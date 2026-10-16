@@ -9,7 +9,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { PromptInputAction } from "@/components/prompt-kit/prompt-input";
-import { Chip } from "@/components/section-card";
 import { ModelCost } from "@/components/model-cost";
 import {
   DIAL_EFFORTS,
@@ -151,10 +150,10 @@ export const TurnDial = memo(function TurnDial({
         live={live}
         readOnly={!canTune}
         chip={
-          <Chip tone="code" className="inline-flex items-center gap-1">
+          <DialChip>
             {model}
-            {canTune && <ChevronDown className="h-3 w-3 text-muted-foreground" />}
-          </Chip>
+            {canTune && <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+          </DialChip>
         }
       >
         {models.map((m) => {
@@ -167,14 +166,11 @@ export const TurnDial = memo(function TurnDial({
               // so the conversation goes on following the agent if the agent
               // is moved later — which is what "the agent's" means.
               onSelect={() => set("model", agents ? null : m)}
-              className="font-mono text-xs"
             >
               <span className="flex w-full items-center justify-between">
                 <span>
                   {m}
-                  {agents && (
-                    <span className="ml-1.5 font-sans text-muted-foreground">(agent's)</span>
-                  )}
+                  {agents && <span className="ml-1.5 text-muted-foreground">(agent's)</span>}
                 </span>
                 <ModelCost cost={costFor(modelCosts, m)} />
               </span>
@@ -190,7 +186,7 @@ export const TurnDial = memo(function TurnDial({
           live={live}
           readOnly={!canTune}
           chip={
-            <DialWords icon={<Brain className="h-3 w-3" />} name="Thinking" compact={compact}>
+            <DialWords icon={<Brain className="h-3.5 w-3.5" />} name="Thinking" compact={compact}>
               {thinkingWord(effort)}
             </DialWords>
           }
@@ -232,10 +228,10 @@ export const TurnDial = memo(function TurnDial({
       {fixedBrainstorm ? (
         // Said, not offered: there is no other mode for a conversation with an
         // idea board, so a menu here would be one row long.
-        <Chip className="inline-flex items-center gap-1">
-          <Lightbulb className="h-3 w-3" aria-hidden />
+        <DialChip>
+          <Lightbulb className="h-3.5 w-3.5" aria-hidden />
           Brainstorm
-        </Chip>
+        </DialChip>
       ) : (
         <Dial
           label={`Mode: ${modeWord(mode)}`}
@@ -243,7 +239,7 @@ export const TurnDial = memo(function TurnDial({
           live={live}
           readOnly={!canTune}
           chip={
-            <DialWords icon={<Lightbulb className="h-3 w-3" />} name="Mode" compact={compact}>
+            <DialWords icon={<Lightbulb className="h-3.5 w-3.5" />} name="Mode" compact={compact}>
               {modeWord(mode)}
             </DialWords>
           }
@@ -272,7 +268,7 @@ export const TurnDial = memo(function TurnDial({
         live={live}
         readOnly={!canTune}
         chip={
-          <DialWords icon={<Globe className="h-3 w-3" />} name="Web" compact={compact}>
+          <DialWords icon={<Globe className="h-3.5 w-3.5" />} name="Web" compact={compact}>
             {web ? "On" : "Off"}
           </DialWords>
         }
@@ -328,7 +324,7 @@ function Dial({
       aria-label={label}
       aria-disabled={!live || undefined}
       className={cn(
-        "group shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group shrink-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring",
         live ? "cursor-pointer" : "cursor-default",
         // Dimmed only while a reply runs, when it will come back. Somebody
         // reading a conversation they do not own is reading these values,
@@ -352,7 +348,25 @@ function Dial({
   );
 }
 
-/** The neutral chip's insides: a mark, a word on a wide screen, the value. */
+/**
+ * One setting on the row, as words rather than as a chip.
+ *
+ * These were chips — grey wells, the model's in monospace — and three wells
+ * in a row under the message read as three badges on it, which is a lot of
+ * furniture for what are, most of the time, the defaults. Words in the
+ * secondary ink, 14px, lifting to a soft fill when hovered: the same weight
+ * as the hint line under the composer, which is the register these belong
+ * in. A model id is a name here, not code, so it is set in the one face.
+ */
+function DialChip({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-meta font-medium text-muted-foreground transition-colors group-hover:bg-accent group-hover:text-foreground group-aria-disabled:group-hover:bg-transparent group-aria-disabled:group-hover:text-muted-foreground">
+      {children}
+    </span>
+  );
+}
+
+/** A setting's insides: a mark, a word on a wide screen, the value. */
 function DialWords({
   icon,
   name,
@@ -365,13 +379,13 @@ function DialWords({
   children: ReactNode;
 }) {
   return (
-    <Chip className="inline-flex items-center gap-1 transition-colors group-hover:text-foreground group-aria-disabled:group-hover:text-muted-foreground">
+    <DialChip>
       <span aria-hidden className="inline-flex">
         {icon}
       </span>
-      {!compact && <span>{name} ·</span>}
+      {!compact && <span className="font-normal">{name}</span>}
       <span>{children}</span>
-    </Chip>
+    </DialChip>
   );
 }
 

@@ -585,7 +585,7 @@ describe("the sign-in prompt", () => {
 
     expect(await screen.findByText("linkedin.com needs you to sign in.")).toBeInTheDocument();
     // The ink fill: the primary button, per DESIGN.md — not amber.
-    expect(screen.getByRole("button", { name: "Take over" })).toHaveClass("bg-primary");
+    expect(screen.getByRole("button", { name: "Take over" })).toHaveClass("bg-brand");
   });
 
   it("says the same with no host when the run named none", async () => {
@@ -1120,7 +1120,7 @@ describe("a browser of your own (Task 3.1)", () => {
 
     await openIt();
     expect(container.querySelector(".browser-live")).toBeNull();
-    expect(container.querySelector(".bg-accent-orange")).not.toBeNull();
+    expect(container.querySelector(".bg-brand")).not.toBeNull();
   });
 });
 

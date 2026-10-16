@@ -29,7 +29,7 @@ export function FirstWeekChecklist({
     <SectionCard className="mt-8">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-dm text-title font-medium leading-tight">Getting set up</h2>
+          <h2 className="text-title font-semibold leading-tight">Getting set up</h2>
           <p className="mt-1 text-sm leading-[1.45] text-muted-foreground">
             {done} of {steps.length} done. This disappears when it is finished.
           </p>
@@ -52,7 +52,7 @@ export function FirstWeekChecklist({
                 done step gets the amber tick; an open one gets the dashed
                 tile the Team page already uses for something still waiting. */}
             {step.done ? (
-              <span className="mt-px grid h-5 w-5 shrink-0 place-items-center rounded-sm bg-accent-orange text-[#251f19]">
+              <span className="mt-px grid h-5 w-5 shrink-0 place-items-center rounded-sm bg-primary text-primary-foreground">
                 <Check className="h-3.5 w-3.5" />
               </span>
             ) : (

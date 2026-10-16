@@ -1,23 +1,73 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { ArrowLeft, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SETTINGS_PAGES, isSettingsPage } from "./settings-pages";
+import { DOCS_HOME } from "@/lib/docs";
+import { SETTINGS_GROUPS, SETTINGS_PAGES, isSettingsPage } from "./settings-pages";
+
+const ROW =
+  "flex shrink-0 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-200";
+const ROW_IDLE = "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground";
+const ROW_ACTIVE = "bg-sidebar-accent text-sidebar-accent-foreground";
 
 /**
- * A column beside the page on a wide screen and a row of tabs above it on a
- * narrow one. Both are the same real links, so a keyboard and a thumb reach
- * every page the same way a pointer does.
+ * The column on the left of the settings card: the way back, the heading, and
+ * the pages under the heading each belongs to.
  *
  * Active state comes from the pathname rather than `Link`'s `activeProps`, so
  * the one rule above decides it here and in the tests alike.
  */
-export function SettingsNav() {
+export function SettingsNav({ workspaceName }: { workspaceName?: string }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
   return (
-    <nav
-      aria-label="Settings sections"
-      className="-mx-5 mb-10 flex gap-1 overflow-x-auto px-5 lg:sticky lg:top-24 lg:mx-0 lg:mb-0 lg:flex-col lg:self-start lg:px-0"
-    >
+    <nav aria-label="Settings sections" className="flex flex-col gap-0.5">
+      <Link to="/app" className={cn(ROW, ROW_IDLE)}>
+        <ArrowLeft className="h-4 w-4" />
+        Back to app
+      </Link>
+
+      <div className="mb-2 mt-4 px-3">
+        <div className="text-title-lg font-semibold">Settings</div>
+        <div className="truncate text-meta text-muted-foreground">{workspaceName ?? "…"}</div>
+      </div>
+
+      {SETTINGS_GROUPS.map((group) => (
+        <div key={group.key} className="mt-3">
+          <Eyebrow>{group.label}</Eyebrow>
+          {SETTINGS_PAGES.filter((page) => page.group === group.key).map((page) => {
+            const active = isSettingsPage(pathname, page.to);
+            const Icon = page.icon;
+            return (
+              <Link
+                key={page.to}
+                to={page.to}
+                aria-current={active ? "page" : undefined}
+                className={cn(ROW, active ? ROW_ACTIVE : ROW_IDLE)}
+              >
+                <Icon className={cn("h-4 w-4", active && "text-brand")} />
+                {page.label}
+              </Link>
+            );
+          })}
+        </div>
+      ))}
+
+      <div className="mt-3">
+        <Eyebrow>Help</Eyebrow>
+        <a href={DOCS_HOME} target="_blank" rel="noreferrer" className={cn(ROW, ROW_IDLE)}>
+          <BookOpen className="h-4 w-4" />
+          Documentation
+        </a>
+      </div>
+    </nav>
+  );
+}
+
+/** The same pages as a row of tabs, for a screen too narrow for the column. */
+export function SettingsTabs() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  return (
+    <nav aria-label="Settings pages" className="flex gap-1 overflow-x-auto">
       {SETTINGS_PAGES.map((page) => {
         const active = isSettingsPage(pathname, page.to);
         const Icon = page.icon;
@@ -26,26 +76,22 @@ export function SettingsNav() {
             key={page.to}
             to={page.to}
             aria-current={active ? "page" : undefined}
-            className={cn(
-              "flex shrink-0 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-200",
-              active
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-            )}
+            className={cn(ROW, active ? ROW_ACTIVE : ROW_IDLE)}
           >
-            {/* The sidebar's mark for the row you are on (§7.2). */}
-            <span
-              aria-hidden
-              className={cn(
-                "h-1 w-1 shrink-0 transition-colors duration-200",
-                active ? "bg-accent-orange" : "bg-transparent",
-              )}
-            />
-            <Icon className="h-4 w-4" />
+            <Icon className={cn("h-4 w-4", active && "text-brand")} />
             {page.label}
           </Link>
         );
       })}
     </nav>
+  );
+}
+
+/** The 12px uppercase eyebrow, the system's one uppercase role. */
+function Eyebrow({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-3 pb-1 text-xs font-semibold uppercase tracking-[0.06em] text-micro-foreground">
+      {children}
+    </div>
   );
 }

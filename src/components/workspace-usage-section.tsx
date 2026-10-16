@@ -154,7 +154,7 @@ function MonthlyTrend({ months }: { months: UsageMonth[] }) {
               }
             >
               <div
-                className="w-full bg-accent-orange"
+                className="w-full bg-brand"
                 style={{ height: `${Math.max(2, Math.round((m.totalTokens / peak) * 100))}%` }}
                 aria-hidden
               />

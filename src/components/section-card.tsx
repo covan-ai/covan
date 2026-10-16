@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * A card sitting on the canvas: one surface step up, a 1px line, 12px radius,
- * and no shadow. A grid of shadowed cards is the "bubble wrap" failure mode and
- * it is instantly off-system (§3.5) — depth here is a step, never a shadow.
+ * A card sitting on the canvas: white, a 1px line, 10px radius, and the
+ * hairline shadow. Depth is one surface step and one line; a card never gets
+ * the floating shadow a panel does (§3).
  *
  * Pass `padded={false}` when the card holds its own edge-to-edge rows.
  */
@@ -18,36 +18,39 @@ export function SectionCard({
   children: ReactNode;
 }) {
   return (
-    <div className={cn("rounded-xl border border-border bg-card", padded && "p-6", className)}>
+    <div
+      className={cn("rounded-xl border border-border bg-card shadow-xs", padded && "p-6", className)}
+    >
       {children}
     </div>
   );
 }
 
 /**
- * A panel that genuinely floats — white (the raised state), 20px radius, and
- * the one panel shadow in the system. Its interior rows sit on `--background`,
- * one step *below* the panel, so they read as content wells (§7.7).
+ * A panel that genuinely floats — white, 14px radius, a line, and the one
+ * floating shadow in the system. Its optional title bar is a plain strip on
+ * the muted surface; there is no window chrome.
  */
 export function Panel({
   title,
   className,
   children,
 }: {
-  /** The window-chrome bar's label. Omit for a bare panel. */
+  /** The title bar's label. Omit for a bare panel. */
   title?: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <div className={cn("overflow-hidden rounded-3xl bg-popover shadow-card", className)}>
+    <div
+      className={cn(
+        "overflow-hidden rounded-3xl border border-border bg-popover shadow-card",
+        className,
+      )}
+    >
       {title ? (
-        <div className="flex items-center gap-[7px] border-b border-hairline bg-surface-muted px-[18px] py-3.5">
-          {/* One of exactly two places a circle is allowed: window chrome. */}
-          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
-          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
-          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#d4cdc7] dark:bg-[#453b31]" />
-          <span className="ml-2.5 text-meta font-medium text-muted-foreground">{title}</span>
+        <div className="flex items-center border-b border-hairline bg-surface-muted px-5 py-3">
+          <span className="text-meta font-medium text-muted-foreground">{title}</span>
         </div>
       ) : null}
       <div className="p-6">{children}</div>
@@ -56,7 +59,7 @@ export function Panel({
 }
 
 /**
- * The data row — the workhorse of §7.8. Icon tile, two-line main, trailing
+ * The data row — the workhorse of §6. Icon tile, two-line main, trailing
  * chip. `overflow-wrap: anywhere` on the title is not optional: these rows
  * carry filenames, and at 375px a long one punches straight through the chip.
  */
@@ -79,9 +82,7 @@ export function DataRow({
     <>
       {icon}
       <span className="flex min-w-0 flex-1 flex-col gap-[3px] text-left">
-        <span className="text-base font-medium leading-tight [overflow-wrap:anywhere]">
-          {title}
-        </span>
+        <span className="text-sm font-medium leading-tight [overflow-wrap:anywhere]">{title}</span>
         {meta ? (
           <span className="text-meta leading-tight text-muted-foreground">{meta}</span>
         ) : null}
@@ -91,8 +92,8 @@ export function DataRow({
   );
 
   const classes = cn(
-    "flex w-full items-center gap-3.5 rounded-lg border border-hairline bg-background px-4 py-3.5",
-    onClick && "text-left transition-colors duration-200 hover:bg-surface-hover",
+    "flex w-full items-center gap-3.5 rounded-lg border border-hairline bg-background px-4 py-3",
+    onClick && "text-left transition-colors duration-150 hover:bg-surface-hover",
     className,
   );
 
@@ -106,9 +107,10 @@ export function DataRow({
 }
 
 /**
- * A chip. Neutral grey = off, pending, or coming soon. Amber = active,
- * enabled, shipped. There is no third state and no red (§7.8). `code` carries
- * cron strings, ids, and model names.
+ * A chip. Neutral grey = off, pending, or coming soon. `on` = active, enabled,
+ * shipped: the amber fill with ink text. There is no
+ * third state and no red (§6). `code` carries cron strings, ids, and model
+ * names.
  */
 export function Chip({
   tone = "neutral",
@@ -123,7 +125,7 @@ export function Chip({
     <span
       className={cn(
         "shrink-0 whitespace-nowrap rounded-sm px-2 py-1 text-xs font-medium leading-[1.4]",
-        tone === "on" && "bg-accent-orange text-accent-orange-foreground",
+        tone === "on" && "bg-brand text-brand-foreground",
         tone === "neutral" && "bg-muted text-muted-foreground",
         tone === "ink" && "bg-primary text-primary-foreground",
         tone === "code" && "bg-surface font-mono text-foreground",
@@ -154,7 +156,7 @@ export function EmptyState({
         className,
       )}
     >
-      <p className="font-dm text-title leading-tight">{title}</p>
+      <p className="text-title font-semibold leading-tight">{title}</p>
       {description ? (
         <p className="mx-auto mt-2 max-w-sm text-sm leading-[1.45] text-muted-foreground">
           {description}

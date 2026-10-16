@@ -120,7 +120,7 @@ export function DocumentPanel({
                 <Markdown content={section.body} className="mt-3" />
               ) : i === writingIndex ? (
                 <p className="mt-3 flex items-center gap-2 text-meta text-muted-foreground">
-                  <span className="step-running h-2 w-2 shrink-0 rounded-[2px]" />
+                  <span className="step-running h-2 w-2 shrink-0 rounded-full" />
                   Being written…
                 </p>
               ) : null}

@@ -1,7 +1,8 @@
 import { Gauge, Settings, User, Users } from "lucide-react";
 
 /**
- * The settings area's pages, in the order the rail lists them.
+ * The settings area's pages, in the order the rail lists them, each under the
+ * heading it belongs to: the workspace's settings or your own.
  *
  * Every page is listed for every role. What a role may change is decided on the
  * page, section by section, exactly as it was when this was one long page — a
@@ -9,10 +10,15 @@ import { Gauge, Settings, User, Users } from "lucide-react";
  * silence.
  */
 export const SETTINGS_PAGES = [
-  { to: "/settings/account", label: "Account", icon: User },
-  { to: "/settings/workspace", label: "Workspace", icon: Settings },
-  { to: "/settings/members", label: "Members", icon: Users },
-  { to: "/settings/usage", label: "Usage", icon: Gauge },
+  { to: "/settings/workspace", label: "Workspace", icon: Settings, group: "workspace" },
+  { to: "/settings/members", label: "Members", icon: Users, group: "workspace" },
+  { to: "/settings/usage", label: "Usage", icon: Gauge, group: "workspace" },
+  { to: "/settings/account", label: "Account", icon: User, group: "account" },
+] as const;
+
+export const SETTINGS_GROUPS = [
+  { key: "workspace", label: "Workspace" },
+  { key: "account", label: "My account" },
 ] as const;
 
 /** The same rule as the sidebar: the page itself, or anything under it. */

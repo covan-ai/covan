@@ -39,7 +39,7 @@ export function SessionRow({
   // the other becomes a no-op.
   const settled = useRef(false);
 
-  const label = session.title || (session.kind === "brainstorm" ? "New brainstorm" : "New chat");
+  const label = session.title || (session.kind === "brainstorm" ? "New brainstorm" : "New thread");
 
   const startEditing = () => {
     setDraft(session.title ?? "");

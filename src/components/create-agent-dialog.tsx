@@ -374,7 +374,7 @@ function StepDot({
         className={cn(
           "grid h-5 w-5 place-items-center rounded-sm text-xs font-medium",
           active || done
-            ? "bg-accent-orange text-accent-orange-foreground"
+            ? "bg-brand text-brand-foreground"
             : "bg-muted text-muted-foreground",
         )}
       >

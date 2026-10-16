@@ -42,6 +42,11 @@ function dateLabel(ts: number): string {
  * label per day — but a day boundary is the real question, and asking it
  * directly means a later change to how a day is *named* cannot silently move
  * where the lines fall.
+ *
+ * The first message never gets one. A divider says "the day changed here",
+ * and nothing changed above the first message; "Today" over a thread that
+ * started today was a heading on a page with one section. A thread that spans
+ * days still gets a line wherever the day turns.
  */
 export function dateDividers(messages: Message[]): Map<string, string> {
   const dividers = new Map<string, string>();
@@ -49,7 +54,9 @@ export function dateDividers(messages: Message[]): Map<string, string> {
 
   for (const msg of messages) {
     const day = new Date(msg.createdAt).toDateString();
-    if (day !== previousDay) dividers.set(msg.id, dateLabel(msg.createdAt));
+    if (previousDay !== null && day !== previousDay) {
+      dividers.set(msg.id, dateLabel(msg.createdAt));
+    }
     previousDay = day;
   }
 

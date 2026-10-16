@@ -3,7 +3,14 @@
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import React, { createContext, useContext, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 /*
  * prompt-kit's `prompt-input`, copied and edited.
@@ -45,8 +52,10 @@ import React, { createContext, useContext, useLayoutEffect, useRef, useState } f
  *    them a line later. A composer that owns Enter outright passes no
  *    `onSubmit` and keeps every key it did not ask about.
  *
- * `rounded-3xl` is KEPT. It resolves to `--radius-3xl: 20px` here — the
- * floating-panel step of this system's radius ladder — not Tailwind's 24px.
+ * `rounded-3xl` became `rounded-5xl` (20px, the composer's own step on this
+ * system's radius ladder — the one object on the chat screen that is held
+ * rather than read) and the composer carries the one floating shadow,
+ * because it is the one thing on the chat screen that floats.
  *
  * `text-primary` on the textarea is upstream's and is kept: `--primary` and
  * `--foreground` are the same ink in both themes here, so it is already the
@@ -75,6 +84,37 @@ const PromptInputContext = createContext<PromptInputContextType>({
 
 function usePromptInput() {
   return useContext(PromptInputContext);
+}
+
+/**
+ * Whether the last thing the person did was move focus with the keyboard.
+ *
+ * For EDIT 8 below. `:focus-visible` was tried first and is not usable for
+ * this: Chrome grants it to focus that a closing menu hands back to its
+ * trigger, because the menu item before it had been focused by script. So
+ * the question is asked of the input itself: Tab and the arrow keys are
+ * keyboard navigation, a pointer press ends it, and Escape is neither — a
+ * mouse user closing a menu with Escape has not started navigating by key.
+ *
+ * One listener pair for the module, in capture, so it sees the key before a
+ * menu swallows it.
+ */
+let keyboardNavigating = false;
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Tab" || e.key.startsWith("Arrow")) keyboardNavigating = true;
+    },
+    true,
+  );
+  window.addEventListener(
+    "pointerdown",
+    () => {
+      keyboardNavigating = false;
+    },
+    true,
+  );
 }
 
 export type PromptInputProps = {
@@ -147,7 +187,7 @@ function PromptInput({
         <div
           onClick={handleClick}
           className={cn(
-            "cursor-text rounded-3xl border border-input bg-popover p-2",
+            "cursor-text rounded-5xl border border-input bg-popover p-2 shadow-card",
             disabled && "cursor-not-allowed opacity-60",
             className,
           )}
@@ -264,8 +304,58 @@ function PromptInputAction({
 }: PromptInputActionProps) {
   const { disabled } = usePromptInput();
 
+  /**
+   * EDIT 8. The tooltip opens for a pointer, or for a keyboard, and not for
+   * focus that merely came back.
+   *
+   * Radix opens a tooltip on any focus of its trigger. Three of the controls
+   * on this row open a menu, and when a menu closes it hands focus back to
+   * the control that opened it — so every pick from the model menu ended
+   * with the model's tooltip sitting over the composer, and it stayed there
+   * until something else took focus. Clicking the control again opened and
+   * closed the menu, which handed focus back again, which opened the tooltip
+   * again.
+   *
+   * So the open is gated: the pointer is over the control, or the person is
+   * moving focus by keyboard (`keyboardNavigating`, above). A keyboard user
+   * tabbing onto Send still reads what it is waiting for; a mouse user
+   * picking a model does not get a label for the thing they just used.
+   */
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const hovering = useRef(false);
+  // NATIVE listeners, not React's `onPointerEnter`/`onPointerLeave`. React
+  // works those out from its own tree, in which a menu rendered through a
+  // portal is still a child of the control that opened it — so moving the
+  // pointer from the control into its menu never counted as leaving, and the
+  // guard below let the tooltip through. The DOM knows the menu is elsewhere.
+  useEffect(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const enter = () => {
+      hovering.current = true;
+    };
+    const leave = () => {
+      hovering.current = false;
+    };
+    el.addEventListener("pointerenter", enter);
+    el.addEventListener("pointerleave", leave);
+    return () => {
+      el.removeEventListener("pointerenter", enter);
+      el.removeEventListener("pointerleave", leave);
+    };
+  }, []);
+  const onOpenChange = (next: boolean) => {
+    if (next && !hovering.current && !keyboardNavigating) return;
+    setOpen(next);
+  };
+
   return (
-    <Tooltip {...props}>
+    // `disableHoverableContent`: the content is a sentence, never a control,
+    // so there is nothing to keep it open for while the pointer travels to it.
+    // Without this, a tooltip that focus had opened outlived the pointer
+    // leaving its control, and sat there until something else took focus.
+    <Tooltip open={open} onOpenChange={onOpenChange} disableHoverableContent {...props}>
       {/*
         EDIT 7. The trigger is a SPAN AROUND the child, not the child itself.
         Upstream passes `asChild`, which makes the control the trigger — and a
@@ -277,7 +367,9 @@ function PromptInputAction({
         draws it rather than the page.
       */}
       <TooltipTrigger asChild disabled={disabled} onClick={(event) => event.stopPropagation()}>
-        <span className="inline-flex">{children}</span>
+        <span ref={triggerRef} className="inline-flex">
+          {children}
+        </span>
       </TooltipTrigger>
       <TooltipContent side={side} className={className}>
         {tooltip}

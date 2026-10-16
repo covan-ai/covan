@@ -22,10 +22,10 @@ export function WelcomeLayout({
   children: ReactNode;
 }) {
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-hero-glow px-4 py-12">
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-12">
       <div className="w-full max-w-xl">
         <div className="mb-8 flex items-center justify-center gap-2">
-          <BrandMark className="shadow-glow" />
+          <BrandMark />
           <span className="text-sm font-semibold tracking-tight">Covan</span>
         </div>
 
@@ -33,9 +33,9 @@ export function WelcomeLayout({
             screen is the one immediately after sign-up, and changing the
             surface treatment mid-flow would read as landing somewhere else.
             The shadow is allowed here because this panel genuinely floats. */}
-        <div className="rounded-2xl border border-hairline bg-card p-7 shadow-elegant">
+        <div className="rounded-2xl border border-border bg-card p-7 shadow-card">
           <div className="text-center">
-            <h1 className="font-dm text-[28px] font-medium leading-tight tracking-tight">
+            <h1 className="text-2xl font-semibold leading-tight tracking-tight">
               {title}
             </h1>
             {subtitle && <p className="mt-2 text-base text-muted-foreground">{subtitle}</p>}
@@ -68,7 +68,7 @@ function StepIndicator({ index, count }: { index: number; count: number }) {
         <span
           key={i}
           aria-hidden
-          className={cn("h-2 w-2 shrink-0", i === index ? "bg-accent-orange" : "bg-border")}
+          className={cn("h-2 w-2 shrink-0 rounded-full", i === index ? "bg-brand" : "bg-border")}
         />
       ))}
     </div>

@@ -133,14 +133,14 @@ export function KnowledgeStep({ agent, onDone }: { agent: Agent; onDone: () => v
           className={cn(
             "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed py-10 text-center transition-colors duration-200",
             dragging
-              ? "border-accent-orange bg-surface-hover"
+              ? "border-brand bg-surface-hover"
               : "border-border bg-surface hover:bg-surface-hover",
           )}
         >
           <Upload
             className={cn(
               "h-6 w-6 transition-colors duration-200",
-              dragging ? "text-accent-orange" : "text-muted-foreground",
+              dragging ? "text-brand" : "text-muted-foreground",
             )}
           />
           <span className="text-sm text-muted-foreground">

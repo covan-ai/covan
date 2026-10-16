@@ -43,11 +43,11 @@ export function ChatReport({ reports, canWrite }: { reports: ReportWriter; canWr
       <button
         type="button"
         onClick={() => setDialogOpen(true)}
-        className="grid h-7 w-7 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label="Write a report from this conversation"
         title="Write a report from this conversation — or type /report in the message box"
       >
-        <ScrollText className="h-4 w-4" />
+        <ScrollText className="h-[18px] w-[18px]" />
       </button>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

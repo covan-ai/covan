@@ -25,9 +25,6 @@ export function FeedbackButton({ path, onOpen }: { path: string; onOpen?: () => 
         }}
         className="group flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
       >
-        {/* No amber square: the nav rows use one to mark which page you are on,
-            and this opens a dialog rather than going anywhere. */}
-        <span aria-hidden className="h-1 w-1 shrink-0 bg-transparent" />
         <MessageSquarePlus className="h-4 w-4" />
         Send feedback
       </button>

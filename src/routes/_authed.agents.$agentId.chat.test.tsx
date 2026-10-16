@@ -19,6 +19,14 @@ import type React from "react";
  * the stream is the only thing left moving.
  */
 
+/**
+ * The composer, by its placeholder. It says "Message" on an empty thread and
+ * "Reply to" once there is something in it, and a test should not care which.
+ */
+function composerPlaceholder(name: string): RegExp {
+  return new RegExp(`^(Message|Reply to) ${name}$`);
+}
+
 const navigate = vi.fn();
 
 vi.mock("@tanstack/react-router", () => ({
@@ -247,7 +255,7 @@ async function renderChat() {
   // anything has loaded. The toggle needs `isOwner`, which needs `/me` — so by
   // the time it is on screen both queries have settled and the shortcuts that
   // turn on ownership behave the way they will in a browser.
-  await screen.findByPlaceholderText(`Message ${agent.name}`);
+  await screen.findByPlaceholderText(composerPlaceholder(agent.name));
   await screen.findByRole("button", { name: "Share with your workspace" });
   return { ...view, client };
 }
@@ -357,7 +365,10 @@ describe("the end of a reply", () => {
     const { client } = await renderChat();
     listMessages.mockReturnValue(new Promise(() => {}));
 
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "and per seat?");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "and per seat?",
+    );
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await screen.findByText("Forty dollars a seat.");
@@ -385,7 +396,10 @@ describe("the end of a reply", () => {
     // started carrying it.
     listMessages.mockResolvedValue([question, answer]);
 
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "and per seat?");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "and per seat?",
+    );
     await userEvent.click(screen.getByLabelText("Send message"));
 
     expect(await screen.findByText("Forty dollars a seat.")).toBeInTheDocument();
@@ -451,7 +465,7 @@ describe("the way back down", () => {
 });
 
 describe("what Enter means", () => {
-  const composer = () => screen.getByPlaceholderText(`Message ${agent.name}`);
+  const composer = () => screen.getByPlaceholderText(composerPlaceholder(agent.name));
 
   beforeEach(() => {
     vi.stubGlobal(
@@ -510,7 +524,10 @@ describe("the composer's actions", () => {
     // on a phone the button simply looked broken while a reply ran. There was
     // no tooltip on this row before the composer was rebuilt.
     await renderChat();
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "and per seat?");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "and per seat?",
+    );
 
     await userEvent.hover(screen.getByLabelText("Send message"));
 
@@ -519,7 +536,7 @@ describe("the composer's actions", () => {
 });
 
 describe("the keys beside Enter", () => {
-  const composer = () => screen.getByPlaceholderText(`Message ${agent.name}`);
+  const composer = () => screen.getByPlaceholderText(composerPlaceholder(agent.name));
 
   it("stops a running reply on Escape", async () => {
     vi.stubGlobal(
@@ -577,7 +594,10 @@ describe("what a reply looks like on its way in", () => {
     );
 
     const { container } = await renderChat();
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
     await waitFor(() => expect(container.querySelector("strong")).toBeInTheDocument());
     expect(container.querySelector("strong")).toHaveTextContent("Forty");
@@ -593,11 +613,16 @@ describe("what a reply looks like on its way in", () => {
       vi.fn(() => Promise.resolve(openStream())),
     );
     const { container } = await renderChat();
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
     await waitFor(() => expect(container.querySelector(".stream-live")).toBeInTheDocument());
 
-    fireEvent.keyDown(screen.getByPlaceholderText(`Message ${agent.name}`), { key: "Escape" });
+    fireEvent.keyDown(screen.getByPlaceholderText(composerPlaceholder(agent.name)), {
+      key: "Escape",
+    });
 
     // Stopped: the text stays until the server's copy replaces it, but it is
     // no longer arriving, so it no longer claims to be.
@@ -614,7 +639,7 @@ describe("what a reply looks like on its way in", () => {
  * another conversation, which was simply never finished.
  */
 describe("a turn that outlives the screen", () => {
-  const composer = () => screen.getByPlaceholderText(`Message ${agent.name}`);
+  const composer = () => screen.getByPlaceholderText(composerPlaceholder(agent.name));
 
   it("keeps the words a person stopped, and asks the server to stop the turn", async () => {
     vi.stubGlobal(
@@ -706,7 +731,10 @@ describe("what a screen reader is told", () => {
     );
     await renderChat();
 
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
     const status = await screen.findByRole("status");
     await waitFor(() => expect(status).toHaveTextContent(`${agent.name} is replying`));
@@ -734,7 +762,10 @@ describe("what a screen reader is told", () => {
     // list from before the reply and take the answer straight back off screen.
     listMessages.mockResolvedValue([question, answer]);
 
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
     await waitFor(() => expect(screen.getByRole("status")).toBeEmptyDOMElement());
     // The answer is in the log by then, which is where it gets read out.
@@ -790,7 +821,10 @@ describe("a conversation longer than one page", () => {
       ),
     );
     listMessages.mockClear();
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
     await waitFor(() => expect(listMessages).toHaveBeenCalledWith("session-1", { limit: 200 }));
     // Fifteen seconds rather than the default five, and it is the work rather
@@ -821,7 +855,10 @@ describe("an answer that stopped at its length limit", () => {
     await renderChat();
     listMessages.mockResolvedValue([question, cutOff]);
 
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
     expect(await screen.findByText("This answer hit its length limit.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
@@ -832,7 +869,10 @@ describe("an answer that stopped at its length limit", () => {
     vi.stubGlobal("fetch", fetchMock);
     await renderChat();
     listMessages.mockResolvedValue([question, cutOff]);
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
     await screen.findByRole("button", { name: "Continue" });
 
     fetchMock.mockClear();
@@ -856,7 +896,10 @@ describe("an answer that stopped at its length limit", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { container } = await renderChat();
     listMessages.mockResolvedValue([question, cutOff]);
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
     await screen.findByRole("button", { name: "Continue" });
 
     const whole = `${cutOff.content} two seats free.`;
@@ -891,7 +934,10 @@ describe("an answer that stopped at a ceiling", () => {
     ]);
 
   const ask = async () =>
-    userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
   it("says so under the answer, and keeps saying it", async () => {
     // This was a four-second toast over a reply that looked finished — gone
@@ -1030,7 +1076,10 @@ describe("the pause before an answer", () => {
     );
 
     const { container } = await renderChat();
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
     // This asserted a CLOSED `<details>` until the reasoning block arrived:
     // the reader got the word "Thinking" and nothing else, with no sign of
@@ -1069,7 +1118,10 @@ describe("the pause before an answer", () => {
 
     await renderChat();
     listMessages.mockResolvedValue([question, answer]);
-    await userEvent.type(screen.getByPlaceholderText(`Message ${agent.name}`), "how much?{Enter}");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder(agent.name)),
+      "how much?{Enter}",
+    );
 
     const settled = await screen.findByText("Forty dollars a seat.");
     expect(settled).not.toHaveTextContent("Checking the handbook");
@@ -1236,7 +1288,10 @@ describe("a reply that used a tool", () => {
     await renderChat();
     listMessages.mockReturnValue(new Promise(() => {}));
 
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "how many orders?");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "how many orders?",
+    );
     await userEvent.click(screen.getByLabelText("Send message"));
 
     // The same index arriving twice is one row changing, not two rows.
@@ -1262,7 +1317,7 @@ describe("a reply that used a tool", () => {
     await renderChat();
     listMessages.mockReturnValue(new Promise(() => {}));
 
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "go");
+    await userEvent.type(screen.getByPlaceholderText(composerPlaceholder("GTM Agent")), "go");
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await screen.findByText("Forty dollars a seat.");
@@ -1286,7 +1341,10 @@ describe("the sign of life during a long turn", () => {
     );
     await renderChat();
     listMessages.mockReturnValue(new Promise(() => {}));
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "how many orders?");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "how many orders?",
+    );
     await userEvent.click(screen.getByLabelText("Send message"));
     return held;
   }
@@ -1361,7 +1419,10 @@ describe("a reply that stopped to ask", () => {
     await renderChat();
     listMessages.mockReturnValue(new Promise(() => {}));
 
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "every monday");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "every monday",
+    );
     await userEvent.click(screen.getByLabelText("Send message"));
 
     await screen.findByText("Create a routine on 0 17 * * 1?");
@@ -1392,7 +1453,10 @@ describe("a reply that stopped to ask", () => {
     await renderChat();
     listMessages.mockReturnValue(new Promise(() => {}));
 
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "every monday");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "every monday",
+    );
     await userEvent.click(screen.getByLabelText("Send message"));
     await screen.findByRole("button", { name: "Not now" });
     await userEvent.click(screen.getByRole("button", { name: "Not now" }));
@@ -1421,7 +1485,10 @@ describe("a reply that stopped to ask", () => {
     await renderChat();
     listMessages.mockReturnValue(new Promise(() => {}));
 
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "every monday");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "every monday",
+    );
     await userEvent.click(screen.getByLabelText("Send message"));
     await screen.findByRole("button", { name: "Approve" });
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
@@ -1484,7 +1551,7 @@ describe("the browser beside the conversation", () => {
           <ChatTab />
         </QueryClientProvider>,
       );
-      await screen.findByPlaceholderText(`Message ${agent.name}`);
+      await screen.findByPlaceholderText(composerPlaceholder(agent.name));
       await waitFor(() => expect(browserTasks).toHaveBeenCalledWith("session-1"));
       expect(screen.queryByRole("button", { name: "Show the browser" })).toBeNull();
     } finally {
@@ -1525,7 +1592,10 @@ describe("the browser beside the conversation", () => {
     expect(screen.queryByRole("heading", { name: "Browser" })).toBeNull();
 
     browserTasks.mockResolvedValue(running);
-    await userEvent.type(screen.getByPlaceholderText("Message GTM Agent"), "read the page");
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "read the page",
+    );
     await userEvent.click(screen.getByLabelText("Send message"));
 
     expect(await screen.findByRole("heading", { name: "Browser" })).toBeInTheDocument();
@@ -1619,7 +1689,7 @@ describe("the browser beside the conversation", () => {
     const control = await screen.findByRole("button", {
       name: "Show the browser: a site needs you to sign in",
     });
-    expect(control.querySelector(".bg-accent-orange")).not.toBeNull();
+    expect(control.querySelector(".bg-brand")).not.toBeNull();
   });
 
   it("does not mark it when nothing is waiting on the person", async () => {
@@ -1628,7 +1698,7 @@ describe("the browser beside the conversation", () => {
     await renderChat();
 
     const control = await screen.findByRole("button", { name: "Show the browser" });
-    expect(control.querySelector(".bg-accent-orange")).toBeNull();
+    expect(control.querySelector(".bg-brand")).toBeNull();
   });
 
   /** Ruling R18: a drained v2 task keeps its old card, in the transcript. */

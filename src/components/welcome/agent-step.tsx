@@ -94,7 +94,7 @@ export function AgentStep({
               onClick={() => setEmoji(e)}
               className={cn(
                 "grid h-10 w-10 place-items-center rounded-md border text-lg transition-colors duration-200",
-                "focus-visible:shadow-glow focus-visible:outline-none",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                 emoji === e ? "border-border bg-surface" : "border-hairline hover:bg-surface-hover",
               )}
             >

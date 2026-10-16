@@ -87,8 +87,8 @@ describe("the live trail", () => {
       <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
     );
 
-    expect(waiting.querySelector(".bg-accent-orange")).toBeInTheDocument();
-    expect(busy.querySelector(".bg-accent-orange")).not.toBeInTheDocument();
+    expect(waiting.querySelector(".bg-brand")).toBeInTheDocument();
+    expect(busy.querySelector(".bg-brand")).not.toBeInTheDocument();
   });
 
   it("draws nothing at all when there are no steps", () => {

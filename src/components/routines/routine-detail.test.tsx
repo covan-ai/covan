@@ -225,7 +225,7 @@ describe("RoutineDetail", () => {
     render(<RoutineDetail {...props} runs={cut} />);
     const chip = screen.getByText("Stopped before it finished");
     expect(chip.className).not.toContain("destructive");
-    expect(chip.className).not.toContain("accent-orange");
+    expect(chip.className).not.toContain("brand");
     // The rest of the row is still true, so it stays.
     expect(screen.getByText(/Delivered/)).toBeInTheDocument();
   });

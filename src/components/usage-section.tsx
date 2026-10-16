@@ -75,7 +75,7 @@ export function UsageSection() {
           <div className="mt-3 h-1.5 w-full bg-muted" aria-hidden>
             <div
               className={
-                credits.level === "fine" ? "h-full bg-foreground" : "h-full bg-accent-orange"
+                credits.level === "fine" ? "h-full bg-foreground" : "h-full bg-brand"
               }
               style={{ width: `${Math.max(2, Math.round(credits.ratio * 100))}%` }}
             />

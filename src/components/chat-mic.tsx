@@ -43,9 +43,9 @@ export function ChatMic({ dictation }: { dictation: Dictation }) {
         onClick={stop}
         aria-label="Stop recording"
         title="Escape discards the recording"
-        className="flex h-7 items-center gap-1.5 rounded-sm bg-muted px-2 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+        className="flex h-8 items-center gap-1.5 rounded-full bg-muted px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent"
       >
-        <span className="h-2 w-2 shrink-0 bg-accent-orange" />
+        <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />
         <span className="tabular-nums">{clock(seconds)}</span>
       </button>
     );
@@ -59,9 +59,13 @@ export function ChatMic({ dictation }: { dictation: Dictation }) {
       onClick={() => void start()}
       disabled={transcribing}
       aria-label={transcribing ? "Transcribing your recording" : "Dictate a message"}
-      className="grid h-7 w-7 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:hover:bg-transparent"
+      className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:hover:bg-transparent"
     >
-      {transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
+      {transcribing ? (
+        <Loader2 className="h-[18px] w-[18px] animate-spin" />
+      ) : (
+        <Mic className="h-[18px] w-[18px]" />
+      )}
     </button>
   );
 }

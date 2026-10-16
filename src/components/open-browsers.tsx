@@ -74,7 +74,7 @@ function lastUsed(at: string | null, now: number): string {
 /** The conversation's title, or a neutral line for one the person can no longer open. */
 function placeTitle(place: BrowserPlace): string {
   if (!place.conversation) return "A conversation you can no longer open";
-  return place.conversation.title || "New chat";
+  return place.conversation.title || "New thread";
 }
 
 /**
@@ -106,11 +106,11 @@ function Square({ tone }: { tone: "agent" | "person" | "idle" }) {
     <span
       aria-hidden="true"
       className={cn(
-        "h-2 w-2 shrink-0 rounded-[2px]",
+        "h-2 w-2 shrink-0 rounded-full",
         tone === "agent"
           ? "step-running"
           : tone === "person"
-            ? "bg-accent-orange"
+            ? "bg-brand"
             : "bg-muted-foreground/40",
       )}
     />

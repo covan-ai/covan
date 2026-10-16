@@ -213,7 +213,7 @@ function CoverageSummary({ totals, days }: { totals: CoverageTotals; days: numbe
   return (
     <SectionCard className="mt-6">
       <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <span className="font-dm text-[32px] leading-none tabular-nums">{coveredPct}%</span>
+        <span className="text-3xl font-semibold leading-none tracking-tight tabular-nums">{coveredPct}%</span>
         <span className="text-sm text-muted-foreground">
           of {totals.answers} {totals.answers === 1 ? "reply" : "replies"} in the last {days} days
           stood on something you wrote
@@ -271,7 +271,7 @@ function Bucket({
 }) {
   return (
     <div className="flex items-start gap-2.5">
-      <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-[2px] ${swatch}`} aria-hidden />
+      <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${swatch}`} aria-hidden />
       <div className="min-w-0">
         <dt className="text-meta leading-tight text-muted-foreground">{label}</dt>
         <dd className="text-base font-medium leading-tight tabular-nums">

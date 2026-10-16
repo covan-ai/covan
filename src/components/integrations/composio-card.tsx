@@ -105,7 +105,7 @@ export function ComposioCard({
         <div className="flex min-w-0 items-center gap-3.5">
           <Tile />
           <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="font-dm text-title font-medium leading-tight">Connected apps</span>
+            <span className="text-title font-semibold leading-tight">Connected apps</span>
             <span className="text-meta leading-tight text-muted-foreground">
               Set <span className="font-mono text-xs">COMPOSIO_API_KEY</span> to let agents search
               about 1500 applications and call the ones you connect — Gmail, HubSpot, Linear.
@@ -123,7 +123,7 @@ export function ComposioCard({
         <div className="flex min-w-0 items-center gap-3.5">
           <Tile />
           <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="font-dm text-title font-medium leading-tight">Connected apps</span>
+            <span className="text-title font-semibold leading-tight">Connected apps</span>
             <span className="text-meta leading-tight text-muted-foreground">
               Gmail, HubSpot, Linear and about fifteen hundred others. Some need only a sign-in,
               most need a key from the application itself, and the few nobody can connect yet say

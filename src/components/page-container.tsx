@@ -14,29 +14,36 @@ export function PageContainer({
   children: ReactNode;
 }) {
   return (
-    <div className={cn("mx-auto px-5 py-14 lg:px-8", PAGE_WIDTHS[width], className)}>
+    <div className={cn("mx-auto px-5 py-10 lg:px-8", PAGE_WIDTHS[width], className)}>
       {children}
     </div>
   );
 }
 
 /**
- * The badge — the smallest, loudest thing in a header, and the only place amber
- * appears in one (§5.4). Two to three words, sentence case, no punctuation.
+ * The eyebrow — the small uppercase label over a headline that says which
+ * part of the app you are in (§5). Muted, never coloured: it is a label, not
+ * a pointer. Two to three words, no punctuation.
  */
 export function Badge({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <p className={cn("text-sm font-semibold leading-none text-accent-orange", className)}>
+    <p
+      className={cn(
+        "text-xs font-semibold uppercase leading-none tracking-[0.06em] text-micro-foreground",
+        className,
+      )}
+    >
       {children}
     </p>
   );
 }
 
 /**
- * The two-tone headline (§5.5) — the signature move. `turn` is the second half:
- * it goes italic and drops to the muted display grey, and that contrast is what
- * gives a header its rhythm. Roughly two-thirds of headings should use it; if
- * every one does, the device stops registering, so `turn` is optional.
+ * A headline, with an optional second clause in the muted grey (§5). The
+ * second clause is set in the same face and weight, on the same line, so the
+ * two read as one sentence with its emphasis in the first half. Roughly
+ * two-thirds of headings should use it; if every one does, the device stops
+ * registering, so `turn` is optional.
  */
 export function Headline({
   children,
@@ -50,22 +57,18 @@ export function Headline({
   className?: string;
 }) {
   return (
-    // The system sets a section headline at 52px, which is a marketing measure:
-    // it assumes one headline per screenful. An app page stacks several
-    // sections in a viewport, so the scale is stepped down one notch — the
-    // ratios, weight, leading and italic turn are unchanged.
     <As
       className={cn(
-        "font-dm font-medium leading-[1.05] tracking-[-0.01em]",
-        As === "h1" ? "text-[38px] sm:text-[44px]" : "text-[28px] sm:text-[32px]",
+        "font-semibold leading-[1.2] tracking-[-0.02em]",
+        As === "h1" ? "text-2xl" : "text-xl",
         className,
       )}
     >
       {children}
       {turn ? (
         <>
-          <br />
-          <em className="font-medium italic text-display-muted">{turn}</em>
+          {" "}
+          <span className="font-semibold text-display-muted">{turn}</span>
         </>
       ) : null}
     </As>
@@ -73,8 +76,8 @@ export function Headline({
 }
 
 /**
- * Page header. Badge, two-tone headline, lede — the centred/stacked shape from
- * §5.2, with an optional action pulled to the right.
+ * Page header. Eyebrow, headline, lede — stacked, with an optional action
+ * pulled to the right and aligned to the headline's baseline.
  */
 export function PageHeader({
   badge,
@@ -86,7 +89,7 @@ export function PageHeader({
 }: {
   badge?: ReactNode;
   title: ReactNode;
-  /** The italic second half of the headline. */
+  /** The muted second clause of the headline. */
   turn?: ReactNode;
   subtitle?: ReactNode;
   action?: ReactNode;
@@ -94,13 +97,13 @@ export function PageHeader({
 }) {
   return (
     <div className="flex flex-wrap items-end justify-between gap-6">
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
         {badge ? <Badge>{badge}</Badge> : null}
         <Headline as="h1" turn={turn}>
           {title}
         </Headline>
         {subtitle ? (
-          <p className="max-w-[520px] text-base leading-[1.45] text-muted-foreground">{subtitle}</p>
+          <p className="max-w-[560px] text-sm leading-[1.5] text-muted-foreground">{subtitle}</p>
         ) : null}
         {children}
       </div>
@@ -110,9 +113,9 @@ export function PageHeader({
 }
 
 /**
- * A section header inside a page: the split shape from §5.1 when a description
- * is present (heading left, lede right, baselines aligned), stacking below
- * 900px. `meta` carries a quiet count; `action` a button.
+ * A section header inside a page: heading left, description right on a wide
+ * screen, baselines aligned, stacking below 900px. `meta` carries a quiet
+ * count; `action` a button.
  */
 export function SectionHeading({
   badge,
@@ -132,13 +135,13 @@ export function SectionHeading({
   className?: string;
 }) {
   return (
-    <div className={cn("flex flex-wrap items-end justify-between gap-x-10 gap-y-4", className)}>
-      <div className="flex min-w-0 flex-col gap-2">
+    <div className={cn("flex flex-wrap items-end justify-between gap-x-10 gap-y-3", className)}>
+      <div className="flex min-w-0 flex-col gap-1.5">
         {badge ? <Badge>{badge}</Badge> : null}
         <Headline turn={turn}>{title}</Headline>
       </div>
       {description ? (
-        <p className="max-w-[420px] flex-1 text-base leading-[1.35] text-muted-foreground">
+        <p className="max-w-[440px] flex-1 text-sm leading-[1.5] text-muted-foreground">
           {description}
         </p>
       ) : null}
@@ -148,7 +151,7 @@ export function SectionHeading({
   );
 }
 
-/** The 12px uppercase eyebrow that labels a block inside a panel (§7.7). */
+/** The 12px uppercase eyebrow that labels a block inside a panel (§5). */
 export function PanelEyebrow({ children }: { children: ReactNode }) {
   return (
     <div className="mb-0.5 text-xs font-semibold uppercase tracking-[0.06em] text-micro-foreground">

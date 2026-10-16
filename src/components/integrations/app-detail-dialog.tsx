@@ -328,7 +328,7 @@ function Operations({ state }: { state: OperationsState }) {
         {state.operations.map((operation) => (
           <li key={operation.slug} className="flex items-start gap-2.5">
             {/* Square, per DESIGN.md. Circles are window chrome and nothing else. */}
-            <span className="mt-[6px] h-2 w-2 shrink-0 rounded-[2px] bg-foreground" />
+            <span className="mt-[6px] h-2 w-2 shrink-0 rounded-full bg-foreground" />
             <span className="flex min-w-0 flex-col gap-[3px]">
               <span className="flex flex-wrap items-center gap-1.5">
                 <span className="font-mono text-xs [overflow-wrap:anywhere]">{operation.slug}</span>

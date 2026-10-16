@@ -14,17 +14,26 @@ import {
 import { toast } from "sonner";
 import {
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   ChevronRight,
   Download,
   ExternalLink,
+  FileCode,
+  FileImage,
+  FileSpreadsheet,
   FileText,
+  Folder,
   FolderOpen,
+  FolderPlus,
+  Globe,
+  HardDrive,
   LayoutGrid,
   List,
   Lock,
   MoreVertical,
   Pencil,
+  Presentation,
   RefreshCw,
   Search,
   Trash2,
@@ -63,14 +72,20 @@ import { filesFromDrop } from "@/lib/dropped-files";
 type ExplorerDocument = Agent["documents"][number];
 
 /**
- * What the right-hand pane is showing: one bundle, or everything an agent reads.
+ * What the pane is showing: the root, one folder, or everything an agent reads.
  *
- * `all` exists only in the agent context, where it is the list this tab has
- * always shown — every document in every attached bundle. It is a real question
- * ("what does this agent know?") that no single bundle answers, so it stays,
- * as the folder the tab opens on.
+ * `root` is the workspace page's front door — every folder, drawn as a folder,
+ * the way a drive opens. `all` exists only in the agent context, where it is
+ * the list this tab has always shown — every document in every attached
+ * folder. It is a real question ("what does this agent know?") that no single
+ * folder answers, so it stays, as the place the tab opens on.
+ *
+ * A "bundle" in the code is a folder on the screen. The word changed on the
+ * screen because the screen now behaves like a file manager and a folder is
+ * what a file manager has; it did not change in the code because the API, the
+ * store and the tables all still say bundle.
  */
-type Selection = { kind: "all" } | { kind: "bundle"; id: string };
+type Selection = { kind: "root" } | { kind: "all" } | { kind: "bundle"; id: string };
 
 type SortKey = "name" | "size" | "createdAt" | "indexed" | "citations";
 type Sort = { key: SortKey; dir: "asc" | "desc" };
@@ -114,7 +129,14 @@ type Uploading = {
 const UPLOADS_AT_ONCE = 3;
 
 /**
- * The Knowledge explorer: bundles down the side, documents in the middle.
+ * The Knowledge explorer: a file manager's window, for the workspace's files.
+ *
+ * Toolbar across the top (Back, the path, search, view, Upload), folders down
+ * the side, the contents in the middle and a status line along the bottom.
+ * The root shows the folders as folders; opening one shows its files. It is
+ * laid out this way because it is the layout everybody already knows how to
+ * walk around in, and the earlier version — a rail of names beside a table —
+ * asked people to learn a screen for a thing they do every day on a desktop.
  *
  * One component with two entrances. `/knowledge` mounts it bare, where it is
  * the workspace's files; an agent's Knowledge tab mounts it with `agent`, where
@@ -128,7 +150,17 @@ const UPLOADS_AT_ONCE = 3;
  * documents came from the agent, so an unattached bundle was a name and a count
  * with nothing behind it — including every bundle on the day it was made.
  */
-export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
+export function KnowledgeExplorer({
+  agent,
+  footer,
+  className,
+}: {
+  agent?: Agent;
+  /** The right-hand side of the status line: the workspace page's usage. */
+  footer?: ReactNode;
+  /** The window's own size, when the page wants it to fill the screen. */
+  className?: string;
+}) {
   const store = useAgentsStore();
   const { bundles, canWrite } = store;
 
@@ -154,6 +186,8 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
    */
   const [moved, setMoved] = useState<Record<string, string>>({});
   const [dragging, setDragging] = useState<string | null>(null);
+  /** Files from outside the page, held over the pane. */
+  const [dropHover, setDropHover] = useState(false);
 
   const sensors = useSensors(
     // Six pixels of travel before a press becomes a drag, so pressing a row and
@@ -162,27 +196,26 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
     useSensor(KeyboardSensor),
   );
 
-  // Derived rather than kept in sync by an effect: the first bundle is the
-  // answer until somebody picks another, and a bundle that has since been
-  // deleted falls back to it rather than leaving the pane pointed at nothing.
+  // Derived rather than kept in sync by an effect: home is the answer until
+  // somebody opens something, and a folder that has since been deleted falls
+  // back to it rather than leaving the pane pointed at nothing.
   //
-  // An agent opens on everything it reads — unless it reads nothing yet. That
-  // view cannot take an upload (there is no one bundle to put a file in), so an
-  // agent with no documents opened on a pane whose only control was disabled.
-  // It opens on a bundle instead, an attached one first.
+  // Home is the root on the workspace page and "everything it reads" in an
+  // agent's tab — unless the agent reads nothing yet. That view cannot take an
+  // upload (there is no one folder to put a file in), so an agent with no
+  // documents opened on a pane whose only control was disabled. It opens on a
+  // folder instead, an attached one first.
   const firstBundle = bundles.find((b) => agent?.bundleIds.includes(b.id)) ?? bundles[0] ?? null;
-  const fallback: Selection | null =
-    agent && agent.documents.length > 0
-      ? { kind: "all" }
-      : firstBundle
-        ? { kind: "bundle", id: firstBundle.id }
-        : agent
-          ? { kind: "all" }
-          : null;
-  const selection =
-    chosen && (chosen.kind === "all" || bundles.some((b) => b.id === chosen.id))
+  const home: Selection = agent ? { kind: "all" } : { kind: "root" };
+  const fallback: Selection =
+    agent && agent.documents.length === 0 && firstBundle
+      ? { kind: "bundle", id: firstBundle.id }
+      : home;
+  const selection: Selection =
+    chosen && (chosen.kind !== "bundle" || bundles.some((b) => b.id === chosen.id))
       ? chosen
       : fallback;
+  const atHome = selection.kind === home.kind;
   const openBundle =
     selection?.kind === "bundle" ? (bundles.find((b) => b.id === selection.id) ?? null) : null;
 
@@ -263,6 +296,14 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
     return [...filtered].sort((a, b) => factor * compare(a, b, sort.key, counts));
   }, [documents, query, filter, sort, counts]);
 
+  // The root's folders, through the same search box the files use.
+  const visibleFolders = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return [...bundles]
+      .filter((b) => !needle || b.name.toLocaleLowerCase().includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [bundles, query]);
+
   const toggleSort = (key: SortKey) =>
     setSort((s) => ({ key, dir: s.key === key && s.dir === "asc" ? "desc" : "asc" }));
 
@@ -310,7 +351,7 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
     const list = files ? Array.from(files) : [];
     if (list.length === 0) return;
     if (!openBundle) {
-      toast.error("Pick a bundle to upload into first.");
+      toast.error("Pick a folder to upload into first.");
       return;
     }
     const bundleId = openBundle.id;
@@ -388,7 +429,7 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
 
   const moveMany = async (docs: ExplorerDocument[], bundleId: string) => {
     if (docs.length === 0) return;
-    const where = bundles.find((b) => b.id === bundleId)?.name ?? "the bundle";
+    const where = bundles.find((b) => b.id === bundleId)?.name ?? "the folder";
     setMoved((prev) => ({ ...prev, ...Object.fromEntries(docs.map((d) => [d.id, bundleId])) }));
     const outcome = await eachInTurn(docs, {
       progress: (done, total) => `Moving ${done} of ${total} to ${where}…`,
@@ -481,7 +522,9 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
   const draggedName = dragging ? documents.find((d) => d.id === dragging)?.name : undefined;
   const draggedCount = dragging && selected.has(dragging) ? selectedDocs.length : 1;
 
-  const loading = selection?.kind === "bundle" && bundleDocuments.isPending;
+  const loading = selection.kind === "bundle" && bundleDocuments.isPending;
+  const bytes = documents.reduce((n, d) => n + d.size, 0);
+  const canDrop = canWrite && !!openBundle;
 
   return (
     <DndContext
@@ -490,111 +533,208 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
       onDragCancel={() => setDragging(null)}
       onDragEnd={onDragEnd}
     >
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,17rem)_minmax(0,1fr)] lg:items-start">
-        <BundleRail
-          bundles={bundles}
+      <div
+        className={cn(
+          "flex flex-col overflow-hidden rounded-xl border border-border bg-surface",
+          className,
+        )}
+      >
+        <Toolbar
+          home={atHome}
+          openBundle={openBundle}
           agent={agent}
-          selection={selection}
-          onSelect={openFolder}
           canWrite={canWrite}
-          dropping={!!dragging}
-          readers={agent ? null : readersByBundle}
+          view={view}
+          onView={setView}
+          query={query}
+          onQuery={setQuery}
+          onHome={() => openFolder(home)}
+          onFiles={addFiles}
         />
 
-        <section className="min-w-0 overflow-hidden rounded-xl border border-border bg-surface">
-          <PaneHeader
-            openBundle={openBundle}
+        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+          <Sidebar
+            bundles={bundles}
             agent={agent}
-            count={documents.length}
+            selection={selection}
+            onSelect={openFolder}
             canWrite={canWrite}
-            view={view}
-            onView={setView}
-            query={query}
-            onQuery={setQuery}
-            filter={filter}
-            onFilter={setFilter}
-            tallies={tallies}
-            readers={agent || !openBundle ? null : (readersByBundle[openBundle.id] ?? [])}
+            dropping={!!dragging}
+            readers={agent ? null : readersByBundle}
           />
 
-          {selectedDocs.length > 0 ? (
-            <SelectionBar
-              selected={selectedDocs}
-              total={visible.length}
-              bundles={bundles.filter((b) => b.id !== openId)}
-              onSelectAll={() => setSelected(new Set(visible.map((d) => d.id)))}
-              onClear={() => {
-                setSelected(new Set());
-                setAnchor(null);
-              }}
-              onMove={(bundleId) => void moveMany(selectedDocs, bundleId)}
-              onDelete={() => void removeMany(selectedDocs)}
-            />
-          ) : null}
+          {/* The pane is the drop target, all of it: a file dragged in from
+              the desktop can land anywhere on the folder that is open, the way
+              it can in a file manager, and the strip at the foot says so. */}
+          <section
+            aria-label={
+              openBundle ? openBundle.name : agent ? `Everything ${agent.name} reads` : "Folders"
+            }
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+            onDragOver={(e) => {
+              if (!canDrop || !e.dataTransfer.types.includes("Files")) return;
+              e.preventDefault();
+              setDropHover(true);
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropHover(false);
+            }}
+            onDrop={(e) => {
+              if (!canDrop || !e.dataTransfer.types.includes("Files")) return;
+              e.preventDefault();
+              setDropHover(false);
+              // Read synchronously, inside the event: the entries are gone after it.
+              void filesFromDrop(e.dataTransfer).then(addFiles);
+            }}
+          >
+            {dropHover && openBundle ? (
+              <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-lg border border-dashed border-brand bg-background/80">
+                <span className="text-base font-semibold">
+                  Drop to upload into {openBundle.name}
+                </span>
+              </div>
+            ) : null}
 
-          {loading ? (
-            <p className="px-5 py-12 text-center text-sm text-muted-foreground">Loading…</p>
-          ) : visible.length === 0 ? (
-            <div className="p-5">
-              <EmptyState
-                title={query || filter !== "all" ? "Nothing matches" : "Nothing here yet"}
-                description={
-                  // The filter before the search, because a filter left on from
-                  // another folder is the one an empty pane does not explain by
-                  // itself.
-                  filter !== "all"
-                    ? query
-                      ? `No file called "${query}" is ${FILTER_PHRASE[filter]}. Press All to see every file again.`
-                      : `Nothing here is ${FILTER_PHRASE[filter]}. Press All to see every file again.`
-                    : query
-                      ? `No file in this ${selection?.kind === "all" ? "agent" : "bundle"} is called "${query}".`
-                      : selection?.kind === "all"
-                        ? "This agent has no bundle attached, or the ones it has are empty. Pick a bundle on the left and switch it on."
-                        : canWrite
-                          ? "Drop files below and they're chunked and embedded for retrieval in chat."
-                          : "Nothing has been uploaded to this bundle yet."
-                }
+            <PaneNotes
+              openBundle={openBundle}
+              canWrite={canWrite}
+              filter={filter}
+              onFilter={setFilter}
+              tallies={tallies}
+              readers={agent || !openBundle ? null : (readersByBundle[openBundle.id] ?? [])}
+            />
+
+            {selectedDocs.length > 0 ? (
+              <SelectionBar
+                selected={selectedDocs}
+                total={visible.length}
+                bundles={bundles.filter((b) => b.id !== openId)}
+                onSelectAll={() => setSelected(new Set(visible.map((d) => d.id)))}
+                onClear={() => {
+                  setSelected(new Set());
+                  setAnchor(null);
+                }}
+                onMove={(bundleId) => void moveMany(selectedDocs, bundleId)}
+                onDelete={() => void removeMany(selectedDocs)}
               />
-            </div>
-          ) : view === "list" ? (
-            <DocumentTable
-              documents={visible}
-              bundles={bundles}
-              showBundle={selection?.kind === "all"}
-              sort={sort}
-              onSort={toggleSort}
-              counts={counts}
-              busy={busy}
-              canWrite={canWrite}
-              selected={selected}
-              onPick={pick}
-              onSelectAll={() => setSelected(new Set(visible.map((d) => d.id)))}
-              onClearSelection={() => setSelected(new Set())}
-              onOpen={(d) => setPreviewing({ id: d.id, name: d.name })}
-              onMove={move}
-              onReindex={reindex}
-              onRemove={remove}
-              onOpenBundle={(id) => openFolder({ kind: "bundle", id })}
-            />
-          ) : (
-            <DocumentGrid
-              documents={visible}
-              busy={busy}
-              canWrite={canWrite}
-              bundles={bundles}
-              selected={selected}
-              onPick={pick}
-              onOpen={(d) => setPreviewing({ id: d.id, name: d.name })}
-              onMove={move}
-              onReindex={reindex}
-              onRemove={remove}
-            />
-          )}
+            ) : null}
 
-          {canWrite ? (
-            <UploadWell bundle={openBundle} uploading={uploading} onFiles={addFiles} />
-          ) : null}
-        </section>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {selection.kind === "root" ? (
+                visibleFolders.length === 0 ? (
+                  <div className="p-5">
+                    <EmptyState
+                      title={query ? "Nothing matches" : "No folders yet"}
+                      description={
+                        query
+                          ? `No folder is called "${query}".`
+                          : canWrite
+                            ? "Make a folder, then drop the team's files into it. Each one is a place an agent can be pointed at."
+                            : "Nobody has made a folder yet."
+                      }
+                    />
+                  </div>
+                ) : view === "grid" ? (
+                  <FolderGrid
+                    bundles={visibleFolders}
+                    readers={readersByBundle}
+                    onOpen={(id) => openFolder({ kind: "bundle", id })}
+                  />
+                ) : (
+                  <FolderList
+                    bundles={visibleFolders}
+                    readers={readersByBundle}
+                    onOpen={(id) => openFolder({ kind: "bundle", id })}
+                  />
+                )
+              ) : loading ? (
+                <p className="px-5 py-12 text-center text-sm text-muted-foreground">Loading…</p>
+              ) : visible.length === 0 ? (
+                <div className="p-5">
+                  <EmptyState
+                    title={query || filter !== "all" ? "Nothing matches" : "Nothing here yet"}
+                    description={
+                      // The filter before the search, because a filter left on from
+                      // another folder is the one an empty pane does not explain by
+                      // itself.
+                      filter !== "all"
+                        ? query
+                          ? `No file called "${query}" is ${FILTER_PHRASE[filter]}. Press All to see every file again.`
+                          : `Nothing here is ${FILTER_PHRASE[filter]}. Press All to see every file again.`
+                        : query
+                          ? `No file in this ${selection.kind === "all" ? "agent" : "folder"} is called "${query}".`
+                          : selection.kind === "all"
+                            ? "This agent has no folder attached, or the ones it has are empty. Pick a folder on the left and switch it on."
+                            : canWrite
+                              ? "Drop files here and they're chunked and embedded for retrieval in chat."
+                              : "Nothing has been uploaded to this folder yet."
+                    }
+                  />
+                </div>
+              ) : view === "list" ? (
+                <DocumentTable
+                  documents={visible}
+                  bundles={bundles}
+                  showBundle={selection.kind === "all"}
+                  sort={sort}
+                  onSort={toggleSort}
+                  counts={counts}
+                  busy={busy}
+                  canWrite={canWrite}
+                  selected={selected}
+                  onPick={pick}
+                  onSelectAll={() => setSelected(new Set(visible.map((d) => d.id)))}
+                  onClearSelection={() => setSelected(new Set())}
+                  onOpen={(d) => setPreviewing({ id: d.id, name: d.name })}
+                  onMove={move}
+                  onReindex={reindex}
+                  onRemove={remove}
+                  onOpenBundle={(id) => openFolder({ kind: "bundle", id })}
+                />
+              ) : (
+                <DocumentGrid
+                  documents={visible}
+                  busy={busy}
+                  canWrite={canWrite}
+                  bundles={bundles}
+                  selected={selected}
+                  onPick={pick}
+                  onOpen={(d) => setPreviewing({ id: d.id, name: d.name })}
+                  onMove={move}
+                  onReindex={reindex}
+                  onRemove={remove}
+                />
+              )}
+
+              {/* The phone's "New folder", where the sidebar that holds it is
+                  not shown. */}
+              {selection.kind === "root" && canWrite ? (
+                <div className="border-t border-hairline p-2 lg:hidden">
+                  <NewFolderForm onCreated={(id) => openFolder({ kind: "bundle", id })} />
+                </div>
+              ) : null}
+            </div>
+
+            {canWrite && selection.kind !== "root" ? (
+              <UploadStrip bundle={openBundle} uploading={uploading} onFiles={addFiles} />
+            ) : null}
+
+            {/* The status line: what is in front of you, counted, and — on the
+                workspace page — the whole drive's usage beside it. */}
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-hairline bg-surface-muted px-4 py-1.5 text-xs text-muted-foreground">
+              {selection.kind === "root" && footer ? (
+                <span />
+              ) : (
+                <span>
+                  {selection.kind === "root"
+                    ? `${bundles.length} ${bundles.length === 1 ? "folder" : "folders"}`
+                    : `${visible.length === documents.length ? documents.length : `${visible.length} of ${documents.length}`} ${documents.length === 1 ? "file" : "files"}${documents.length > 0 ? ` · ${formatFileSize(bytes)}` : ""}`}
+                </span>
+              )}
+              {footer ? <span>{footer}</span> : null}
+            </div>
+          </section>
+        </div>
 
         {previewing ? (
           <DocumentPreviewDialog
@@ -606,7 +746,7 @@ export function KnowledgeExplorer({ agent }: { agent?: Agent }) {
       </div>
 
       {/* What is in the hand while it is being dragged. Without it a drag is a
-          row that dims and a rail that lights up, with nothing in between. */}
+          row that dims and a sidebar that lights up, with nothing in between. */}
       <DragOverlay dropAnimation={null}>
         {dragging ? (
           <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm">
@@ -779,7 +919,7 @@ function SelectionBar({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="outline" size="sm">
-              <FolderOpen className="mr-2 h-4 w-4" />
+              <Folder className="mr-2 h-4 w-4" />
               Move to
             </Button>
           </DropdownMenuTrigger>
@@ -800,18 +940,20 @@ function SelectionBar({
   );
 }
 
-/* ---------------------------------------------------------------- the rail */
+/* ------------------------------------------------------------- the sidebar */
 
 /**
- * The bundles, as folders.
+ * The folders, down the side, the way a file manager lists places.
  *
- * In the agent context they arrive in two groups, and the split is the point:
- * the top group is what this agent reads, the bottom is everything else the
- * workspace has. Grouping rather than hiding, because attaching one is done
- * here — a rail filtered down to the attached bundles would be a rail with no
- * way to attach the next one.
+ * On the workspace page the first row is the root — every folder, as folders —
+ * and the rows under it are the folders themselves. In an agent's tab the root
+ * is "everything this agent reads" and the folders arrive in two groups, which
+ * is the point of the tab: the top group is what the agent reads, the bottom is
+ * everything else the workspace has, and the switch on each row is how one
+ * moves between them. Grouping rather than hiding, because a sidebar filtered
+ * down to the attached folders would be one with no way to attach the next.
  */
-function BundleRail({
+function Sidebar({
   bundles,
   agent,
   selection,
@@ -825,20 +967,20 @@ function BundleRail({
   selection: Selection | null;
   onSelect: (s: Selection) => void;
   canWrite: boolean;
-  /** Something is being dragged, so every bundle says it will take it. */
+  /** Something is being dragged, so every folder says it will take it. */
   dropping: boolean;
   /**
-   * Which agents read each bundle, or null in an agent's own tab — there the
-   * rail is already split into what this agent reads and what it does not, and
-   * naming the others would answer a question the screen is not about.
+   * Which agents read each folder, or null in an agent's own tab — there the
+   * sidebar is already split into what this agent reads and what it does not,
+   * and naming the others would answer a question the screen is not about.
    */
   readers: Record<string, string[]> | null;
 }) {
   const store = useAgentsStore();
   const [railQuery, setRailQuery] = useState("");
 
-  // A search rather than a "hide empty bundles" switch, which was the other
-  // way to make a long rail shorter: the empty bundle is the one somebody is
+  // A search rather than a "hide empty folders" switch, which was the other
+  // way to make a long list shorter: the empty folder is the one somebody is
   // looking for, because it is the one waiting to be filled.
   const needle = railQuery.trim().toLocaleLowerCase();
   const matching = needle
@@ -846,104 +988,146 @@ function BundleRail({
     : bundles;
   const attached = agent ? matching.filter((b) => agent.bundleIds.includes(b.id)) : matching;
   const detached = agent ? matching.filter((b) => !agent.bundleIds.includes(b.id)) : [];
+  const total = bundles.reduce((n, b) => n + b.documentCount, 0);
+
+  const row = (b: (typeof bundles)[number]) => (
+    <FolderRow
+      key={b.id}
+      bundle={b}
+      agent={agent}
+      readers={readers ? (readers[b.id] ?? []) : null}
+      selected={selection?.kind === "bundle" && selection.id === b.id}
+      onSelect={() => onSelect({ kind: "bundle", id: b.id })}
+      canWrite={canWrite}
+      dropping={dropping}
+      store={store}
+    />
+  );
 
   return (
-    <aside className="overflow-hidden rounded-xl border border-border bg-surface">
-      {bundles.length > RAIL_SEARCH_AFTER ? (
-        <div className="relative border-b border-hairline p-2">
-          <Search className="pointer-events-none absolute left-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={railQuery}
-            onChange={(e) => setRailQuery(e.target.value)}
-            placeholder="Find a bundle"
-            aria-label="Find a bundle by name"
-            className="h-8 pl-8 text-meta"
-          />
+    <aside
+      aria-label="Folders"
+      className={cn(
+        "flex w-full shrink-0 flex-col border-b border-hairline bg-surface-muted lg:w-60 lg:border-b-0 lg:border-r",
+        // On a phone the workspace page navigates like a file manager does —
+        // folders in the pane, Back in the toolbar — and the column would be
+        // the same list twice. An agent's tab keeps it: the switches are here.
+        !agent && "hidden lg:flex",
+      )}
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto py-2">
+        {agent ? (
+          <PlaceRow
+            icon={<HardDrive className="h-4 w-4" />}
+            selected={selection?.kind === "all"}
+            onClick={() => onSelect({ kind: "all" })}
+            count={agent.documents.length}
+          >
+            Everything {agent.name} reads
+          </PlaceRow>
+        ) : (
+          <PlaceRow
+            icon={<HardDrive className="h-4 w-4" />}
+            selected={selection?.kind === "root"}
+            onClick={() => onSelect({ kind: "root" })}
+            count={total}
+          >
+            Knowledge
+          </PlaceRow>
+        )}
+
+        {bundles.length > RAIL_SEARCH_AFTER ? (
+          <div className="relative px-2 pb-1 pt-2">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={railQuery}
+              onChange={(e) => setRailQuery(e.target.value)}
+              placeholder="Find a folder"
+              aria-label="Find a folder by name"
+              className="h-8 bg-background pl-8 text-meta"
+            />
+          </div>
+        ) : null}
+
+        {bundles.length === 0 ? (
+          <p className="px-3 py-4 text-meta text-muted-foreground">
+            No folders yet.{canWrite ? " Make the first one below." : ""}
+          </p>
+        ) : matching.length === 0 ? (
+          <p className="px-3 py-4 text-meta text-muted-foreground">
+            {`No folder is called "${railQuery.trim()}".`}
+          </p>
+        ) : (
+          <>
+            <SidebarHeading>{agent ? "Attached" : "Folders"}</SidebarHeading>
+            {attached.length === 0 ? (
+              <p className="px-3 py-2 text-meta text-muted-foreground">
+                Nothing attached, so this agent reads nothing but its persona.
+              </p>
+            ) : (
+              attached.map(row)
+            )}
+            {detached.length > 0 ? (
+              <>
+                <SidebarHeading>Not attached</SidebarHeading>
+                {detached.map(row)}
+              </>
+            ) : null}
+          </>
+        )}
+      </div>
+
+      {canWrite ? (
+        <div className="border-t border-hairline p-2">
+          <NewFolderForm onCreated={(id) => onSelect({ kind: "bundle", id })} />
         </div>
       ) : null}
-
-      {agent ? (
-        <button
-          type="button"
-          onClick={() => onSelect({ kind: "all" })}
-          className={cn(
-            "flex w-full items-center gap-2.5 border-b border-hairline px-4 py-3 text-left text-sm transition-colors",
-            selection?.kind === "all" ? "bg-surface-hover font-medium" : "hover:bg-surface-hover",
-          )}
-        >
-          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate">Everything {agent.name} reads</span>
-          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-            {agent.documents.length}
-          </span>
-        </button>
-      ) : null}
-
-      {bundles.length === 0 ? (
-        <p className="px-4 py-6 text-sm text-muted-foreground">
-          No bundles yet.{canWrite ? " Make the first one below." : ""}
-        </p>
-      ) : matching.length === 0 ? (
-        <p className="px-4 py-6 text-sm text-muted-foreground">
-          {`No bundle is called "${railQuery.trim()}".`}
-        </p>
-      ) : (
-        <>
-          {agent ? <RailHeading>Attached</RailHeading> : null}
-          {attached.length === 0 ? (
-            <p className="px-4 py-3 text-meta text-muted-foreground">
-              Nothing attached, so this agent reads nothing but its persona.
-            </p>
-          ) : (
-            attached.map((b) => (
-              <BundleRailRow
-                key={b.id}
-                bundle={b}
-                agent={agent}
-                readers={readers ? (readers[b.id] ?? []) : null}
-                selected={selection?.kind === "bundle" && selection.id === b.id}
-                onSelect={() => onSelect({ kind: "bundle", id: b.id })}
-                canWrite={canWrite}
-                dropping={dropping}
-                store={store}
-              />
-            ))
-          )}
-          {detached.length > 0 ? (
-            <>
-              <RailHeading>Not attached</RailHeading>
-              {detached.map((b) => (
-                <BundleRailRow
-                  key={b.id}
-                  bundle={b}
-                  agent={agent}
-                  readers={readers ? (readers[b.id] ?? []) : null}
-                  selected={selection?.kind === "bundle" && selection.id === b.id}
-                  onSelect={() => onSelect({ kind: "bundle", id: b.id })}
-                  canWrite={canWrite}
-                  dropping={dropping}
-                  store={store}
-                />
-              ))}
-            </>
-          ) : null}
-        </>
-      )}
-
-      {canWrite ? <NewBundleForm onCreated={(id) => onSelect({ kind: "bundle", id })} /> : null}
     </aside>
   );
 }
 
-function RailHeading({ children }: { children: ReactNode }) {
+/** A place that is not a folder: the root, or everything an agent reads. */
+function PlaceRow({
+  icon,
+  selected,
+  onClick,
+  count,
+  children,
+}: {
+  icon: ReactNode;
+  selected: boolean;
+  onClick: () => void;
+  count: number;
+  children: ReactNode;
+}) {
   return (
-    <p className="border-b border-hairline bg-surface-muted px-4 py-1.5 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={selected ? "location" : undefined}
+      className={cn(
+        "mx-2 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+        selected ? "bg-surface-hover font-medium" : "hover:bg-surface-hover",
+      )}
+    >
+      <span className={cn("shrink-0", selected ? "text-brand" : "text-muted-foreground")}>
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count}</span>
+    </button>
+  );
+}
+
+function SidebarHeading({ children }: { children: ReactNode }) {
+  return (
+    <p className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.06em] text-micro-foreground">
       {children}
     </p>
   );
 }
 
-function BundleRailRow({
+function FolderRow({
   bundle,
   agent,
   readers,
@@ -995,11 +1179,12 @@ function BundleRailRow({
 
   if (renaming) {
     return (
-      <div className="border-b border-hairline px-3 py-2">
+      <div className="px-2 py-1">
         <Input
           autoFocus
           value={draft}
           aria-label={`Rename ${bundle.name}`}
+          className="h-8 bg-background"
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
@@ -1017,44 +1202,62 @@ function BundleRailRow({
     );
   }
 
+  const unread = readers?.length === 0;
+
   return (
     <div
       ref={setNodeRef}
       className={cn(
-        "flex items-center gap-2 border-b border-hairline pl-1 pr-2 transition-colors",
+        "group mx-2 flex items-center gap-1 rounded-md pr-1 transition-colors",
         selected ? "bg-surface-hover" : "hover:bg-surface-hover",
         // Dashed while anything is in the air, so every place a file can land
-        // says so; solid amber under the one it would land on now.
-        dropping && "border-dashed",
-        isOver && "bg-surface-hover ring-1 ring-inset ring-accent-orange",
+        // says so; amber under the one it would land on now.
+        dropping && "outline-dashed outline-1 outline-border",
+        isOver && "bg-surface-hover outline outline-1 outline-brand",
       )}
     >
       <button
         type="button"
         onClick={onSelect}
         aria-label={`Open ${bundle.name}`}
-        className="flex min-w-0 flex-1 items-center gap-2 py-2.5 pl-3 text-left text-sm"
+        aria-current={selected ? "location" : undefined}
+        title={
+          [
+            bundle.shared === false ? "Only you can see this folder." : null,
+            unread ? "No agent reads this folder." : null,
+            bundle.description,
+          ]
+            .filter(Boolean)
+            .join(" ") || undefined
+        }
+        className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2 text-left text-sm"
       >
-        <span className="min-w-0 flex-1">
-          <span className={cn("block truncate", selected && "font-medium")}>{bundle.name}</span>
-          <span
-            className={cn(
-              "block truncate text-xs text-muted-foreground",
-              // The one state worth a colour in a list of folders: a bundle no
-              // agent has attached is a folder nothing can read out of.
-              readers?.length === 0 && "text-amber-700 dark:text-amber-400",
-            )}
-          >
-            {/* Said first, because it decides who else can read the rest. */}
-            {bundle.shared === false ? "Only you · " : ""}
-            {bundle.documentCount} {bundle.documentCount === 1 ? "file" : "files"}
-            {readers
-              ? readers.length === 0
-                ? " · no agent reads it"
-                : ` · ${listOf(readers)}`
-              : ""}
-            {bundle.description ? ` · ${bundle.description}` : ""}
-          </span>
+        {selected ? (
+          <FolderOpen className="h-4 w-4 shrink-0 text-brand" />
+        ) : (
+          <Folder className="h-4 w-4 shrink-0 fill-muted text-muted-foreground" />
+        )}
+        <span className={cn("min-w-0 flex-1 truncate", selected && "font-medium")}>
+          {bundle.name}
+        </span>
+        {/* Said, not only drawn: the lock and the dot each carry their words
+            for a screen reader, and the title above repeats them for a hover. */}
+        {bundle.shared === false ? (
+          <>
+            <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="sr-only">Only you</span>
+          </>
+        ) : null}
+        {unread ? (
+          <>
+            {/* The one state worth a colour in a list of folders: a folder no
+                agent has attached is one nothing can read out of. */}
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" aria-hidden />
+            <span className="sr-only">no agent reads it</span>
+          </>
+        ) : null}
+        <span className="shrink-0 pl-1 text-xs tabular-nums text-muted-foreground">
+          {bundle.documentCount}
         </span>
       </button>
 
@@ -1075,7 +1278,7 @@ function BundleRailRow({
       {canWrite ? (
         <DropdownMenu>
           <DropdownMenuTrigger
-            className="shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground"
+            className="shrink-0 rounded-sm p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
             aria-label={`Actions for ${bundle.name}`}
           >
             <MoreVertical className="h-4 w-4" />
@@ -1106,7 +1309,7 @@ function BundleRailRow({
               onSelect={() => {
                 if (
                   confirm(
-                    `Delete "${bundle.name}"? Its documents go with it and it detaches from every agent. It waits 30 days in Settings → Recently deleted, and restoring it brings the documents back too.`,
+                    `Delete "${bundle.name}"? Its files go with it and it detaches from every agent. It waits 30 days in Settings → Recently deleted, and restoring it brings the files back too.`,
                   )
                 ) {
                   store.removeBundle(bundle.id);
@@ -1114,7 +1317,7 @@ function BundleRailRow({
               }}
             >
               <Trash2 className="mr-2 h-4 w-4" />
-              Delete bundle
+              Delete folder
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -1123,8 +1326,15 @@ function BundleRailRow({
   );
 }
 
-function NewBundleForm({ onCreated }: { onCreated: (id: string) => void }) {
+/**
+ * "New folder": a row until it is pressed, then a name and a switch.
+ *
+ * Folded because a form that is always open is the heaviest thing in a
+ * column of one-line rows, and most visits to this screen make no folder.
+ */
+function NewFolderForm({ onCreated }: { onCreated: (id: string) => void }) {
   const { createBundle } = useAgentsStore();
+  const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [shared, setShared] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -1137,6 +1347,7 @@ function NewBundleForm({ onCreated }: { onCreated: (id: string) => void }) {
       .then((bundle) => {
         setName("");
         setShared(false);
+        setOpen(false);
         onCreated(bundle.id);
         toast.success(
           shared ? `Created ${bundle.name}, shared with the workspace` : `Created ${bundle.name}`,
@@ -1146,18 +1357,38 @@ function NewBundleForm({ onCreated }: { onCreated: (id: string) => void }) {
       .finally(() => setCreating(false));
   };
 
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground"
+      >
+        <FolderPlus className="h-4 w-4 shrink-0" />
+        New folder
+      </button>
+    );
+  }
+
   return (
-    <div className="p-3">
+    <div className="p-1">
       <div className="flex items-center gap-2">
         <Input
-          placeholder="New bundle"
+          autoFocus
+          placeholder="Folder name"
+          aria-label="Folder name"
           value={name}
           disabled={creating}
+          className="h-8 bg-background"
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
               create();
+            }
+            if (e.key === "Escape") {
+              setOpen(false);
+              setName("");
             }
           }}
         />
@@ -1171,12 +1402,12 @@ function NewBundleForm({ onCreated }: { onCreated: (id: string) => void }) {
           Add
         </Button>
       </div>
-      {/* Off by default (0106): a bundle is its maker's until they share it. */}
+      {/* Off by default (0106): a folder is its maker's until they share it. */}
       <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
         <Checkbox
           checked={shared}
           onCheckedChange={(on) => setShared(on === true)}
-          aria-label="Share the new bundle with the workspace"
+          aria-label="Share the new folder with the workspace"
         />
         Share with the workspace
       </label>
@@ -1186,33 +1417,146 @@ function NewBundleForm({ onCreated }: { onCreated: (id: string) => void }) {
 
 /* ------------------------------------------------------------- the content */
 
-function PaneHeader({
+/**
+ * The window's top edge: the way back, where you are, and the controls.
+ *
+ * Laid out the way a file manager lays out its toolbar — Back, then the path,
+ * then search and view — because that arrangement is the one every reader
+ * already knows how to use. The path is clickable: "Knowledge" is the root.
+ */
+function Toolbar({
+  home,
   openBundle,
   agent,
-  count,
   canWrite,
   view,
   onView,
   query,
   onQuery,
+  onHome,
+  onFiles,
+}: {
+  /** Whether the pane is showing the root (or, in an agent's tab, its list). */
+  home: boolean;
+  openBundle: ReturnType<typeof useAgentsStore>["bundles"][number] | null;
+  agent?: Agent;
+  canWrite: boolean;
+  view: "list" | "grid";
+  onView: (v: "list" | "grid") => void;
+  query: string;
+  onQuery: (q: string) => void;
+  onHome: () => void;
+  onFiles: (files: FileList | File[] | null) => void;
+}) {
+  const root = agent ? `Everything ${agent.name} reads` : "Knowledge";
+  return (
+    <div className="flex items-center gap-2 border-b border-hairline px-2 py-2">
+      <button
+        type="button"
+        onClick={onHome}
+        disabled={home}
+        aria-label="Back"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+      >
+        <ArrowLeft className="h-4 w-4" />
+      </button>
+
+      <nav aria-label="Where you are" className="flex min-w-0 flex-1 items-center gap-1 text-sm">
+        <button
+          type="button"
+          onClick={onHome}
+          disabled={home}
+          className={cn(
+            "shrink-0 rounded-sm px-1 py-0.5 transition-colors",
+            home
+              ? "font-semibold text-foreground"
+              : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+          )}
+        >
+          {root}
+        </button>
+        {openBundle ? (
+          <>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 items-center gap-1.5 px-1 font-semibold">
+              <span className="truncate">{openBundle.name}</span>
+              {openBundle.shared === false ? (
+                <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Only you" />
+              ) : null}
+            </span>
+          </>
+        ) : null}
+      </nav>
+
+      <div className="relative hidden w-56 sm:block">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          placeholder={
+            openBundle
+              ? `Search in ${openBundle.name}`
+              : home && !agent
+                ? "Search folders"
+                : "Search files"
+          }
+          aria-label="Search files by name"
+          className="h-8 bg-background pl-8 text-meta"
+        />
+      </div>
+
+      <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-hairline p-0.5">
+        <ViewButton active={view === "list"} onClick={() => onView("list")} label="List view">
+          <List className="h-4 w-4" />
+        </ViewButton>
+        <ViewButton active={view === "grid"} onClick={() => onView("grid")} label="Grid view">
+          <LayoutGrid className="h-4 w-4" />
+        </ViewButton>
+      </div>
+
+      {canWrite && openBundle ? (
+        <label className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-sm font-medium transition-colors hover:bg-surface-hover">
+          <Upload className="h-3.5 w-3.5" />
+          <span className="hidden md:inline">Upload</span>
+          <input
+            type="file"
+            multiple
+            className="hidden"
+            accept={ACCEPT}
+            aria-label={`Upload files into ${openBundle.name}`}
+            onChange={(e) => {
+              // Copied before the reset — see the strip at the foot of the pane.
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              onFiles(files);
+            }}
+          />
+        </label>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The line under the toolbar, when there is something to say: who reads the
+ * open folder, the filters that would find something, and what a viewer may
+ * not do. Nothing at all otherwise — the toolbar sits straight on the files.
+ */
+function PaneNotes({
+  openBundle,
+  canWrite,
   filter,
   onFilter,
   tallies,
   readers,
 }: {
   openBundle: ReturnType<typeof useAgentsStore>["bundles"][number] | null;
-  agent?: Agent;
-  count: number;
   canWrite: boolean;
-  view: "list" | "grid";
-  onView: (v: "list" | "grid") => void;
-  query: string;
-  onQuery: (q: string) => void;
   filter: FilterKey;
   onFilter: (f: FilterKey) => void;
   tallies: { unindexed: number; stale: number };
   /**
-   * The agents that read the open bundle, or null in an agent's own tab, where
+   * The agents that read the open folder, or null in an agent's own tab, where
    * the answer is the agent whose tab it is.
    */
   readers: string[] | null;
@@ -1225,58 +1569,28 @@ function PaneHeader({
       { key: "stale", label: "Older than 90 days", count: tallies.stale },
     ] as const
   ).filter((c) => c.count > 0 || filter === c.key);
-  const title = openBundle
-    ? openBundle.name
-    : agent
-      ? `Everything ${agent.name} reads`
-      : "Knowledge";
+  const viewerNote = openBundle && !canWrite;
+  if (!readers && chips.length === 0 && !viewerNote) return null;
 
   return (
-    <div className="border-b border-hairline px-4 py-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm">
-          <span className="shrink-0 text-muted-foreground">Knowledge</span>
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate font-dm text-title font-medium">{title}</span>
-          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-            {count} {count === 1 ? "file" : "files"}
-          </span>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1 rounded-sm border border-hairline p-0.5">
-          <ViewButton active={view === "list"} onClick={() => onView("list")} label="List view">
-            <List className="h-4 w-4" />
-          </ViewButton>
-          <ViewButton active={view === "grid"} onClick={() => onView("grid")} label="Grid view">
-            <LayoutGrid className="h-4 w-4" />
-          </ViewButton>
-        </div>
-      </div>
-
-      <div className="relative mt-2.5">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(e) => onQuery(e.target.value)}
-          placeholder="Search files by name"
-          aria-label="Search files by name"
-          className="h-8 pl-8 text-meta"
-        />
-      </div>
-
-      {/* Who can actually retrieve what is in here. A bundle nobody has
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-hairline px-4 py-2 text-meta text-muted-foreground">
+      {/* Who can actually retrieve what is in here. A folder nobody has
           attached is a folder of files no answer can ever stand on, and the
-          count in the rail says nothing about that. */}
+          count in the sidebar says nothing about that. */}
       {readers ? (
-        <p className="mt-2 text-meta text-muted-foreground">
+        <span>
           {readers.length === 0
-            ? "No agent reads this bundle yet — attach it from an agent's Knowledge tab."
+            ? "No agent reads this folder yet — attach it from an agent's Knowledge tab."
             : `Read by ${listOf(readers)}.`}
-        </p>
+        </span>
       ) : null}
-
+      {viewerNote ? (
+        <span>
+          You can read everything here. Uploading, moving and deleting are a member's job.
+        </span>
+      ) : null}
       {chips.length > 0 ? (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className="flex flex-wrap items-center gap-1.5">
           <FilterChip active={filter === "all"} onClick={() => onFilter("all")}>
             All
           </FilterChip>
@@ -1293,16 +1607,167 @@ function PaneHeader({
               <span className="ml-1.5 tabular-nums opacity-70">{c.count}</span>
             </FilterChip>
           ))}
-        </div>
-      ) : null}
-
-      {openBundle && !canWrite ? (
-        <p className="mt-2 text-meta text-muted-foreground">
-          You can read everything here. Uploading, moving and deleting are a member's job.
-        </p>
+        </span>
       ) : null}
     </div>
   );
+}
+
+/* ------------------------------------------------------------- the folders */
+
+/**
+ * The root: every folder, as a folder.
+ *
+ * This is the view that makes the screen a file system rather than a list
+ * with a sidebar. Opening the page shows what there is to open, the way a
+ * drive does, and a folder is a thing you go into rather than a filter you
+ * apply. Both views share the sort the files use — by name — and the search
+ * box above narrows them by name too.
+ */
+function FolderGrid({
+  bundles,
+  readers,
+  onOpen,
+}: {
+  bundles: ReturnType<typeof useAgentsStore>["bundles"];
+  readers: Record<string, string[]> | null;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-1 p-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+      {bundles.map((b) => (
+        <FolderTile
+          key={b.id}
+          bundle={b}
+          readers={readers ? (readers[b.id] ?? []) : undefined}
+          onOpen={() => onOpen(b.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FolderTile({
+  bundle,
+  readers,
+  onOpen,
+}: {
+  bundle: ReturnType<typeof useAgentsStore>["bundles"][number];
+  readers: string[] | undefined;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`Open ${bundle.name}`}
+      title={bundle.description ?? undefined}
+      className="flex flex-col items-center gap-1 rounded-lg px-2 py-3 text-center transition-colors hover:bg-surface-hover focus-visible:bg-surface-hover focus-visible:outline-none"
+    >
+      <span className="relative">
+        <Folder className="h-12 w-12 fill-muted text-muted-foreground" strokeWidth={1.25} />
+        {bundle.shared === false ? (
+          <Lock
+            className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-surface p-0.5 text-foreground"
+            aria-label="Only you"
+          />
+        ) : null}
+      </span>
+      <span className="line-clamp-2 w-full text-meta font-medium leading-tight [overflow-wrap:anywhere]">
+        {bundle.name}
+      </span>
+      <span className="text-xs text-muted-foreground">
+        {bundle.documentCount} {bundle.documentCount === 1 ? "file" : "files"}
+        {readers && readers.length === 0 ? " · no agent" : ""}
+      </span>
+    </button>
+  );
+}
+
+function FolderList({
+  bundles,
+  readers,
+  onOpen,
+}: {
+  bundles: ReturnType<typeof useAgentsStore>["bundles"];
+  readers: Record<string, string[]> | null;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <div>
+      <div className="hidden items-center gap-3 border-b border-hairline px-5 py-2 text-xs text-muted-foreground md:flex">
+        <span className="w-4 shrink-0" />
+        <span className="flex-1">Name</span>
+        <span className="w-20 shrink-0">Files</span>
+        {readers ? <span className="hidden w-40 shrink-0 lg:block">Read by</span> : null}
+        <span className="w-28 shrink-0">Created</span>
+      </div>
+      <div className="divide-y divide-hairline">
+        {bundles.map((b) => {
+          const who = readers?.[b.id];
+          return (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => onOpen(b.id)}
+              aria-label={`Open ${b.name}`}
+              className="flex w-full items-center gap-3 px-5 py-2.5 text-left text-sm transition-colors hover:bg-surface-hover"
+            >
+              <Folder className="h-4 w-4 shrink-0 fill-muted text-muted-foreground" />
+              <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                <span className="truncate">{b.name}</span>
+                {b.shared === false ? (
+                  <>
+                    <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="sr-only">Only you</span>
+                  </>
+                ) : null}
+                {b.description ? (
+                  <span className="hidden truncate text-xs text-muted-foreground md:inline">
+                    · {b.description}
+                  </span>
+                ) : null}
+              </span>
+              <span className="w-20 shrink-0 text-xs tabular-nums text-muted-foreground">
+                {b.documentCount} {b.documentCount === 1 ? "file" : "files"}
+              </span>
+              {readers ? (
+                <span
+                  className={cn(
+                    "hidden w-40 shrink-0 truncate text-xs text-muted-foreground lg:block",
+                    who && who.length === 0 && "text-amber-700 dark:text-amber-400",
+                  )}
+                >
+                  {who && who.length > 0 ? listOf(who) : "No agent"}
+                </span>
+              ) : null}
+              <span className="hidden w-28 shrink-0 text-xs text-muted-foreground md:block">
+                {b.createdAt ? documentAge(b.createdAt).label : ""}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The mark a file wears, from its name. A kind, not a thumbnail: a rendered
+ * preview of a document is a picture this component cannot produce, and a
+ * generic one dressed up as a preview is the first failure mode in DESIGN.md.
+ */
+function FileIcon({ doc, className }: { doc: ExplorerDocument; className?: string }) {
+  const ext = doc.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+  if (doc.externalUrl || /^https?:\/\//i.test(doc.name)) return <Globe className={className} />;
+  if (["xlsx", "xls", "csv", "tsv", "numbers"].includes(ext))
+    return <FileSpreadsheet className={className} />;
+  if (["pptx", "ppt", "key"].includes(ext)) return <Presentation className={className} />;
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "heic"].includes(ext))
+    return <FileImage className={className} />;
+  if (["json", "js", "ts", "tsx", "py", "html", "css", "xml", "yaml", "yml"].includes(ext))
+    return <FileCode className={className} />;
+  return <FileText className={className} />;
 }
 
 /** "Ada", "Ada and Ops bot", "Ada, Ops bot and 2 more". */
@@ -1529,7 +1994,7 @@ function DocumentRow({
   return (
     <div
       className={cn(
-        "flex items-center gap-3 px-5 py-3 text-sm transition-colors hover:bg-surface-hover",
+        "flex items-center gap-3 px-5 py-2.5 text-sm transition-colors hover:bg-surface-hover",
         ticked && "bg-surface-hover",
         isDragging && "opacity-50",
       )}
@@ -1552,13 +2017,13 @@ function DocumentRow({
           {...attributes}
           {...listeners}
           aria-label={`Drag ${doc.name}`}
-          title="Drag onto a bundle on the left to move it there"
+          title="Drag onto a folder on the left to move it there"
           className="shrink-0 cursor-grab text-muted-foreground active:cursor-grabbing"
         >
-          <FileText className="h-4 w-4" />
+          <FileIcon doc={doc} className="h-4 w-4" />
         </button>
       ) : (
-        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <FileIcon doc={doc} className="h-4 w-4 shrink-0 text-muted-foreground" />
       )}
 
       <button
@@ -1683,27 +2148,6 @@ function DocumentTile({
               aria-label={`Select ${doc.name}`}
             />
           ) : null}
-          {/* The extension, not a thumbnail. A rendered preview of a document
-              is a picture this component cannot actually produce, and a
-              generic one dressed up as a preview is the first failure mode in
-              DESIGN.md. It doubles as the grip, for the same reason the file
-              icon does in the list: it is the one mark on the tile that is
-              always there and is not already a control. */}
-          {canWrite ? (
-            <button
-              ref={setNodeRef}
-              type="button"
-              {...attributes}
-              {...listeners}
-              aria-label={`Drag ${doc.name}`}
-              title="Drag onto a bundle on the left to move it there"
-              className="cursor-grab active:cursor-grabbing"
-            >
-              <Chip tone="code">{extensionLabel(doc.name)}</Chip>
-            </button>
-          ) : (
-            <Chip tone="code">{extensionLabel(doc.name)}</Chip>
-          )}
         </div>
         <DocumentActions
           doc={doc}
@@ -1716,15 +2160,39 @@ function DocumentTile({
           onRemove={onRemove}
         />
       </div>
+      {/* A kind and an extension, not a thumbnail — see FileIcon. The icon
+          doubles as the grip, for the same reason it does in the list: it is
+          the one mark on the tile that is always there and is not already a
+          control. */}
+      {canWrite ? (
+        <button
+          ref={setNodeRef}
+          type="button"
+          {...attributes}
+          {...listeners}
+          aria-label={`Drag ${doc.name}`}
+          title="Drag onto a folder on the left to move it there"
+          className="flex cursor-grab flex-col items-center gap-1 self-center active:cursor-grabbing"
+        >
+          <FileIcon doc={doc} className="h-10 w-10 text-muted-foreground" />
+          <Chip tone="code">{doc.externalUrl ? "WEB" : extensionLabel(doc.name)}</Chip>
+        </button>
+      ) : (
+        <span className="flex flex-col items-center gap-1 self-center">
+          <FileIcon doc={doc} className="h-10 w-10 text-muted-foreground" />
+          <Chip tone="code">{doc.externalUrl ? "WEB" : extensionLabel(doc.name)}</Chip>
+        </span>
+      )}
       <button
         type="button"
         onClick={() => onOpen(doc)}
-        className="text-left text-meta font-medium leading-tight [overflow-wrap:anywhere]"
+        aria-label={`Open ${doc.name}`}
+        className="line-clamp-2 text-center text-meta font-medium leading-tight [overflow-wrap:anywhere]"
       >
         {doc.name}
       </button>
       {doc.routineId ? (
-        <span className="truncate text-xs text-muted-foreground">
+        <span className="truncate text-center text-xs text-muted-foreground">
           Written by {doc.routineName ?? "a routine"}
         </span>
       ) : null}
@@ -1737,6 +2205,7 @@ function DocumentTile({
 }
 
 function extensionLabel(name: string): string {
+  if (/^https?:\/\//i.test(name)) return "WEB";
   const match = name.toLowerCase().match(/\.([a-z0-9]+)$/);
   return match ? match[1].toUpperCase() : "FILE";
 }
@@ -1904,7 +2373,7 @@ function AddWebPage({ bundleId }: { bundleId: string }) {
       type="button"
       onClick={() => void add()}
       disabled={busy}
-      className="mr-4 mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+      className="inline-flex items-center gap-1.5 hover:text-foreground disabled:opacity-50"
     >
       <ExternalLink className="h-3.5 w-3.5" />
       {busy ? "Fetching the page…" : "Add a web page"}
@@ -1913,14 +2382,18 @@ function AddWebPage({ bundleId }: { bundleId: string }) {
 }
 
 /**
- * Where files come in.
+ * Where files come in, said at the foot of the pane.
  *
- * A drop target and a file picker in the same control, because a drop target
- * alone is a mechanism with no keyboard equivalent. It only accepts files when
- * a bundle is open: an upload has to know where it is going, and "everything
- * this agent reads" is a view rather than a place.
+ * The pane itself is the drop target (see the section in the explorer), so
+ * this is the sentence that says so plus the two ways in that a drop cannot
+ * do: a file picker, which is the keyboard's equivalent, and a web page. A
+ * strip rather than a well, because a well the height of six rows under
+ * every folder was the biggest thing on a screen that is about the files.
+ *
+ * Files only go into a folder: an upload has to know where it is going, and
+ * "everything this agent reads" is a view rather than a place.
  */
-function UploadWell({
+function UploadStrip({
   bundle,
   uploading,
   onFiles,
@@ -1929,87 +2402,72 @@ function UploadWell({
   uploading: Uploading[];
   onFiles: (files: FileList | File[] | null) => void;
 }) {
-  const [dragging, setDragging] = useState(false);
-
   return (
-    <div className="border-t border-hairline p-4">
-      <label
-        onDragOver={(e) => {
-          // Only for files from outside the page.
-          if (!e.dataTransfer.types.includes("Files")) return;
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return;
-          e.preventDefault();
-          setDragging(false);
-          // Read synchronously, inside the event: the entries are gone after it.
-          void filesFromDrop(e.dataTransfer).then(onFiles);
-        }}
-        className={cn(
-          "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed py-7 text-center transition-colors",
-          dragging
-            ? "border-accent-orange bg-surface-hover"
-            : "border-border hover:bg-surface-hover",
-        )}
-      >
-        <Upload
-          className={cn("h-5 w-5", dragging ? "text-accent-orange" : "text-muted-foreground")}
-        />
-        <span className="font-dm text-base font-medium">
-          {bundle
-            ? dragging
-              ? "Drop to upload"
-              : `Drop files into ${bundle.name}`
-            : "Pick a bundle to upload into"}
+    <div className="border-t border-hairline px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <Upload className="h-3.5 w-3.5" />
+          {bundle ? (
+            <>
+              <span>Drop files into {bundle.name}</span>
+              <span>or</span>
+              <label className="cursor-pointer underline underline-offset-2 hover:text-foreground">
+                choose files
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  accept={ACCEPT}
+                  onChange={(e) => {
+                    // Copied before the reset, not after. Clearing `value`
+                    // empties the very FileList `e.target.files` returned,
+                    // in Chromium at least, so the picker handed over
+                    // nothing and the upload never started.
+                    const files = Array.from(e.target.files ?? []);
+                    e.target.value = "";
+                    onFiles(files);
+                  }}
+                />
+              </label>
+            </>
+          ) : (
+            <span>Pick a folder to upload into</span>
+          )}
         </span>
-        <span className="text-xs text-muted-foreground">
-          PDF, Word, PowerPoint, Excel, Markdown, text and more · folders too · up to 100 MB each
-        </span>
-        <input
-          type="file"
-          multiple
-          className="hidden"
-          accept={ACCEPT}
-          disabled={!bundle}
-          onChange={(e) => {
-            // Copied before the reset, not after. Clearing `value` empties the
-            // very FileList `e.target.files` returned, in Chromium at least,
-            // so the picker handed over nothing and the upload never started
-            // — only dropping files worked.
-            const files = Array.from(e.target.files ?? []);
-            e.target.value = "";
-            onFiles(files);
-          }}
-        />
-      </label>
-      {bundle ? <AddWebPage bundleId={bundle.id} /> : null}
-      {/* A folder picker of its own: the same input cannot pick both files and
-          folders, and the drop target above already takes both. */}
-      {bundle ? (
-        <label className="mt-2 inline-flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-          <FolderOpen className="h-3.5 w-3.5" />
-          Upload a folder
-          <input
-            type="file"
-            multiple
-            className="hidden"
-            aria-label="Upload a folder"
-            {...({ webkitdirectory: "" } as Record<string, string>)}
-            onChange={(e) => {
-              // Copied before the reset, for the reason the file picker gives.
-              const files = Array.from(e.target.files ?? []).filter((f) => !f.name.startsWith("."));
-              e.target.value = "";
-              onFiles(files);
-            }}
-          />
-        </label>
-      ) : null}
+        {bundle ? (
+          <>
+            {/* A folder picker of its own: the same input cannot pick both
+                files and folders, and the drop target already takes both. */}
+            <label className="inline-flex cursor-pointer items-center gap-1.5 hover:text-foreground">
+              <FolderOpen className="h-3.5 w-3.5" />
+              Upload a folder
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                aria-label="Upload a folder"
+                {...({ webkitdirectory: "" } as Record<string, string>)}
+                onChange={(e) => {
+                  // Copied before the reset: clearing `value` empties the very
+                  // FileList `e.target.files` returned, in Chromium at least.
+                  const files = Array.from(e.target.files ?? []).filter(
+                    (f) => !f.name.startsWith("."),
+                  );
+                  e.target.value = "";
+                  onFiles(files);
+                }}
+              />
+            </label>
+            <AddWebPage bundleId={bundle.id} />
+            <span className="hidden xl:inline">
+              PDF, Word, PowerPoint, Excel, Markdown, text and more · up to 100 MB each
+            </span>
+          </>
+        ) : null}
+      </div>
 
       {uploading.length > 0 ? (
-        <div className="mt-3 space-y-2">
+        <div className="mt-2 space-y-2">
           {uploading.map((u) => (
             <div key={u.id} className="text-sm">
               <div className="flex items-center gap-2">

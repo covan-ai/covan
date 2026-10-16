@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
-import { Badge, Headline, SectionHeading } from "@/components/page-container";
+import { SectionHeading } from "@/components/page-container";
 import { Chip, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar, AvatarStack, UserAvatar } from "@/components/avatars";
 import { useCredits, creditsSentence } from "@/lib/credits";
@@ -25,6 +25,7 @@ import {
 import { useAgentsStore, type Agent, type ChatSession } from "@/lib/agents-store";
 import { sharingSummary } from "@/lib/agent-access";
 import { formatRelative } from "@/lib/relative-time";
+import { dayPart } from "@/lib/day-part";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ArrowUp, ChevronDown, Plus, Search, Star, Users } from "lucide-react";
@@ -41,15 +42,6 @@ function firstName(name: string | null | undefined) {
   return name.trim().split(/\s+/)[0] || "there";
 }
 
-/** Greets by time of day so the home feels addressed to a person, not a URL. */
-function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 5) return "Still up";
-  if (h < 12) return "Good morning";
-  if (h < 18) return "Good afternoon";
-  return "Good evening";
-}
-
 function Home() {
   const { agents, favorites, sessions, canWrite } = useAgentsStore();
   const { new: openNew } = Route.useSearch();
@@ -59,6 +51,17 @@ function Home() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const members = me?.members ?? [];
   const credits = useCredits();
+
+  // Who the hero introduces and the composer sends to. A pinned agent, else
+  // the first one, until a pick is made. `agentId` holds a pick and only a
+  // pick: an agent that is deleted leaves its id behind here, where
+  // `?? defaultAgent` recovers, and a stored default would not.
+  const defaultAgent = useMemo(
+    () => agents.find((a) => favorites.includes(a.id)) ?? agents[0],
+    [agents, favorites],
+  );
+  const [agentId, setAgentId] = useState<string | undefined>(undefined);
+  const selected = agents.find((a) => a.id === agentId) ?? defaultAgent;
 
   // The one fact the checklist needs that the home screen does not already
   // hold. Asked for only while it could still change the answer, so a
@@ -103,37 +106,49 @@ function Home() {
 
   return (
     <AppShell>
-      {/* Chat-first home: the conversation starter owns the fold. The headline
-          takes the system's two-tone shape — statement, then an italic turn in
-          muted display grey (§5.5). */}
-      <div className="mx-auto w-full max-w-3xl px-5 pt-[8vh]">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <Badge>{me?.workspace.name ?? "Workspace"}</Badge>
-          <Headline as="h1" className="text-center" turn={<>What are we working on?</>}>
-            {greeting()}, {firstName(me?.user.name)}.
-          </Headline>
-          {/* A lede only when there is nothing to act on yet. With agents in
-              the workspace the composer below is the instruction. */}
-          {agents.length === 0 ? (
-            <p className="max-w-[480px] text-base leading-[1.45] text-muted-foreground">
-              Create your first agent — keep it to yourself or share it with the team. Every
-              conversation with it stays private.
-            </p>
-          ) : null}
+      {/* Chat-first home: the agent introduces itself, asks what it can do,
+          and the composer under it is the answer. */}
+      <div className="mx-auto w-full max-w-3xl px-5 pt-[14vh]">
+        <div className="flex flex-col items-center gap-1 text-center">
+          <h1 className="text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[2.125rem]">
+            Hi{selected ? ", I'm" : `, ${firstName(me?.user.name)}`}
+            {selected && (
+              <>
+                {" "}
+                <span className="text-brand">{selected.name}</span>
+              </>
+            )}
+            .
+          </h1>
+          <p className="text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[2.125rem]">
+            {selected
+              ? `What can I do for you ${dayPart()}?`
+              : canWrite
+                ? "Create your first agent."
+                : "Nothing is shared with you yet."}
+          </p>
+          <p className="mt-3 max-w-[480px] text-sm text-muted-foreground">
+            {selected
+              ? "Threads are private to you"
+              : canWrite
+                ? "Keep it to yourself or share it with the team. Every thread with it stays private."
+                : "Ask an admin or a member to share an agent with you."}
+          </p>
         </div>
         <HomeComposer
           agents={agents}
-          favorites={favorites}
+          selected={selected}
+          onSelect={setAgentId}
           canCreate={canWrite}
           onCreate={() => setCreateOpen(true)}
-          className="mt-10"
+          className="mt-8"
         />
         {/* Directly under the composer, because this is the moment before
             spending — not buried in settings, where nobody looks until the
             replies have already stopped. Renders nothing when self-hosted. */}
         {credits && (
           <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-            {credits.level !== "fine" && <span className="h-2 w-2 shrink-0 bg-accent-orange" />}
+            {credits.level !== "fine" && <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />}
             {creditsSentence(credits)}
           </p>
         )}
@@ -180,13 +195,16 @@ function Home() {
     the stashed draft automatically on an empty session. */
 function HomeComposer({
   agents,
-  favorites,
+  selected,
+  onSelect,
   canCreate,
   onCreate,
   className,
 }: {
   agents: Agent[];
-  favorites: string[];
+  /** The agent the hero above is introducing. */
+  selected: Agent | undefined;
+  onSelect: (id: string) => void;
   /** False for a viewer — same meaning as in the gallery below: the policies
       refuse them either way, this is so the button is not there to press. */
   canCreate: boolean;
@@ -197,22 +215,6 @@ function HomeComposer({
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-
-  // Default to a pinned agent, else the first one.
-  const defaultAgent = useMemo(
-    () => agents.find((a) => favorites.includes(a.id)) ?? agents[0],
-    [agents, favorites],
-  );
-  // Holds a pick, and only a pick. `undefined` is not "not loaded yet" — it is
-  // "nobody has chosen", which is the state this composer opens in and the one
-  // the line below already knows what to do with. Seeding it from defaultAgent
-  // (in the initialiser, or in an effect once the agents arrive) would say the
-  // same thing twice and let the two copies disagree: an agent that is deleted
-  // leaves its id behind here, where `?? defaultAgent` recovers and a stored id
-  // does not. Everything the dropdown renders reads `selected`, never this.
-  const [agentId, setAgentId] = useState<string | undefined>(undefined);
-
-  const selected = agents.find((a) => a.id === agentId) ?? defaultAgent;
 
   const launch = async () => {
     const body = text.trim();
@@ -250,9 +252,8 @@ function HomeComposer({
 
   return (
     <div className={className}>
-      {/* White is the raised state, and this genuinely floats — so it takes the
-          20px panel radius and the one panel shadow in the system (§3.5). */}
-      <div className="rounded-3xl bg-popover shadow-card transition-colors duration-200">
+      {/* The composer floats: white, a line, the one panel shadow. */}
+      <div className="rounded-5xl border border-border bg-popover shadow-card transition-colors duration-200">
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -311,7 +312,7 @@ function HomeComposer({
                 </DropdownMenuLabel>
                 <div className="max-h-72 overflow-y-auto">
                   {agents.map((a) => (
-                    <DropdownMenuItem key={a.id} onClick={() => setAgentId(a.id)}>
+                    <DropdownMenuItem key={a.id} onClick={() => onSelect(a.id)}>
                       <AgentAvatar emoji={a.emoji} className="h-6 w-6 text-sm" />
                       <span className="flex-1 truncate">{a.name}</span>
                     </DropdownMenuItem>
@@ -320,13 +321,12 @@ function HomeComposer({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          {/* Send is the one amber fill on this screen — a 36px chip, exactly
-              the size the button's own chip is. */}
+          {/* Send is the amber dot: the primary button at icon size. */}
           <button
             onClick={() => void launch()}
             disabled={sending || empty || !text.trim()}
             aria-label="Send"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-accent-orange text-[#251f19] transition-opacity duration-200 hover:opacity-90 disabled:opacity-40"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand text-brand-foreground transition-opacity duration-200 hover:opacity-90 disabled:opacity-40"
           >
             <ArrowUp className="h-4 w-4" />
           </button>
@@ -334,7 +334,7 @@ function HomeComposer({
       </div>
       {!empty && (
         <p className="mt-3 text-center text-meta text-micro-foreground">
-          Enter to send · Shift + Enter for a new line · new chats start private
+          Enter to send · Shift + Enter for a new line
         </p>
       )}
     </div>
@@ -497,7 +497,7 @@ function TabButton({
       {/* The 8px square is how this system marks a selection. */}
       <span
         aria-hidden
-        className={cn("h-2 w-2 shrink-0", active ? "bg-accent-orange" : "bg-transparent")}
+        className={cn("h-2 w-2 shrink-0 rounded-full", active ? "bg-brand" : "bg-transparent")}
       />
       {children}
     </button>
@@ -544,7 +544,7 @@ function AgentCard({
     <div
       className={cn(
         "group relative flex flex-col rounded-xl border border-border bg-card p-5 transition-colors duration-200 hover:bg-surface-hover",
-        "focus-within:shadow-[0_0_0_2px_var(--background),0_0_0_4px_var(--accent-orange)]",
+        "focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background",
         busy && "opacity-60",
       )}
     >
@@ -559,7 +559,7 @@ function AgentCard({
       <div className="pointer-events-none flex items-start gap-3.5">
         <AgentAvatar emoji={a.emoji} className="h-9 w-9 text-lg" />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-dm text-title font-medium leading-tight">{a.name}</div>
+          <div className="truncate text-title font-semibold leading-tight">{a.name}</div>
           <div className="mt-1.5">
             {/* Models are named in a code chip, not colour-coded. */}
             <Chip tone="code">{a.model}</Chip>
@@ -573,7 +573,7 @@ function AgentCard({
           className={cn(
             "pointer-events-auto relative z-10 grid h-7 w-7 shrink-0 place-items-center rounded-sm transition-colors duration-200 hover:bg-muted",
             favorite
-              ? "text-accent-orange"
+              ? "text-brand"
               : "text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover:opacity-100",
           )}
         >
@@ -733,7 +733,7 @@ function SharedWith({
     <span className="inline-flex items-center gap-2">
       <span
         aria-hidden
-        className={cn("h-2 w-2 shrink-0", mode === "workspace" ? "bg-accent-orange" : "bg-border")}
+        className={cn("h-2 w-2 shrink-0 rounded-full", mode === "workspace" ? "bg-brand" : "bg-border")}
       />
       {mode === "workspace" ? "Everyone" : label}
     </span>

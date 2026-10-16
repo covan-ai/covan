@@ -49,7 +49,7 @@ describe("a session in the sidebar", () => {
 
   it("falls back to a placeholder while the title is still being written", () => {
     renderRow({ title: null });
-    expect(screen.getByText("New chat")).toBeInTheDocument();
+    expect(screen.getByText("New thread")).toBeInTheDocument();
   });
 
   it("names an untitled brainstorm as a brainstorm", () => {

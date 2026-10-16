@@ -15,8 +15,13 @@ export const PRIMARY_NAV = [
   // setting to the people in it, and Team is where everybody already looks.
   { to: "/settings/members", label: "Team", icon: Users },
   { to: "/integrations", label: "Integrations", icon: Plug },
-  { to: "/settings", label: "Settings", icon: Settings },
+  // Not in the panel: the rail has the one settings control, the cog at its
+  // foot. Listed so the label rule below still knows what to call the pages.
+  { to: "/settings", label: "Settings", icon: Settings, rail: true },
 ] as const;
+
+/** The panel's rows: everything but what the rail already carries. */
+export const PANEL_NAV = PRIMARY_NAV.filter((n) => !("rail" in n));
 
 export type PrimaryNavItem = (typeof PRIMARY_NAV)[number];
 

@@ -25,9 +25,15 @@ async function connection(over: Row = {}): Promise<Row> {
     provider: "google_drive",
     status: "active",
     config: { folderId: FOLDER },
-    // Unexpired, so `refresh` hands it back without asking Google.
+    // Unexpired, so `refresh` hands it back without asking Google. Against the
+    // real clock, not `NOW`: `refresh` reads `Date.now()`, and an hour past a
+    // fixed `NOW` made this whole file fail from 13:00 UTC on the day it landed.
     secret_ciphertext: await encryptSecret(
-      JSON.stringify({ accessToken: "ya29", refreshToken: "1//r", expiresAt: NOW + 3_600_000 }),
+      JSON.stringify({
+        accessToken: "ya29",
+        refreshToken: "1//r",
+        expiresAt: Date.now() + 3_600_000,
+      }),
       KEY,
     ),
     ...over,

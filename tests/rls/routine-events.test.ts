@@ -421,3 +421,32 @@ describe("routine_runs.triggered_by", () => {
     expect(data?.length).toBe(1);
   });
 });
+
+describe("one trigger instance, two routines (0110)", () => {
+  // Composio's create is an upsert: the same trigger on the same account with
+  // the same settings comes back as the instance that already exists. 0109's
+  // unique index refused the second routine's copy of that id, so a routine
+  // could never be set up while another with the same settings existed.
+  it("lets two routines hold the same provider id", async () => {
+    const second = await seedEventRoutine("Inbox, again");
+    await subscribe(waiting, { external_id: "ti_shared_by_two" });
+    await expect(subscribe(second, { external_id: "ti_shared_by_two" })).resolves.toBeUndefined();
+
+    const { data, error } = await serviceClient()
+      .from("routine_event_subscriptions")
+      .select("routine_id")
+      .eq("provider", "composio")
+      .eq("external_id", "ti_shared_by_two");
+    expect(error).toBeNull();
+    expect((data ?? []).map((r) => r.routine_id).sort()).toEqual([waiting, second].sort());
+  });
+
+  it("still finds them by that id through an index", async () => {
+    const rows = await sql()`
+      select indexdef from pg_indexes
+       where schemaname = 'public' and indexname = 'routine_event_subscriptions_external_idx'`;
+    expect(rows).toHaveLength(1);
+    expect(String(rows[0].indexdef)).not.toMatch(/UNIQUE/i);
+    expect(String(rows[0].indexdef)).toContain("(provider, external_id)");
+  });
+});

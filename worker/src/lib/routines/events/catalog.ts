@@ -16,16 +16,18 @@
  * routine row's meaning. The id stays the same; that is the promise the id
  * makes.
  *
- * EMPTY IN THIS BUILD. The entries arrive with the adapters that can serve
- * them. An entry without an adapter would be a choice the dialog offers and
- * the engine cannot keep, which is the one thing this list must never be: the
- * catalogue route filters on `adapterFor(provider)?.isConfigured(env)`, so an
- * entry whose adapter is missing or unconfigured is never shown, and a row
- * that names one is marked `failed` with a sentence rather than left
- * `pending` forever (`lifecycle.ts`).
+ * ENTRIES ARRIVE WITH THEIR ADAPTERS. An entry without an adapter would be a
+ * choice the dialog offers and the engine cannot keep, which is the one thing
+ * this list must never be: the catalogue route filters on
+ * `adapterFor(provider)?.isConfigured(env)`, so an entry whose adapter is
+ * missing or unconfigured is never shown, and a row that names one is marked
+ * `failed` with a sentence rather than left `pending` forever
+ * (`lifecycle.ts`). Composio's — Gmail, Outlook, Google Calendar — are the
+ * first, in `composio-catalog.ts` beside what Composio needs to serve them.
  */
 
-import { z } from "zod";
+import type { z } from "zod";
+import { COMPOSIO_EVENTS } from "./composio-catalog";
 
 /**
  * Who sends the event. The adapter registry is keyed on this, and so is the
@@ -125,10 +127,10 @@ export type EventTypeDef = {
 };
 
 /**
- * The list. See the module comment for why it is empty in this build: the
- * entries ship with the adapters that serve them.
+ * The list, in the order the dialog offers it. Each provider's entries live
+ * beside the adapter half that serves them; see the module comment.
  */
-export const EVENT_TYPES: readonly EventTypeDef[] = [];
+export const EVENT_TYPES: readonly EventTypeDef[] = COMPOSIO_EVENTS.map((spec) => spec.def);
 
 /** `routine_runs.trigger_label` is at most this long (0109). */
 export const MAX_TRIGGER_LABEL = 120;

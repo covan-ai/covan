@@ -219,7 +219,7 @@ services:
       DB_USER: supabase_admin
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DB_NAME: postgres
-      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime"
       DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:-supabaserealtime}
       API_JWT_SECRET: ${JWT_SECRET}
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env}
@@ -408,6 +408,8 @@ services:
       # not reach either provider however the operator configured it.
       COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
       COMPOSIO_BASE_URL: ${COMPOSIO_BASE_URL:-}
+      # Routines that start on a connected app's event. Empty means none can.
+      COMPOSIO_WEBHOOK_SECRET: ${COMPOSIO_WEBHOOK_SECRET:-}
       # The browser tool, and the takeover that recovers a login wall. Empty
       # means `browse` is not offered at all; no password is ever handed to it
       # either way, because the provider's `secrets` field is never populated.

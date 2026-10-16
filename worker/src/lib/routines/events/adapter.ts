@@ -10,10 +10,13 @@
  * same for all of them, which is what lets an event move from one adapter to
  * another without a single routine row changing meaning (see `catalog.ts`).
  *
- * Adapters do not touch the database. They are handed the row and the
+ * Adapters do not write the database. They are handed the row and the
  * decrypted secret, and they answer with what should be written; the writing
  * — and the encrypting — is `lifecycle.ts`'s. So the service-role exemption
- * for event subscriptions lives in two files, not in one per provider.
+ * for writing event subscriptions lives in two files, not in one per
+ * provider. An adapter that has to READ something the row does not carry —
+ * Composio's needs the connected account a `tool_connections` row withholds
+ * from clients — says so in its own header and has its own allowlist line.
  */
 
 import type { RoutineEnv } from "../../../types";
@@ -24,6 +27,7 @@ import {
   type EventTypeDef,
   type NormalizedEvent,
 } from "./catalog";
+import { COMPOSIO_ADAPTER } from "./composio";
 
 /** The row as the engine reads it, secret still sealed. */
 export type SubscriptionRow = {
@@ -67,27 +71,9 @@ export type SubscribeResult = {
   expiresAt?: Date | null;
 };
 
-/**
- * A refusal the owner can act on, as opposed to a bug.
- *
- * `message` is written on the row as `status_detail` and shown on the
- * routine's page, so it is a sentence for a person — "Gmail is no longer
- * connected", not "401 from backend.composio.dev". `expired` says the
- * connection behind the subscription lapsed: the row goes to `expired`, which
- * the sweeper leaves alone, because no number of retries will reconnect
- * somebody's Google account for them.
- *
- * Anything else an adapter throws is treated as a transient failure with a
- * generic sentence, and retried.
- */
-export class EventSourceError extends Error {
-  readonly expired: boolean;
-  constructor(message: string, options: { expired?: boolean } = {}) {
-    super(message);
-    this.name = "EventSourceError";
-    this.expired = options.expired ?? false;
-  }
-}
+// In a file of its own so an adapter can import it without importing the
+// registry that imports the adapter.
+export { EventSourceError } from "./errors";
 
 export interface EventAdapter {
   provider: EventProvider;
@@ -127,10 +113,12 @@ export interface EventAdapter {
 export type AdapterRegistry = { adapterFor: (provider: string) => EventAdapter | undefined };
 
 /**
- * Empty in this build, as the catalogue is. An adapter is added here in the
- * same change that adds the catalogue entries it serves.
+ * One per provider. An adapter is added here in the same change that adds the
+ * catalogue entries it serves.
  */
-const ADAPTERS: Partial<Record<EventProvider, EventAdapter>> = {};
+const ADAPTERS: Partial<Record<EventProvider, EventAdapter>> = {
+  composio: COMPOSIO_ADAPTER,
+};
 
 export const ADAPTER_REGISTRY: AdapterRegistry = {
   adapterFor: (provider) => ADAPTERS[provider as EventProvider],

@@ -9,6 +9,8 @@ import { toolAvailability } from "../lib/harness/registry";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { revokeConnectedAccounts } from "../lib/composio/revoke";
+import { lapseSubscriptions } from "../lib/routines/events/lifecycle";
+import { announceLapsedSubscription } from "../lib/routines/dispatcher";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 
 /**
@@ -283,7 +285,7 @@ toolConnections.delete("/tool-connections/:id", async (c) => {
   // not create the row, which is why this read decides nothing below.
   const { data: row } = await db
     .from("tool_connections")
-    .select("id, workspace_id, transport")
+    .select("id, workspace_id, transport, label")
     .eq("id", id)
     .maybeSingle();
   if (!row) return c.json({ error: "not found" }, 404);
@@ -317,6 +319,19 @@ toolConnections.delete("/tool-connections/:id", async (c) => {
   if (error) return c.json({ error: "failed to remove connection" }, 500);
   if ((removed ?? []).length === 0) {
     return c.json({ error: "you do not have permission to remove this connection" }, 403);
+  }
+
+  // Routines listening through it (0109) have nothing left to listen with.
+  // Before the revocation, because ending a trigger at Composio needs the
+  // account it was made on to still be there — and best-effort, because the
+  // connection is gone whatever this manages.
+  if (row.transport === "composio") {
+    await lapseSubscriptions(
+      c.env,
+      { config: { connectionId: id } },
+      `${row.label} was disconnected.`,
+      { announce: announceLapsedSubscription },
+    ).catch((err: unknown) => console.error("could not lapse a removed connection's events", err));
   }
 
   // Best effort, and the row has already gone — see `lib/composio/revoke.ts`

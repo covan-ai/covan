@@ -5,6 +5,7 @@ import { canFileDocuments } from "../../types";
 import { serviceClient } from "../supabase";
 import {
   announceEventFlood,
+  announceEventLapsed,
   runRoutine as defaultRunRoutine,
   type ExecutorDeps,
   type IngestTrigger,
@@ -14,6 +15,7 @@ import { summariseWithModel } from "./summarise";
 import { runRoutineWithTools } from "./agent-run";
 import { completeHeldRun } from "./held";
 import { ownHostsFrom } from "./url-guard";
+import { ROUTINE_COLUMNS } from "./ingest";
 import { deliveryDepsFrom } from "./delivery";
 import { fileRoutineOutput } from "./filing";
 import { completionSpend, entitlementsFor, spends, type Spend } from "../entitlements";
@@ -432,6 +434,28 @@ export async function pauseForEventFlood(
   if (!Array.isArray(data) || data.length === 0) return false;
   await announceEventFlood(routine, executorDeps(env, db), reason);
   return true;
+}
+
+/**
+ * Tell a routine's owner it stopped hearing events (`events/lifecycle.ts`'s
+ * `lapseSubscriptions`). Here for `pauseForEventFlood`'s reason: the notice
+ * goes through the routine's own delivery channel, which needs `ExecutorDeps`.
+ */
+export async function announceLapsedSubscription(
+  env: RoutineEnv,
+  routineId: string,
+  reason: string,
+  overrides: Partial<Pick<DispatcherDeps, "db">> = {},
+): Promise<void> {
+  const db = overrides.db ?? serviceClient(env);
+  const { data } = await db
+    .from("routines")
+    .select(ROUTINE_COLUMNS)
+    .eq("id", routineId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!data) return;
+  await announceEventLapsed(data as unknown as RoutineRow, executorDeps(env, db), reason);
 }
 
 /**

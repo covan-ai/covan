@@ -236,3 +236,50 @@ describe("eventRunLimits", () => {
     ).toEqual({ perHour: 60, perDay: 500 });
   });
 });
+
+describe("a delivery for a trigger two routines share", () => {
+  it("runs each routine waiting for it, each under its own claim", async () => {
+    const out = await receive({
+      routines: [routine(), routine({ id: "r2", name: "Second" })],
+      subs: [subscription(), subscription({ routine_id: "r2" })],
+    });
+
+    expect(out).toEqual({ status: "accepted", eventId: "composio:msg_1" });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls.map((c) => c[1].id).sort()).toEqual(["r1", "r2"]);
+  });
+
+  it("runs the one that is listening and not the one that is paused", async () => {
+    const out = await receive({
+      routines: [routine(), routine({ id: "r2", status: "paused" })],
+      subs: [subscription(), subscription({ routine_id: "r2", status: "disabled" })],
+    });
+
+    expect(out.status).toBe("accepted");
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0][1].id).toBe("r1");
+  });
+
+  it("applies each routine's own filter", async () => {
+    const out = await receive({
+      routines: [routine(), routine({ id: "r2" })],
+      subs: [
+        subscription({ config: { from: "someone@else.example" } }),
+        subscription({ routine_id: "r2", config: { from: "ayse@example.com" } }),
+      ],
+    });
+
+    expect(out.status).toBe("accepted");
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0][1].id).toBe("r2");
+  });
+
+  it("reports the most consequential outcome when none ran", async () => {
+    const out = await receive({
+      routines: [routine({ status: "paused" }), routine({ id: "r2" })],
+      subs: [subscription(), subscription({ routine_id: "r2", config: { from: "nobody@x.y" } })],
+    });
+    expect(out.status).toBe("filtered");
+    expect(run).not.toHaveBeenCalled();
+  });
+});

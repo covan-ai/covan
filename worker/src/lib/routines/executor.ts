@@ -1654,6 +1654,29 @@ export async function announceEventFlood(
 }
 
 /**
+ * Tell the owner an event routine has stopped hearing anything, because the
+ * connection it listened through is gone or lapsed. Not paused — nothing about
+ * the routine is wrong, and it starts working again the moment the event is
+ * chosen afresh — but silent, which is the reason to say so: a routine that
+ * waits for mail and never gets any looks exactly like a quiet inbox.
+ */
+export async function announceEventLapsed(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  reason: string,
+): Promise<void> {
+  await notifyOwner(routine, deps, "routine_paused", {
+    subject: `Routine stopped listening: ${routine.name}`,
+    body:
+      `"${routine.name}" is no longer being told about new events: ${reason}
+
+` +
+      `Reconnect the app on the Integrations page, then choose the event again on the ` +
+      `routine's page. Nothing that arrived in between will be replayed.`,
+  });
+}
+
+/**
  * Tell the owner a run was skipped because the workspace is out of credits.
  *
  * Sent once, not once per tick. Ticks are minutes apart — five on the

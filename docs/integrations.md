@@ -736,6 +736,92 @@ Composio before the row goes, so does closing the account.
   each one costs the workspace credits, as a reply does. A self-hosted
   deployment charges nobody credits, as for everything else.
 
+### Routines that start when something happens
+
+A routine can start on an event in a connected app rather than on a clock
+or a webhook: **a new email in Gmail or Outlook, a new Outlook calendar event,
+or a Google Calendar event that is new, changed, cancelled, or about to
+start.** In the routine dialog, under _Starts_, pick _When something happens
+in an app_, then the app, then the event and any filter (a Gmail search, an
+Outlook sender, how many minutes before a meeting). If the app is not
+connected yet, the dialog says so and links to the Integrations page.
+
+These events come through Composio, the same way connected apps do. Composio
+watches the account and calls Covan when something happens. Each routine gets
+a short, readable summary of the event (sender, subject and text; or title,
+time and attendees), not the raw payload. The filters you pick are sent to
+Composio, so mail that does not match never reaches Covan.
+
+**How quickly.** Composio pushes Outlook events as they happen. It checks
+Gmail and Google Calendar on a schedule, so a run can start several minutes
+after the email or the change.
+
+**What it is protected by.**
+
+- **The delivery is signed.** Each one carries an HMAC signature over its id,
+  timestamp and body. Anything unsigned, signed with another key, or more
+  than five minutes old is refused, and an address that keeps sending bad
+  signatures is turned away.
+- **The delivery must match the account.** Covan checks that it came from the
+  connected account the routine was set up with.
+- **Each event runs once.** Composio may send the same event more than once,
+  but each event id starts at most one run per routine.
+- **A flood fuse pauses a runaway routine.** If a routine gets more than
+  `ROUTINE_EVENT_RUNS_PER_HOUR` events in an hour or
+  `ROUTINE_EVENT_RUNS_PER_DAY` in a day (defaults 60 and 500), it is paused,
+  its trigger is switched off at Composio, and the owner is told.
+- **Covan's own emails are ignored.** A routine that emails you results and
+  also listens to your inbox would otherwise answer itself, so mail sent by
+  the routine sender (`RESEND_FROM`) never starts a run.
+
+**When the connection goes.** If you remove the app from the Integrations
+page, or its grant expires and Composio says so, every routine listening
+through it stops. Its card shows _Needs reconnecting_, and its owner gets
+one email. Reconnect the app, then choose the event again on the routine's
+page. Events that arrived while it was disconnected are not replayed.
+
+**Two routines, one trigger.** Two routines that listen for the same event,
+with the same settings, on the same account share one trigger at Composio.
+Each one still runs on every event. Deleting or pausing one leaves the
+trigger in place for the other.
+
+#### Setting it up
+
+1. `COMPOSIO_API_KEY` must already be set, as for connected apps. Use
+   **one Composio project per deployment**: a project has a single webhook
+   address, so two deployments sharing a project would receive each other's
+   events.
+2. Point the project's webhook at this deployment. From `worker/`:
+
+   ```sh
+   COMPOSIO_API_KEY=… bun run scripts/composio-webhook-subscribe.ts https://<your API host>
+   ```
+
+   The script checks that every trigger type in the catalogue still exists
+   at Composio. It then creates the project's webhook subscription, or updates
+   the existing one, to send `composio.trigger.message`,
+   `composio.connected_account.expired` and `composio.trigger.disabled` as V3
+   payloads to `https://<your API host>/composio/events`, and prints the
+   signing secret. You can run it again at any time.
+
+3. Set that secret on **both** Workers:
+
+   ```sh
+   wrangler secret put COMPOSIO_WEBHOOK_SECRET
+   wrangler secret put COMPOSIO_WEBHOOK_SECRET -c wrangler.cron.toml
+   ```
+
+   The cron Worker creates and renews the triggers, and the API Worker
+   receives them. The events are offered only where both the key and the
+   secret are set, so both Workers must have the secret or they will disagree
+   about whether events exist. Without it, `/composio/events` answers 404 and
+   the dialog shows no app events.
+
+**HubSpot is not here yet.** Composio's HubSpot triggers need each person's
+own HubSpot developer app and developer key before they deliver anything.
+That is more than connecting HubSpot from the Integrations page, so they are
+not offered.
+
 ### A real browser
 
 The three roads above all end at an API. A great deal of what a team actually

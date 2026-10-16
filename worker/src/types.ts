@@ -84,6 +84,21 @@ export type RoutineEnv = {
    */
   COMPOSIO_BASE_URL?: string;
   /**
+   * The signing secret of this deployment's Composio webhook subscription —
+   * what `POST /composio/events` verifies every delivery with
+   * (`lib/composio/webhook.ts`). `worker/scripts/composio-webhook-subscribe.ts`
+   * makes the subscription and prints it.
+   *
+   * On `RoutineEnv`, and set on BOTH Workers, because it is also the switch
+   * that says this deployment can hear Composio's triggers at all: without it
+   * nothing would ever be delivered, so the Composio events are not offered,
+   * and the cron Worker — which makes the trigger instances — must agree
+   * with the API Worker about that, or it would subscribe to events nobody
+   * can receive. Optional; unset, routines simply cannot start on a Composio
+   * trigger. On Cloudflare: `wrangler secret put COMPOSIO_WEBHOOK_SECRET`.
+   */
+  COMPOSIO_WEBHOOK_SECRET?: string;
+  /**
    * browser-use's API key, and the switch that makes the `browse` tool exist.
    *
    * On `RoutineEnv` rather than `Bindings` for `COMPOSIO_API_KEY`'s reason,

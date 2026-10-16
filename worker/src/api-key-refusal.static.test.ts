@@ -311,6 +311,7 @@ const OUTSIDE_THE_SESSION: Record<string, string> = {
   avatarsPublic: "an <img> fetching a profile photo, whose unguessable URL is the capability",
   composioPublic: "a logo proxy for <img> tags, serving nothing about anybody",
   routineHooks: "a third-party sender holding an ingest token, which is the credential",
+  composioEvents: "Composio's trigger deliveries, verified by the webhook signature",
   addressConfirmationsPublic:
     "somebody at an email address confirming it, holding the token mailed to it",
 };

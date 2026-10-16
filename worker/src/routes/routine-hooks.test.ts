@@ -127,6 +127,58 @@ describe("POST /routine-hooks/:token", () => {
     expect(touchTrigger).toHaveBeenCalledWith(expect.anything(), "r1");
   });
 
+  // A Siri shortcut reads the answer out of the response.
+  it("waits for a short run with ?wait=1 and answers with its report", async () => {
+    runPokedRoutine.mockResolvedValue({
+      status: "ok",
+      itemsNew: 1,
+      summary: "Two meetings today.",
+    } as never);
+
+    const res = await post("/routine-hooks/covan_whk_abc?wait=1", { body: '"what is on today"' });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      accepted: true,
+      finished: true,
+      status: "ok",
+      summary: "Two meetings today.",
+    });
+    await settle();
+    expect(touchTrigger).toHaveBeenCalledWith(expect.anything(), "r1");
+  });
+
+  it("says something speakable when a waited-for run has no report", async () => {
+    runPokedRoutine.mockResolvedValue({ status: "skipped", itemsNew: 0 } as never);
+    const res = await post("/routine-hooks/covan_whk_abc?wait=1");
+    expect(await res.json()).toMatchObject({
+      finished: true,
+      summary: expect.stringMatching(/nothing to report/),
+    });
+  });
+
+  it("answers 202 without the report when ?wait=1 runs out of time, and the run goes on", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      let finish!: () => void;
+      runPokedRoutine.mockImplementation(
+        () => new Promise((r) => (finish = () => r({ status: "ok", itemsNew: 1 }))) as never,
+      );
+      const pending = post("/routine-hooks/covan_whk_abc?wait=1");
+      await vi.advanceTimersByTimeAsync(30_000);
+      const res = await pending;
+      expect(res.status).toBe(202);
+      expect(await res.json()).toMatchObject({
+        accepted: true,
+        finished: false,
+        summary: expect.stringMatching(/still working/),
+      });
+      finish();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // GitHub will not be setting ours, and most APIs settled on Idempotency-Key.
   it.each([
     ["X-Covan-Event-Id", "ours"],

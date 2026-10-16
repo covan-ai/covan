@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import { resetRateLimiters } from "../lib/ratelimit";
 import { resetMisses } from "../middleware/ratelimit";
 import { intentToken } from "../lib/routines/events/websub";
+import { webhookToken } from "../lib/routines/events/telegram";
 
 const receiveEvent = vi.fn();
 const startPokedRun = vi.fn(async () => {});
@@ -22,10 +23,10 @@ const GH = "gh_" + "a".repeat(32);
 const WS = "ws_" + "b".repeat(32);
 const TOPIC = "https://www.youtube.com/xml/feeds/videos.xml?channel_id=UCxxxxxxxxxxxxxxxxxxxxxx";
 
-function call(path: string, init: RequestInit = {}) {
+function call(path: string, init: RequestInit = {}, env: Record<string, string> = ENV) {
   const app = new Hono<AppEnv>();
   app.route("/", routineEvents);
-  return app.request(path, init, ENV as never);
+  return app.request(path, init, env as never);
 }
 
 function postGitHub(
@@ -207,5 +208,51 @@ describe("POST /routine-events/drive/:id", () => {
     receiveEvent.mockResolvedValueOnce({ status: "forged" });
     expect((await notify("change")).status).toBe(401);
     expect((await notify("change", "dr_short")).status).toBe(404);
+  });
+});
+
+describe("POST /routine-events/telegram/:id", () => {
+  const TG = "tg_123456789";
+  async function postTelegram(token?: string, id = TG, env: Record<string, string> = ENV) {
+    return call(
+      `/routine-events/telegram/${id}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Telegram-Bot-Api-Secret-Token": token ?? (await webhookToken(ENV as never, id)),
+        },
+        body: '{"update_id":1}',
+      },
+      env,
+    );
+  }
+
+  it("hands an update carrying our token to receiveEvent, by the bot's id", async () => {
+    const res = await postTelegram();
+    expect(res.status).toBe(200);
+    const [, target, raw] = receiveEvent.mock.calls[0];
+    expect(target).toEqual({ provider: "telegram", externalId: TG });
+    expect(raw).toEqual({ body: '{"update_id":1}' });
+  });
+
+  it("refuses a wrong or missing token, or a malformed id, before any lookup", async () => {
+    expect((await postTelegram("nope")).status).toBe(401);
+    expect((await postTelegram("")).status).toBe(401);
+    expect((await postTelegram(undefined, "tg_abc")).status).toBe(401);
+    expect(receiveEvent).not.toHaveBeenCalled();
+  });
+
+  it("answers 200 for a bot nothing listens to any more, so Telegram stops, without a miss", async () => {
+    receiveEvent.mockResolvedValue({ status: "unknown" });
+    // Two misses a minute would spend the address; five of these do not.
+    const strict = {
+      ...ENV,
+      RATE_LIMIT_STANDARD_PER_MINUTE: "2",
+      RATE_LIMIT_EXPENSIVE_PER_MINUTE: "100",
+    };
+    let last = 0;
+    for (let i = 0; i < 5; i++) last = (await postTelegram(undefined, TG, strict)).status;
+    expect(last).toBe(200);
   });
 });

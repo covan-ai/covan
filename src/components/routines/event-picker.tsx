@@ -204,7 +204,9 @@ function FieldInput({
       <Label htmlFor={id}>{label}</Label>
       <Input
         id={id}
-        type={field.kind === "number" ? "number" : "text"}
+        type={field.kind === "number" ? "number" : field.kind === "secret" ? "password" : "text"}
+        // A credential: the browser should neither offer one nor remember it.
+        autoComplete={field.kind === "secret" ? "off" : undefined}
         placeholder={field.placeholder}
         value={value === undefined || value === null ? "" : String(value)}
         onChange={(e) => {

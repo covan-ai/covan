@@ -264,6 +264,8 @@ describe("the expensive rate limit", () => {
     expect(readFileSync(join(SRC, "lib", "routines", "replies.ts"), "utf8")).toContain(
       "REPLIES_PER_HOUR",
     );
+    // Telegram's door checks its derived token before the body or any row.
+    expect(routineEvents).toContain("webhookToken(c.env, id)");
     expect(readFileSync(join(SRC, "lib", "routines", "events", "receive.ts"), "utf8")).toContain(
       "count_routine_event",
     );

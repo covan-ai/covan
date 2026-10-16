@@ -10,6 +10,12 @@ import { WEBSUB_HOOK_ID, isOurIntent, type WebSubDelivery } from "../lib/routine
 import { DRIVE_CHANNEL_ID, type DriveNotification } from "../lib/routines/events/drive";
 import type { EventProvider } from "../lib/routines/events/catalog";
 import { startPokedRun } from "../lib/routines/poke-room";
+import {
+  TELEGRAM_HOOK_ID,
+  webhookToken,
+  type TelegramDelivery,
+} from "../lib/routines/events/telegram";
+import { timingSafeEqual } from "../lib/hmac";
 
 /**
  * The doors for providers that sign each subscription's deliveries with that
@@ -20,6 +26,11 @@ import { startPokedRun } from "../lib/routines/poke-room";
  *   GET  /routine-events/websub/:id    a hub checking we asked (the challenge)
  *   POST /routine-events/websub/:id    a hub pushing a feed that changed
  *   POST /routine-events/drive/:id     a Drive channel saying something changed
+ *   POST /routine-events/telegram/:id  a message to a person's own bot
+ *
+ * Telegram is the exception to what follows: its secret is derived from the
+ * id in the path (`webhookToken`), so that door checks it before any lookup,
+ * as `/composio/events` does. See `events/telegram.ts`.
  *
  * Unlike `/composio/events`, which checks one deployment-wide signature
  * before reading anything, these cannot know the secret until they know the
@@ -69,7 +80,7 @@ async function deliver(
   c: Context<AppEnv>,
   provider: EventProvider,
   id: string,
-  raw: GitHubDelivery | WebSubDelivery | DriveNotification,
+  raw: GitHubDelivery | WebSubDelivery | DriveNotification | TelegramDelivery,
   options: { unknownIsAMiss?: boolean } = {},
 ): Promise<Response> {
   const verdict = await getRateLimiter(c.env, "expensive").check(`${provider}-hook:${id}`);
@@ -83,16 +94,16 @@ async function deliver(
     run: (_env, routine, trigger) => startPokedRun(c.env, routine, trigger),
   });
 
-  // A 404 for a URL nothing holds: GitHub shows it against the webhook, which
-  // is the person's cue to remove a webhook whose routine is gone, and a hub
-  // treats it as "stop pushing". Counted either way — except where the sender
-  // is Google, whose few addresses deliver every Drive channel there is: a
-  // channel that could not be stopped keeps calling for up to a week, and
-  // counting that against the address would refuse everybody's Drive.
-  if (outcome.status === "unknown" && options.unknownIsAMiss === false) {
-    return c.json({ ok: true, status: outcome.status });
-  }
+  // A URL nothing holds. GitHub shows a 404 against the webhook, which is the
+  // person's cue to remove a webhook whose routine is gone, and a hub reads it
+  // as "stop pushing"; those are counted against the address. A Drive channel
+  // or a Telegram bot left behind is answered 200 and not counted: Google and
+  // Telegram deliver for everybody from a few addresses, a Drive channel that
+  // could not be stopped keeps calling for up to a week, and a Telegram update
+  // has already proved itself with our own token — counting either against
+  // the address would refuse everybody's deliveries.
   if (outcome.status === "unknown") {
+    if (options.unknownIsAMiss === false) return c.json({ ok: true, status: "unknown" });
     await countMiss(c);
     return c.json({ error: "not found" }, 404);
   }
@@ -188,4 +199,24 @@ routineEvents.post("/routine-events/drive/:id", async (c) => {
     { token: c.req.header("X-Goog-Channel-Token") ?? "", state },
     { unknownIsAMiss: false },
   );
+});
+
+routineEvents.post("/routine-events/telegram/:id", async (c) => {
+  if (hasSpentMisses(c)) return refuseSpent(c);
+  const id = c.req.param("id");
+  const given = c.req.header("X-Telegram-Bot-Api-Secret-Token") ?? "";
+  // The token is checked before the body is read and before any lookup: it
+  // is an HMAC of the id, so nothing about a row is needed to know whether
+  // this came from a webhook this deployment set.
+  if (
+    !TELEGRAM_HOOK_ID.test(id) ||
+    !c.env.ROUTINE_SECRET_KEY ||
+    !timingSafeEqual(await webhookToken(c.env, id), given)
+  ) {
+    await countMiss(c);
+    return c.json({ error: "invalid signature" }, 401);
+  }
+  const body = await cappedBody(c);
+  if (typeof body !== "string") return body;
+  return deliver(c, "telegram", id, { body }, { unknownIsAMiss: false });
 });

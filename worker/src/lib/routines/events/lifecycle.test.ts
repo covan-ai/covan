@@ -343,6 +343,28 @@ describe("replaceSubscription", () => {
       external_id: "ti_1",
     });
   });
+
+  // A Telegram bot token: never in `config`, sealed on the way in, and what
+  // the adapter is handed as `ctx.secret` on its first subscribe.
+  it("seals a credential that came with the choice and hands it to the adapter", async () => {
+    const db = seed(null);
+
+    await replaceSubscription(
+      ENV,
+      "r1",
+      { def: MAIL, config: {}, secret: "123:bot-token" },
+      deps(db, mail),
+    );
+
+    const row = db.tables.routine_event_subscriptions[0];
+    expect(row.config).toEqual({});
+    expect(typeof row.secret_ciphertext).toBe("string");
+    expect(row.secret_ciphertext).not.toContain("bot-token");
+    expect(await decryptSecret(row.secret_ciphertext as string, ENV.ROUTINE_SECRET_KEY)).toBe(
+      "123:bot-token",
+    );
+    expect(mail.subscribe.mock.calls[0][0].secret).toBe("123:bot-token");
+  });
 });
 
 describe("sweepEventSubscriptions", () => {

@@ -5,7 +5,18 @@ import { getRateLimiter } from "../lib/ratelimit";
 import { readCapped } from "../lib/routines/source";
 import { hashIngestToken, resolveIngestToken, touchTrigger } from "../lib/routines/ingest";
 import { countMiss, hasSpentMisses, refuseSpent } from "../middleware/ratelimit";
-import { startPokedRun } from "../lib/routines/poke-room";
+import { MAX_WAIT_MS, startPokedRun } from "../lib/routines/poke-room";
+
+/** What turns on `?wait`: a shortcut's URL is typed by hand, so the usual spellings. */
+const WAIT_VALUES = new Set(["1", "true", "yes"]);
+
+/** A run that finished without a report, said in a sentence a voice can read. */
+function spokenStatus(status: string): string {
+  if (status === "skipped") return "The routine ran and found nothing to report.";
+  if (status === "waiting")
+    return "The routine is still working. The answer will be sent to you when it is ready.";
+  return "The routine could not finish. Its run history says why.";
+}
 
 /**
  * `POST /routine-hooks/:token` — somebody else's system, starting a routine.
@@ -111,15 +122,50 @@ routineHooks.post("/routine-hooks/:token", async (c) => {
   // regardless — this just means the sender is not the one discovering it.
   // `startPokedRun` is what lets "afterwards" last longer than `waitUntil`'s
   // thirty seconds on Cloudflare (`lib/routines/poke-room.ts`).
+  //
+  // `?wait=1` is the one exception, for a Siri shortcut that wants to read
+  // the answer out: the response waits up to `MAX_WAIT_MS` for the run and
+  // carries its report if it finished in time. A run that takes longer is
+  // answered 202 like any other and still delivers to its channel — the
+  // wait only decides what this response says, never whether the run happens.
+  const trigger = { eventId: eventId.trim(), payload, source: "webhook" as const };
+  if (WAIT_VALUES.has(c.req.query("wait") ?? "")) {
+    const result = await startPokedRun(c.env, routine, trigger, {
+      waitMs: MAX_WAIT_MS,
+      keepAlive: (run) => deferred(c, run),
+    }).catch((err: unknown) => {
+      console.error("poked routine failed", err);
+      return null;
+    });
+    deferred(c, touchTrigger(c.env, routine.id));
+    if (!result) {
+      // Still something to read out, so a shortcut that speaks `summary`
+      // says the run is under way rather than saying nothing.
+      return c.json(
+        {
+          accepted: true,
+          eventId: trigger.eventId,
+          finished: false,
+          summary: spokenStatus("waiting"),
+        },
+        202,
+      );
+    }
+    return c.json({
+      accepted: true,
+      eventId: trigger.eventId,
+      finished: true,
+      status: result.status,
+      // What Siri reads: the report, or a sentence saying why there is none.
+      summary: result.summary ?? spokenStatus(result.status),
+    });
+  }
+
   deferred(
     c,
     (async () => {
       try {
-        await startPokedRun(c.env, routine, {
-          eventId: eventId.trim(),
-          payload,
-          source: "webhook",
-        });
+        await startPokedRun(c.env, routine, trigger);
       } catch (err) {
         // The run records its own failure on `routine_runs`, which is where
         // the owner looks. This catch exists so an unhandled rejection cannot

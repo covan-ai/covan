@@ -164,6 +164,26 @@ describe("RoutineEventCard", () => {
     expect(screen.getByText(/Mail from @acme.com starts it/)).toBeInTheDocument();
   });
 
+  it("shows a Telegram routine the link to pair a chat, and who has", async () => {
+    eventSetup.mockResolvedValue({
+      kind: "telegram",
+      botUsername: "acme_bot",
+      link: "https://t.me/acme_bot?start=abc123",
+      code: "abc123",
+      chats: ["Sales"],
+    });
+    renderCard({
+      ...EVENT,
+      type: "telegram.new_message",
+      provider: "telegram",
+      app: "Telegram",
+      label: "Message to your bot",
+    });
+
+    expect(await screen.findByText("https://t.me/acme_bot?start=abc123")).toBeInTheDocument();
+    expect(screen.getByText("Paired: Sales.")).toBeInTheDocument();
+  });
+
   it("asks for nothing to be pasted for an event Covan sets up itself", () => {
     renderCard(EVENT);
     expect(eventSetup).not.toHaveBeenCalled();

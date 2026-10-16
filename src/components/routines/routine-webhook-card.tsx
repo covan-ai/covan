@@ -160,7 +160,50 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
             </Button>
           )}
         </div>
+
+        {(configured || revealed) && <SiriSteps />}
       </SectionCard>
     </section>
+  );
+}
+
+/**
+ * Starting the routine from Siri or the Shortcuts app, with nothing but this
+ * URL. `?wait=1` makes the webhook hold its answer until the run is done (up
+ * to about 25 seconds) and put the report in `summary`, which the shortcut
+ * reads out; a longer run still says something there, and its report goes to
+ * the delivery channel as always.
+ *
+ * Behind a disclosure, because most people with a webhook are pasting it into
+ * GitHub or a CI job, and these steps are for the few on a phone.
+ */
+function SiriSteps() {
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-xs text-muted-foreground">
+        Use it with Siri or Shortcuts
+      </summary>
+      <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-xs text-muted-foreground">
+        <li>In the Shortcuts app, make a new shortcut and add Dictate Text.</li>
+        <li>
+          Add Get Contents of URL. Paste this webhook URL and add{" "}
+          <code className="font-mono">?wait=1</code> to the end. Set Method to POST and Request Body
+          to JSON, with one Text field named <code className="font-mono">text</code> set to Dictated
+          Text.
+        </li>
+        <li>
+          Add Get Dictionary Value for the key <code className="font-mono">summary</code>, then
+          Speak Text.
+        </li>
+        <li>Name the shortcut. Saying “Hey Siri” and its name runs it.</li>
+      </ol>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Siri reads the routine's answer if it is ready within about 25 seconds. If not, it says the
+        routine is still working, and the answer arrives where this routine delivers. To keep the
+        token out of the URL, replace the token at its end with <code className="font-mono">-</code>{" "}
+        and send the token in an <code className="font-mono">X-Covan-Ingest-Token</code> header
+        instead.
+      </p>
+    </details>
   );
 }

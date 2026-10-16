@@ -50,6 +50,7 @@ import {
 } from "../lib/routines/events/lifecycle";
 import { checkRequirement, connectedInWorkspace } from "../lib/routines/events/requirements";
 import { agentAddress, inboundDomain } from "../lib/inbound-email/address";
+import { pairingCode } from "../lib/routines/events/telegram";
 
 const routines = new Hono<AppEnv>();
 
@@ -1232,9 +1233,10 @@ routines.delete("/routines/:id/event", async (c) => {
 /**
  * What the owner has to paste into the app for the event to arrive, where
  * that is their job rather than ours: a GitHub webhook's URL and secret, for
- * the repository's Settings → Webhooks, or the address a routine is mailed at
- * (`email.received`). `{ kind: "none" }` for every event this code sets up
- * by itself.
+ * the repository's Settings → Webhooks; the address a routine is mailed at
+ * (`email.received`); or, for a Telegram bot, the link a chat opens to pair
+ * itself with the routine, and the chats that have. `{ kind: "none" }` for
+ * every event this code sets up by itself.
  *
  * The secret leaves the database here and nowhere else
  * (`subscriptionSetup`), so this is the owner's alone, through their own
@@ -1261,6 +1263,25 @@ routines.get("/routines/:id/event/setup", async (c) => {
     return c.json({
       kind: "email",
       address: agentAddress(domain, own.routine.name, setup.externalId),
+    });
+  }
+  // Telegram: the link a chat opens to pair itself, and which chats have.
+  // Never the bot token — `setup.secret` is that, and it stays here.
+  if (setup?.provider === "telegram") {
+    const botUsername = typeof setup.state.botUsername === "string" ? setup.state.botUsername : "";
+    if (!botUsername) return c.json({ kind: "none" });
+    const code = await pairingCode(c.env, own.routine.id);
+    const chats = Array.isArray(setup.state.chats) ? setup.state.chats : [];
+    return c.json({
+      kind: "telegram",
+      botUsername,
+      link: `https://t.me/${botUsername}?start=${code}`,
+      code,
+      chats: chats
+        .map((chat) =>
+          chat && typeof chat === "object" ? (chat as { title?: unknown }).title : null,
+        )
+        .filter((title): title is string => typeof title === "string"),
     });
   }
   if (setup?.provider !== "github" || !setup.externalId || !setup.secret) {

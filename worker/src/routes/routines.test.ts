@@ -1364,6 +1364,23 @@ describe("event triggers (0109)", () => {
       });
     });
 
+    it("hands a Telegram routine's owner the pairing link, and never the bot token", async () => {
+      events.subscriptionSetup.mockResolvedValueOnce({
+        provider: "telegram",
+        externalId: "tg_1",
+        secret: "123:the-bot-token",
+        state: { botUsername: "acme_bot", chats: [{ id: "42", title: "Sales" }] },
+      });
+      const { request } = withRoutine(EVENT_ROUTINE);
+
+      const { status, body } = await request("GET", "/routines/r1/event/setup");
+
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ kind: "telegram", botUsername: "acme_bot", chats: ["Sales"] });
+      expect(body.link).toMatch(/^https:\/\/t\.me\/acme_bot\?start=[0-9a-f]{24}$/);
+      expect(JSON.stringify(body)).not.toContain("the-bot-token");
+    });
+
     it("has nothing to show for an event this code sets up by itself", async () => {
       events.subscriptionSetup.mockResolvedValueOnce({
         provider: "composio",

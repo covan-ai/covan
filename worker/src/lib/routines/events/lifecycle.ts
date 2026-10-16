@@ -231,6 +231,13 @@ export async function replaceSubscription(
     provider: choice.def.provider,
     event_type: choice.def.id,
     config: choice.config,
+    // A credential that came with the choice (a Telegram bot token) goes
+    // straight into the sealed column; `parseEventChoice` already kept it
+    // out of `config`. The adapter reads it back as `ctx.secret`.
+    secret_ciphertext:
+      choice.secret === undefined
+        ? null
+        : await encryptSecret(choice.secret, env.ROUTINE_SECRET_KEY),
     status: "pending",
   });
   if (error) throw new Error(`could not record the event subscription: ${error.message}`);
@@ -239,10 +246,12 @@ export async function replaceSubscription(
 }
 
 /**
- * The provider's id for the arrangement and its secret, opened — for the one
- * kind of provider where the routine's owner, not this code, makes the
+ * The provider's id for the arrangement, its secret opened, and its state —
+ * for the providers where the routine's owner, not this code, finishes the
  * arrangement: a GitHub webhook, whose URL and secret they paste into the
- * repository's settings (`GET /routines/:id/event/setup`).
+ * repository's settings, and a Telegram bot, whose chats pair themselves
+ * from a link (`GET /routines/:id/event/setup`). For Telegram the secret is
+ * the bot's token, and the route uses only `state`.
  *
  * These are the two columns 0109 withholds from every client, and this is the
  * one road by which they leave the database. The route calls it only after
@@ -255,7 +264,12 @@ export async function subscriptionSetup(
   env: RoutineEnv,
   routineId: string,
   deps: LifecycleDeps = {},
-): Promise<{ provider: string; externalId: string | null; secret: string | null } | null> {
+): Promise<{
+  provider: string;
+  externalId: string | null;
+  secret: string | null;
+  state: Record<string, unknown>;
+} | null> {
   const db = deps.db ?? serviceClient(env);
   const sub = await readSubscription(db, routineId);
   if (!sub) return null;
@@ -265,7 +279,28 @@ export async function subscriptionSetup(
     secret: sub.secret_ciphertext
       ? await decryptSecret(sub.secret_ciphertext, env.ROUTINE_SECRET_KEY)
       : null,
+    state: sub.state ?? {},
   };
+}
+
+/**
+ * Keep what an adapter learned from a delivery about the arrangement itself —
+ * a Telegram chat that paired with the routine by sending `/start <code>`
+ * (`EventAdapter.handshake`). Called by `receive.ts` with the service
+ * client it already holds, for the one row the delivery resolved to; the
+ * adapter decides what the state is, this writes it, the same division of
+ * labour as `write` above.
+ */
+export async function rememberState(
+  db: SupabaseClient,
+  routineId: string,
+  state: Record<string, unknown>,
+): Promise<void> {
+  const { error } = await db
+    .from("routine_event_subscriptions")
+    .update({ state })
+    .eq("routine_id", routineId);
+  if (error) throw new Error(`could not update the event subscription: ${error.message}`);
 }
 
 /**

@@ -796,6 +796,28 @@ is to make a new one.
 A routine can run on **both**: a digest every morning that can also be poked
 after a deploy.
 
+#### From Siri or the Shortcuts app
+
+Add `?wait=1` to the webhook URL and the response waits for the run, up to
+about 25 seconds, and carries its report:
+
+```json
+{ "accepted": true, "finished": true, "status": "ok", "summary": "You have two meetings today…" }
+```
+
+A shortcut of four actions makes that a voice command: _Dictate Text_; _Get
+Contents of URL_ (the webhook URL with `?wait=1`, method POST, a JSON body
+with a `text` field set to the dictated text); _Get Dictionary Value_ for
+`summary`; _Speak Text_. The routine's page shows the same steps under _Use it
+with Siri or Shortcuts_.
+
+A run that takes longer is answered `202` with `"finished": false` and a
+`summary` saying it is still working. The run carries on and its report goes
+to the routine's delivery channel, as it would without `?wait`. The wait only
+changes what the response says, never whether or how the routine runs. When
+there is no report (nothing to say, or the run failed), `summary` is a sentence
+saying so.
+
 ### The token
 
 32 random bytes, `covan_whk_` prefixed, shown exactly once when you make it.

@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import type { Context } from "hono";
 import type { AppEnv } from "../types";
 import { callerWorkspaceId } from "../lib/workspace";
+import { canSendEmail } from "../lib/email";
+import { feedbackEmail } from "../lib/emails/feedback";
+import { appUrlOf, notify } from "../lib/emails/send";
+import { getRateLimiter } from "../lib/ratelimit";
 
 const feedback = new Hono<AppEnv>();
 
@@ -89,7 +94,69 @@ feedback.post("/feedback", async (c) => {
     return c.json({ error: "failed to record feedback" }, 500);
   }
 
+  await tellTheOperator(c, {
+    workspaceId,
+    kind: kind ?? "other",
+    path: pathOf(path),
+    messageId: messageId ?? null,
+    message,
+  });
+
   return c.json({ id: data.id, createdAt: Date.parse(data.created_at as string) }, 201);
 });
+
+/**
+ * Mail the note to `FEEDBACK_EMAIL`, when this install has set one.
+ *
+ * The row is the record and is already written; this is a courtesy about it,
+ * so it goes through `notify` — deferred past the response, unable to fail
+ * the send the person just pressed. Off unless configured, unlike the quota
+ * form's `SUPPORT_EMAIL`: a default address here would have every self-hosted
+ * install mailing its users' notes to Covan through its own Resend account.
+ *
+ * Bounded per person by the expensive tier, under its own key, so a dialog
+ * pressed in a loop fills the table rather than an inbox.
+ */
+async function tellTheOperator(
+  c: Context<AppEnv>,
+  note: {
+    workspaceId: string | null;
+    kind: "problem" | "idea" | "other";
+    path: string | null;
+    messageId: string | null;
+    message: string;
+  },
+): Promise<void> {
+  const to = c.env?.FEEDBACK_EMAIL?.trim();
+  if (!to || !canSendEmail(c.env)) return;
+
+  const user = c.get("user");
+  const verdict = await getRateLimiter(c.env, "expensive").check(`feedback-mail:user:${user.id}`);
+  if (!verdict.allowed) return;
+
+  const db = c.get("db");
+  const [{ data: profile }, { data: workspace }] = await Promise.all([
+    db.from("profiles").select("name").eq("id", user.id).maybeSingle(),
+    note.workspaceId
+      ? db.from("workspaces").select("name").eq("id", note.workspaceId).maybeSingle()
+      : Promise.resolve({ data: null }),
+  ]);
+
+  notify(
+    c,
+    feedbackEmail({
+      to,
+      from: { email: user.email ?? "unknown", name: (profile?.name as string | null) ?? null },
+      workspace: note.workspaceId
+        ? { id: note.workspaceId, name: (workspace?.name as string | null) ?? "unnamed" }
+        : null,
+      kind: note.kind,
+      path: note.path,
+      messageId: note.messageId,
+      appUrl: appUrlOf(c),
+      message: note.message,
+    }),
+  );
+}
 
 export { feedback };

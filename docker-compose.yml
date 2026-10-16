@@ -381,6 +381,7 @@ services:
       # from .env at all. Empty keeps the form's default recipient;
       # docs/self-hosting.md explains why you probably want it set even so.
       SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      FEEDBACK_EMAIL: ${FEEDBACK_EMAIL:-}
       # The same secret GoTrue signs sessions with, passed through so the API can
       # exchange an API key for a short-lived token belonging to the key's owner.
       # It is already in .env for the auth service, so a self-hosted stack gets

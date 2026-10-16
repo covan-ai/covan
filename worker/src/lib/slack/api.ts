@@ -5,7 +5,8 @@
  * from it is a handful of `fetch` calls with a bearer token. The one thing worth
  * knowing about the Web API is below: it answers **200 with `ok: false`** for
  * application errors, so a caller that checks `res.ok` and stops has just
- * silently ignored `invalid_auth`.
+ * silently ignored `invalid_auth`. The other is in `call`: arguments go as a
+ * form, not JSON.
  */
 
 const API = "https://slack.com/api";
@@ -22,19 +23,36 @@ export class SlackError extends Error {
 
 type SlackResponse = { ok?: boolean; error?: string; [key: string]: unknown };
 
+/** One argument, as a form field. Every one this file sends is a scalar. */
+type SlackArg = string | number | boolean | undefined;
+
+/**
+ * One Web API call, its arguments posted as a form.
+ *
+ * Not JSON. Slack reads a JSON body only on its write methods; the read ones —
+ * `users.info`, `conversations.info`, `conversations.history`,
+ * `chat.getPermalink` — ignore it, so the `user` or `channel` never arrives and
+ * the answer is `user_not_found` for somebody who plainly exists. That was every
+ * Slack question, and every Slack routine, until this was a form. A form is
+ * read by every method, writes included.
+ */
 async function call(
   fetchImpl: typeof fetch,
   method: string,
   token: string,
-  body: Record<string, unknown>,
+  args: Record<string, SlackArg>,
 ): Promise<SlackResponse> {
+  const form = new URLSearchParams();
+  for (const [key, value] of Object.entries(args)) {
+    if (value !== undefined) form.set(key, String(value));
+  }
   const res = await fetchImpl(`${API}/${method}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": "application/x-www-form-urlencoded",
     },
-    body: JSON.stringify(body),
+    body: form,
   });
   // A transport failure is still a failure worth naming, even though the line
   // below catches almost everything.
@@ -47,9 +65,9 @@ async function call(
 /**
  * Finish an install.
  *
- * Not `call` above, because this one is the exception: it is a form post with
- * the client credentials rather than a JSON post with a bearer token, since
- * there is no token yet — that is what it is for.
+ * Not `call` above, because this one is the exception: it carries the client
+ * credentials rather than a bearer token, since there is no token yet — that
+ * is what it is for.
  */
 export async function exchangeSlackCode(
   fetchImpl: typeof fetch,
@@ -136,7 +154,7 @@ export async function lookupEmail(
     // a message a person can act on.
     if (
       err instanceof SlackError &&
-      (err.code === "missing_scope" || err.code === "users_not_found")
+      (err.code === "missing_scope" || err.code === "user_not_found")
     ) {
       return null;
     }

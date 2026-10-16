@@ -15,6 +15,11 @@ import {
 import { entitlementsFor } from "../lib/entitlements";
 import { verifySlackSignature } from "../lib/slack/verify";
 import { exchangeSlackCode } from "../lib/slack/api";
+import { SLACK_SCOPES, missingEventScopes } from "../lib/slack/scopes";
+import { deliverSlackEvent } from "../lib/routines/events/slack-deliver";
+import { lapseSubscriptions } from "../lib/routines/events/lifecycle";
+import { announceLapsedSubscription } from "../lib/routines/dispatcher";
+import { startPokedRun } from "../lib/routines/poke-room";
 import { handleSlackEvent, type InstallationRow, type SlackEvent } from "../lib/slack/handle";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 import { readCapped } from "../lib/routines/source";
@@ -38,23 +43,18 @@ const slack = new Hono<AppEnv>();
 const slackPublic = new Hono<AppEnv>();
 
 /**
- * What the app asks Slack for.
+ * What the app asks Slack for: `SLACK_SCOPES` (`lib/slack/scopes.ts`).
  *
  * `users:read.email` is the one worth defending, because it looks like more
  * than it is: without it the app cannot tell who is asking, and 0044 explains
- * why answering as the installer instead is the end of tenancy. The rest is the
- * minimum to hear a mention, hear a DM, and reply.
+ * why answering as the installer instead is the end of tenancy. `channels:read`
+ * tells a public channel from a private one, which decides who in Covan can
+ * see the conversation a mention starts (`isPublicChannel`). The three history
+ * and reaction scopes are what a routine that starts on Slack activity hears
+ * through (0112); the answer flow below never reads a channel message it was
+ * not mentioned in, whatever the app is allowed to see.
  */
-// `channels:read` tells a public channel from a private one, which decides
-// who in Covan can see the conversation a mention starts (`isPublicChannel`).
-const SCOPES = [
-  "app_mentions:read",
-  "channels:read",
-  "chat:write",
-  "im:history",
-  "users:read",
-  "users:read.email",
-];
+const SCOPES = SLACK_SCOPES;
 
 function slackConfigured(env: Bindings): boolean {
   return Boolean(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET && env.SLACK_SIGNING_SECRET);
@@ -71,7 +71,7 @@ function frontendOrigin(env: Bindings): string {
 }
 
 const INSTALLATION_SELECT =
-  "id,workspace_id,team_id,team_name,bot_user_id,agent_id,installed_by,created_at";
+  "id,workspace_id,team_id,team_name,bot_user_id,agent_id,installed_by,created_at,scopes";
 
 /**
  * Every route below scopes to the caller's *active* workspace, and none of them
@@ -118,6 +118,11 @@ slack.get("/slack", async (c) => {
           agentId: data.agent_id,
           installedBy: data.installed_by,
           createdAt: Date.parse(data.created_at as string),
+          // What a reinstall would add for routines that start on Slack
+          // activity (0112). Empty means the install hears everything they
+          // can listen for; the Integrations page asks for a reconnect
+          // otherwise.
+          missingScopes: missingEventScopes((data.scopes as string[] | null) ?? null),
         }
       : null,
   });
@@ -209,10 +214,29 @@ slack.delete("/slack/installation", async (c) => {
     .from("slack_installations")
     .delete()
     .eq("id", id)
-    .select("id");
+    .select("id,team_id");
   if (error) return c.json({ error: "failed to disconnect Slack" }, 500);
   if (!data || data.length === 0) {
     return c.json({ error: "you do not have permission to disconnect this" }, 403);
+  }
+
+  // Routines that started on Slack activity have nothing to hear from now on.
+  // Marked so on their pages, and their owners told once, as for any other
+  // connection that goes (`lapseSubscriptions`). After the delete, which is the
+  // caller's own client deciding they may; the subscriptions are found by the
+  // team the deleted row named.
+  const teamId = (data[0] as { team_id?: string }).team_id;
+  if (teamId) {
+    try {
+      await lapseSubscriptions(
+        c.env,
+        { provider: "slack", externalId: teamId },
+        "Slack was disconnected.",
+        { announce: announceLapsedSubscription },
+      );
+    } catch (err) {
+      console.error("could not mark Slack routines as stopped", err);
+    }
   }
   return c.json({ ok: true });
 });
@@ -337,6 +361,9 @@ slack.post("/slack/complete", async (c) => {
       team_name: install.teamName,
       bot_user_id: install.botUserId,
       secret_ciphertext: await encryptSecret(install.botToken, c.env.ROUTINE_SECRET_KEY),
+      // What Slack granted, not what was asked for: a workspace admin can
+      // install with fewer scopes than requested on some plans (0112).
+      scopes: install.scopes,
       agent_id: agent?.id ?? null,
       installed_by: state.userId,
       updated_at: new Date().toISOString(),
@@ -401,6 +428,7 @@ slackPublic.post("/slack/events", async (c) => {
     type?: string;
     challenge?: string;
     team_id?: string;
+    event_id?: string;
     event?: SlackEvent;
   };
 
@@ -458,11 +486,27 @@ slackPublic.post("/slack/events", async (c) => {
         return;
       }
 
-      await handleSlackEvent(installation as InstallationRow, event, {
-        db: admin,
-        env: c.env,
-        entitlements: entitlementsFor(c.env),
-        fetchImpl: fetch.bind(globalThis),
+      // Two independent listeners for one event, and neither may stop the
+      // other. The agent answering a mention or a DM, exactly as before; and
+      // any routine waiting for activity in this channel (0112), which reads
+      // the same event through `deliverSlackEvent` and never answers in Slack.
+      await Promise.allSettled([
+        handleSlackEvent(installation as InstallationRow, event, {
+          db: admin,
+          env: c.env,
+          entitlements: entitlementsFor(c.env),
+          fetchImpl: fetch.bind(globalThis),
+        }),
+        deliverSlackEvent(c.env, installation as InstallationRow, event, payload.event_id ?? "", {
+          db: admin,
+          fetchImpl: fetch.bind(globalThis),
+          defer: (work) => deferred(c, work),
+          run: (_env, routine, trigger) => startPokedRun(c.env, routine, trigger),
+        }),
+      ]).then((results) => {
+        for (const r of results) {
+          if (r.status === "rejected") console.error("slack event handling failed", r.reason);
+        }
       });
     })(),
   );

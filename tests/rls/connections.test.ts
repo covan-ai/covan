@@ -225,6 +225,40 @@ describe("a Slack installation", () => {
       .eq("id", installationId);
     expect(agentError).toBeNull();
   });
+
+  // 0112: what Slack granted, so the Integrations page can ask for a
+  // reconnect. Readable like the rest of the row, written only by the install.
+  it("shows its members the scopes Slack granted, and lets no client set them", async () => {
+    const before = await owner.db
+      .from("slack_installations")
+      .select("scopes")
+      .eq("id", installationId)
+      .single();
+    expect(before.error).toBeNull();
+    expect(before.data?.scopes).toBeNull();
+
+    const { error: serviceError } = await serviceClient()
+      .from("slack_installations")
+      .update({ scopes: ["channels:history", "reactions:read"] })
+      .eq("id", installationId);
+    expect(serviceError).toBeNull();
+
+    const { data: after } = await owner.db
+      .from("slack_installations")
+      .select("scopes")
+      .eq("id", installationId)
+      .single();
+    expect(after?.scopes).toEqual(["channels:history", "reactions:read"]);
+
+    const { error: clientError } = await owner.db
+      .from("slack_installations")
+      .update({ scopes: ["everything"] })
+      .eq("id", installationId);
+    expect(clientError).not.toBeNull();
+
+    const { data: theirs } = await outsider.db.from("slack_installations").select("scopes");
+    expect(theirs).toEqual([]);
+  });
 });
 
 describe("a Slack identity", () => {

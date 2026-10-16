@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
+import { memoryDb } from "../test-support/memory-db";
 
 /**
  * The install callback, which is the only place a Slack workspace is bound to a
@@ -18,6 +19,19 @@ vi.mock("../lib/supabase", () => ({ serviceClient: () => ({ from: serviceFrom })
 const exchangeSlackCode = vi.fn();
 vi.mock("../lib/slack/api", () => ({
   exchangeSlackCode: (...args: unknown[]) => exchangeSlackCode(...args),
+}));
+
+const handleSlackEvent = vi.fn(async () => {});
+vi.mock("../lib/slack/handle", () => ({
+  handleSlackEvent: (...args: unknown[]) => handleSlackEvent(...(args as [])),
+}));
+const deliverSlackEvent = vi.fn(async () => {});
+vi.mock("../lib/routines/events/slack-deliver", () => ({
+  deliverSlackEvent: (...args: unknown[]) => deliverSlackEvent(...(args as [])),
+}));
+const lapseSubscriptions = vi.fn(async () => [] as string[]);
+vi.mock("../lib/routines/events/lifecycle", () => ({
+  lapseSubscriptions: (...args: unknown[]) => lapseSubscriptions(...(args as [])),
 }));
 
 const { slack, slackPublic } = await import("./slack");
@@ -139,6 +153,7 @@ beforeEach(() => {
     teamName: "Acme",
     botUserId: "B-1",
     botToken: "xoxb-fresh",
+    scopes: ["app_mentions:read", "channels:history"],
   });
 });
 
@@ -170,7 +185,12 @@ describe("POST /slack/complete", () => {
     expect(res.status).toBe(200);
     expect(
       calls.find((c) => c.table === "slack_installations" && c.op === "upsert")?.values,
-    ).toMatchObject({ workspace_id: "ws-1", team_id: "T-ACME" });
+    ).toMatchObject({
+      workspace_id: "ws-1",
+      team_id: "T-ACME",
+      // What Slack granted, recorded so a reconnect can be asked for (0112).
+      scopes: ["app_mentions:read", "channels:history"],
+    });
   });
 
   it("refuses an install somebody else started, before exchanging anything", async () => {
@@ -296,5 +316,152 @@ describe("POST /slack/events, in front of the per-address limit", () => {
     expect((await event("T1", { from })).status).toBe(429);
     // Slack's own address is untouched.
     expect((await event("T1")).status).toBe(200);
+  });
+});
+
+describe("POST /slack/events, for routines waiting on Slack activity", () => {
+  beforeEach(() => {
+    resetRateLimiters();
+    resetMisses();
+  });
+
+  async function signedEvent(payload: Record<string, unknown>) {
+    const body = JSON.stringify(payload);
+    const ts = String(Math.floor(Date.now() / 1000));
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(ENV.SLACK_SIGNING_SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mac = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v0:${ts}:${body}`)),
+    );
+    const hex = [...mac].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return app().request(
+      "/slack/events",
+      {
+        method: "POST",
+        body,
+        headers: {
+          "Content-Type": "application/json",
+          "x-slack-request-timestamp": ts,
+          "x-slack-signature": `v0=${hex}`,
+        },
+      },
+      ENV as never,
+    );
+  }
+
+  it("hands every event to the answer flow and to the routines, side by side", async () => {
+    const installation = { id: "inst-1", team_id: "T1", workspace_id: "ws-1", bot_user_id: "UBOT" };
+    serviceDb({ slack_installations: installation });
+    const event = {
+      type: "message",
+      channel_type: "channel",
+      channel: "C1",
+      user: "U1",
+      text: "hi",
+      ts: "1.0",
+    };
+
+    const res = await signedEvent({
+      type: "event_callback",
+      team_id: "T1",
+      event_id: "Ev42",
+      event,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(res.status).toBe(200);
+    expect(handleSlackEvent).toHaveBeenCalledWith(installation, event, expect.anything());
+    expect(deliverSlackEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      installation,
+      event,
+      "Ev42",
+      expect.objectContaining({ defer: expect.any(Function), run: expect.any(Function) }),
+    );
+  });
+
+  it("still answers when the routines' side fails", async () => {
+    serviceDb({ slack_installations: { id: "inst-1", team_id: "T1", workspace_id: "ws-1" } });
+    deliverSlackEvent.mockRejectedValueOnce(new Error("boom"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await signedEvent({
+      type: "event_callback",
+      team_id: "T1",
+      event: { type: "app_mention", user: "U1", channel: "C1", text: "hi", ts: "1.0" },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    error.mockRestore();
+
+    expect(handleSlackEvent).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the installation, for routines waiting on Slack activity", () => {
+  /** The caller's own client: a member of ws-1, whose Slack is `install`. */
+  function signedIn(install: Record<string, unknown>) {
+    const m = memoryDb({
+      profiles: [{ id: "user-1", active_workspace_id: "ws-1" }],
+      workspace_members: [{ workspace_id: "ws-1", user_id: "user-1", role: "admin" }],
+      slack_installations: [install],
+    });
+    const hono = new Hono<AppEnv>();
+    hono.use("*", async (c, next) => {
+      c.set("user", { id: "user-1", email: "u@example.com" } as never);
+      c.set("db", m.db as never);
+      await next();
+    });
+    hono.route("/", slack);
+    return hono;
+  }
+
+  const install = {
+    id: "inst-1",
+    workspace_id: "ws-1",
+    team_id: "T1",
+    team_name: "Acme",
+    bot_user_id: "UBOT",
+    agent_id: null,
+    installed_by: "user-1",
+    created_at: "2026-10-01T00:00:00Z",
+  };
+
+  it("says which scopes an install from before 0112 would need a reconnect for", async () => {
+    const res = await signedIn({ ...install, scopes: null }).request("/slack", {}, ENV as never);
+    const body = (await res.json()) as { installation: { missingScopes: string[] } };
+    expect(body.installation.missingScopes.sort()).toEqual([
+      "channels:history",
+      "groups:history",
+      "reactions:read",
+    ]);
+
+    const fresh = await signedIn({
+      ...install,
+      scopes: ["channels:history", "groups:history", "reactions:read"],
+    }).request("/slack", {}, ENV as never);
+    expect(
+      ((await fresh.json()) as { installation: { missingScopes: string[] } }).installation
+        .missingScopes,
+    ).toEqual([]);
+  });
+
+  it("marks the team's routines stopped when Slack is disconnected", async () => {
+    const res = await signedIn({ ...install, scopes: null }).request(
+      "/slack/installation",
+      { method: "DELETE" },
+      ENV as never,
+    );
+    expect(res.status).toBe(200);
+    expect(lapseSubscriptions).toHaveBeenCalledWith(
+      expect.anything(),
+      { provider: "slack", externalId: "T1" },
+      "Slack was disconnected.",
+      expect.objectContaining({ announce: expect.any(Function) }),
+    );
   });
 });

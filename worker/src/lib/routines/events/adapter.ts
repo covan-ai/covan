@@ -30,6 +30,7 @@ import {
 import { COMPOSIO_ADAPTER } from "./composio";
 import { GITHUB_ADAPTER } from "./github";
 import { WEBSUB_ADAPTER } from "./websub";
+import { SLACK_ADAPTER } from "./slack";
 
 /** The row as the engine reads it, secret still sealed. */
 export type SubscriptionRow = {
@@ -135,6 +136,7 @@ const ADAPTERS: Partial<Record<EventProvider, EventAdapter>> = {
   composio: COMPOSIO_ADAPTER,
   github: GITHUB_ADAPTER,
   websub: WEBSUB_ADAPTER,
+  slack: SLACK_ADAPTER,
 };
 
 export const ADAPTER_REGISTRY: AdapterRegistry = {

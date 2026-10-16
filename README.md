@@ -215,6 +215,7 @@ any writer can take back.
 | What starts it     | a cron schedule in your timezone, or a webhook URL you paste into GitHub or `curl`                               | —                                             |
 | …or an app event   | a new Gmail or Outlook mail, an Outlook event, a Google Calendar event new, changed, cancelled or about to start | `COMPOSIO_API_KEY`, `COMPOSIO_WEBHOOK_SECRET` |
 | …or a repo or feed | a GitHub push, pull request or issue, a new YouTube video, or a new post in a feed that supports WebSub          | `WORKER_HOST` for YouTube and feeds           |
+| …or Slack activity | a message or a reaction in a Slack channel the app is in                                                         | the Slack app (`SLACK_*`)                     |
 | What it watches    | an RSS feed, a web page by content hash, a bundle a connection syncs, or nothing                                 | —                                             |
 | Where it lands     | email, a Slack webhook, or a signed webhook of yours                                                             | `RESEND_API_KEY` for email                    |
 | What it keeps      | each result optionally filed into a bundle, with a retention you set                                             | —                                             |

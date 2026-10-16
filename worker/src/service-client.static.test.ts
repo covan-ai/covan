@@ -75,6 +75,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the Composio event adapter (0109) subscribes with the connected account behind the connection a routine was set up with, and connected_account_id and composio_user_id are granted to no client role (0063) — on one deployment-wide Composio key the account id is the only thing separating two tenants. It reads only: the one tool_connections row named by the subscription's config.connectionId (which the route found through the caller's own client), re-checked against the routine's own workspace, its owner (or a workspace scope, 0098), its toolkit and its status before anything is subscribed; the other routine_event_subscriptions rows holding the same trigger instance id, so a shared instance is not ended under them; and, for a delivery matching no row, whether any Composio subscription is mid-subscribe. Every write stays in lifecycle.ts",
   ],
   [
+    "lib/routines/events/slack.ts",
+    "the Slack event adapter (0112) subscribes nothing at Slack, but has to check the install can hear what a routine asks for and find the channel it names, which takes the bot token — a column of slack_installations no client may read (0044). It reads only the one installation the route found through the caller's own client (config.connectionId), re-checked against the routine's own workspace, and writes nothing; every write stays in lifecycle.ts",
+  ],
+  [
     "lib/routines/poke-room.ts",
     "the Durable Object alarm a webhook's or an app event's run is moved into so it outlives the response has no caller, so there is no JWT for RLS to resolve. It reads one routines row, by the id the receiving route parked after ingest.ts or events/receive.ts had already resolved it with the service role, with ingest.ts's column list, skips it if it is deleted or no longer active, and hands it to runPokedRoutine, which re-checks membership and credits off the row as every run does. It writes nothing itself",
   ],
@@ -281,6 +285,10 @@ const RECEIVES_THE_SERVICE_CLIENT = new Map([
   [
     "lib/slack/handle.ts",
     "a Slack event has no Covan caller. Every query is scoped to the installation's workspace, and the asker is resolved to a member by email before anything is read on their behalf",
+  ],
+  [
+    "lib/routines/events/slack-deliver.ts",
+    "a Slack event has no Covan caller, the same exemption lib/slack/handle.ts holds beside it. It reads only routine_event_subscriptions rows for the team the signed delivery named (provider slack, external_id that team id, active, this event type and channel), and hands each routine id to receiveEvent, which re-reads it and applies every check a delivery gets — the routine running, its filters, the flood fuse — before the executor re-checks membership and credits",
   ],
   [
     "lib/routines/executor.ts",

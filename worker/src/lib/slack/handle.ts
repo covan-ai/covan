@@ -47,7 +47,12 @@ import { agentAccessFor } from "../agent-access";
 const TITLE_LIMIT = 80;
 
 export type SlackEvent = {
-  type: "app_mention" | "message";
+  /**
+   * `reaction_added` reaches this module only to be turned away by
+   * `shouldAnswer`; routines that wait for one read it in
+   * `lib/routines/events/slack.ts`.
+   */
+  type: "app_mention" | "message" | "reaction_added";
   user?: string;
   text?: string;
   channel?: string;
@@ -56,6 +61,13 @@ export type SlackEvent = {
   thread_ts?: string;
   bot_id?: string;
   subtype?: string;
+  /** `reaction_added`: the emoji's name, without colons. */
+  reaction?: string;
+  /** `reaction_added`: what was reacted to. */
+  item?: { type?: string; channel?: string; ts?: string };
+  /** `reaction_added`: who wrote the message that was reacted to. */
+  item_user?: string;
+  event_ts?: string;
 };
 
 export type InstallationRow = {

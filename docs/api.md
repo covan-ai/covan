@@ -151,7 +151,7 @@ is not there", and it says the second because that is what it can prove.
 
 ### Rate limits
 
-Two tiers, both per minute. The standard tier — 120 requests, keyed by address —
+Two tiers, both per minute. The standard tier — 600 requests, keyed by address —
 stands in front of everything. The expensive tier — 20 requests, keyed by user —
 stands in front of the six endpoints that buy a completion or a transcription:
 `/chat/stream`, `/transcribe`, `/brainstorm/ideas/suggest`, `/persona/suggest`,

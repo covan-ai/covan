@@ -105,7 +105,7 @@ ALLOWED_ORIGIN = "https://your-app.example.com"
 [[ratelimits]]
 name = "RATE_LIMIT_STANDARD"
 namespace_id = "1001"
-simple = { limit = 120, period = 60 }
+simple = { limit = 600, period = 60 }
 
 # expensive: in front of the six endpoints that buy a completion or a
 # transcription, keyed by the authenticated user. More than a person can type,

@@ -587,7 +587,7 @@ call costs, not how many arrive.
 
 | Tier        | In front of                                                                                                            | Keyed on             | Default |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------- | ------- |
-| `standard`  | everything, including the token check                                                                                  | the caller's address | 120/min |
+| `standard`  | everything, including the token check                                                                                  | the caller's address | 600/min |
 | `expensive` | `/chat/stream`, `/transcribe`, `/brainstorm/ideas/suggest`, `/persona/suggest`, `/routines/draft`, `/routines/:id/run` | the signed-in user   | 20/min  |
 
 `standard` is generous on purpose: it is keyed by address, a shared office is

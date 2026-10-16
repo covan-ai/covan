@@ -13,6 +13,8 @@ vi.mock("../lib/routines/events/receive", () => ({ receiveEvent }));
 vi.mock("../lib/routines/events/lifecycle", () => ({ lapseSubscriptions }));
 vi.mock("../lib/routines/events/composio", () => ({ cancelOrphanTrigger }));
 vi.mock("../lib/routines/dispatcher", () => ({ announceLapsedSubscription }));
+const startPokedRun = vi.fn(async () => {});
+vi.mock("../lib/routines/poke-room", () => ({ startPokedRun }));
 
 const { composioEvents } = await import("./composio-events");
 
@@ -81,6 +83,25 @@ describe("POST /composio/events", () => {
     const [, target, raw] = receiveEvent.mock.calls[0];
     expect(target).toEqual({ provider: "composio", externalId: "ti_abc" });
     expect(raw).toMatchObject({ data: { message_id: "m1" } });
+  });
+
+  it("has the run started where it can outlive this response", async () => {
+    // `waitUntil` ends thirty seconds after the 200; the route's `run` hands
+    // the routine to `startPokedRun`, with the route's own bindings.
+    const body = message();
+    await post(body, await signed(body));
+    const [, , , deps] = receiveEvent.mock.calls[0] as [
+      unknown,
+      unknown,
+      unknown,
+      { run: (env: unknown, routine: unknown, trigger: unknown) => Promise<unknown> },
+    ];
+    await deps.run({ other: true }, { id: "r1" }, { eventId: "composio:gmail:m1" });
+    expect(startPokedRun).toHaveBeenCalledWith(
+      expect.objectContaining({ COMPOSIO_WEBHOOK_SECRET: SECRET }),
+      { id: "r1" },
+      { eventId: "composio:gmail:m1" },
+    );
   });
 
   it("refuses an unsigned or wrongly signed delivery before reading it", async () => {

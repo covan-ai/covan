@@ -75,6 +75,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the Composio event adapter (0109) subscribes with the connected account behind the connection a routine was set up with, and connected_account_id and composio_user_id are granted to no client role (0063) — on one deployment-wide Composio key the account id is the only thing separating two tenants. It reads only: the one tool_connections row named by the subscription's config.connectionId (which the route found through the caller's own client), re-checked against the routine's own workspace, its owner (or a workspace scope, 0098), its toolkit and its status before anything is subscribed; the other routine_event_subscriptions rows holding the same trigger instance id, so a shared instance is not ended under them; and, for a delivery matching no row, whether any Composio subscription is mid-subscribe. Every write stays in lifecycle.ts",
   ],
   [
+    "lib/routines/poke-room.ts",
+    "the Durable Object alarm a webhook's or an app event's run is moved into so it outlives the response has no caller, so there is no JWT for RLS to resolve. It reads one routines row, by the id the receiving route parked after ingest.ts or events/receive.ts had already resolved it with the service role, with ingest.ts's column list, skips it if it is deleted or no longer active, and hands it to runPokedRoutine, which re-checks membership and credits off the row as every run does. It writes nothing itself",
+  ],
+  [
     "lib/routines/held.ts",
     "a routine's report held for its browser (0100) is finished by whatever settled the browser's last task — a cron tick or an open tab answering for another person's run — so there is no caller whose JWT could resolve the routine, its channel or its run. routine_runs has no client write grant at all (0094), and routines.browser_conversation_id is the engine's column. Every read is keyed to the run id a browser task row carried and the routine row that run names: the channel is held to the routine's own user_id, the agent to the routine's workspace, and the conversation it opens is the routine owner's own, private, under the routine's agent",
   ],

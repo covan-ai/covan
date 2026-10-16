@@ -146,6 +146,20 @@ class_name = "DocumentRoom"
 tag = "v2-doc-rooms"
 new_sqlite_classes = ["DocumentRoom"]
 
+# Where a routine started by a webhook or an app event runs, one object per
+# event (`src/lib/routines/poke-room.ts`). The sender is answered first and
+# the routine runs afterwards; without this, "afterwards" is `waitUntil`, which
+# Cloudflare ends thirty seconds after the response, and most runs take
+# longer. Leave both blocks out and those runs still start, and are cut off
+# when the thirty seconds are up. SQLite-backed, so it works on Workers Free.
+[[durable_objects.bindings]]
+name = "ROUTINE_ROOMS"
+class_name = "RoutineRoom"
+
+[[migrations]]
+tag = "v3-routine-rooms"
+new_sqlite_classes = ["RoutineRoom"]
+
 # PDF export, printed by Cloudflare Browser Rendering (`src/lib/formats/pdf.ts`).
 # Optional — without it the PDF button falls back to the browser's own print
 # dialog. Billed by the browser-hour; one PDF is a few seconds of one.

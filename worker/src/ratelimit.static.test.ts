@@ -121,14 +121,15 @@ const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   //
   // `paidRouteFiles()` below finds spenders by looking for an import of the
   // completion seam or of `transcribeAudio`. A route that spends by running a
-  // routine imports neither — `runPokedRoutine` is a dispatcher call, and the
-  // model call is three files further down — so this endpoint would have
-  // sailed past the tripwire that exists to catch exactly it.
+  // routine imports neither — `startPokedRun` hands the routine to a Durable
+  // Object or to `runPokedRoutine`, and the model call is several files
+  // further down — so this endpoint would have sailed past the tripwire that
+  // exists to catch exactly it.
   //
   // The same hole is open for anything else that reaches the model through the
   // routine engine. Until the detection is widened, a new one has to be
   // remembered here, which is a review item rather than a guarantee.
-  "routine-hooks.ts": "runPokedRoutine",
+  "routine-hooks.ts": "startPokedRun",
   // The same hole one step further down: Composio's deliveries reach
   // `runPokedRoutine` through `events/receive.ts`, so this file imports
   // neither seam. Its bounds are pinned below with the hooks'.

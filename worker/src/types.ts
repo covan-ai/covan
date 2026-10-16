@@ -108,6 +108,12 @@ export type RoutineEnv = {
    * outside the provider's list is a 422 on every run.
    */
   BROWSER_USE_MODEL?: string;
+  /**
+   * How hard a `browse` run's model reasons: `none` … `max`, or `provider` to
+   * send nothing and take browser-use's default (`xhigh` for `gpt-5.6-luna`).
+   * Empty means `DEFAULT_REASONING` in `lib/browser/v4.ts`.
+   */
+  BROWSER_USE_REASONING?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
   /**

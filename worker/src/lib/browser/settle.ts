@@ -395,7 +395,7 @@ async function recordOpenBrowser(
  * Nothing when the provider gave no figure: the hold stands, which errs
  * towards the operator. Nothing for the one free retry after a login wall
  * (`retry_of`, see `retryBrowserTask`): the person did nothing wrong, and the
- * run still carries the original's `maxCostUsd`.
+ * run carries its own, lower `maxCostUsd` (`RETRY_COST_CAP_USD`).
  *
  * Never throws: the run is over and its answer is on its way.
  */

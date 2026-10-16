@@ -1,5 +1,12 @@
 import type { CredentialBinding } from "./credentials";
-import { DEFAULT_MODEL, RUN_COST_CAP_USD, type CreateRunInput } from "./v4";
+import {
+  DEFAULT_MODEL,
+  RETRY_COST_CAP_USD,
+  RUN_COST_CAP_USD,
+  modelParamsFor,
+  reasoningOf,
+  type CreateRunInput,
+} from "./v4";
 
 /**
  * What a `browse` run is asked to end with, in one place.
@@ -72,13 +79,21 @@ export function bareHost(value: string | null): string | null {
 /**
  * Words the model never writes, put in front of the one sentence it did.
  *
- * The first sentence is the plan's, verbatim. The second asks for the final
+ * The first sentence is the plan's, verbatim. The second is the run's
+ * `maxCostUsd`, told to the one thing that can act on it: a run stopped at
+ * the ceiling answers "Could not produce output matching outputSchema" and
+ * nothing else, so every page it read is paid for and lost — three retries
+ * after a sign-in on 2026-10-11/12 ended that way, at $0.25 each, asked for
+ * fifteen companies or "explore in detail". The last asks for the final
  * answer in the schema's shape — the schema itself, serialised, rather than a
  * paraphrase of it, which is what keeps it from drifting.
  */
 export const RUN_PREAMBLE =
   "If a page requires signing in and you have no credential for it, stop and report " +
   "`login_required` with the site's host. " +
+  "Your budget is small and a run that exhausts it ends with no answer at all, so for a task " +
+  "that asks for many items or open-ended exploration, stop once you have a useful answer and " +
+  "report what you have, saying what is missing. " +
   "End with your final answer as exactly one JSON object matching this JSON Schema — " +
   "`done` when the task is finished, `blocked` when something else stopped you, and what " +
   `you found or did in \`answer\`: ${JSON.stringify(OUTCOME_SCHEMA)}`;
@@ -199,7 +214,7 @@ export function jarForRun<T extends { id: string }>(
  * something remembered.
  */
 export function conversationRun(
-  env: { BROWSER_USE_MODEL?: string },
+  env: { BROWSER_USE_MODEL?: string; BROWSER_USE_REASONING?: string },
   input: {
     task: string;
     /** The provider session to continue; absent for the run that opens it. */
@@ -211,9 +226,16 @@ export function conversationRun(
      */
     withoutProfile?: boolean;
     login?: Pick<CredentialBinding, "siteHost" | "aliases" | "bindings"> | null;
+    /** The free retry after a hand-back: capped at `RETRY_COST_CAP_USD`, not the run's. */
+    freeRetry?: boolean;
   },
 ): CreateRunInput {
   const login = input.login?.bindings.length ? input.login : null;
+  // `||`, as `v4BaseOf`: `docker-compose.yml` hands an unset variable over
+  // as an empty string, and an empty model is a 422.
+  const model = env.BROWSER_USE_MODEL || DEFAULT_MODEL;
+  const effort = reasoningOf(env.BROWSER_USE_REASONING);
+  const modelParams = effort ? modelParamsFor(model, effort) : undefined;
   return {
     // The preamble and the schema are the same constant twice over; see the
     // file header and ruling R8. A saved login's sentence goes between the
@@ -249,13 +271,14 @@ export function conversationRun(
               : { proxyCountryCode: input.profile.proxyCountryCode }),
           }
         : {}),
-    // `||`, as `v4BaseOf`: `docker-compose.yml` hands an unset variable over
-    // as an empty string, and an empty model is a 422.
-    model: env.BROWSER_USE_MODEL || DEFAULT_MODEL,
+    model,
+    // Omitted when the operator asked for the provider's default, or the
+    // model's family has no word for the level; see `modelParamsFor`.
+    ...(modelParams ? { modelParams } : {}),
     // A ceiling on what one run may cost, enforced by the provider rather than
     // hoped for. The person never pays browser-use; this
     // is what keeps the operator's side of that bounded — the hand-back's
-    // free retry included.
-    maxCostUsd: RUN_COST_CAP_USD,
+    // free retry included, on a lower ceiling because nobody pays for it.
+    maxCostUsd: input.freeRetry ? RETRY_COST_CAP_USD : RUN_COST_CAP_USD,
   };
 }

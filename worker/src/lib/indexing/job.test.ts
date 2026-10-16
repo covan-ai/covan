@@ -20,7 +20,8 @@ import { fakeDb, type Filter, type QueryContext } from "../../test-support/fake-
 import { getDocStore } from "../docstore";
 import { embedTexts } from "../embeddings";
 import { sidecarKey } from "../document-text";
-import { advanceIndexJob, MAX_ATTEMPTS, UNIT } from "./job";
+import { CHUNK_INSERT_BATCH } from "../chunk-store";
+import { advanceIndexJob, MAX_ATTEMPTS, UNIT, WAIT_FOR_TURN_MS } from "./job";
 
 type Row = Record<string, unknown>;
 
@@ -50,9 +51,13 @@ const matches = (row: Row, filters: Filter[]) =>
     return true;
   });
 
-/** A database holding one document and its passages, which the job changes. */
-function world(doc: Row, passages: Row[] = []) {
-  const state = { doc: { ...doc }, chunks: [...passages] };
+/**
+ * A database holding one document and its passages, which the job changes.
+ * `waiting` stands for 0111's answer when another document in the workspace is
+ * being indexed: the claim hands back nothing.
+ */
+function world(doc: Row, passages: Row[] = [], opts: { waiting?: boolean } = {}) {
+  const state = { doc: { ...doc }, chunks: [...passages], inserts: [] as number[] };
   const fake = fakeDb({
     tables: {
       documents: {
@@ -79,6 +84,7 @@ function world(doc: Row, passages: Row[] = []) {
           return { data: sorted.slice(0, 1), error: null };
         },
         insert: (ctx: QueryContext) => {
+          state.inserts.push((ctx.values as unknown as Row[]).length);
           state.chunks.push(...(ctx.values as unknown as Row[]));
           return { data: null, error: null };
         },
@@ -90,6 +96,7 @@ function world(doc: Row, passages: Row[] = []) {
     },
     rpc: {
       claim_index_job: () => {
+        if (opts.waiting) return { data: [], error: null };
         const s = state.doc.index_status;
         return { data: s === "queued" || s === "indexing" ? [{ ...state.doc }] : [], error: null };
       },
@@ -223,6 +230,52 @@ describe("advanceIndexJob", () => {
   it("does nothing for a document that is not queued", async () => {
     const { db } = world(queued({ index_status: "ready" }));
     expect(await advanceIndexJob(db, env(), "d1")).toEqual({ next: "none" });
+  });
+
+  // The statement timeout, not the Worker's memory, is what an insert has to
+  // fit now: every row is a write into the vector index.
+  it("writes a unit in inserts no bigger than the batch, a whole number of them", async () => {
+    await store("b1/handbook", sentences(5000));
+    const { state, db } = world(queued());
+
+    await advanceIndexJob(db, env(), "d1"); // reads the text
+    await advanceIndexJob(db, env(), "d1"); // the first unit
+
+    expect(state.doc.index_status).toBe("indexing");
+    expect(state.inserts).toEqual(Array(UNIT / CHUNK_INSERT_BATCH).fill(CHUNK_INSERT_BATCH));
+    expect(CHUNK_INSERT_BATCH).toBeLessThanOrEqual(64);
+  });
+});
+
+describe("advanceIndexJob when its turn has not come (0111)", () => {
+  const at = new Date("2026-10-16T02:00:00Z");
+  const now = () => at;
+
+  it("looks again after a while, without reading or embedding anything", async () => {
+    await store("b1/handbook", sentences(400));
+    const { state, db } = world(queued(), [], { waiting: true });
+
+    const next = await advanceIndexJob(db, env(), "d1", now);
+
+    expect(next).toEqual({ next: "at", at: at.getTime() + WAIT_FOR_TURN_MS });
+    expect(state.doc.index_status).toBe("queued");
+    expect(embedTexts).not.toHaveBeenCalled();
+  });
+
+  it("waits for the lease of a unit of its own that is still running", async () => {
+    const until = new Date(at.getTime() + 120_000).toISOString();
+    const { db } = world(queued({ index_status: "indexing", index_lease_until: until }), [], {
+      waiting: true,
+    });
+
+    const next = await advanceIndexJob(db, env(), "d1", now);
+
+    expect(next).toEqual({ next: "at", at: Date.parse(until) + 1_000 });
+  });
+
+  it("stops for a document that was deleted while it waited", async () => {
+    const { db } = world(queued({ deleted_at: at.toISOString() }), [], { waiting: true });
+    expect(await advanceIndexJob(db, env(), "d1", now)).toEqual({ next: "none" });
   });
 });
 

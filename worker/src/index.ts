@@ -43,6 +43,7 @@ import { unfitToServe } from "./lib/env";
 import { connections, connectionsPublic } from "./routes/connections";
 import { toolConnections } from "./routes/tool-connections";
 import { composio, composioPublic } from "./routes/composio";
+import { composioEvents } from "./routes/composio-events";
 import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
 import { routineHooks } from "./routes/routine-hooks";
@@ -115,6 +116,9 @@ app.route("/", composioPublic);
 // opens the state, seals the grant and redirects.
 app.route("/", slackPublic);
 app.route("/", routineHooks);
+// Composio's deliveries, by the same argument: one signature, one trigger
+// instance to count against, and the address only for signatures that fail.
+app.route("/", composioEvents);
 
 // After cors, so a preflight is answered rather than counted: an OPTIONS that
 // gets a 429 makes the browser report the real request as a CORS failure, which

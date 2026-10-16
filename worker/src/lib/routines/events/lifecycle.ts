@@ -263,6 +263,105 @@ export async function sweepEventSubscriptions(
   return { claimed: claimed.length };
 }
 
+/**
+ * Which subscriptions listen through a grant that is gone.
+ *
+ * Two roads lead here and both are about the connection, not the routine: the
+ * person removed it (`DELETE /tool-connections/:id`), or the provider let it
+ * lapse and said so (Composio's `connected_account.expired`, at
+ * `POST /composio/events`). Either way every routine listening through it has
+ * stopped hearing anything, and no retry will change that — the person has to
+ * connect again. So each row goes to `expired`, which the sweeper leaves alone,
+ * with a sentence for the routine's page; its arrangement at the provider is
+ * ended where it can be; and the routine's owner is told, once — a row that is
+ * already `expired` is not matched, so a provider that repeats itself does not
+ * mail anybody twice.
+ *
+ * `match` is a key in `config` (where the route recorded the connection the
+ * routine was set up with), a key in `state` (where an adapter recorded what
+ * it subscribed with), or the provider's own id for the arrangement — for a
+ * provider that switched one off by itself (Composio's `trigger.disabled`).
+ * Answers the routine ids it lapsed.
+ */
+export async function lapseSubscriptions(
+  env: RoutineEnv,
+  match:
+    | { config: Record<string, string> }
+    | { state: Record<string, string> }
+    | { provider: string; externalId: string },
+  detail: string,
+  deps: LifecycleDeps & {
+    announce?: (env: RoutineEnv, routineId: string, reason: string) => Promise<void>;
+  } = {},
+): Promise<string[]> {
+  const db = deps.db ?? serviceClient(env);
+  const registry = deps.registry ?? EVENT_REGISTRY;
+  let query = db
+    .from("routine_event_subscriptions")
+    .select(SUBSCRIPTION_COLUMNS)
+    .neq("status", "expired");
+  if ("externalId" in match) {
+    query = query.eq("provider", match.provider).eq("external_id", match.externalId);
+  } else {
+    const [column, pairs] = "config" in match ? ["config", match.config] : ["state", match.state];
+    for (const [key, value] of Object.entries(pairs)) query = query.eq(`${column}->>${key}`, value);
+  }
+  const { data, error } = await query;
+  if (error) throw new Error(`could not find the event subscriptions to lapse: ${error.message}`);
+  const rows = (data ?? []) as unknown as SubscriptionRow[];
+
+  const lapsed: string[] = [];
+  for (const sub of rows) {
+    // Ended at the source first, best-effort: the grant is usually gone with
+    // the arrangement already, and a provider that kept one is answered by
+    // the next delivery finding nothing (`receive.ts`'s `unknown`).
+    let externalId = sub.external_id;
+    const adapter = registry.adapterFor(sub.provider);
+    const def = registry.eventType(sub.event_type);
+    if (externalId && adapter && def && adapter.isConfigured(env)) {
+      try {
+        const ctx = await contextFor(
+          env,
+          { id: sub.routine_id, user_id: "", workspace_id: "" },
+          sub,
+          def,
+        );
+        await adapter.unsubscribe(ctx);
+        externalId = null;
+      } catch (err) {
+        console.error(`could not unsubscribe ${sub.routine_id} at ${sub.provider}`, err);
+      }
+    }
+    const { data: updated, error: updateError } = await db
+      .from("routine_event_subscriptions")
+      .update({
+        status: "expired",
+        status_detail: detail,
+        external_id: externalId,
+        next_attempt_at: null,
+      })
+      .eq("routine_id", sub.routine_id)
+      .neq("status", "expired")
+      .select("routine_id");
+    if (updateError) {
+      console.error(`could not lapse the event subscription of ${sub.routine_id}`, updateError);
+      continue;
+    }
+    // Only the call that changed the row tells anybody, for
+    // `pauseForEventFlood`'s reason.
+    if (Array.isArray(updated) && updated.length > 0) lapsed.push(sub.routine_id);
+  }
+
+  if (deps.announce) {
+    for (const routineId of lapsed) {
+      await deps.announce(env, routineId, detail).catch((err: unknown) => {
+        console.error(`could not tell the owner of ${routineId} it stopped listening`, err);
+      });
+    }
+  }
+  return lapsed;
+}
+
 // ---- internals -------------------------------------------------------------
 
 async function readSubscription(

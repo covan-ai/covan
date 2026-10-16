@@ -81,6 +81,13 @@ RESEND_FROM=
 # subprocessor, it bills per call, and the page that collects a user's key
 # carries Composio's branding until you set your own.
 # COMPOSIO_API_KEY=
+# Optional, with the key above. Lets a routine start on an event in a connected
+# app — a new Gmail or Outlook mail, a calendar event about to start. It is the
+# signing secret of the project's webhook subscription, which
+# `bun run scripts/composio-webhook-subscribe.ts https://<api host>` makes and
+# prints. Set it on the cron Worker too: that one makes the triggers, and both
+# must agree that events exist. See docs/integrations.md.
+# COMPOSIO_WEBHOOK_SECRET=
 
 # Optional. Lets an agent drive a real browser — read a page that needs
 # JavaScript, pull a number out of a site with no API — through browser-use,

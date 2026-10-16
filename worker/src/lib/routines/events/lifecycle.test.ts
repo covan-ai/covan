@@ -14,6 +14,7 @@ vi.mock("../../supabase", () => ({
 }));
 
 const {
+  lapseSubscriptions,
   releaseSubscription,
   replaceSubscription,
   retryDelayMs,
@@ -370,5 +371,105 @@ describe("retryDelayMs", () => {
     expect(retryDelayMs(1)).toBe(5 * 60_000);
     expect(retryDelayMs(2)).toBe(10 * 60_000);
     expect(retryDelayMs(40)).toBe(24 * 60 * 60_000);
+  });
+});
+
+describe("lapseSubscriptions", () => {
+  const announce = vi.fn(async () => {});
+  beforeEach(() => announce.mockClear());
+
+  it("expires every row listening through a removed connection, ends it at the source and tells each owner once", async () => {
+    const db = memoryDb({
+      routines: [routine(), routine({ id: "r2" })],
+      routine_event_subscriptions: [
+        subscription({ status: "active", external_id: "ti_1", config: { connectionId: "tc1" } }),
+        subscription({
+          routine_id: "r2",
+          status: "disabled",
+          external_id: "ti_2",
+          config: { connectionId: "tc1" },
+        }),
+        subscription({
+          routine_id: "r3",
+          status: "active",
+          external_id: "ti_3",
+          config: { connectionId: "tc-other" },
+        }),
+      ],
+    });
+
+    const lapsed = await lapseSubscriptions(
+      ENV,
+      { config: { connectionId: "tc1" } },
+      "gmail was disconnected.",
+      { ...deps(db, mail), announce },
+    );
+
+    expect(lapsed.sort()).toEqual(["r1", "r2"]);
+    expect(mail.unsubscribe).toHaveBeenCalledTimes(2);
+    const rows = db.tables.routine_event_subscriptions;
+    expect(rows.find((r) => r.routine_id === "r1")).toMatchObject({
+      status: "expired",
+      status_detail: "gmail was disconnected.",
+      external_id: null,
+    });
+    expect(rows.find((r) => r.routine_id === "r3")).toMatchObject({ status: "active" });
+    expect(announce).toHaveBeenCalledTimes(2);
+  });
+
+  it("finds rows by what the adapter recorded, and by the provider's own id", async () => {
+    const db = memoryDb({
+      routines: [routine()],
+      routine_event_subscriptions: [
+        subscription({
+          status: "active",
+          external_id: "ti_1",
+          state: { connectedAccountId: "ca_1" },
+        }),
+      ],
+    });
+    expect(
+      await lapseSubscriptions(ENV, { state: { connectedAccountId: "ca_9" } }, "x", deps(db, mail)),
+    ).toEqual([]);
+    expect(
+      await lapseSubscriptions(
+        ENV,
+        { provider: "composio", externalId: "ti_1" },
+        "x",
+        deps(db, mail),
+      ),
+    ).toEqual(["r1"]);
+  });
+
+  it("does not tell anybody twice when the provider repeats itself", async () => {
+    const db = memoryDb({
+      routines: [routine()],
+      routine_event_subscriptions: [
+        subscription({
+          status: "active",
+          external_id: "ti_1",
+          state: { connectedAccountId: "ca_1" },
+        }),
+      ],
+    });
+    const match = { state: { connectedAccountId: "ca_1" } };
+    await lapseSubscriptions(ENV, match, "expired", { ...deps(db, mail), announce });
+    await lapseSubscriptions(ENV, match, "expired", { ...deps(db, mail), announce });
+    expect(announce).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the provider's id when ending it failed, so a later release can try again", async () => {
+    mail = adapter({ unsubscribe: vi.fn(async () => Promise.reject(new Error("down"))) });
+    const db = memoryDb({
+      routines: [routine()],
+      routine_event_subscriptions: [
+        subscription({ status: "active", external_id: "ti_1", config: { connectionId: "tc1" } }),
+      ],
+    });
+    await lapseSubscriptions(ENV, { config: { connectionId: "tc1" } }, "gone", deps(db, mail));
+    expect(db.tables.routine_event_subscriptions[0]).toMatchObject({
+      status: "expired",
+      external_id: "ti_1",
+    });
   });
 });

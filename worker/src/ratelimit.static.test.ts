@@ -129,6 +129,10 @@ const SPENDS_OUTSIDE_THE_MAP: Record<string, string> = {
   // routine engine. Until the detection is widened, a new one has to be
   // remembered here, which is a review item rather than a guarantee.
   "routine-hooks.ts": "runPokedRoutine",
+  // The same hole one step further down: Composio's deliveries reach
+  // `runPokedRoutine` through `events/receive.ts`, so this file imports
+  // neither seam. Its bounds are pinned below with the hooks'.
+  "composio-events.ts": "receiveEvent",
   // The document poll, `GET /sessions/:id/document-jobs`. On a deployment
   // with no document host it advances the caller's own job one unit per poll,
   // which is a model call — and it is a GET the tab makes every few seconds,
@@ -214,6 +218,19 @@ describe("the expensive rate limit", () => {
     expect(hooks).toContain('getRateLimiter(c.env, "expensive")');
     expect(hooks).toContain("hasSpentMisses(c)");
     expect(hooks).toContain("countMiss(c)");
+    // Composio's deliveries, the same three bounds: a signature before the
+    // body is parsed, the expensive tier taken by hand per trigger instance
+    // (one routine's spend), and an address whose signatures keep failing
+    // refused before the HMAC. Past that, `receive.ts`'s flood fuse.
+    const composioEvents = readFileSync(join(ROUTES, "composio-events.ts"), "utf8");
+    expect(composioEvents).toContain("verifyComposioWebhook");
+    expect(composioEvents).toContain('getRateLimiter(c.env, "expensive")');
+    expect(composioEvents).toContain("hasSpentMisses(c)");
+    expect(composioEvents).toContain("countMiss(c)");
+    expect(readFileSync(join(SRC, "lib", "routines", "events", "receive.ts"), "utf8")).toContain(
+      "count_routine_event",
+    );
+
     // And the credits themselves: a poked run is charged to the routine's
     // workspace by the executor, with no new code, because every id comes off
     // the row.

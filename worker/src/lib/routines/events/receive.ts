@@ -113,17 +113,53 @@ export async function receiveEvent(
   const pause = deps.pause ?? pauseForEventFlood;
   const sync = deps.sync ?? syncSubscription;
 
-  // 1. The subscription, by whichever handle the route has.
+  // 1. The subscription, by whichever handle the route has. A provider's own
+  // id can name more than one: Composio answers the same trigger instance to
+  // two routines that asked for the same thing on the same account
+  // (`composio.ts`), so a delivery is offered to each of them in turn.
   let query = db.from("routine_event_subscriptions").select(SUBSCRIPTION_COLUMNS);
   query =
     "routineId" in target
       ? query.eq("routine_id", target.routineId)
       : query.eq("provider", target.provider).eq("external_id", target.externalId);
-  const { data: subRow, error: subError } = await query.maybeSingle();
+  const { data: subRows, error: subError } = await query.limit(MAX_FAN_OUT);
   if (subError) throw new Error(`could not read the event subscription: ${subError.message}`);
-  const sub = subRow as SubscriptionRow | null;
-  if (!sub) return { status: "unknown" };
+  const subs = (subRows ?? []) as unknown as SubscriptionRow[];
+  if (subs.length === 0) return { status: "unknown" };
 
+  const outcomes: ReceiveOutcome[] = [];
+  for (const sub of subs) {
+    outcomes.push(
+      await receiveFor(env, sub, raw, { db, registry, run, pause, sync, defer: deps.defer }),
+    );
+  }
+  // What the route reports back: the most consequential of them.
+  return outcomes.sort((a, b) => RANK[a.status] - RANK[b.status])[0];
+}
+
+/** Read one shared trigger's routines at most this many at a time. */
+const MAX_FAN_OUT = 25;
+
+const RANK: Record<ReceiveOutcome["status"], number> = {
+  accepted: 0,
+  flood: 1,
+  filtered: 2,
+  ignored: 3,
+  inactive: 4,
+  unknown: 5,
+};
+
+/** Steps 2–6, for one subscription. */
+async function receiveFor(
+  env: RoutineEnv,
+  sub: SubscriptionRow,
+  raw: unknown,
+  deps: Required<Omit<ReceiveDeps, "db" | "registry">> & {
+    db: SupabaseClient;
+    registry: EventRegistry;
+  },
+): Promise<ReceiveOutcome> {
+  const { db, registry, run, pause, sync } = deps;
   const { data: routineRow, error: routineError } = await db
     .from("routines")
     .select(ROUTINE_COLUMNS)

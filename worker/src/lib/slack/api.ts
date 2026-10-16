@@ -1,8 +1,8 @@
 /**
- * The five Slack calls this integration makes, and no client library.
+ * The Slack calls this integration makes, and no client library.
  *
  * Slack's own SDK is a large dependency that assumes Node, and what we need
- * from it is five `fetch` calls with a bearer token. The one thing worth
+ * from it is a handful of `fetch` calls with a bearer token. The one thing worth
  * knowing about the Web API is below: it answers **200 with `ok: false`** for
  * application errors, so a caller that checks `res.ok` and stops has just
  * silently ignored `invalid_auth`.
@@ -56,7 +56,14 @@ export async function exchangeSlackCode(
   env: { SLACK_CLIENT_ID?: string; SLACK_CLIENT_SECRET?: string },
   code: string,
   redirectUri: string,
-): Promise<{ botToken: string; teamId: string; teamName: string; botUserId: string }> {
+): Promise<{
+  botToken: string;
+  teamId: string;
+  teamName: string;
+  botUserId: string;
+  /** What Slack granted, which an admin can make less than what was asked for. */
+  scopes: string[];
+}> {
   const res = await fetchImpl(`${API}/oauth.v2.access`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -70,6 +77,7 @@ export async function exchangeSlackCode(
   const data = (await res.json()) as SlackResponse & {
     access_token?: string;
     bot_user_id?: string;
+    scope?: string;
     team?: { id?: string; name?: string };
   };
   if (!data.ok) throw new SlackError("oauth.v2.access", String(data.error ?? "unknown"));
@@ -81,6 +89,10 @@ export async function exchangeSlackCode(
     teamId: data.team.id,
     teamName: data.team.name ?? data.team.id,
     botUserId: data.bot_user_id,
+    scopes: (data.scope ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
   };
 }
 
@@ -154,6 +166,143 @@ export async function isPublicChannel(
     return Boolean(info?.is_channel && !info.is_private && !info.is_im && !info.is_mpim);
   } catch (err) {
     if (err instanceof SlackError) return false;
+    throw err;
+  }
+}
+
+// ---- for routines that start on Slack activity (0112) ----------------------
+
+export type SlackChannel = { id: string; name: string; isMember: boolean | null };
+
+/** A channel id as Slack writes one: C… for public, G… for an older private one. */
+const CHANNEL_ID = /^[CG][A-Z0-9]{6,}$/;
+
+/**
+ * The channel a person named — `#general`, `general`, or an id pasted from the
+ * channel's details — or null when this install cannot see it.
+ *
+ * An id is described with `conversations.info`; a name is looked for in the
+ * public channels (`conversations.list`, a few pages at most: a workspace with
+ * thousands of channels is asked to paste the id instead). `isMember` is null
+ * where Slack would not say, which is a private channel this app was not
+ * granted `groups:read` for — the person pasted its id, and the app is either
+ * in it, in which case events arrive, or not, in which case they never will.
+ */
+export async function findChannel(
+  fetchImpl: typeof fetch,
+  token: string,
+  named: string,
+): Promise<SlackChannel | null> {
+  const wanted = named.trim().replace(/^#/, "");
+  if (CHANNEL_ID.test(wanted)) {
+    try {
+      const data = await call(fetchImpl, "conversations.info", token, { channel: wanted });
+      const info = data.channel as { id?: string; name?: string; is_member?: boolean } | undefined;
+      return {
+        id: info?.id ?? wanted,
+        name: info?.name ?? wanted,
+        isMember: typeof info?.is_member === "boolean" ? info.is_member : null,
+      };
+    } catch (err) {
+      if (err instanceof SlackError && err.code === "missing_scope") {
+        return { id: wanted, name: wanted, isMember: null };
+      }
+      if (err instanceof SlackError && err.code === "channel_not_found") return null;
+      throw err;
+    }
+  }
+
+  const name = wanted.toLowerCase();
+  let cursor: string | undefined;
+  for (let page = 0; page < 5; page++) {
+    const data = await call(fetchImpl, "conversations.list", token, {
+      types: "public_channel",
+      exclude_archived: true,
+      limit: 1000,
+      ...(cursor ? { cursor } : {}),
+    });
+    const channels = (data.channels ?? []) as Array<{
+      id: string;
+      name: string;
+      is_member?: boolean;
+    }>;
+    const hit = channels.find((ch) => ch.name.toLowerCase() === name);
+    if (hit) return { id: hit.id, name: hit.name, isMember: hit.is_member ?? null };
+    cursor = (data.response_metadata as { next_cursor?: string } | undefined)?.next_cursor;
+    if (!cursor) break;
+  }
+  return null;
+}
+
+/** How a person is shown in Slack, or null when Slack will not say. */
+export async function displayName(
+  fetchImpl: typeof fetch,
+  token: string,
+  slackUserId: string,
+): Promise<string | null> {
+  try {
+    const data = await call(fetchImpl, "users.info", token, { user: slackUserId });
+    const user = data.user as
+      | {
+          real_name?: string;
+          name?: string;
+          profile?: { display_name?: string; real_name?: string };
+        }
+      | undefined;
+    return (
+      user?.profile?.display_name?.trim() ||
+      user?.profile?.real_name?.trim() ||
+      user?.real_name?.trim() ||
+      user?.name?.trim() ||
+      null
+    );
+  } catch (err) {
+    if (err instanceof SlackError) return null;
+    throw err;
+  }
+}
+
+/** A link to one message, or null. */
+export async function permalink(
+  fetchImpl: typeof fetch,
+  token: string,
+  channel: string,
+  ts: string,
+): Promise<string | null> {
+  try {
+    const data = await call(fetchImpl, "chat.getPermalink", token, { channel, message_ts: ts });
+    return typeof data.permalink === "string" ? data.permalink : null;
+  } catch (err) {
+    if (err instanceof SlackError) return null;
+    throw err;
+  }
+}
+
+/**
+ * The text of one message, for a reaction to it: a reaction event says only
+ * which message, not what it said. Null when Slack will not say — a thread
+ * reply `conversations.history` does not list, or a channel the app left.
+ */
+export async function messageText(
+  fetchImpl: typeof fetch,
+  token: string,
+  channel: string,
+  ts: string,
+): Promise<{ text: string; user: string | null } | null> {
+  try {
+    const data = await call(fetchImpl, "conversations.history", token, {
+      channel,
+      latest: ts,
+      inclusive: true,
+      limit: 1,
+    });
+    const message = (
+      (data.messages ?? []) as Array<{ ts?: string; text?: string; user?: string }>
+    )[0];
+    if (!message || message.ts !== ts) return null;
+    return { text: message.text ?? "", user: message.user ?? null };
+  } catch (err) {
+    if (err instanceof SlackError) return null;
     throw err;
   }
 }

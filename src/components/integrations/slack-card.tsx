@@ -86,6 +86,32 @@ export function SlackCard({ state, agents }: { state: SlackState; agents: Agent[
         </p>
       )}
 
+      {/* Slack grants scopes per install, so one made before routines could
+          listen to channels keeps answering mentions and hears nothing else
+          until it is installed again. The same install flow; Slack keeps the
+          team, the agent choice and the conversations. */}
+      {installation.missingScopes && installation.missingScopes.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-hairline bg-background px-4 py-3">
+          <p className="min-w-0 flex-1 text-meta leading-[1.45] text-muted-foreground">
+            Routines can't start on channel messages or reactions yet. This install was made before
+            Covan asked to hear them — reconnect to allow it.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={install.isPending}
+            onClick={() =>
+              install.mutate(undefined, {
+                onError: (err) =>
+                  toast.error(err instanceof Error ? err.message : "Could not start the install"),
+              })
+            }
+          >
+            {install.isPending ? "Opening…" : "Reconnect"}
+          </Button>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         <Select
           value={installation.agentId ?? ""}

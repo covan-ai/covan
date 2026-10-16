@@ -410,6 +410,12 @@ export type SlackState = {
     agentId: string | null;
     installedBy: string;
     createdAt: number;
+    /**
+     * Scopes routines that start on Slack activity need and this install was
+     * not granted — an install from before they were asked for. Reinstalling
+     * adds them. Absent from an API older than this field.
+     */
+    missingScopes?: string[];
   } | null;
 };
 

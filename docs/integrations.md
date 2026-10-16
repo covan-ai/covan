@@ -359,9 +359,12 @@ workspace's oldest agent so the app works before anybody configures anything.
 1. Create an app at <https://api.slack.com/apps>.
 2. **OAuth & Permissions** → redirect URL `<your API URL>/slack/callback`.
 3. **Bot token scopes**: `app_mentions:read`, `channels:read`, `chat:write`,
-   `im:history`, `users:read`, `users:read.email`.
+   `im:history`, `users:read`, `users:read.email`, and — for routines that
+   start on Slack activity — `channels:history`, `groups:history`,
+   `reactions:read`.
 4. **Event Subscriptions** → request URL `<your API URL>/slack/events`, and
-   subscribe to the bot events `app_mention` and `message.im`.
+   subscribe to the bot events `app_mention` and `message.im`, and — for
+   routines — `message.channels`, `message.groups` and `reaction_added`.
 5. Set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` and `SLACK_SIGNING_SECRET` — all
    three, or none. A client pair without the signing secret installs fine and
    then rejects every event it is sent, which looks like a Slack outage.
@@ -370,6 +373,39 @@ workspace's oldest agent so the app works before anybody configures anything.
 
 `users:read.email` is not optional. Without it the app cannot tell who is
 asking, and answers nobody.
+
+### Routines that start on Slack activity
+
+The same app can start a routine (see [Routines that start when something
+happens](#routines-that-start-when-something-happens)):
+
+- **New message in a channel**: somebody writes in a channel the app is in.
+  Name the channel (`#support`), or paste a private channel's ID from its
+  details. Optionally only messages containing a word, or only from one
+  person.
+- **Reaction added**: somebody reacts with a particular emoji (`eyes`,
+  `white_check_mark`), in one channel or any the app is in.
+
+Slack only tells the app about channels it is in, so invite it first:
+`/invite @Covan` in the channel. Choosing a channel the app is not in is
+refused with that instruction.
+
+The routine reads the message, who wrote it, a link to it and, for a reaction,
+the message it was on. It never replies in Slack: it delivers wherever its own
+delivery channel says. The app's own messages, other bots' messages, edits and
+deletions never start a routine, so a routine that reports into the channel it
+listens to does not hear itself. Mentions and direct messages are still
+answered by the agent exactly as before; a routine is a second reader of the
+same events, not a replacement.
+
+**An install from before this needs reconnecting.** Slack grants scopes per
+install, and the three this needs were added later. The Integrations page says
+so on the Slack card, with a **Reconnect** button that runs the install again.
+The team, the agent choice and the conversations stay. Until then, choosing a
+Slack event is refused with the same sentence.
+
+Disconnecting Slack stops every routine listening to it: each one's page says
+so, and its owner gets one email.
 
 ### Removing it
 
@@ -741,14 +777,16 @@ Composio before the row goes, so does closing the account.
 A routine can start on an event in a connected app rather than on a clock
 or a webhook: **a new email in Gmail or Outlook, a new Outlook calendar event,
 a Google Calendar event that is new, changed, cancelled, or about to
-start, a GitHub push, pull request or issue, a new YouTube video, or a new
-post in a feed that supports instant updates.** In the routine dialog, under _Starts_, pick _When something happens
+start, a message or a reaction in a Slack channel, a GitHub push, pull
+request or issue, a new YouTube video, or a new post in a feed that supports
+instant updates.** In the routine dialog, under _Starts_, pick _When something happens
 in an app_, then the app, then the event and any filter (a Gmail search, an
 Outlook sender, how many minutes before a meeting). If the app is not
 connected yet, the dialog says so and links to the Integrations page.
 
 The mail and calendar events come through Composio, the same way connected
-apps do; GitHub, YouTube and feeds are described under their own headings
+apps do; GitHub, YouTube and feeds are described under their own headings,
+and Slack under [its own section](#routines-that-start-on-slack-activity)
 below. Composio
 watches the account and calls Covan when something happens. Each routine gets
 a short, readable summary of the event (sender, subject and text; or title,

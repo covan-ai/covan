@@ -862,7 +862,11 @@ describe("runRoutine", () => {
   describe("when a webhook poked it", () => {
     const poked = (over: Partial<RoutineRow> = {}) =>
       routine({ source_kind: "none", source_config: {}, ...over });
-    const trigger = { eventId: "evt-1", payload: '{"deploy":"finished"}' };
+    const trigger = {
+      eventId: "evt-1",
+      payload: '{"deploy":"finished"}',
+      source: "webhook" as const,
+    };
 
     it("claims the sender's event id, not a clock slot", async () => {
       const { db, inserts } = makeDb();
@@ -931,7 +935,11 @@ describe("runRoutine", () => {
       const { db, inserts, updates } = makeDb();
       const secret = '{"customer":"acme","card":"4111111111111111"}';
 
-      await runRoutine(poked(), makeDeps(db) as any, { eventId: "evt-2", payload: secret });
+      await runRoutine(poked(), makeDeps(db) as any, {
+        eventId: "evt-2",
+        payload: secret,
+        source: "webhook",
+      });
 
       const written = JSON.stringify([...inserts, ...updates]);
       expect(written).not.toContain("4111111111111111");
@@ -948,6 +956,105 @@ describe("runRoutine", () => {
       const claim = inserts.find((i) => i.table === "routine_deliveries")!;
       expect((claim.values as { item_key: string }[])[0].item_key).toMatch(/^slot:/);
       expect(summarise.mock.calls[0][0].payloadText).toBeUndefined();
+    });
+
+    // 0109: what started a run is on its row, so "why did this run at 03:12?"
+    // has an answer in the history and not only in a receiver's payload.
+    it("writes down that a webhook started it", async () => {
+      const { db, inserts } = makeDb();
+
+      await runRoutine(poked(), makeDeps(db) as any, trigger);
+
+      const run = inserts.find((i) => i.table === "routine_runs")!;
+      expect(run.values).toMatchObject({ triggered_by: "webhook", trigger_label: null });
+    });
+
+    it("writes down a scheduled run and a manual one as what they are", async () => {
+      const scheduled = makeDb();
+      await runRoutine(poked(), makeDeps(scheduled.db) as any);
+      expect(scheduled.inserts.find((i) => i.table === "routine_runs")!.values).toMatchObject({
+        triggered_by: "schedule",
+        trigger_label: null,
+      });
+
+      const manual = makeDb();
+      await runRoutine(poked(), { ...(makeDeps(manual.db) as any), trigger: "manual" });
+      expect(manual.inserts.find((i) => i.table === "routine_runs")!.values).toMatchObject({
+        triggered_by: "manual",
+      });
+    });
+  });
+
+  describe("when an event started it", () => {
+    const waiting = (over: Partial<RoutineRow> = {}) =>
+      routine({ source_kind: "none", source_config: {}, ...over });
+    const event = {
+      eventId: "composio:msg_1",
+      payload: "From: Ayşe\nSubject: Thursday\n\nDoes Thursday still work?",
+      source: "event" as const,
+      label: "Gmail · New mail",
+    };
+
+    // A prefix of its own, so a webhook sender's id and a provider's id that
+    // happened to be the same string are two events and not one handled.
+    it("claims an evt: key, not a hook: one", async () => {
+      const { db, inserts } = makeDb();
+
+      await runRoutine(waiting(), makeDeps(db) as any, event);
+
+      const claim = inserts.find((i) => i.table === "routine_deliveries")!;
+      expect(claim.values).toMatchObject([{ item_key: "evt:composio:msg_1" }]);
+    });
+
+    it("is a visible skipped run when the provider delivers it twice", async () => {
+      const { db, inserts } = makeDb({ claimWins: () => [] });
+
+      const out = await runRoutine(waiting(), makeDeps(db) as any, event);
+
+      expect(out).toEqual({ status: "skipped", itemsNew: 0 });
+      expect(summarise).not.toHaveBeenCalled();
+      expect(inserts.find((i) => i.table === "routine_runs")!.values).toMatchObject({
+        status: "skipped",
+        triggered_by: "event",
+        trigger_label: "Gmail · New mail",
+      });
+    });
+
+    it("hands the model the event's account under its own label", async () => {
+      const { db } = makeDb();
+
+      await runRoutine(waiting(), makeDeps(db) as any, event);
+
+      expect(summarise.mock.calls[0][0]).toMatchObject({
+        payloadText: event.payload,
+        payloadLabel: "Gmail · New mail",
+        mayDecline: true,
+      });
+    });
+
+    it("records what started it, and tells a receiver the same", async () => {
+      const { db, inserts } = makeDb({
+        rows: {
+          delivery_channels: {
+            kind: "webhook",
+            secret_ciphertext: await encryptSecret(
+              serialiseWebhookSecret({
+                url: "https://receiver.example.com/covan",
+                signingSecret: "whsec_TEST",
+              }),
+              SECRET_KEY,
+            ),
+          },
+        },
+      });
+
+      await runRoutine(waiting(), makeDeps(db) as any, event);
+
+      expect(inserts.find((i) => i.table === "routine_runs")!.values).toMatchObject({
+        triggered_by: "event",
+        trigger_label: "Gmail · New mail",
+      });
+      expect(JSON.parse(deliverCalls[0].init.body as string).run.triggeredBy).toBe("event");
     });
   });
 
@@ -2293,7 +2400,11 @@ describe("a routine that reads its own workspace", () => {
         reason: "the coverage report is no longer on for this workspace",
       });
 
-      await runRoutine(workspaceRoutine(), deps, { eventId: "evt-1", payload: "{}" });
+      await runRoutine(workspaceRoutine(), deps, {
+        eventId: "evt-1",
+        payload: "{}",
+        source: "webhook",
+      });
 
       expect(released).toEqual(["hook:evt-1"]);
       expect(updates.find((u) => u.table === "routines")!.values.status).toBe("paused");

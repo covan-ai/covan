@@ -63,6 +63,14 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the same exemption as the routine dispatcher, one floor up: a sync is claimed by a cron tick with no caller, so there is no JWT for RLS to resolve. What it may touch is bounded by hand in lib/connections/sync.ts, to the workspace and bundle that came out of claim_due_connections rather than out of anything a caller sent",
   ],
   [
+    "lib/routines/events/lifecycle.ts",
+    "subscribing, unsubscribing and renewing a routine's event at its provider (0109). routine_event_subscriptions has no client write grant at all, and external_id and secret_ciphertext are readable by no client role — with one deployment-wide provider key the first is the whole address of the arrangement, and unsubscribing needs both. Every function takes one routine id: one the route has already shown is the caller's own through c.get(\"db\") (create, PATCH, DELETE, the event routes), or one claim_event_subscriptions (0109, service role only) handed the cron. Every read and write is keyed to that id, the routine row it names supplies the user and workspace an adapter is handed, and the connection an adapter subscribes with is the config.connectionId the route found through the caller's own client",
+  ],
+  [
+    "lib/routines/events/receive.ts",
+    "a provider's delivery has no Covan caller, so there is no JWT for RLS to resolve — the same exemption lib/routines/ingest.ts holds for a webhook, one provider further away. What stands in for a caller is the receiving route's own verification of the provider's signature, which names one subscription. It reads that one row (by routine id or by the provider's own id for it), reads the routine it names with ingest.ts's column list, counts the event on that row through count_routine_event (0109, service role only), and hands the routine to runPokedRoutine, which re-checks membership and credits off the row as every run does",
+  ],
+  [
     "lib/routines/held.ts",
     "a routine's report held for its browser (0100) is finished by whatever settled the browser's last task — a cron tick or an open tab answering for another person's run — so there is no caller whose JWT could resolve the routine, its channel or its run. routine_runs has no client write grant at all (0094), and routines.browser_conversation_id is the engine's column. Every read is keyed to the run id a browser task row carried and the routine row that run names: the channel is held to the routine's own user_id, the agent to the routine's workspace, and the conversation it opens is the routine owner's own, private, under the routine's agent",
   ],

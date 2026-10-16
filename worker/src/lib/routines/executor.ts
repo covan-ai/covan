@@ -154,6 +154,12 @@ export type SummariseInput = {
    */
   payloadText?: string;
   /**
+   * What the payload is, when something better than "a webhook payload" is
+   * known — "Gmail · New mail" for an event (0109). The heading above
+   * `payloadText` in the prompt; see `routineMaterial`.
+   */
+  payloadLabel?: string;
+  /**
    * Whether this run is allowed to decide there is nothing worth sending.
    *
    * False for a scheduled prompt, which has no source for its output to be
@@ -446,7 +452,50 @@ export type IngestTrigger = {
   eventId: string;
   /** The raw body, as text. Given to the model and stored nowhere. */
   payload: string;
+  /**
+   * What kind of poke this is (0109). A webhook is somebody's POST; an event
+   * is a third party telling us something happened (`lib/routines/events/`);
+   * a reply is somebody answering a routine's own mail. The run is the same
+   * for all three — this decides the delivery key's prefix, the heading the
+   * model sees above the payload, and what the run's history says started it.
+   */
+  source: "webhook" | "event" | "reply";
+  /**
+   * What a person reads in the run history — "Gmail · New mail" — and the
+   * heading the model reads above the payload. Absent for a webhook, whose
+   * body is whatever the sender chose and has no better name than that.
+   */
+  label?: string;
 };
+
+/**
+ * The claim a poke makes in `routine_deliveries`, by kind.
+ *
+ * Separate prefixes, so a webhook sender's `X-GitHub-Delivery` and a Composio
+ * event id that happened to be the same string are two events and not one
+ * already handled. An event's id arrives already namespaced by its provider
+ * (`receive.ts` writes `<provider>:<id>`), so `evt:` keys cannot collide
+ * between two providers either.
+ */
+export function pokeKey(trigger: IngestTrigger): string {
+  const prefix = trigger.source === "event" ? "evt" : trigger.source === "reply" ? "reply" : "hook";
+  return `${prefix}:${trigger.eventId}`;
+}
+
+/**
+ * What started a run, as `routine_runs` records it (0109) and as a webhook
+ * receiver is told it in `run.triggeredBy`.
+ */
+export type RunOrigin = {
+  triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply";
+  label: string | null;
+};
+
+function originOf(deps: ExecutorDeps, trigger: IngestTrigger | undefined): RunOrigin {
+  // A poke names itself, whatever the dispatcher was built as.
+  if (trigger) return { triggeredBy: trigger.source, label: trigger.label ?? null };
+  return { triggeredBy: deps.trigger === "manual" ? "manual" : "schedule", label: null };
+}
 
 export async function runRoutine(
   routine: RoutineRow,
@@ -454,6 +503,10 @@ export async function runRoutine(
   trigger?: IngestTrigger,
 ): Promise<{ status: "ok" | "skipped" | "failed" | "waiting"; itemsNew: number }> {
   const startedAt = deps.now();
+  // Decided once, here, and written on every row this run produces — including
+  // the ones that never reach a model — because "why did this run?" is asked of
+  // a skipped row as often as of a delivered one.
+  const origin = originOf(deps, trigger);
   let claimedKeys: string[] = [];
   let delivered = false;
   // Chosen before the turn rather than by the insert in `finish`, because a
@@ -489,7 +542,7 @@ export async function runRoutine(
     }
     if (!membership) {
       const reason = "the routine's owner is no longer a member of this workspace";
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         status: "skipped",
         itemsNew: 0,
         tokens: 0,
@@ -509,7 +562,7 @@ export async function runRoutine(
     // owner to find a switch on a screen that, until then, hid it from them.
     const access = await agentAccessFor(deps.db, routine.agent_id, routine.user_id);
     if (!access) {
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         status: "skipped",
         itemsNew: 0,
         tokens: 0,
@@ -531,7 +584,7 @@ export async function runRoutine(
       // Read before `finish` writes this run: the question is whether the
       // PREVIOUS one was also a quota skip.
       const alreadyTold = await lastRunWasQuotaSkip(deps.db, routine.id);
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         status: "skipped",
         itemsNew: 0,
         tokens: 0,
@@ -553,7 +606,7 @@ export async function runRoutine(
         // Loud, not silent. A cron Worker without this dep bound is a
         // deployment mistake, and a routine that quietly skips forever is the
         // failure this whole feature's pause machinery exists to avoid.
-        await finish(routine, deps, startedAt, {
+        await finish(routine, deps, startedAt, origin, {
           status: "failed",
           itemsNew: 0,
           tokens: 0,
@@ -587,13 +640,13 @@ export async function runRoutine(
       //     slot but a refusal to run at all (the switch went off, the owner
       //     stopped being an admin, the workspace shrank to two), and the claim
       //     must not outlive it: a slot key is dead anyway once `finish`
-      //     advances `next_run_at`, but a webhook's `hook:` key is not, and a
+      //     advances `next_run_at`, but a poke's key (`hook:`, `evt:`) is not, and a
       //     redelivery of that event after the routine is resumed would
       //     otherwise be refused as already handled.
       //   * throw  — the `catch` at the bottom of this function hands the key
       //     back, as it does on every path: `delivered` is still false.
       const reportKeysToClaim = trigger
-        ? [`hook:${trigger.eventId}`]
+        ? [pokeKey(trigger)]
         : deps.trigger === "manual"
           ? [`manual:${routine.id}@${startedAt.toISOString()}`]
           : [`slot:${routine.next_run_at}`];
@@ -601,7 +654,7 @@ export async function runRoutine(
       if (claimedKeys.length === 0) {
         // Already handled for this slot, and found out before anything was
         // spent — nothing to meter.
-        await finish(routine, deps, startedAt, {
+        await finish(routine, deps, startedAt, origin, {
           status: "skipped",
           itemsNew: 0,
           tokens: 0,
@@ -628,7 +681,7 @@ export async function runRoutine(
         // leaving a key held by a run that reports itself as a clean pause.
         await releaseItemKeys(deps.db, routine.id, claimedKeys);
         claimedKeys = [];
-        await finish(routine, deps, startedAt, {
+        await finish(routine, deps, startedAt, origin, {
           status: "skipped",
           itemsNew: 0,
           tokens: 0,
@@ -655,7 +708,7 @@ export async function runRoutine(
         // required rather than optional; the type does not say the two are
         // always set together, but `coverage-source.ts` guarantees they are.
         if (result.model !== undefined && result.tokens !== undefined) {
-          await finish(routine, deps, startedAt, {
+          await finish(routine, deps, startedAt, origin, {
             status: "skipped",
             itemsNew: 0,
             error: result.note,
@@ -664,7 +717,7 @@ export async function runRoutine(
             modelCall: { model: result.model, modelOutcome: "answered" },
           });
         } else {
-          await finish(routine, deps, startedAt, {
+          await finish(routine, deps, startedAt, origin, {
             status: "skipped",
             itemsNew: 0,
             tokens: 0,
@@ -693,12 +746,12 @@ export async function runRoutine(
         run: {
           itemsNew: 1,
           itemsOverflow: 0,
-          triggeredBy: trigger ? "webhook" : (deps.trigger ?? "schedule"),
+          triggeredBy: origin.triggeredBy,
         },
       });
       delivered = true;
 
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         status: "ok",
         itemsNew: 1,
         summary: result.summary,
@@ -739,7 +792,7 @@ export async function runRoutine(
     }
 
     if (result.status === "unchanged") {
-      await finish(routine, deps, startedAt, { status: "skipped", itemsNew: 0, tokens: 0 });
+      await finish(routine, deps, startedAt, origin, { status: "skipped", itemsNew: 0, tokens: 0 });
       return { status: "skipped", itemsNew: 0 };
     }
 
@@ -782,7 +835,7 @@ export async function runRoutine(
       // is nothing to compare against, so record the hash and say nothing
       // rather than summarising the whole page at the user.
       if (routine.cursor === null) {
-        await finish(routine, deps, startedAt, {
+        await finish(routine, deps, startedAt, origin, {
           status: "skipped",
           itemsNew: 0,
           tokens: 0,
@@ -827,7 +880,7 @@ export async function runRoutine(
       // neither collides with a previous manual run nor consumes the future
       // scheduled slot.
       keysToClaim = trigger
-        ? [`hook:${trigger.eventId}`]
+        ? [pokeKey(trigger)]
         : deps.trigger === "manual"
           ? [`manual:${routine.id}@${startedAt.toISOString()}`]
           : [`slot:${routine.next_run_at}`];
@@ -835,7 +888,7 @@ export async function runRoutine(
 
     const hasWork = routine.source_kind === "none" || items.length > 0 || pageText !== undefined;
     if (!hasWork) {
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         status: "skipped",
         itemsNew: 0,
         tokens: 0,
@@ -850,7 +903,7 @@ export async function runRoutine(
       items = items.filter((i) => claimedKeys.includes(i.key));
     }
     if (claimedKeys.length === 0) {
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         status: "skipped",
         itemsNew: 0,
         tokens: 0,
@@ -920,6 +973,7 @@ export async function runRoutine(
       items,
       pageText,
       payloadText: trigger?.payload,
+      payloadLabel: trigger?.label,
       ragBlock,
       // A scheduled prompt has no source, so there is nothing for its output
       // to be irrelevant to — and one `false` would silence it permanently.
@@ -976,7 +1030,7 @@ export async function runRoutine(
     // another model call to reach the same answer, and on a busy feed that is
     // most of the bill.
     if (summary.declined) {
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         status: "skipped",
         // What it read before deciding. Zero here would be indistinguishable
         // from a feed that had not moved, which is the question this number is
@@ -1025,7 +1079,7 @@ export async function runRoutine(
      */
     const heldFor = "heldFor" in summary ? (summary.heldFor as string[] | undefined) : undefined;
     if (heldFor && heldFor.length > 0) {
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         runId,
         status: "waiting",
         itemsNew: items.length,
@@ -1063,7 +1117,7 @@ export async function runRoutine(
         itemsNew: items.length,
         itemsOverflow: overflow,
         // A poke names itself, whatever the dispatcher was built as.
-        triggeredBy: trigger ? "webhook" : (deps.trigger ?? "schedule"),
+        triggeredBy: origin.triggeredBy,
       },
     });
     // Past this point the message is out. Releasing the claims would let the
@@ -1082,7 +1136,7 @@ export async function runRoutine(
       at: startedAt,
     });
 
-    await finish(routine, deps, startedAt, {
+    await finish(routine, deps, startedAt, origin, {
       runId,
       status: "ok",
       itemsNew: items.length,
@@ -1139,7 +1193,7 @@ export async function runRoutine(
       : message;
 
     try {
-      await finish(routine, deps, startedAt, {
+      await finish(routine, deps, startedAt, origin, {
         status: "failed",
         itemsNew: 0,
         tokens: 0,
@@ -1371,6 +1425,7 @@ async function finish(
   routine: RoutineRow,
   deps: ExecutorDeps,
   startedAt: Date,
+  origin: RunOrigin,
   outcome: RunOutcome,
 ): Promise<void> {
   const finishedAt = deps.now();
@@ -1404,6 +1459,11 @@ async function finish(
       summary: outcome.summary ?? null,
       document_id: outcome.documentId ?? null,
       filing_note: outcome.filingNote ?? null,
+      // Why this run happened at all (0109). A required argument rather than
+      // something read off `deps`, so a new branch that forgets it does not
+      // compile instead of quietly recording an event run as scheduled.
+      triggered_by: origin.triggeredBy,
+      trigger_label: origin.label,
     })
     // The id is what the ledger files this run's charge against.
     .select("id");
@@ -1564,6 +1624,32 @@ async function announceCoveragePause(
       `"${routine.name}" has stopped: ${reason}.\n\n` +
       `It will not run again on its own. Once that is no longer true, open the ` +
       `routine in the app and resume it.`,
+  });
+}
+
+/**
+ * Tell the owner a routine was paused because events arrived faster than its
+ * limit (0109) — `lib/routines/events/receive.ts` decides that, and pauses.
+ *
+ * Its own sentence, for `announceCoveragePause`'s reason: "paused after
+ * repeated failures" would be false, since nothing failed. Something upstream
+ * is sending far more than the routine was set up for — a filter that is too
+ * wide, a channel busier than expected, a loop between two routines — and the
+ * owner is the one who knows which. Exported because the pause is written by
+ * the receiving side, which holds no `ExecutorDeps` of its own; the dispatcher
+ * builds them and calls this.
+ */
+export async function announceEventFlood(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  reason: string,
+): Promise<void> {
+  await notifyOwner(routine, deps, "routine_paused", {
+    subject: `Routine paused: ${routine.name}`,
+    body:
+      `"${routine.name}" has been paused: ${reason}\n\n` +
+      `Nothing more will run until you resume it. If that many events were expected, ` +
+      `narrow what it listens for first; otherwise check what is sending them.`,
   });
 }
 

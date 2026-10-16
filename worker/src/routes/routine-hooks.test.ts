@@ -85,7 +85,11 @@ describe("POST /routine-hooks/:token", () => {
       { eventId: string; payload: string },
     ];
     expect(routine).toBe(ROUTINE);
-    expect(trigger).toEqual({ eventId: "evt-1", payload: '{"deploy":"finished"}' });
+    expect(trigger).toEqual({
+      eventId: "evt-1",
+      payload: '{"deploy":"finished"}',
+      source: "webhook",
+    });
   });
 
   // GitHub will not be setting ours, and most APIs settled on Idempotency-Key.

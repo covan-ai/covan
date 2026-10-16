@@ -16,11 +16,13 @@ import {
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api-client";
 import { useAgentsStore } from "@/lib/agents-store";
-import { useDeliveryChannels, useCreateRoutine } from "@/hooks/use-routines";
+import { useDeliveryChannels, useCreateRoutine, useEventCatalog } from "@/hooks/use-routines";
 import { useConnections } from "@/hooks/use-connections";
 import { SchedulePicker, scheduleError } from "@/components/routines/schedule-picker";
 import { TemplatePicker } from "@/components/routines/template-picker";
-import type { CreatableSourceKind, RoutineTriggerKind } from "@/lib/routines-api";
+import { EventPicker } from "@/components/routines/event-picker";
+import { eventChoiceReady } from "@/lib/event-choice";
+import type { CreatableSourceKind, EventChoice, RoutineTriggerKind } from "@/lib/routines-api";
 import { templateById, type RoutineTemplate } from "@/lib/routine-templates";
 
 /**
@@ -93,6 +95,16 @@ export function CreateRoutineDialog({
   const [name, setName] = useState("");
   const [sourceKind, setSourceKind] = useState<CreatableSourceKind>("none");
   const [triggerKind, setTriggerKind] = useState<RoutineTriggerKind>("schedule");
+  // What an event routine waits for. Only read when `triggerKind` is
+  // `event`; kept across a switch away and back so a half-made choice is not
+  // thrown away by a misclick.
+  const [eventChoice, setEventChoice] = useState<EventChoice | null>(null);
+  // Asked for only once somebody picks "when something happens", because the
+  // catalogue reads which apps are connected and most routines never need it.
+  const { data: eventCatalog = [] } = useEventCatalog(open && triggerKind === "event");
+  // An event routine is never due, so its schedule is not asked for — the
+  // engine still wants one on the row (0055), and gets the default.
+  const isEvent = sourceKind === "none" && triggerKind === "event";
   const [connectionId, setConnectionId] = useState("");
   const [instruction, setInstruction] = useState("");
   const [scheduleCron, setScheduleCron] = useState("0 * * * *");
@@ -166,6 +178,7 @@ export function CreateRoutineDialog({
     setName("");
     setSourceKind("none");
     setTriggerKind("schedule");
+    setEventChoice(null);
     setConnectionId("");
     setInstruction("");
     setScheduleCron("0 * * * *");
@@ -297,6 +310,7 @@ export function CreateRoutineDialog({
         // `schedule` for every other kind, which is also what the state says —
         // the control that sets it is not rendered for them.
         triggerKind: sourceKind === "none" ? triggerKind : "schedule",
+        ...(isEvent && eventChoice ? { event: eventChoice } : {}),
         connectionId: sourceKind === "connection" ? connectionId : null,
         instruction: instruction.trim(),
         ...(needsNewChannel
@@ -351,6 +365,7 @@ export function CreateRoutineDialog({
     // "the user cleared the interval and has not typed the new one yet".
     scheduleCron.trim() !== "" &&
     scheduleError(scheduleCron) === null &&
+    (!isEvent || eventChoiceReady(eventCatalog, eventChoice)) &&
     // Only a connected source has anything left to pick. `none` and `workspace`
     // need no further field, and the dialog cannot produce `rss` or `web` — it
     // used to require a URL for them with no input to type one into, which
@@ -448,15 +463,26 @@ export function CreateRoutineDialog({
                       <SelectItem value="schedule">On its schedule</SelectItem>
                       <SelectItem value="webhook">When something calls it</SelectItem>
                       <SelectItem value="both">Either</SelectItem>
+                      <SelectItem value="event">When something happens in an app</SelectItem>
                     </SelectContent>
                   </Select>
-                  {triggerKind !== "schedule" && (
+                  {(triggerKind === "webhook" || triggerKind === "both") && (
                     <p className="text-xs text-muted-foreground">
                       You will get a URL to paste into whatever should start it, and whatever it
                       POSTs is what the agent reads.
                     </p>
                   )}
+                  {triggerKind === "event" && (
+                    <p className="text-xs text-muted-foreground">
+                      It runs each time the event happens, and the agent reads a short account of it
+                      — who, what and when — rather than the raw data.
+                    </p>
+                  )}
                 </div>
+              )}
+
+              {isEvent && (
+                <EventPicker catalog={eventCatalog} value={eventChoice} onChange={setEventChoice} />
               )}
 
               {sourceKind === "connection" && (
@@ -500,9 +526,13 @@ export function CreateRoutineDialog({
                 />
               </div>
 
-              <SchedulePicker value={scheduleCron} onChange={setScheduleCron} />
-              {fieldError?.field === "schedule" && (
-                <p className="text-xs text-destructive">{fieldError.message}</p>
+              {!isEvent && (
+                <>
+                  <SchedulePicker value={scheduleCron} onChange={setScheduleCron} />
+                  {fieldError?.field === "schedule" && (
+                    <p className="text-xs text-destructive">{fieldError.message}</p>
+                  )}
+                </>
               )}
 
               <div className="space-y-2">

@@ -132,6 +132,8 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "removes a service credential somebody's agents depend on",
   "routes/routines.ts POST /delivery-channels/:id/rotate":
     "hands back a fresh webhook signing secret, so whoever holds it can sign payloads to the owner's endpoint after the key is revoked",
+  "routes/routines.ts PUT /routines/:id/event":
+    "attaches a listener at a third party to a routine that may have been made in a session, which a revoked key does not pause — a routine the key itself creates is paused on revocation (0088), and its listener with it",
 
   // -- the owner's browser
   "routes/browser.ts POST /browser/takeovers":
@@ -268,6 +270,11 @@ const OPEN_TO_A_KEY = new Set([
   "routes/routines.ts GET /routines/:id/trigger",
   "routes/routines.ts POST /routines/:id/trigger",
   "routes/routines.ts DELETE /routines/:id/trigger",
+  // 0109. Reading what can be listened for, stopping a listener and running a
+  // test are open: none of them leaves anything running after the key is gone.
+  "routes/routines.ts GET /routines/events/catalog",
+  "routes/routines.ts DELETE /routines/:id/event",
+  "routes/routines.ts POST /routines/:id/event/test",
   "routes/search.ts GET /search/messages",
   "routes/sessions.ts GET /sessions",
   "routes/sessions.ts POST /sessions",

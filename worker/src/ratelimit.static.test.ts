@@ -164,7 +164,7 @@ const PAID_ENDPOINTS: Record<string, string[]> = {
   "transcribe.ts": ["/transcribe"],
   "brainstorm.ts": ["/brainstorm/ideas/suggest"],
   "persona.ts": ["/persona/suggest"],
-  "routines.ts": ["/routines/draft", "/routines/:id/run"],
+  "routines.ts": ["/routines/draft", "/routines/:id/run", "/routines/:id/event/test"],
   "reports.ts": ["/sessions/:id/report"],
   "document-jobs.ts": ["/document-jobs/:id/retry"],
 };

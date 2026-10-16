@@ -54,11 +54,21 @@ export type RoutineItem = { title: string; link: string; summary: string };
  */
 export function routineMaterial(input: {
   payloadText?: string;
+  /**
+   * What started the run, when it has a better name than "a webhook payload"
+   * (0109): "Gmail · New mail". An event's payload is an adapter's short
+   * account of what happened, not a raw body, and the heading says which
+   * kind of thing the model is reading before it reads it.
+   */
+  payloadLabel?: string;
   pageText?: string;
   items: RoutineItem[];
 }): string {
   if (input.payloadText) {
-    return `Incoming webhook payload:\n\n${input.payloadText.slice(0, MAX_MATERIAL_CHARS)}`;
+    const heading = input.payloadLabel
+      ? `What happened (${input.payloadLabel})`
+      : "Incoming webhook payload";
+    return `${heading}:\n\n${input.payloadText.slice(0, MAX_MATERIAL_CHARS)}`;
   }
   if (input.pageText) {
     return `Watched page content:\n\n${input.pageText.slice(0, MAX_MATERIAL_CHARS)}`;

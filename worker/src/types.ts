@@ -116,6 +116,14 @@ export type RoutineEnv = {
   BROWSER_USE_REASONING?: string;
   /** base64 32-byte AES-GCM key for delivery_channels.secret_ciphertext. */
   ROUTINE_SECRET_KEY: string;
+  /**
+   * How many events may start one routine in an hour, and in a day, before it
+   * is paused and its owner told (0109). Whole numbers; unset or nonsense
+   * means 60 and 500 — see `lib/routines/events/receive.ts` for why these are
+   * a fuse rather than a budget.
+   */
+  ROUTINE_EVENT_RUNS_PER_HOUR?: string;
+  ROUTINE_EVENT_RUNS_PER_DAY?: string;
   RESEND_API_KEY: string;
   /** Verified sender, e.g. "Routines <routines@yourdomain.com>". */
   RESEND_FROM: string;

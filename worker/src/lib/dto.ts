@@ -7,6 +7,7 @@ import { allowedLogoUrl } from "./composio/client";
 import { REASONING_EFFORTS, type ReasoningEffort } from "./models";
 import { hiddenOperations } from "./harness/connections";
 import { MESSAGE_OUTCOMES, type MessageOutcome } from "./harness/usage";
+import { CATALOGUE } from "./routines/events/catalog";
 
 export type DocumentDTO = {
   id: string;
@@ -921,6 +922,66 @@ export function mapIdea(row: {
   };
 }
 
+/**
+ * What an event routine is waiting for (0109), as its owner sees it.
+ *
+ * Never the provider's id for the arrangement and never its secret — 0109
+ * grants neither column to any client role, and this is built from the
+ * columns it does grant.
+ */
+export type RoutineEventDTO = {
+  /** The catalogue id: `gmail.new_message`. */
+  type: string;
+  provider: string;
+  /** "Gmail", and "New mail" — the event's id when this build no longer knows it. */
+  app: string;
+  label: string;
+  /** The person's choices: filters, a channel. Never a secret. */
+  config: Record<string, unknown>;
+  /**
+   * `pending` until the provider agreed; `active` while events are expected;
+   * `failed` (retried) or `expired` (reconnect) with `statusDetail` saying
+   * why; `disabled` while the routine is paused.
+   */
+  status: "pending" | "active" | "failed" | "expired" | "disabled";
+  statusDetail: string | null;
+  lastEventAt: number | null;
+  expiresAt: number | null;
+};
+
+/** The columns 0109 grants a client, as `ROUTINE_SELECT` embeds them. */
+export type RoutineEventRow = {
+  provider: string;
+  event_type: string;
+  config: Record<string, unknown> | null;
+  status: string;
+  status_detail: string | null;
+  last_event_at: string | null;
+  expires_at: string | null;
+};
+
+const EVENT_STATUSES = ["pending", "active", "failed", "expired", "disabled"] as const;
+
+export function mapRoutineEvent(row: RoutineEventRow | null): RoutineEventDTO | null {
+  if (!row) return null;
+  const def = CATALOGUE.eventType(row.event_type);
+  return {
+    type: row.event_type,
+    provider: row.provider,
+    app: def?.app ?? row.provider,
+    label: def?.label ?? row.event_type,
+    config: row.config ?? {},
+    // Narrowed, so a value a newer build wrote reads as the safe `pending`
+    // — "not confirmed yet" — rather than as a claim it is running.
+    status: (EVENT_STATUSES as readonly string[]).includes(row.status)
+      ? (row.status as RoutineEventDTO["status"])
+      : "pending",
+    statusDetail: row.status_detail ?? null,
+    lastEventAt: row.last_event_at ? toEpochMs(row.last_event_at) : null,
+    expiresAt: row.expires_at ? toEpochMs(row.expires_at) : null,
+  };
+}
+
 export type RoutineDTO = {
   id: string;
   agentId: string;
@@ -942,7 +1003,15 @@ export type RoutineDTO = {
    * a routine with no source of its own, and 0027 means that can never change
    * after creation.
    */
-  triggerKind: "schedule" | "webhook" | "both";
+  triggerKind: "schedule" | "webhook" | "both" | "event";
+  /**
+   * What an `event` routine is waiting for, and whether the provider agreed
+   * to tell us (0109). Null for every other kind — and for an event routine
+   * whose owner has not picked an event yet, and for anybody but the owner,
+   * because `routine_event_subscriptions_select_own` returns the row to the
+   * owner alone.
+   */
+  event: RoutineEventDTO | null;
   /**
    * The bundle each delivered summary is filed into, or null to file nothing —
    * which is every routine made before 0056 and the default since.
@@ -983,6 +1052,13 @@ export function mapRoutine(row: {
   schedule_cron: string;
   timezone: string;
   trigger_kind?: string | null;
+  /**
+   * The embedded subscription, when the read asked for it
+   * (`ROUTINE_SELECT` in `routes/routines.ts`). PostgREST answers a
+   * one-to-one embed with an object, and with an array on a build that did not
+   * detect the relationship as one-to-one — both are accepted.
+   */
+  event?: RoutineEventRow | RoutineEventRow[] | null;
   output_bundle_id?: string | null;
   output_retention?: number | null;
   ends_after_runs?: number | null;
@@ -1013,7 +1089,10 @@ export function mapRoutine(row: {
     // absent: a row read by a build older than 0055 — or by a query written
     // before this field existed — is a scheduled routine, which is what it was.
     triggerKind:
-      row.trigger_kind === "webhook" || row.trigger_kind === "both" ? row.trigger_kind : "schedule",
+      row.trigger_kind === "webhook" || row.trigger_kind === "both" || row.trigger_kind === "event"
+        ? row.trigger_kind
+        : "schedule",
+    event: mapRoutineEvent(Array.isArray(row.event) ? (row.event[0] ?? null) : (row.event ?? null)),
     outputBundleId: row.output_bundle_id ?? null,
     // 52 rather than 0 when the column is absent, because the DTO has to name
     // the number the database would use: a row read by a query written before
@@ -1091,8 +1170,17 @@ export type RoutineRunDTO = {
   outcome: MessageOutcome | null;
   /** The model that answered, when one did. Null on the same runs as `outcome`. */
   model: string | null;
+  /**
+   * What started this run (0109): the cron, Run now, a webhook, an event, a
+   * reply. Null for runs recorded before the column existed.
+   */
+  triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply" | null;
+  /** "Gmail · New mail", for an event run. Null for the rest. */
+  triggerLabel: string | null;
   startedAt: number;
 };
+
+const TRIGGER_SOURCES = ["schedule", "manual", "webhook", "event", "reply"] as const;
 
 export function mapRoutineRun(row: {
   id: string;
@@ -1106,6 +1194,8 @@ export function mapRoutineRun(row: {
   filing_note?: string | null;
   outcome?: string | null;
   model?: string | null;
+  triggered_by?: string | null;
+  trigger_label?: string | null;
   started_at: string;
 }): RoutineRunDTO {
   return {
@@ -1130,6 +1220,10 @@ export function mapRoutineRun(row: {
       ? (row.outcome as MessageOutcome)
       : null,
     model: row.model || null,
+    triggeredBy: (TRIGGER_SOURCES as readonly string[]).includes(row.triggered_by ?? "")
+      ? (row.triggered_by as RoutineRunDTO["triggeredBy"])
+      : null,
+    triggerLabel: row.trigger_label || null,
     startedAt: toEpochMs(row.started_at),
   };
 }

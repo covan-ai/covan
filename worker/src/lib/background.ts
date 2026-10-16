@@ -4,6 +4,7 @@ import { runDueRoutines } from "./routines/dispatcher";
 import { runDueConnections } from "./connections/dispatcher";
 import { pollDueBrowserTasks } from "./browser/poller";
 import { sweepHeldRuns } from "./routines/held";
+import { sweepEventSubscriptions } from "./routines/events/lifecycle";
 import { startQueuedBrowserTasks } from "./browser/queue";
 import { sweepAbandonedTakeovers, sweepConversationBrowsers } from "./browser/sweep";
 import { PROVIDERS } from "./connections/registry";
@@ -99,6 +100,16 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
   // stage above is one that might still answer it.
   const held = await sweepHeldRuns(env);
   if (held.finished > 0) return;
+
+  // Event subscriptions out of step with their routines (0109): a subscribe
+  // that failed and is due another try, an arrangement about to lapse, a
+  // routine paused or binned whose provider is still sending, one restored
+  // whose provider has stopped. Up to three, a handful of subrequests each;
+  // an idle tick costs the one claim. Below the browser stages because none
+  // of this is waiting on a person, and above the documents because a lapsed
+  // Drive channel is an event somebody will not get.
+  const events = await sweepEventSubscriptions(env);
+  if (events.claimed > 0) return;
 
   // Documents whose clock stopped: no Durable Object bound, nobody watching
   // the tab, a worker that died holding the lease. One unit per job, two jobs

@@ -60,6 +60,12 @@ ROUTINE_SECRET_KEY=
 RESEND_API_KEY=
 RESEND_FROM=
 
+# Optional. How many third-party events (a new mail, a Slack message) may start
+# one routine in an hour and in a day before it is paused and its owner told.
+# A fuse against a filter that is too wide, not a budget. Defaults: 60 and 500.
+# ROUTINE_EVENT_RUNS_PER_HOUR=60
+# ROUTINE_EVENT_RUNS_PER_DAY=500
+
 # Optional. This Worker's own domain, for the routine engine's SSRF guard. Leave
 # unset on workers.dev — that whole domain class is already blocked.
 # WORKER_HOST=api.example.com

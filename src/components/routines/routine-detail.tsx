@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, Clock, Minus, X } from "lucide-react";
 import { Chip, SectionCard } from "@/components/section-card";
 import { RoutineWebhookCard } from "@/components/routines/routine-webhook-card";
+import { RoutineEventCard } from "@/components/routines/routine-event-card";
 import { RoutineOutputCard } from "@/components/routines/routine-output-card";
 import { RoutineBrowserCard } from "@/components/routines/routine-browser-card";
 import { SectionHeading } from "@/components/page-container";
@@ -41,6 +42,27 @@ function sourceLabel(routine: Routine, connections: Connection[]): string {
     return `Connected · ${connection.accountLabel}${scope ? ` · ${scope}` : ""}`;
   }
   return `${routine.sourceKind.toUpperCase()} · ${routine.sourceUrl ?? ""}`;
+}
+
+/**
+ * What started a run, in the words its row says it (0109) — or nothing, for
+ * the schedule, which is what a routine does unless something else is said.
+ * A run from before the column existed says nothing either, which is true:
+ * nothing recorded it.
+ */
+function runTriggerText(run: RoutineRun): string | null {
+  switch (run.triggeredBy) {
+    case "event":
+      return run.triggerLabel ?? "An app event";
+    case "webhook":
+      return "Webhook";
+    case "manual":
+      return "Run now";
+    case "reply":
+      return run.triggerLabel ?? "A reply";
+    default:
+      return null;
+  }
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -141,8 +163,12 @@ function RunRow({ run }: { run: RoutineRun }) {
       <span className="text-sm text-muted-foreground">No action needed</span>
     );
 
+  // Why it ran, beside when it ran — "why did this run at 03:12?" is the
+  // first question somebody asks of a row nobody expected.
+  const trigger = runTriggerText(run);
   const when = (
     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+      {trigger ? `${trigger} · ` : ""}
       {formatRelative(run.startedAt)}
       {run.durationMs !== null ? ` · ${(run.durationMs / 1000).toFixed(1)}s` : ""}
     </span>
@@ -324,13 +350,25 @@ export function RoutineDetail({
       <SectionCard className="mt-8">
         <dl className="divide-y divide-hairline">
           <Field label="Source">{sourceLabel(routine, connections)}</Field>
-          <Field label="Schedule">
-            <span className="tabular-nums">{cronToProse(routine.scheduleCron)}</span> ·{" "}
-            {routine.timezone}
-          </Field>
+          {routine.triggerKind === "event" ? (
+            // An event routine is never due, so its cron is not a schedule —
+            // showing one would promise a run that will not happen.
+            <Field label="Starts">
+              {routine.event
+                ? `When ${routine.event.app} · ${routine.event.label}`
+                : "When something happens in an app"}
+            </Field>
+          ) : (
+            <Field label="Schedule">
+              <span className="tabular-nums">{cronToProse(routine.scheduleCron)}</span> ·{" "}
+              {routine.timezone}
+            </Field>
+          )}
           <Field label="Delivers to">{channelLabel ?? "The owner's channel"}</Field>
           <Field label="Next run">
-            {routine.status === "active" && routine.nextRunAt !== null ? (
+            {routine.status === "active" && routine.triggerKind === "event" ? (
+              "When the event arrives"
+            ) : routine.status === "active" && routine.nextRunAt !== null ? (
               <span className="tabular-nums">{formatRelative(routine.nextRunAt)}</span>
             ) : routine.status === "completed" ? (
               "Finished"
@@ -384,9 +422,13 @@ export function RoutineDetail({
       {/* Owner only, and only where there is something to show: the policy on
           routine_triggers returns nothing to anybody else, so a teammate would
           get an empty card and a button that 404s. */}
-      {isOwner && routine.triggerKind !== "schedule" && (
+      {isOwner && (routine.triggerKind === "webhook" || routine.triggerKind === "both") && (
         <RoutineWebhookCard routineId={routine.id} />
       )}
+
+      {/* Owner only, for the webhook card's reason: the subscription row is
+          shown to the routine's owner alone (0109). */}
+      {isOwner && routine.triggerKind === "event" && <RoutineEventCard routine={routine} />}
 
       {/* Owner only, for the same reason the pause and delete controls are:
           filing is a write into the workspace's knowledge, and offering the
@@ -420,9 +462,11 @@ export function RoutineDetail({
           {runs.length === 0 ? (
             <p className="p-5 text-sm text-muted-foreground">
               No runs yet
-              {routine.nextRunAt !== null
-                ? ` — the first one is scheduled ${formatRelative(routine.nextRunAt)}.`
-                : "."}
+              {routine.triggerKind === "event"
+                ? " — the first one starts when the event arrives."
+                : routine.nextRunAt !== null
+                  ? ` — the first one is scheduled ${formatRelative(routine.nextRunAt)}.`
+                  : "."}
             </p>
           ) : (
             <ul className="divide-y divide-hairline">

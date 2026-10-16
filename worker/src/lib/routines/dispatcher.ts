@@ -4,6 +4,7 @@ import type { RoutineEnv } from "../../types";
 import { canFileDocuments } from "../../types";
 import { serviceClient } from "../supabase";
 import {
+  announceEventFlood,
   runRoutine as defaultRunRoutine,
   type ExecutorDeps,
   type IngestTrigger,
@@ -396,6 +397,41 @@ export async function runPokedRoutine(
   const db = overrides.db ?? serviceClient(env);
   const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
   return runRoutine(routine, executorDeps(env, db), trigger);
+}
+
+/**
+ * Pause a routine that is being sent more events than its limit, and tell its
+ * owner — once.
+ *
+ * Here rather than in `events/receive.ts` because telling the owner goes
+ * through the routine's own delivery channel, and that needs the `ExecutorDeps`
+ * this file is the one place to build.
+ *
+ * Conditional on the routine still being `active`, and the announcement on
+ * that update having changed a row. A flood is many events arriving at once,
+ * so several of them cross the limit together; without the condition each
+ * would pause an already-paused routine and each would mail the owner, which
+ * turns "you are getting too many events" into one more of them.
+ *
+ * Answers whether this call was the one that paused it.
+ */
+export async function pauseForEventFlood(
+  env: RoutineEnv,
+  routine: RoutineRow,
+  reason: string,
+  overrides: Partial<Pick<DispatcherDeps, "db">> = {},
+): Promise<boolean> {
+  const db = overrides.db ?? serviceClient(env);
+  const { data, error } = await db
+    .from("routines")
+    .update({ status: "paused", paused_reason: reason, updated_at: new Date().toISOString() })
+    .eq("id", routine.id)
+    .eq("status", "active")
+    .select("id");
+  if (error) throw new Error(`could not pause a flooded routine: ${error.message}`);
+  if (!Array.isArray(data) || data.length === 0) return false;
+  await announceEventFlood(routine, executorDeps(env, db), reason);
+  return true;
 }
 
 /**

@@ -18,6 +18,7 @@ const routine: Routine = {
   scheduleCron: "0 */6 * * *",
   timezone: "Europe/Istanbul",
   triggerKind: "schedule" as const,
+  event: null,
   outputBundleId: null,
   outputRetention: 52,
   endsAfterRuns: null,

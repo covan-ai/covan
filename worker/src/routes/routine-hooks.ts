@@ -113,7 +113,11 @@ routineHooks.post("/routine-hooks/:token", async (c) => {
     c,
     (async () => {
       try {
-        await runPokedRoutine(c.env, routine, { eventId: eventId.trim(), payload });
+        await runPokedRoutine(c.env, routine, {
+          eventId: eventId.trim(),
+          payload,
+          source: "webhook",
+        });
       } catch (err) {
         // The run records its own failure on `routine_runs`, which is where
         // the owner looks. This catch exists so an unhandled rejection cannot

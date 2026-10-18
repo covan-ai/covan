@@ -392,9 +392,12 @@ kind. Versions up to and including v0.2.0 shipped under AGPL-3.0-only and stay
 that way, irrevocably.
 
 This is a source-available licence rather than an open-source one: the OSI has
-not approved the FSL, so calling Covan open source would be inaccurate. Want to
-host Covan for other people? That is what a commercial licence is for — write to
-efe@covan.app.
+not approved the FSL, so calling Covan open source would be inaccurate.
+
+A commercial licence covers what the FSL does not: hosting Covan for other
+people, or an organisation whose procurement rules cannot accept a licence the
+OSI has not approved — the code is the same, only the agreement changes. Write
+to efe@covan.app.
 
 Some files here started as copies of MIT-licensed work — shadcn/ui and
 prompt-kit — and their notices live in

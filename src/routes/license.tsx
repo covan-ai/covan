@@ -46,7 +46,7 @@ const REPO = "https://github.com/covan-ai/covan";
 
 function LicensePage() {
   return (
-    <LegalLayout title="Licence" updated="September 2026">
+    <LegalLayout title="Licence" updated="October 2026">
       <p className="text-base text-muted-foreground">
         Covan is licensed under the{" "}
         <a
@@ -152,8 +152,10 @@ function LicensePage() {
       <LegalSection title="When you need a different licence">
         <p>
           The FSL is the right licence for almost everybody reading this. It stops being the right
-          one in one case: you want to offer Covan to other people as a paid hosted or managed
-          service, or build it into a commercial product that does what Covan does.
+          one in two cases: you want to offer Covan to other people as a paid hosted or managed
+          service, or build it into a commercial product that does what Covan does; or your
+          organisation's procurement rules do not accept a licence the OSI has not approved, in
+          which case the code is the same and only the agreement changes.
         </p>
         <p>
           A commercial licence exists for that, and it is a normal thing to buy rather than an

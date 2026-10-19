@@ -3,9 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const service = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock("./supabase", () => ({ serviceClient: () => service.current }));
 
+import type { RoutineEnv } from "../types";
 import { nearestPassages, putPassages, syncPassageVectors } from "./passages";
 
-const env = { SUPABASE_URL: "u", SUPABASE_SERVICE_ROLE_KEY: "k", OPENAI_API_KEY: "o" };
+const env = {
+  SUPABASE_URL: "u",
+  SUPABASE_SERVICE_ROLE_KEY: "k",
+  OPENAI_API_KEY: "o",
+} as unknown as RoutineEnv;
 
 function fakeIndex() {
   return {

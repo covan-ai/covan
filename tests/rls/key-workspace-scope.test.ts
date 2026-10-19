@@ -234,6 +234,7 @@ describe("the schema", () => {
     ["user_usage", "a person's own counters"],
     ["signup_grants", "hosted builds: keyed by person and outliving the workspace it names"],
     ["routine_deliveries", "no policies at all: the service role is the only reader"],
+    ["passage_vector_changes", "no policies at all: the passage index's queue, service role only"],
     ["credit_holds", "hosted builds: no policies at all, the service role is the only reader"],
     ["signup_grant_addresses", "hosted builds: no policies, and outlives every account"],
   ]);

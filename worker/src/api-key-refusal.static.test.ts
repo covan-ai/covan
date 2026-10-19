@@ -285,6 +285,9 @@ const OPEN_TO_A_KEY = new Set([
   "routes/sessions.ts DELETE /sessions/:id",
   "routes/sessions.ts GET /sessions/:id/messages",
   "routes/sessions.ts GET /sessions/:id/browser-tasks",
+  // 0117. Marks a step claimed and starts nothing: the turn after it is an
+  // ordinary chat request, which a key may already make.
+  "routes/sessions.ts POST /sessions/:id/browser-tasks/continue",
   "routes/slack.ts GET /slack",
   "routes/support.ts POST /support/quota",
   "routes/tool-connections.ts GET /tool-connections",

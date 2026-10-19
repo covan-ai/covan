@@ -127,6 +127,8 @@ let said: { content: string; created_at: string }[] | null;
 let bound: string | undefined;
 /** `browser_tasks` rows `askedAt` can read, by id; an Error fails the read. */
 let tasks: Record<string, { created_at: string }> | Error;
+/** What was written back to `browser_tasks`: `delivered_at` (0117). */
+let marked: Array<Record<string, unknown>>;
 
 function fakeDb(): SupabaseClient {
   return {
@@ -176,7 +178,15 @@ function fakeDb(): SupabaseClient {
               ? { data: null, error: { message: tasks.message } }
               : { data: tasks[id] ?? null, error: null },
         };
-        return { select: () => read };
+        return {
+          select: () => read,
+          update: (patch: Record<string, unknown>) => ({
+            eq: async (_column: string, value: string) => {
+              marked.push({ id: value, ...patch });
+              return { error: null };
+            },
+          }),
+        };
       }
       if (table === "messages") {
         const read = {
@@ -238,6 +248,7 @@ beforeEach(() => {
   said = null;
   bound = undefined;
   tasks = {};
+  marked = [];
   complete.mockReset();
   complete.mockResolvedValue({
     text: "Example.com lists three tiers: Starter at $29/mo, Pro at $99/mo, and Enterprise on request.",
@@ -399,6 +410,19 @@ describe("when the ground has moved", () => {
   it("does not throw when the message cannot be written", async () => {
     messageInsertFails = true;
     await expect(deliverBrowserTask(ROW, FINISHED, ENV, fakeDb())).resolves.toBeUndefined();
+  });
+
+  it("marks the task delivered once its answer is in the conversation (0117)", async () => {
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(marked).toHaveLength(1);
+    expect(marked[0].id).toBe(ROW.id);
+    expect(typeof marked[0].delivered_at).toBe("string");
+  });
+
+  it("does not mark a task delivered whose answer could not be written", async () => {
+    messageInsertFails = true;
+    await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());
+    expect(marked).toEqual([]);
   });
 });
 

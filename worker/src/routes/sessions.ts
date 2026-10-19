@@ -461,4 +461,29 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
   });
 });
 
+/**
+ * POST /sessions/:id/browser-tasks/continue — claim the step after the
+ * browser (0117), once.
+ *
+ * The chat screen asks when this conversation's tasks are done and one of
+ * them said what it would do with its answer; the answer is `{ steps }`, and
+ * a non-empty list is the screen's go-ahead to send the conversation on. An
+ * empty one is "not yet", "already", or "not yours" alike: the function
+ * narrows to the caller by `auth.uid()`, so this route has nothing to check
+ * that the claim does not.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+sessions.post("/sessions/:id/browser-tasks/continue", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID.test(id)) return c.json({ error: "no such conversation" }, 404);
+  const { data, error } = await c.get("db").rpc("claim_browser_continuation", { p_session_id: id });
+  if (error) {
+    console.error("could not claim the step after a browser task", error.code);
+    return c.json({ error: "failed to carry on" }, 500);
+  }
+  const steps = Array.isArray(data) ? data.filter((s): s is string => typeof s === "string") : [];
+  return c.json({ steps });
+});
+
 export { sessions };

@@ -70,7 +70,54 @@ export function shouldPoll(data: ConversationBrowser | undefined): boolean {
     // start. Cheap to ask: with nothing running the server makes no provider
     // call.
     data.tasks.some((t) => t.status === "waiting") ||
+    // A task with a step after it, settled and not yet answered in the
+    // conversation (the cron's settle, a model call from its message): keep
+    // asking until the answer is written, which is when `stepAfterBrowser`
+    // can say yes.
+    data.tasks.some(
+      (t) =>
+        !!t.thenStep &&
+        t.status === "finished" &&
+        t.deliveredAt == null &&
+        t.finishedAt != null &&
+        Date.now() - t.finishedAt < CARRY_ON_WITHIN_MS,
+    ) ||
     (!!data.session && data.session.liveState !== "none")
+  );
+}
+
+/** How long after an answer the conversation still carries on by itself. 0117 says the same. */
+export const CARRY_ON_WITHIN_MS = 30 * 60 * 1000;
+
+/**
+ * Whether the conversation has a step to carry on with now (0117): a task
+ * that said what the agent would do with its answer, finished, its answer
+ * written into the conversation within the half hour, not carried on with
+ * yet — and nothing else still to come in the browser's line, so a request
+ * for three lookups and then a write is sent on once, after the third.
+ *
+ * Only a finished task. A login wall, a refusal or a run that did part of it
+ * has already told the person, and what to do about it is theirs.
+ *
+ * The screen's guess; the server's claim is the answer, and a second tab
+ * asking the same question is told no.
+ */
+export function stepAfterBrowser(data: ConversationBrowser | undefined, now = Date.now()): boolean {
+  if (!data) return false;
+  if (
+    data.tasks.some(
+      (t) => t.status === "waiting" || t.status === "queued" || t.status === "running",
+    )
+  ) {
+    return false;
+  }
+  return data.tasks.some(
+    (t) =>
+      !!t.thenStep &&
+      t.continuedAt == null &&
+      t.status === "finished" &&
+      t.deliveredAt != null &&
+      now - t.deliveredAt < CARRY_ON_WITHIN_MS,
   );
 }
 

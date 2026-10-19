@@ -304,6 +304,18 @@ async function writeAnswer(
       return;
     }
 
+    // The answer is in the conversation now, which is what a tab waits for
+    // before carrying on with the step after it (0117): `finished_at` is the
+    // settle's claim, a model call ago. A failure is a conversation that
+    // waits for the person to ask, as every one did before.
+    const { error: markError } = await db
+      .from("browser_tasks")
+      .update({ delivered_at: new Date().toISOString() })
+      .eq("id", row.id);
+    if (markError) {
+      console.warn("could not mark a browser task's answer delivered", row.id, markError.code);
+    }
+
     // Charged. This used to be left off on the reasoning that the task's
     // provisional hold already stood for far more — but the hold is settled
     // to the provider's own figure (`settle_credits`), which knows nothing of

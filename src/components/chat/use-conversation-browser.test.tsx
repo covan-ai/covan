@@ -9,6 +9,7 @@ import {
   ran,
   shouldPoll,
   signInFor,
+  stepAfterBrowser,
   useBrowserPanel,
   waitingFor,
 } from "./use-conversation-browser";
@@ -183,5 +184,63 @@ describe("a browser with tasks waiting their turn", () => {
   it("keeps asking while a task waits, so the panel sees it start", () => {
     expect(shouldPoll(withTasks([waiting("w1"), wall]))).toBe(true);
     expect(shouldPoll(withTasks([removed, wall]))).toBe(false);
+  });
+});
+
+describe("the step after the browser", () => {
+  const NOW = 10_000_000;
+  type Task = ConversationBrowser["tasks"][number];
+  const done = (over: Partial<Task> = {}): Task =>
+    ({
+      ...finished().tasks[0],
+      status: "finished",
+      finishedAt: NOW - 5_000,
+      thenStep: "write the leads to a page in Qrucial",
+      deliveredAt: NOW - 1_000,
+      continuedAt: null,
+      ...over,
+    }) as Task;
+  const withTasks = (...tasks: Task[]): ConversationBrowser => ({
+    ...finished(),
+    tasks,
+  });
+
+  it("carries on once the answer is in the conversation", () => {
+    expect(stepAfterBrowser(withTasks(done()), NOW)).toBe(true);
+  });
+
+  it("waits for the answer to be written", () => {
+    expect(stepAfterBrowser(withTasks(done({ deliveredAt: null })), NOW)).toBe(false);
+  });
+
+  it("does not carry on a task that said nothing about afterwards", () => {
+    expect(stepAfterBrowser(withTasks(done({ thenStep: null })), NOW)).toBe(false);
+  });
+
+  it("carries on once, not again", () => {
+    expect(stepAfterBrowser(withTasks(done({ continuedAt: NOW })), NOW)).toBe(false);
+  });
+
+  it("waits while anything else is still in the browser's line", () => {
+    const next = done({ id: "task-2", status: "waiting", thenStep: null, deliveredAt: null });
+    expect(stepAfterBrowser(withTasks(next, done()), NOW)).toBe(false);
+    const run = done({ id: "task-2", status: "running", thenStep: null, deliveredAt: null });
+    expect(stepAfterBrowser(withTasks(run, done()), NOW)).toBe(false);
+  });
+
+  it("leaves a task that stopped short to the person", () => {
+    const short = done({ status: "failed", stopReason: "partial" });
+    expect(stepAfterBrowser(withTasks(short), NOW)).toBe(false);
+  });
+
+  it("does not start work by itself long after the answer", () => {
+    const old = done({ deliveredAt: NOW - 31 * 60 * 1000 });
+    expect(stepAfterBrowser(withTasks(old), NOW)).toBe(false);
+  });
+
+  it("keeps asking until a settled task with a step has its answer written", () => {
+    const settled = done({ deliveredAt: null, finishedAt: Date.now() - 1_000 });
+    expect(shouldPoll({ ...withTasks(settled), session: null })).toBe(true);
+    expect(shouldPoll({ ...withTasks(done()), session: null })).toBe(false);
   });
 });

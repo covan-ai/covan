@@ -789,6 +789,12 @@ export const api = {
     browserTasks: (id: string): Promise<ConversationBrowser> =>
       request("GET", `/sessions/${id}/browser-tasks`),
     /**
+     * Claim the step after this conversation's browser tasks (0117), once.
+     * A non-empty `steps` is the go-ahead to send the conversation on.
+     */
+    continueAfterBrowser: (id: string): Promise<{ steps: string[] }> =>
+      request("POST", `/sessions/${id}/browser-tasks/continue`),
+    /**
      * The documents this person asked for in one conversation, newest first,
      * each with its sections so far. Polled while one is being written; on a
      * deployment with no document host each poll is also what moves it on.
@@ -1750,6 +1756,12 @@ export type BrowserTask = {
   browserSessionId: string | null;
   /** The bare host a run said it needed a sign-in on, or null. Shape-checked by 0078. */
   signInHost: string | null;
+  /** What the agent said it would do with the answer (0117), or null. */
+  thenStep: string | null;
+  /** When the answer was written into the conversation. */
+  deliveredAt: number | null;
+  /** When a tab carried on with `thenStep`. */
+  continuedAt: number | null;
   /**
    * Whether the run carried a saved login (R32) — so a wall after it is "the
    * saved login didn't work". Answered by the server for walled tasks only.

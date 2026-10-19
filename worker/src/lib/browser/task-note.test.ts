@@ -64,7 +64,9 @@ describe("browserTaskNote", () => {
       limit: 5,
     });
     // Nothing the person cannot read: 0073's columns and 0078's two.
-    expect(seen.columns).toBe("task, status, error, stop_reason, signin_host, created_at");
+    expect(seen.columns).toBe(
+      "task, status, error, stop_reason, signin_host, created_at, then_step",
+    );
   });
 
   it("lists them oldest first, each with where it stands", async () => {
@@ -111,6 +113,18 @@ describe("browserTaskNote", () => {
     expect(note).toContain('"b" — stopped because, it reports, the site refused it');
     expect(note).not.toContain("blocked by the site");
     expect(note).toContain("do not contradict it, and do not guess why a site stopped it");
+  });
+
+  it("names the step the agent said would follow a task (0117)", async () => {
+    const { db } = dbWith([
+      { task: "find leads", status: "finished", then_step: "write the leads to Qrucial" },
+      { task: "read a page", status: "finished" },
+    ]);
+    const note = String(await browserTaskNote(db, "sess-1", NOW));
+    expect(note).toContain('"find leads" — finished');
+    expect(note).toContain('afterwards you said you would: "write the leads to Qrucial"');
+    expect(note).not.toMatch(/"read a page" — [^\n]*afterwards/);
+    expect(note).toContain("that is not done yet in this conversation, do it now");
   });
 
   it("says why a task stopped short when the row says", async () => {

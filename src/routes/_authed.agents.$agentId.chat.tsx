@@ -51,7 +51,12 @@ import { TurnDial } from "@/components/chat/turn-dial";
 import { Button } from "@/components/ui/button";
 import { BrowserPanel } from "@/components/chat/browser-panel";
 import { TakeoverCard } from "@/components/chat/takeover-card";
-import { browserKey, useBrowserPanel } from "@/components/chat/use-conversation-browser";
+import {
+  browserKey,
+  stepAfterBrowser,
+  useBrowserPanel,
+  useConversationBrowser,
+} from "@/components/chat/use-conversation-browser";
 import { LiveAnswer } from "@/components/chat/live-answer";
 import { DocumentCard } from "@/components/chat/document-card";
 import { DocumentPanel } from "@/components/chat/document-panel";
@@ -1439,6 +1444,49 @@ function ChatTab() {
     setStoppedShort(null);
     void submit("Keep going — pick up where you stopped.");
   };
+
+  /**
+   * Carry on with the step after the browser (0117).
+   *
+   * A browser task answers as a message of its own, minutes after the turn
+   * that started it ended, and that message is one model call with no tools —
+   * so "find the leads, then write them to Qrucial" stopped at the leads until
+   * somebody asked "so?". The turn cannot be resumed from the server: it
+   * replays its caller's request, and only this tab is the caller.
+   *
+   * So when every task in the line is done and one of them said what the
+   * agent would do with its answer, this tab claims that step — once, across
+   * tabs, through the server — and sends the conversation on, the way
+   * `keepGoing` does: a new turn that reads the transcript, the answer in it,
+   * and the task note, which names the step. Not while a reply is streaming:
+   * the effect runs again when it ends.
+   */
+  const conversationBrowser = useConversationBrowser(active?.id).data;
+  const readyToCarryOn = stepAfterBrowser(conversationBrowser);
+  const carryingOn = useRef(false);
+  useEffect(() => {
+    const sessionId = active?.id;
+    if (!sessionId || !readyToCarryOn || busy || carryingOn.current) return;
+    carryingOn.current = true;
+    void api.sessions
+      .continueAfterBrowser(sessionId)
+      .then(({ steps }) => {
+        void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) });
+        if (steps.length > 0 && active?.id === sessionId) {
+          void submit("The browser is done — carry on with the next step.");
+        }
+      })
+      .catch(() => {
+        // Nothing claimed, or the claim's answer lost: the task note still
+        // names the step, so asking picks it up.
+      })
+      .finally(() => {
+        carryingOn.current = false;
+      });
+    // `submit` and `queryClient` are read at the moment of the claim, as
+    // `keepGoing` reads them; re-running on their identity would claim again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id, readyToCarryOn, busy]);
 
   /**
    * Say yes or no to something the agent asked to do.

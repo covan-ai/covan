@@ -63,6 +63,9 @@ function task(over: Partial<BrowserTask> = {}): BrowserTask {
     signInHost: null,
     carriedSavedLogin: false,
     savedLogin: null,
+    thenStep: null,
+    deliveredAt: null,
+    continuedAt: null,
     ...over,
   };
 }

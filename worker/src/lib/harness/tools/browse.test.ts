@@ -57,6 +57,7 @@ const recordBrowserTask = vi.fn(
       providerRunId?: string;
       browserSessionId?: string;
       credentialId?: string | null;
+      thenStep?: string;
     },
   ): Promise<string | null> => "bt-1",
 );
@@ -232,7 +233,7 @@ vi.mock("../../browser/credentials", async (importOriginal) => {
 });
 
 import { credentialAliases, type CredentialBinding } from "../../browser/credentials";
-import { browseTool } from "./browse";
+import { browseTool, MAX_THEN_CHARS } from "./browse";
 import { QUEUE_MAX } from "../../browser/queue";
 
 /**
@@ -575,6 +576,29 @@ describe("once approved", () => {
     });
   });
 
+  it("records the step after the browser when the agent named one (0117)", async () => {
+    await browseTool.run({ task: TASK, then: "  write the leads to a page in Qrucial  " }, ctx());
+    expect(recordBrowserTask.mock.calls[0][1].thenStep).toBe(
+      "write the leads to a page in Qrucial",
+    );
+  });
+
+  it.each(["", "   ", "none", "N/A", "-"])("records no step for a `then` of %j", async (then) => {
+    await browseTool.run({ task: TASK, then }, ctx());
+    expect("thenStep" in recordBrowserTask.mock.calls[0][1]).toBe(false);
+  });
+
+  it("clips a step that runs past its bound rather than refusing the task", async () => {
+    await browseTool.run({ task: TASK, then: "x".repeat(MAX_THEN_CHARS + 50) }, ctx());
+    expect(recordBrowserTask.mock.calls[0][1].thenStep).toHaveLength(MAX_THEN_CHARS);
+  });
+
+  it("tells the agent the conversation carries on with `then` by itself", () => {
+    expect(browseTool.description).toMatch(/put that next step in `then`/);
+    const props = (browseTool.input as { properties: Record<string, unknown> }).properties;
+    expect(props).toHaveProperty("then");
+  });
+
   /**
    * The 2026-10-09 defect, pinned. Writing through the caller's client is a
    * `42501` in production and a silent pass against a mock, so the mock
@@ -751,6 +775,14 @@ describe("once approved", () => {
           }),
         );
         refusedWithNothingSpent();
+      });
+
+      it("puts the step after the browser on a task that waits its turn", async () => {
+        busy();
+        await browseTool.run({ task: TASK, then: "write them to Qrucial" }, ctx());
+        expect(queueBrowserTask.mock.calls[0][1]).toMatchObject({
+          thenStep: "write them to Qrucial",
+        });
       });
 
       // A task approved as a line on another task's card was shown as a
@@ -2068,6 +2100,11 @@ describe("a routine's run, allowed the browser", () => {
       jarless: false,
     });
     expect(ctx.routineBrowser.started).toEqual(["bt-1"]);
+  });
+
+  it("keeps no step after the browser for a routine, which has no conversation to carry on in", async () => {
+    await browseTool.run({ task: TASK, then: "write it to Qrucial" }, routineCtx("all"));
+    expect("thenStep" in recordBrowserTask.mock.calls[0][1]).toBe(false);
   });
 
   it("carries the owner's jar with `all`, as a conversation's browser would", async () => {

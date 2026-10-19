@@ -1470,7 +1470,7 @@ export type BrowserTaskDTO = {
   apiVersion: "v2" | "v4";
   /**
    * Why a run ended before its answer, or null: 'handed_to_person' | 'cost_cap' |
-   * 'cancelled', or the run's own 'login_required' | 'blocked' — the panel's
+   * 'cancelled', or the run's own 'login_required' | 'partial' | 'blocked' — the panel's
    * sign-in prompt keys on 'login_required' and nothing else.
    */
   stopReason: string | null;
@@ -1482,6 +1482,15 @@ export type BrowserTaskDTO = {
    * checks its shape, so it is safe to render as a hostname.
    */
   signInHost: string | null;
+  /**
+   * What the agent said it would do with the answer (0117), or null; when the
+   * answer was written into the conversation; and when a tab carried on with
+   * the step. The chat screen sends the conversation on once all three line
+   * up — see `claim_browser_continuation`.
+   */
+  thenStep: string | null;
+  deliveredAt: number | null;
+  continuedAt: number | null;
   /**
    * Whether this run carried a saved login (R32) — `credential_id is not
    * null`, answered by the worker, because the column itself is granted to no
@@ -1509,7 +1518,7 @@ export type BrowserTaskDTO = {
  * type the select from it.
  */
 export const BROWSER_TASK_COLUMNS =
-  "id, task, status, output, error, retry_of, created_at, finished_at, api_version, stop_reason, browser_session_id, signin_host";
+  "id, task, status, output, error, retry_of, created_at, finished_at, api_version, stop_reason, browser_session_id, signin_host, then_step, delivered_at, continued_at";
 
 export function mapBrowserTask(
   row: Record<string, unknown>,
@@ -1529,6 +1538,9 @@ export function mapBrowserTask(
     stopReason: typeof row.stop_reason === "string" && row.stop_reason ? row.stop_reason : null,
     browserSessionId: row.browser_session_id ? String(row.browser_session_id) : null,
     signInHost: typeof row.signin_host === "string" && row.signin_host ? row.signin_host : null,
+    thenStep: typeof row.then_step === "string" && row.then_step ? row.then_step : null,
+    deliveredAt: row.delivered_at ? toEpochMs(String(row.delivered_at)) : null,
+    continuedAt: row.continued_at ? toEpochMs(String(row.continued_at)) : null,
     carriedSavedLogin,
     savedLogin,
   };

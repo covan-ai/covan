@@ -85,6 +85,8 @@ export async function recordBrowserTask(
      */
     routineRunId?: string;
     jarless?: boolean;
+    /** What the agent will do with the answer (0117), when it said. */
+    thenStep?: string;
   } & RecordedRun,
 ): Promise<string | null> {
   const provider =
@@ -110,6 +112,7 @@ export async function recordBrowserTask(
       ...(input.credentialId ? { credential_id: input.credentialId } : {}),
       ...(input.routineRunId ? { routine_run_id: input.routineRunId } : {}),
       ...(input.jarless ? { jarless: true } : {}),
+      ...(input.thenStep ? { then_step: input.thenStep } : {}),
     })
     .select("id")
     .single();

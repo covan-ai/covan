@@ -8,6 +8,7 @@ import {
   type ToolCall,
 } from "../completion";
 import { supportsTools } from "../models";
+import { promptWeight } from "../pricing";
 import {
   MAX_STEPS,
   MAX_STEP_EXCERPT_CHARS,
@@ -931,6 +932,13 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
    * Zero until the first pass answers, which is when the forecast first runs.
    */
   let lastCompletionTokens = 0;
+  /**
+   * Whether the last pass read from and wrote to the provider's cache, so the
+   * forecast weighs the next one the same way. A provider that reported
+   * neither — or a prefix too short to cache — is forecast at full weight.
+   */
+  let lastReadCache = false;
+  let lastWroteCache = false;
   const toolTimeoutMs = opts.budget?.toolTimeoutMs ?? TOOL_TIMEOUT_MS;
   const maxOutputChars = opts.budget?.maxOutputChars ?? MAX_TOOL_OUTPUT_CHARS;
 
@@ -1138,7 +1146,17 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
         // already been paid for is not un-spent by noticing late.
         lastPromptTokens = event.usage.promptTokens ?? lastPromptTokens;
         lastCompletionTokens = event.usage.completionTokens ?? lastCompletionTokens;
-        tokensSpent += (event.usage.promptTokens ?? 0) + (event.usage.completionTokens ?? 0);
+        lastReadCache = (event.usage.cachedTokens ?? 0) > 0;
+        lastWroteCache = (event.usage.cacheWriteTokens ?? 0) > 0;
+        // Weighed by what the prompt cost (`promptWeight`): a token read from
+        // the cache is a tenth of a fresh one on Claude, and a ceiling on spend
+        // that counted it whole stopped one multi-pass turn in ten.
+        tokensSpent +=
+          promptWeight(opts.request.model, {
+            promptTokens: event.usage.promptTokens ?? 0,
+            cachedTokens: event.usage.cachedTokens ?? 0,
+            cacheWriteTokens: event.usage.cacheWriteTokens ?? 0,
+          }) + (event.usage.completionTokens ?? 0);
         if (maxTurnTokens && tokensSpent >= maxTurnTokens && !stopped) stopped = "tokens";
         // The platform's ceiling, checked in the same place and for the same
         // reason: this pass has just spent one, so this is where the answer
@@ -1321,10 +1339,15 @@ export async function runAgentTurn(opts: AgentTurnOptions): Promise<AgentTurn> {
     // stopped one pass early; for a ceiling, short is the right way to miss.
     if (!stopped && maxTurnTokens && lastPromptTokens !== null) {
       const handedChars = messages.slice(resultsFrom).reduce((sum, m) => sum + m.content.length, 0);
-      const nextPass =
-        lastPromptTokens +
-        lastCompletionTokens +
-        Math.ceil(handedChars / TOOL_OUTPUT_CHARS_PER_TOKEN);
+      // Weighed as the pass will be: what the last one sent comes back from
+      // the cache where the last one read from it, and what is new — its
+      // answer and the results — is written there where the last one wrote.
+      const fresh = lastCompletionTokens + Math.ceil(handedChars / TOOL_OUTPUT_CHARS_PER_TOKEN);
+      const nextPass = promptWeight(opts.request.model, {
+        promptTokens: lastPromptTokens + fresh,
+        cachedTokens: lastReadCache ? lastPromptTokens : 0,
+        cacheWriteTokens: lastWroteCache ? fresh : 0,
+      });
       if (tokensSpent + nextPass >= maxTurnTokens) stopped = "tokens";
     }
     // And again after the tools have run, because they are what actually

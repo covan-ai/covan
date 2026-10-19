@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { estimateCostUsd, referenceReplyCostUsd, modelCostsFor, REFERENCE_REPLY } from "./pricing";
+import {
+  estimateCostUsd,
+  promptWeight,
+  referenceReplyCostUsd,
+  modelCostsFor,
+  REFERENCE_REPLY,
+} from "./pricing";
 import { MODEL_IDS, DEFAULT_MODEL } from "./models";
 
 describe("estimateCostUsd", () => {
@@ -203,5 +209,42 @@ describe("modelCostsFor", () => {
   // a request this deployment never makes.
   it("says nothing at all under a custom endpoint", () => {
     expect(modelCostsFor(["gpt-4o", "gpt-4.1"], { OPENAI_MODEL: "llama-3.3-70b" })).toEqual({});
+  });
+});
+
+describe("promptWeight", () => {
+  it("weighs a cache read at its price against a fresh token, and a write at a quarter more", () => {
+    // Claude: reads a tenth. 1,000 fresh + 8,000 read + 1,000 written.
+    expect(
+      promptWeight("claude-opus-5", {
+        promptTokens: 10_000,
+        cachedTokens: 8_000,
+        cacheWriteTokens: 1_000,
+      }),
+    ).toBeCloseTo(1_000 + 800 + 1_250);
+    // The 4o models cache at half.
+    expect(promptWeight("gpt-4o", { promptTokens: 1_000, cachedTokens: 1_000 })).toBeCloseTo(500);
+  });
+
+  it("is the whole prompt on a model with no price, as the ceiling counted before", () => {
+    expect(promptWeight("some-local-model", { promptTokens: 5_000, cachedTokens: 4_000 })).toBe(
+      5_000,
+    );
+  });
+
+  it("never goes below zero or past the prompt when the counts disagree", () => {
+    expect(
+      promptWeight("claude-sonnet-5", {
+        promptTokens: 100,
+        cachedTokens: 500,
+        cacheWriteTokens: 50,
+      }),
+    ).toBeCloseTo(10);
+  });
+
+  it("is in the same proportion as estimateCostUsd's prompt price", () => {
+    const usage = { promptTokens: 40_000, cachedTokens: 30_000, cacheWriteTokens: 5_000 };
+    const cost = estimateCostUsd("claude-sonnet-5", 40_000, 0, 30_000, 5_000);
+    expect(promptWeight("claude-sonnet-5", usage) * (2 / 1_000_000)).toBeCloseTo(cost, 10);
   });
 });

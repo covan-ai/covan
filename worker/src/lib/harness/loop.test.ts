@@ -12,6 +12,7 @@ import {
   type PassUsage,
 } from "./loop";
 import { cap, MAX_STEP_EXCERPT_CHARS, TOKEN_WARNING_SHARE } from "./budget";
+import { promptWeight } from "../pricing";
 
 /**
  * The loop, driven by a scripted model.
@@ -79,6 +80,14 @@ const sentTranscripts: CompletionMessage[][] = [];
  * with no tools on it cannot come back with a tool call — or the test would
  * be asserting against something no provider does.
  */
+/** The same pass, reporting other prompt and cache counts. */
+function withUsage(
+  events: CompletionEvent[],
+  usage: { promptTokens: number; cachedTokens: number; cacheWriteTokens: number },
+): CompletionEvent[] {
+  return events.map((e) => (e.type === "end" ? { ...e, usage: { ...e.usage, ...usage } } : e));
+}
+
 function scripted(passes: CompletionEvent[][]) {
   let i = 0;
   streamCompletion.mockImplementation(async function* (
@@ -982,20 +991,56 @@ describe("the budget", () => {
         const turn = await runAgentTurn({
           ...base,
           tools: searching(),
-          // 15 a pass, and the next one forecast at 16 (10 + 5 + one token of
-          // "x"): after the sixth, 90 + 16 reaches 100, so the seventh answers.
+          // Each pass is 10 prompt (2 read from the cache, 3 written to it) and
+          // 5 completion, on gpt-4.1, whose cache reads cost a quarter: 5 + 0.5
+          // + 3.75 + 5 = 14.25 a pass. The next is forecast at its 10 read back
+          // (2.5) and the 5 + 1 new tokens written (7.5): after the seventh,
+          // 99.75 + 10 reaches 100, so the eighth answers.
           budget: { maxSteps: 50, maxTurnTokens: 100 },
         });
 
         expect(turn.paused?.reason).toBe("tokens");
-        // Six tool passes, every one of them run rather than refused: the
+        // Seven tool passes, every one of them run rather than refused: the
         // turn stopped before asking, not by turning a call away.
-        expect(turn.steps).toHaveLength(6);
+        expect(turn.steps).toHaveLength(7);
         expect(turn.steps.every((s) => s.status === "ok")).toBe(true);
-        const toolPasses = turn.passes
-          .slice(0, 6)
-          .reduce((sum, p) => sum + (p.prompt ?? 0) + (p.completion ?? 0), 0);
-        expect(toolPasses).toBeLessThanOrEqual(100);
+        const weighed = turn.passes.slice(0, 7).reduce(
+          (sum, p) =>
+            sum +
+            promptWeight("gpt-4.1", {
+              promptTokens: p.prompt ?? 0,
+              cachedTokens: p.cached ?? 0,
+              cacheWriteTokens: p.written ?? 0,
+            }) +
+            (p.completion ?? 0),
+          0,
+        );
+        expect(weighed).toBeLessThanOrEqual(100);
+      });
+
+      it("weighs what the cache served at its own price, so a long cached turn is not cut short", async () => {
+        // 30,000 a pass, 29,000 of it read back on Claude at a tenth: about
+        // 4,200 a pass weighed, where whole it would cross 150,000 in five.
+        scripted([
+          ...Array.from({ length: 8 }, () =>
+            withUsage(pass("", [{ id: "c", name: "search", arguments: "{}" }]), {
+              promptTokens: 30_000,
+              cachedTokens: 29_000,
+              cacheWriteTokens: 1_000,
+            }),
+          ),
+          pass("done"),
+        ]);
+        const turn = await runAgentTurn({
+          ...base,
+          request: { ...base.request, model: "claude-sonnet-5" },
+          tools: searching(),
+          budget: { maxSteps: 50, maxTurnTokens: 150_000 },
+        });
+
+        expect(turn.paused?.reason).not.toBe("tokens");
+        expect(turn.steps).toHaveLength(8);
+        expect(turn.text).toBe("done");
       });
 
       it("counts the results it was just handed in the forecast", async () => {

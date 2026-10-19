@@ -18,6 +18,7 @@ import {
 import { getDocStore } from "../lib/docstore";
 import { guardCredits } from "../lib/entitlements/guard";
 import { replaceChunks } from "../lib/chunk-store";
+import { passageIndex } from "../lib/passages";
 import { uploadLimit } from "../lib/body-limit";
 import { readStoredText, sidecarKey, storedKeysOf } from "../lib/document-text";
 import { extractFromBytes, UnreadableFile } from "../lib/formats/read";
@@ -626,7 +627,7 @@ bundles.post("/admin/backfill-embeddings", async (c) => {
         context: d.name,
         embedding: vectors[i],
       }));
-      const { error: insErr } = await replaceChunks(db, d.id, rows);
+      const { error: insErr } = await replaceChunks(db, d.id, rows, passageIndex(c.env));
       if (insErr) {
         console.error("backfill insert failed", d.id, insErr);
         skipped++;

@@ -232,3 +232,78 @@ describe("retrieveForAgent asked about one document by name", () => {
     expect(result.grounding).toBe("documents");
   });
 });
+
+/**
+ * With a passage index bound (0116) the nearest passages come from it, and
+ * Postgres is handed their ids to read under its own policies.
+ */
+describe("retrieveForAgent with a passage index", () => {
+  const passage = {
+    document_id: "d1",
+    document_name: "pricing.md",
+    content: "Pro is $20 a seat.",
+    similarity: 0.7,
+  };
+
+  function withRanked(onRanked: (args: Record<string, unknown>) => void) {
+    return fakeDb({
+      tables: {
+        agent_bundles: { select: () => ({ data: [{ bundle_id: "b1" }], error: null }) },
+        documents: { select: () => ({ data: [{ name: "pricing.md" }], error: null }) },
+      },
+      rpc: {
+        match_chunks: () => {
+          throw new Error("the column is not the index here");
+        },
+        match_passages_ranked: (args) => {
+          onRanked(args);
+          return { data: [passage], error: null };
+        },
+      },
+    });
+  }
+
+  it("asks the index among the readable bundles, then Postgres for those ids", async () => {
+    let ranked: Record<string, unknown> | null = null;
+    const fake = withRanked((args) => (ranked = args));
+    const query = vi.fn().mockResolvedValue({
+      matches: [
+        { id: "c2", score: 0.8 },
+        { id: "c1", score: 0.6 },
+      ],
+    });
+
+    const result = await retrieveForAgent(
+      fake.db as never,
+      { PASSAGES: { query } } as never,
+      "agent-1",
+      "seat pricing",
+      [],
+    );
+
+    expect(query.mock.calls[0][1]).toMatchObject({ filter: { bundle_id: "b1" } });
+    expect(ranked).toMatchObject({
+      p_agent_id: "agent-1",
+      p_vector_ids: ["c2", "c1"],
+      p_vector_similarities: [0.8, 0.6],
+    });
+    expect(ranked).not.toHaveProperty("p_query_embedding");
+    expect(result.sources).toEqual([{ id: "d1", name: "pricing.md" }]);
+  });
+
+  it("searches by words alone when the index cannot be reached", async () => {
+    let ranked: Record<string, unknown> | null = null;
+    const fake = withRanked((args) => (ranked = args));
+    const query = vi.fn().mockRejectedValue(new Error("index down"));
+
+    await retrieveForAgent(
+      fake.db as never,
+      { PASSAGES: { query } } as never,
+      "agent-1",
+      "seat pricing",
+      [],
+    );
+
+    expect(ranked).toMatchObject({ p_vector_ids: [], p_vector_similarities: [] });
+  });
+});

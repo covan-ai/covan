@@ -10,6 +10,7 @@ import {
   retrievalQuery,
 } from "./rag";
 import type { RetrievedChunk } from "./rag";
+import { nearestPassages, passageIndex, type PassageEnv } from "./passages";
 import { refersToDocuments, namesDocument } from "./doc-question";
 import { lexicalSearchEnabled, searchTerms } from "./search-terms";
 
@@ -115,10 +116,11 @@ export type Retrieval = {
  */
 export type KnowledgeScope = { viewer?: string; sharedOnly?: boolean };
 
-export type RetrievalConfig = EmbeddingConfig & {
-  RAG_MIN_SIMILARITY?: string;
-  RAG_LEXICAL?: string;
-};
+export type RetrievalConfig = EmbeddingConfig &
+  PassageEnv & {
+    RAG_MIN_SIMILARITY?: string;
+    RAG_LEXICAL?: string;
+  };
 
 /**
  * Retrieve for one question, best-effort.
@@ -259,9 +261,8 @@ export async function retrieveForAgent(
       embeddingTokens += embedded.tokens;
       const [queryEmbedding] = embedded.vectors;
       if (queryEmbedding) {
-        const { data: matches, error: matchError } = await db.rpc("match_chunks", {
+        const shared = {
           p_agent_id: agentId,
-          p_query_embedding: queryEmbedding,
           p_match_count: RAG_MATCH_COUNT,
           p_min_similarity: ragMinSimilarity(env),
           p_query_terms: lexicalSearchEnabled(env) ? searchTerms(query) : [],
@@ -269,7 +270,14 @@ export async function retrieveForAgent(
           // person's own client sends exactly what it always did.
           ...(scope.viewer ? { p_viewer: scope.viewer } : {}),
           ...(scope.sharedOnly ? { p_shared_only: true } : {}),
-        });
+        };
+        const index = passageIndex(env);
+        const { data: matches, error: matchError } = index
+          ? await db.rpc("match_passages_ranked", {
+              ...shared,
+              ...(await nearestFromIndex(index, queryEmbedding, bundleIds)),
+            })
+          : await db.rpc("match_chunks", { ...shared, p_query_embedding: queryEmbedding });
         if (matchError) {
           console.error("match_chunks failed", matchError);
         } else if (matches && matches.length > 0) {
@@ -442,6 +450,31 @@ export async function retrieveForAgent(
     grounding,
     embeddingTokens,
   };
+}
+
+/**
+ * The vector arm, from the passage index (0116), as `match_passages_ranked`
+ * takes it. Postgres decides what of it the caller may read.
+ *
+ * An index that cannot be reached is an empty arm, not a failed search: the
+ * words still find what they find, which is what a deployment without
+ * embeddings at all gets.
+ */
+async function nearestFromIndex(
+  index: NonNullable<ReturnType<typeof passageIndex>>,
+  queryEmbedding: number[],
+  bundleIds: string[],
+): Promise<{ p_vector_ids: string[]; p_vector_similarities: number[] }> {
+  try {
+    const near = await nearestPassages(index, queryEmbedding, bundleIds, RAG_MATCH_COUNT * 4);
+    return {
+      p_vector_ids: near.map((n) => n.id),
+      p_vector_similarities: near.map((n) => n.similarity),
+    };
+  } catch (err) {
+    console.error("passage index query failed (searching by words alone)", err);
+    return { p_vector_ids: [], p_vector_similarities: [] };
+  }
 }
 
 /**

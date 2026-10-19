@@ -46,10 +46,16 @@ const CLOUD = join(process.cwd(), "supabase", "cloud");
  * service-role-only list. `credit_holds` (hosted only, cloud/0004) is the same
  * shape: the running spend of turns, read and written by the credit check
  * before each step. So is `signup_grant_addresses` (cloud/0005), which only the
- * new-workspace trigger reads. An entry here is a decision, not an exemption
- * from thinking.
+ * new-workspace trigger reads. `passage_vector_changes` (0116) is the passage
+ * index's to-do list, written by a trigger and drained by the background tick.
+ * An entry here is a decision, not an exemption from thinking.
  */
-const NO_CLIENT_GRANT = new Set(["routine_deliveries", "credit_holds", "signup_grant_addresses"]);
+const NO_CLIENT_GRANT = new Set([
+  "routine_deliveries",
+  "credit_holds",
+  "signup_grant_addresses",
+  "passage_vector_changes",
+]);
 
 /**
  * The one migration that creates a table and grants in a later file.

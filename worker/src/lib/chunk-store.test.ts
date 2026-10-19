@@ -62,3 +62,78 @@ describe("insertChunkRows", () => {
     expect(res.error).toBeNull();
   });
 });
+
+describe("insertChunkRows with a passage index (0116)", () => {
+  function besideDb(insertResult: { data: unknown; error: unknown }) {
+    const sent: unknown[][] = [];
+    const deleted: string[][] = [];
+    const db = {
+      from: () => ({
+        insert: (rows: unknown[]) => {
+          sent.push(rows);
+          return { select: () => Promise.resolve(insertResult) };
+        },
+        delete: () => ({
+          in: (_col: string, ids: string[]) => {
+            deleted.push(ids);
+            return Promise.resolve({ error: null });
+          },
+        }),
+      }),
+    } as never;
+    return { db, sent, deleted };
+  }
+
+  it("writes the rows without their embeddings and the vectors under the rows' ids", async () => {
+    const { db, sent } = besideDb({
+      data: [
+        { id: "c1", document_id: "d1", chunk_index: 1 },
+        { id: "c0", document_id: "d1", chunk_index: 0 },
+      ],
+      error: null,
+    });
+    const upsert = vi.fn().mockResolvedValue({ mutationId: "m" });
+
+    const res = await insertChunkRows(db, [row(0), row(1)], { upsert } as never);
+
+    expect(res.error).toBeNull();
+    expect(sent[0]).toHaveLength(2);
+    expect(sent[0].every((r) => !("embedding" in (r as object)))).toBe(true);
+    // Matched by document and position, not by the order the ids came back in.
+    expect(upsert).toHaveBeenCalledWith([
+      {
+        id: "c0",
+        values: [0],
+        metadata: { bundle_id: "b1", document_id: "d1", workspace_id: "w1" },
+      },
+      {
+        id: "c1",
+        values: [1],
+        metadata: { bundle_id: "b1", document_id: "d1", workspace_id: "w1" },
+      },
+    ]);
+  });
+
+  it("takes the rows back out when the index refuses the vectors", async () => {
+    const { db, deleted } = besideDb({
+      data: [{ id: "c0", document_id: "d1", chunk_index: 0 }],
+      error: null,
+    });
+    const upsert = vi.fn().mockRejectedValue(new Error("index down"));
+
+    const res = await insertChunkRows(db, [row(0)], { upsert } as never);
+
+    expect(res.error).toBe("index down");
+    expect(deleted).toEqual([["c0"]]);
+  });
+
+  it("reports a failed insert without touching the index", async () => {
+    const { db } = besideDb({ data: null, error: { message: "boom" } });
+    const upsert = vi.fn();
+
+    const res = await insertChunkRows(db, [row(0)], { upsert } as never);
+
+    expect(res.error).toEqual({ message: "boom" });
+    expect(upsert).not.toHaveBeenCalled();
+  });
+});

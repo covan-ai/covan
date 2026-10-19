@@ -250,6 +250,8 @@ export const EXCLUDED: Record<string, string> = {
     "derived, and enormous. Every chunk carries a 1536-dimension vector, so a workspace with ten thousand of them is tens of megabytes of numbers that say nothing a human can read. The documents themselves are in this archive; running POST /admin/backfill-embeddings after a restore rebuilds the chunks from them — with whatever embedding model the new install is configured for, which is more useful than replaying the old one's.",
   api_keys:
     "credentials. A key is not a record of what the workspace holds, it is a way to become one of its members, and an archive that carried them would be a key store that people email to each other.",
+  passage_vector_changes:
+    "the engine's to-do list for the passage index (0116): passage ids deleted or moved since the last tick, and nothing anybody wrote. It is emptied as it is read, and a restore has no index to tell — the passages themselves are rebuilt from the documents, as document_chunks says.",
   routine_deliveries:
     "not readable by a client at all, by design since 0012: it is the engine's own log of what it sent where. Nothing in it is workspace content.",
   routine_triggers:

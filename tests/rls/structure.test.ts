@@ -18,10 +18,16 @@ import { anonClient, closeSql, sql } from "./harness";
  * what this list records. These rows are written and read only by the Worker
  * through the service-role client, which bypasses RLS: `routine_deliveries` by
  * the scheduled sync, and — on the hosted service only — `credit_holds` by the
- * credit check before every step of a turn (supabase/cloud/0004), and
- * `signup_grant_addresses` by the new-workspace trigger (cloud/0005).
+ * credit check before every step of a turn (supabase/cloud/0004),
+ * `signup_grant_addresses` by the new-workspace trigger (cloud/0005), and
+ * `passage_vector_changes` by 0116's trigger and the background tick.
  */
-const SERVICE_ROLE_ONLY = new Set(["routine_deliveries", "credit_holds", "signup_grant_addresses"]);
+const SERVICE_ROLE_ONLY = new Set([
+  "routine_deliveries",
+  "credit_holds",
+  "signup_grant_addresses",
+  "passage_vector_changes",
+]);
 
 // The two that exist only where supabase/cloud/ is applied. A database without
 // them is the open-source one, not a stale list.

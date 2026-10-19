@@ -197,6 +197,16 @@ export type ToolConnectionDTO = {
   /** Whether the caller connected it — the one person who may share it or take it back. */
   mine: boolean;
   /**
+   * When the credential was last checked against the provider and worked
+   * (epoch ms), or null — never checked, or the check could not be made.
+   */
+  verifiedAt: number | null;
+  /**
+   * The provider's refusal of this connection's credential, when it refused
+   * (0072, covan#258). A warning: the connection stays `active`.
+   */
+  verifyError: string | null;
+  /**
    * Operations this connection has already been refused and that the agent is
    * therefore not shown, and when the oldest of them is tried again (epoch
    * ms). Null when nothing is hidden.
@@ -235,6 +245,8 @@ export function mapToolConnection(
     scope?: unknown;
     created_by?: unknown;
     created_at: string;
+    verified_at?: unknown;
+    verify_error?: unknown;
   },
   callerId: string,
 ): ToolConnectionDTO {
@@ -266,6 +278,9 @@ export function mapToolConnection(
     mine: typeof row.created_by === "string" && row.created_by === callerId,
     unavailable: hiddenOperations(config),
     createdAt: toEpochMs(row.created_at),
+    verifiedAt: typeof row.verified_at === "string" ? toEpochMs(row.verified_at) : null,
+    verifyError:
+      typeof row.verify_error === "string" && row.verify_error.trim() ? row.verify_error : null,
   };
 }
 

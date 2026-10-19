@@ -61,6 +61,14 @@ describe("mergeConnectedApps", () => {
     expect(mergeConnectedApps([tool({ id: "t1", status: "failed" })], [])).toEqual([]);
   });
 
+  // covan#258: active at Composio, refused by the provider. A starter on it
+  // would end in the 401 the check exists to put in front of somebody else.
+  it("leaves out an app whose key the provider refused", () => {
+    expect(
+      mergeConnectedApps([tool({ id: "t1", verifyError: "PostHog refused this credential." })], []),
+    ).toEqual([]);
+  });
+
   it("keeps a paused source, because its documents are still there", () => {
     // A pause stops new documents arriving. It does not un-index the ones
     // already read, and those are still quotable — so the offer stands.

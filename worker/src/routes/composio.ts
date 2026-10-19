@@ -4,6 +4,7 @@ import type { AppEnv, Bindings } from "../types";
 import { serviceClient } from "../lib/supabase";
 import { callerWorkspaceId, memberRole } from "../lib/workspace";
 import { mapToolConnection, mapToolConnectionGrant } from "../lib/dto";
+import { verifyConnection } from "../lib/composio/verify";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { revokeConnectedAccounts } from "../lib/composio/revoke";
 import {
@@ -108,7 +109,7 @@ const grantSchema = z.object({
 
 /** The columns a client may select. `connected_account_id` is not among them. */
 const CONNECTION_COLUMNS =
-  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, scope, created_by, created_at, updated_at";
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, scope, created_by, created_at, updated_at, verified_at, verify_error";
 
 function frontendOrigin(env: Bindings): string {
   return env.ALLOWED_ORIGIN.split(",")[0].trim().replace(/\/+$/, "");
@@ -624,9 +625,30 @@ composio.post("/composio/complete", async (c) => {
     .select(CONNECTION_COLUMNS)
     .maybeSingle();
   if (settleError || !settled) return c.json({ error: "failed to finish that connection" }, 500);
+
+  // Active at Composio is not the same as working (covan#258): it marks an
+  // account active on a key it never tried. One read before answering, so the
+  // card that appears is already the right one — a warning on a refused key,
+  // never a failed row. See `lib/composio/verify.ts`.
+  let connection = settled as Record<string, unknown>;
+  if (typeof connection.toolkit_slug === "string") {
+    const outcome = await verifyConnection(c.env, admin, {
+      id: row.id as string,
+      toolkitSlug: connection.toolkit_slug,
+      connectedAccountId: accountId,
+    });
+    if (outcome !== "unknown") {
+      const { data: checked } = await admin
+        .from("tool_connections")
+        .select(CONNECTION_COLUMNS)
+        .eq("id", row.id)
+        .maybeSingle();
+      if (checked) connection = checked as Record<string, unknown>;
+    }
+  }
   return c.json({
     status: "active",
-    connection: mapToolConnection(settled as never, c.get("user").id),
+    connection: mapToolConnection(connection as never, c.get("user").id),
   });
 });
 

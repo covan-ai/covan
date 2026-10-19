@@ -212,6 +212,11 @@ function ConnectedApp({
             <Chip tone="neutral">Finishing…</Chip>
           ) : connection.status === "failed" ? (
             <Chip tone="neutral">Not connected</Chip>
+          ) : connection.verifyError ? (
+            // Composio said active; the provider said no to the key itself
+            // (covan#258). Said here, to whoever typed it, rather than as a
+            // 401 in front of whoever next asks an agent to use it.
+            <Chip tone="neutral">Key refused</Chip>
           ) : null}
           {/* Neutral, like every other chip on this row: it is a count, not a
               verdict. Seven hidden on GitHub is a usable app; one on a
@@ -254,6 +259,11 @@ function ConnectedApp({
           ) : null}
         </span>
       </div>
+      {connection.status === "active" && connection.verifyError ? (
+        <p className="text-meta leading-[1.45] text-muted-foreground">
+          {connection.verifyError} Remove it and connect again with a working one.
+        </p>
+      ) : null}
 
       {abandoned ? (
         <p className="text-meta text-muted-foreground">

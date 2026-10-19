@@ -22,6 +22,7 @@ const getToolkit = vi.fn();
 const listToolkits = vi.fn();
 const listToolkitCategories = vi.fn();
 const listToolkitTools = vi.fn();
+const proxyRequest = vi.fn();
 vi.mock("../lib/composio/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/composio/client")>();
   return {
@@ -32,6 +33,7 @@ vi.mock("../lib/composio/client", async (importOriginal) => {
     listToolkits: (...args: unknown[]) => listToolkits(...args),
     listToolkitCategories: (...args: unknown[]) => listToolkitCategories(...args),
     listToolkitTools: (...args: unknown[]) => listToolkitTools(...args),
+    proxyRequest: (...args: unknown[]) => proxyRequest(...args),
   };
 });
 
@@ -197,6 +199,10 @@ beforeEach(() => {
   // that a call did NOT happen.
   createLink.mockClear();
   getConnectedAccount.mockClear();
+  // No answer the check can use, unless a test gives one: the toolkit below
+  // names no "who am I" endpoint either, so the default is "not checked".
+  proxyRequest.mockReset();
+  proxyRequest.mockResolvedValue({ kind: "error", status: 502, message: "not stubbed" });
   getToolkit.mockClear();
   getToolkit.mockResolvedValue({
     kind: "ok",
@@ -588,6 +594,40 @@ describe("POST /composio/complete", () => {
     // Found by the nonce's hash, which is all the database keeps.
     const { nonceHashOf } = await import("../lib/connections/oauth-state");
     expect(serviceEqs).toContainEqual(["completion_nonce_hash", await nonceHashOf(NONCE)]);
+  });
+
+  // covan#258: Composio marks an account active on a key it never tried. The
+  // check says so on the row, as a warning — the row itself stays active.
+  it("warns, and keeps the row active, when the provider refuses the key", async () => {
+    getToolkit.mockResolvedValueOnce({
+      kind: "ok",
+      toolkit: {
+        slug: "posthog",
+        name: "PostHog",
+        currentUserEndpoint: "/api/users/@me/",
+        currentUserMethod: "GET",
+      },
+    });
+    proxyRequest.mockResolvedValueOnce({
+      kind: "ok",
+      status: 401,
+      data: { detail: "Personal API key found in request Authorization header is invalid." },
+    });
+
+    const { status, body } = await call(appWith(), "POST", "/composio/complete", { nonce: NONCE });
+
+    expect(status).toBe(200);
+    expect(body.status).toBe("active");
+    expect(proxyRequest).toHaveBeenCalledWith(
+      expect.anything(),
+      { connectedAccountId: "ca_1", endpoint: "/api/users/@me/", method: "GET" },
+      undefined,
+    );
+    expect(updated).toEqual({
+      verified_at: null,
+      verify_error:
+        "PostHog refused this credential: Personal API key found in request Authorization header is invalid.",
+    });
   });
 
   it("revokes the account when anybody else brings the nonce back", async () => {

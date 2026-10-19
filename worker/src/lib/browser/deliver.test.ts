@@ -500,8 +500,32 @@ describe("a v4 run that stopped short (ruling R8's outcome)", () => {
     );
     const prompt = complete.mock.calls[0][1].messages.map((m) => String(m.content)).join("\n");
     expect(prompt).toContain("a captcha would not clear");
-    expect(prompt).toMatch(/what stopped it/i);
+    expect(prompt).toMatch(/the site refused it/i);
     expect(prompt).not.toMatch(/browser panel/i);
+  });
+
+  it("says what was done and what is left when the run did part of it", async () => {
+    await deliverBrowserTask(
+      ROW,
+      {
+        status: "failed",
+        output: "sent 2 of 10; the third recipient could not be picked",
+        error: null,
+        costUsd: 0.05,
+        reported: {
+          status: "partial",
+          host: null,
+          answer: "sent 2 of 10; the third recipient could not be picked",
+        },
+      },
+      ENV,
+      fakeDb(),
+    );
+    const prompt = complete.mock.calls[0][1].messages.map((m) => String(m.content)).join("\n");
+    expect(prompt).toContain("sent 2 of 10");
+    expect(prompt).toMatch(/did only part of the task/);
+    expect(prompt).toMatch(/do not add a reason it did not give/);
+    expect(prompt).not.toMatch(/refused|browser panel/i);
   });
 
   it("answers a run that said done exactly as before", async () => {

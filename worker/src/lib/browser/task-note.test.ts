@@ -99,6 +99,20 @@ describe("browserTaskNote", () => {
     );
   });
 
+  it("points at the answer for a run that did part, or that a site refused, instead of summing it up", async () => {
+    const { db } = dbWith([
+      { task: "a", status: "failed", stop_reason: "partial" },
+      { task: "b", status: "failed", stop_reason: "blocked" },
+    ]);
+    const note = String(await browserTaskNote(db, "sess-1", NOW));
+    expect(note).toContain(
+      '"a" — stopped part-way — its answer, saying what it did and what it did not, is already a message',
+    );
+    expect(note).toContain('"b" — stopped because, it reports, the site refused it');
+    expect(note).not.toContain("blocked by the site");
+    expect(note).toContain("do not contradict it, and do not guess why a site stopped it");
+  });
+
   it("says why a task stopped short when the row says", async () => {
     const { db } = dbWith([
       { task: "a", status: "stopped", stop_reason: "handed_to_person" },

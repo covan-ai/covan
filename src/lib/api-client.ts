@@ -1742,7 +1742,7 @@ export type BrowserTask = {
   apiVersion: "v2" | "v4";
   /**
    * Why a run ended before its answer, or null: 'handed_to_person' | 'cost_cap' |
-   * 'cancelled', or the run's own 'login_required' | 'blocked'. The panel's
+   * 'cancelled', or the run's own 'login_required' | 'partial' | 'blocked'. The panel's
    * sign-in prompt keys on 'login_required' and nothing else.
    */
   stopReason: string | null;

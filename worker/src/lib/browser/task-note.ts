@@ -64,8 +64,14 @@ function standing(row: TaskRow): string {
   if (reason === "handed_to_person") return "handed to the person in the browser panel";
   if (reason === "cancelled") return "cancelled";
   if (reason === "cost_cap") return "stopped at its cost limit";
+  // Both delivered an answer saying what the run did, so the line points at it
+  // rather than summing it up: "blocked by the site" alone was read, on
+  // 2026-10-19, as "nothing was sent", two messages after two had been.
+  if (reason === "partial") {
+    return "stopped part-way — its answer, saying what it did and what it did not, is already a message in this conversation";
+  }
   if (reason === "blocked") {
-    return `blocked by the site${error ? `: ${clip(error, ERROR_CHARS)}` : ""}`;
+    return "stopped because, it reports, the site refused it — its answer, saying what the site showed and anything it did first, is already a message in this conversation";
   }
   switch (row.status) {
     case "waiting":
@@ -117,7 +123,8 @@ export async function browserTaskNote(
       ...lines,
       "When the person asks about these tasks, answer from this list and nothing else: do not " +
         "say a task is running, waiting or done unless the list says so, and do not start one " +
-        "again while it is listed as running.",
+        "again while it is listed as running. What a task did is in its answer message: do not " +
+        "contradict it, and do not guess why a site stopped it.",
     ].join("\n");
   } catch {
     console.warn("could not read a conversation's browser tasks for its prompt");

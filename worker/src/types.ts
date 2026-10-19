@@ -223,6 +223,12 @@ export type RoutineEnv = {
  */
 export type DocumentEnv = RoutineEnv & {
   /**
+   * How many passages one workspace may hold (`lib/knowledge-ceiling.ts`).
+   * Unset is no ceiling. A document that would take a workspace past it fails
+   * to index with the reason, before anything is embedded.
+   */
+  WORKSPACE_MAX_PASSAGES?: string;
+  /**
    * Where document embeddings go. Unset means api.openai.com, which is also
    * what `OPENAI_BASE_URL` on its own leaves them at — the two do not inherit
    * from each other, deliberately (`lib/openai`).

@@ -360,6 +360,8 @@ services:
       # Retrieval's lexical (keyword) arm. Empty or "on" means enabled; "off"
       # turns it off for a corpus it doesn't suit.
       RAG_LEXICAL: ${RAG_LEXICAL:-}
+      # Passages one workspace may hold. Empty means no ceiling.
+      WORKSPACE_MAX_PASSAGES: ${WORKSPACE_MAX_PASSAGES:-}
       ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY:?set ROUTINE_SECRET_KEY in .env}
       ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:3000}
       # No R2 binding off Cloudflare, so getDocStore falls to the filesystem

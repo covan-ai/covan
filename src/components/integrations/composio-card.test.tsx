@@ -144,6 +144,26 @@ describe("ComposioCard", () => {
     expect(screen.getByText("Finishing…")).toBeInTheDocument();
   });
 
+  // covan#258: Composio said active on a key the provider refuses. Said on
+  // the card, to whoever typed it.
+  it("says a refused key was refused, in the provider's words, and what to do", async () => {
+    render(
+      <ComposioCard
+        connections={[
+          app({
+            status: "active",
+            verifyError: "PostHog refused this credential: Personal API key is invalid.",
+          }),
+        ]}
+        agents={AGENTS}
+      />,
+    );
+    expect(screen.getByText("Key refused")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Personal API key is invalid\. Remove it and connect again/),
+    ).toBeInTheDocument();
+  });
+
   // A sign-in window closed halfway leaves the row pending for good, and the
   // card used to call that "1 connected" and "Finishing…" indefinitely.
   it("does not count an unfinished sign-in as connected", async () => {

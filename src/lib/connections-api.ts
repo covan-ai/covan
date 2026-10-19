@@ -67,6 +67,19 @@ export type ToolConnection = {
   /** Whether you connected it — the one person who can share it or take it back. */
   mine: boolean;
   /**
+   * When the credential was last checked against the provider and worked
+   * (epoch ms). Null: never checked, or the check could not be made.
+   * Absent from an older worker.
+   */
+  verifiedAt?: number | null;
+  /**
+   * The provider's refusal of the credential this was connected with, in its
+   * own words where it gave any (covan#258). A warning, not a state: the
+   * connection stays `active`, because a check that is wrong must never close
+   * one that works.
+   */
+  verifyError?: string | null;
+  /**
    * Operations this connection was already refused by the service, which the
    * agent is not shown, and when the oldest of them is tried again (epoch
    * ms; null when that date could not be read). Null when nothing is hidden.

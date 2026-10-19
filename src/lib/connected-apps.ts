@@ -134,6 +134,9 @@ export function mergeConnectedApps(tools: ToolConnection[], sources: Connection[
   for (const tool of tools) {
     if (tool.transport !== "composio") continue;
     if (tool.status !== "active") continue;
+    // A refused key (covan#258): an offer to use it would end in the
+    // provider's 401, which is the thing the check exists to stop.
+    if (tool.verifyError) continue;
     if (!tool.toolkitSlug) continue;
 
     const slug = tool.toolkitSlug;

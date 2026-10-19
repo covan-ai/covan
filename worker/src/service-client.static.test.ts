@@ -291,6 +291,10 @@ describe("the RLS bypass", () => {
  */
 const RECEIVES_THE_SERVICE_CLIENT = new Map([
   [
+    "lib/composio/verify.ts",
+    "POST /composio/complete hands it the service client after it has found the row by its nonce and checked it is the caller's: its one write is verified_at and verify_error, keyed to that row's id, and both columns are granted to no client role for update (0072)",
+  ],
+  [
     "lib/indexing/job.ts",
     "one unit of one document's indexing, for the clocks in lib/indexing/host.ts and the DocumentRoom alarm: every read and write is keyed to the document claim_index_job returned, its passages are written with that document's own bundle and its bundle's workspace_id, and the credits it spends are recorded against that workspace",
   ],

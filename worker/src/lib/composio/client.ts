@@ -264,6 +264,18 @@ export type ComposioToolkit = {
    * different display name in different rows.
    */
   categories: string[];
+  /**
+   * A request on the provider's own API that answers "who is this credential",
+   * as the detail row publishes it (`get_current_user_endpoint`) — a path or
+   * an absolute URL — with its method. Empty when the row has none, which the
+   * list endpoint never does.
+   *
+   * What lets a connection be checked once it is made (covan#258): Composio
+   * marks an account active on a key it never tried, and this is the one read
+   * the catalogue itself says will tell.
+   */
+  currentUserEndpoint?: string;
+  currentUserMethod?: string;
 };
 
 /** One heading in the catalogue's own taxonomy. */
@@ -983,6 +995,8 @@ function toToolkit(row: Record<string, unknown>): ComposioToolkit | null {
     authHintUrl: connect.hintUrl,
     logo: logo ? logo.toString() : "",
     categories: categoryIdsOf(meta.categories ?? row.categories),
+    currentUserEndpoint: text(row.get_current_user_endpoint),
+    currentUserMethod: text(row.get_current_user_endpoint_method).toUpperCase() || "GET",
   };
 }
 
@@ -1117,6 +1131,43 @@ export async function listToolkitCategories(
  * reference is one hallucinated identifier away from another workspace's
  * mailbox.
  */
+/**
+ * One request on the provider's own API, through Composio, with a connected
+ * account's credential — which never comes here.
+ *
+ * For the server's own reads only, and never with an id a model chose; see
+ * `executeTool` below for why that line matters. Answers with the provider's
+ * status and body as Composio relays them. A Composio refusal of its own (a
+ * 4xx/5xx from the proxy itself) is an error, and says nothing about the
+ * provider's view of the credential.
+ */
+export async function proxyRequest(
+  env: ComposioEnv,
+  input: { connectedAccountId: string; endpoint: string; method: string },
+  opts?: ComposioOptions,
+): Promise<ComposioResult<{ status: number; data: unknown }>> {
+  const res = await request(
+    env,
+    `${CATALOGUE_API}/tools/execute/proxy`,
+    {
+      method: "POST",
+      body: {
+        connected_account_id: input.connectedAccountId,
+        endpoint: input.endpoint,
+        method: input.method,
+      },
+    },
+    opts,
+  );
+  if (res.kind === "error") return res;
+  const body = parsed(res.body);
+  const status = isRecord(body) ? body.status : undefined;
+  if (typeof status !== "number") {
+    return { kind: "error", status: 502, message: "Composio's proxy answered without a status" };
+  }
+  return { kind: "ok", status, data: isRecord(body) ? body.data : null };
+}
+
 export async function executeTool(
   env: ComposioEnv,
   call: {

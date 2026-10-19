@@ -82,7 +82,7 @@ const updateSchema = z.object({
 });
 
 const COLUMNS =
-  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, scope, created_by, created_at, updated_at";
+  "id, workspace_id, label, transport, base_url, auth_kind, allowed_methods, config, toolkit_slug, status, scope, created_by, created_at, updated_at, verified_at, verify_error";
 
 /** Whether this caller may change what agents in this workspace can reach. */
 async function mayWrite(

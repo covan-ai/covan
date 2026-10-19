@@ -121,6 +121,13 @@ export type CreditSnapshot =
       unlimited: boolean;
       /** Replies ever charged — what lets the UI say "about N replies left". */
       replies: number;
+      /**
+       * What a workspace must hold for `check` to let something new start.
+       * Above zero on purpose — a charge lands after the work it pays for —
+       * so a balance between zero and this is one the screen must call spent,
+       * or it offers a composer the server will refuse. Absent means zero.
+       */
+      floor?: number;
     };
 
 export interface Entitlements {

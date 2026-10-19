@@ -65,8 +65,10 @@ export function UsageSection() {
           <div className="flex items-baseline justify-between gap-4">
             <span className="text-sm text-muted-foreground">Workspace credits</span>
             <span className="text-sm font-medium">
-              {wholeCredits(credits.balance).toLocaleString()} of{" "}
-              {wholeCredits(credits.granted).toLocaleString()}
+              {credits.balance > 0 && credits.balance < 1
+                ? "<1"
+                : wholeCredits(credits.balance).toLocaleString()}{" "}
+              of {wholeCredits(credits.granted).toLocaleString()}
             </span>
           </div>
 

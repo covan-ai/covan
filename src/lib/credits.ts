@@ -74,6 +74,19 @@ export function wholeCredits(n: number): number {
   return Math.max(0, Math.floor(n));
 }
 
+/**
+ * A balance in words: "<1 credit", "1 credit", "2,400 credits".
+ *
+ * Not `wholeCredits` alone, because half a credit floored is "0 credits" — a
+ * screen saying the workspace has nothing while it still has something, which
+ * the pilot found on 2026-10-16 (covan-cloud#407).
+ */
+export function creditsPhrase(n: number): string {
+  if (n > 0 && n < 1) return "<1 credit";
+  const whole = wholeCredits(n);
+  return `${whole.toLocaleString()} ${whole === 1 ? "credit" : "credits"}`;
+}
+
 export function creditsFrom(usage: UsageResponse | undefined): CreditsView | null {
   const credits = usage?.credits;
   if (!credits || !credits.metered || credits.unlimited) return null;
@@ -93,8 +106,12 @@ export function creditsFrom(usage: UsageResponse | undefined): CreditsView | nul
   const ratio = credits.granted > 0 ? Math.min(Math.max(balance / credits.granted, 0), 1) : 0;
   const repliesLeft = Math.max(0, Math.floor(balance / perReply));
 
+  // Spent is wherever the server stops starting things, which on the hosted
+  // build is a few credits above zero (`floor`). Called "low" there, the screen
+  // offered a composer and a reply estimate for a balance every send was
+  // refused on.
   const level: CreditsView["level"] =
-    credits.balance <= 0
+    credits.balance <= 0 || credits.balance < (credits.floor ?? 0)
       ? "spent"
       : credits.balance < LOW_BALANCE_CREDITS || repliesLeft <= 3
         ? "low"
@@ -117,8 +134,7 @@ export function creditsFrom(usage: UsageResponse | undefined): CreditsView | nul
  */
 export function creditsSentence(c: CreditsView): string {
   if (c.level === "spent") return "This workspace is out of credits.";
-  const left = wholeCredits(c.balance);
-  const credits = `${left.toLocaleString()} ${left === 1 ? "credit" : "credits"} left`;
+  const credits = `${creditsPhrase(c.balance)} left`;
   if (c.level === "low") {
     // Exact here, whatever `approximateReplies` would do with it: the low band
     // is where the number becomes something to plan around.

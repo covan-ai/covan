@@ -138,8 +138,10 @@ describe("AppDetailDialog", () => {
     detail = answered({ operations: OPERATIONS, total: 2, more: false });
     open();
     const card = within(screen.getByRole("dialog"));
-    expect(card.getByText("GMAIL_SEND_EMAIL")).toBeInTheDocument();
-    expect(card.getByText("GMAIL_DELETE_MESSAGE")).toBeInTheDocument();
+    // By name: the slug is an identifier for a program, not for a person.
+    expect(card.getByText("Send email")).toBeInTheDocument();
+    expect(card.getByText("Delete message")).toBeInTheDocument();
+    expect(card.queryByText("GMAIL_SEND_EMAIL")).not.toBeInTheDocument();
     // `null` means not annotated, which is not the same as safe — so exactly
     // one chip, on the one that says `true`.
     expect(card.getAllByText("Can change things")).toHaveLength(1);
@@ -197,7 +199,8 @@ describe("AppDetailDialog", () => {
     });
     const card = within(screen.getByRole("dialog"));
     expect(card.queryByRole("button", { name: /Connect/ })).not.toBeInTheDocument();
-    expect(card.getByText(/sets it up in Composio/)).toBeInTheDocument();
+    expect(card.getByText(/can’t be connected yet/)).toBeInTheDocument();
+    expect(card.getByText("Not available yet")).toBeInTheDocument();
   });
 
   it("says a no-sign-in application needs none, in words rather than in OAUTH2", () => {
@@ -314,7 +317,7 @@ describe("AppDetailDialog", () => {
     expect(card.getByText(/Checking what this one needs/)).toBeInTheDocument();
     expect(card.queryByRole("button", { name: /Connect/ })).not.toBeInTheDocument();
     // And no chip, because a guess on the chip is the same guess.
-    expect(card.queryByText(/Needs setup in Composio/)).not.toBeInTheDocument();
+    expect(card.queryByText(/Not available yet/)).not.toBeInTheDocument();
   });
 
   it("says the check failed rather than that setup is needed", () => {

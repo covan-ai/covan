@@ -220,6 +220,16 @@ function subjectTerms(question: string): number {
   return searchTerms(question).filter((t) => !FOLLOW_UP_WORDS.has(t) && !/^\d+$/.test(t)).length;
 }
 
+/**
+ * Two numbers with an operator between them: a sum, not a follow-up.
+ *
+ * "what is 2+2" has no subject words — the digits are not counted, rightly,
+ * since "and 2024?" is a follow-up — so it borrowed the question before it,
+ * retrieved that question's document, and cited it under an answer about
+ * arithmetic (covan-cloud#407). A sum is about itself.
+ */
+const ARITHMETIC = /\d\s*[-+*/×÷^%x]\s*\d/;
+
 /** How much of the preceding question to carry, when one is carried. */
 const ANTECEDENT_CHARS = 400;
 
@@ -260,6 +270,7 @@ export function retrievalQuery(turns: { role: "user" | "assistant"; content: str
   if (latest.role === "user" && subjectTerms(question) >= STANDALONE_TERMS) {
     return question.slice(0, QUERY_CHARS);
   }
+  if (latest.role === "user" && ARITHMETIC.test(question)) return question;
 
   const antecedent = turns
     .slice(0, -1)

@@ -7,7 +7,13 @@ import { describe, it, expect, vi } from "vitest";
 // than configured.
 vi.mock("./api-client", () => ({ api: {} }));
 
-import { creditsFrom, creditsSentence, approximateReplies, LOW_BALANCE_CREDITS } from "./credits";
+import {
+  creditsFrom,
+  creditsPhrase,
+  creditsSentence,
+  approximateReplies,
+  LOW_BALANCE_CREDITS,
+} from "./credits";
 import type { CreditSnapshot, UsageResponse } from "./api-client";
 
 const TOTALS = {
@@ -93,6 +99,31 @@ describe("levels", () => {
     expect(over.balance).toBe(0);
     expect(over.repliesLeft).toBe(0);
     expect(over.ratio).toBe(0);
+  });
+
+  // The hosted check refuses to start anything under a few credits, because a
+  // charge lands after the work. Read as "low", that balance showed a composer
+  // and "about 0 replies left" while every send came back refused.
+  it("is spent under the server's floor, though not at zero", () => {
+    expect(creditsFrom(metered({ balance: 2.5, floor: 4 }))!.level).toBe("spent");
+    expect(creditsFrom(metered({ balance: 4, floor: 4 }))!.level).not.toBe("spent");
+    // No floor, as from an older server: zero is the line, as it was.
+    expect(creditsFrom(metered({ balance: 2.5 }))!.level).toBe("low");
+  });
+});
+
+describe("creditsPhrase", () => {
+  // Half a credit floored to "0 credits" told an admin the workspace was empty
+  // while it still had something in it (covan-cloud#407).
+  it("never calls a balance that is left zero", () => {
+    expect(creditsPhrase(0.5)).toBe("<1 credit");
+    expect(creditsPhrase(0)).toBe("0 credits");
+    expect(creditsPhrase(-0.4)).toBe("0 credits");
+  });
+
+  it("says one credit, not one credits", () => {
+    expect(creditsPhrase(1.7)).toBe("1 credit");
+    expect(creditsPhrase(2400.2)).toBe(`${(2400).toLocaleString()} credits`);
   });
 });
 

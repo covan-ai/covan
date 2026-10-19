@@ -51,6 +51,11 @@ describe("CreditsBadge", () => {
     expect(screen.getByText("Unlimited")).toBeInTheDocument();
   });
 
+  it("does not call half a credit zero", () => {
+    renderWith(metered({ balance: 0.5 }));
+    expect(screen.getByText("<1 credit")).toBeInTheDocument();
+  });
+
   it("never shows a negative balance", () => {
     renderWith(metered({ balance: -0.4, spent: 500.4 }));
     expect(screen.getByText("0 credits")).toBeInTheDocument();

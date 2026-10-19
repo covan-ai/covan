@@ -1551,6 +1551,11 @@ export type CreditSnapshot =
       unlimited: boolean;
       /** Replies ever charged, for the "about N replies left" estimate. */
       replies: number;
+      /**
+       * What the workspace must hold before the server starts anything new.
+       * Below it the balance is spent, whatever it says. Absent means zero.
+       */
+      floor?: number;
     };
 
 /** One row of the workspace's credit ledger. Never names who caused it. */

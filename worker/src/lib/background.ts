@@ -10,6 +10,7 @@ import { sweepAbandonedTakeovers, sweepConversationBrowsers } from "./browser/sw
 import { PROVIDERS } from "./connections/registry";
 import { advanceDueDocumentJobs } from "./docs/host";
 import { advanceDueIndexJobs } from "./indexing/host";
+import { syncPassageVectors } from "./passages";
 
 /**
  * One scheduled tick, for both Workers that have one.
@@ -118,6 +119,13 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
   // Worker (no document store) a job that is ready to be filed is put back for
   // the API Worker; see `advanceDocumentJob`.
   if (await advanceDueDocumentJobs(env)) return;
+
+  // The passage index (0116), where one is bound: what was deleted or moved
+  // since the last tick, then the next pages of embeddings still in the
+  // column. Unbound, it returns before asking anything. Above the indexing
+  // below, because a deleted passage the index still answers with costs a
+  // slot in every search of its bundle until it is told.
+  if (await syncPassageVectors(env)) return;
 
   // Documents whose indexing nobody is driving (0105): no Durable Object bound,
   // or a host that died holding the lease. Only where there is a document store

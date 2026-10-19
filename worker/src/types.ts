@@ -209,6 +209,14 @@ export type RoutineEnv = {
    * shared between the requests an isolate serves and must never be written to.
    */
   SUBREQUESTS?: SubrequestMeter;
+  /**
+   * A Cloudflare Vectorize index holding passage embeddings instead of
+   * `document_chunks.embedding` (0116, `lib/passages`). Cloudflare only, and
+   * optional there: unbound, the column is the index. Bound, it has to be
+   * bound on every Worker that searches or writes passages — the API and the
+   * routine engine both — or one of them searches an emptying column.
+   */
+  PASSAGES?: Vectorize;
 };
 
 /**

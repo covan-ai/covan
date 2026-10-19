@@ -3,6 +3,7 @@ import type { SyncEnv } from "../../types";
 import { embeddingSpend, spends, type Entitlements } from "../entitlements";
 import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../embeddings";
 import { replaceChunks } from "../chunk-store";
+import { passageIndex } from "../passages";
 import { getDocStore } from "../docstore";
 import { EXCERPT_LIMIT, hasIndexableText, safeName } from "../extract";
 import { decryptSecret, encryptSecret } from "../secret-box";
@@ -773,6 +774,7 @@ async function importOne(
       context: file.name,
       embedding: embedded.vectors[index],
     })),
+    passageIndex(deps.env),
   );
   if (chunkError) {
     throw new Error(`could not save passages for ${file.name}`);

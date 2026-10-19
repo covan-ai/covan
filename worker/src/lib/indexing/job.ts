@@ -9,6 +9,7 @@ import { EXCERPT_LIMIT, hasIndexableText, MAX_INDEX_CHARS, extOf } from "../extr
 import { UnreadableFile } from "../formats/read";
 import { readStoredText, sidecarKey, type StoredText } from "../document-text";
 import { ceilingReason, passageCeiling, passagesOutside } from "../knowledge-ceiling";
+import { passageIndex } from "../passages";
 
 /**
  * One document's indexing, a unit at a time.
@@ -144,6 +145,7 @@ export async function advanceIndexJob(
           embedding: embedded.vectors[i],
           generation,
         })),
+        passageIndex(env),
       );
       if (error) throw new Error(`could not save passages: ${JSON.stringify(error)}`);
     }

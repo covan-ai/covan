@@ -1010,6 +1010,33 @@ redeploy both Workers. Then sign up on the deployed frontend: if sign-up works
 but every API call fails in the browser with a CORS error, this is the variable
 that is wrong.
 
+### 7. Optional: keep embeddings out of the database
+
+Passage vectors are most of what a knowledge-heavy workspace stores, and on a
+small Postgres plan they are what fills it. On Cloudflare they can live in a
+Vectorize index instead (migration 0116). The text, the keyword index and every
+access rule stay in Postgres; the index is asked only which passages are
+nearest, and Postgres decides which of those the asker may read.
+
+Create the index and its bundle filter first, then uncomment the `[[vectorize]]`
+block in **both** wrangler configs and redeploy both Workers:
+
+```bash
+wrangler vectorize create covan-passages --dimensions=1536 --metric=cosine
+wrangler vectorize create-metadata-index covan-passages --property-name=bundle_id --type=string
+```
+
+New passages are written to the index from then on. The ones already in the
+database move across on their own, a thousand per routine-engine tick, and
+searches use words alone for a passage until its turn comes. Once
+`select count(*) from document_chunks where embedding is not null` reads 0, the
+column's HNSW index holds nothing and can be dropped:
+`drop index if exists public.idx_document_chunks_embedding;`.
+
+Unbinding later is not a switch back: the vectors stay in the index and the
+column stays empty. Re-embed with `POST /admin/backfill-embeddings?force=1`
+after unbinding.
+
 ## Two traps worth knowing about
 
 **The Workers Free plan caps an account at five cron triggers.** Registering a

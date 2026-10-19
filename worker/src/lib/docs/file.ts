@@ -3,6 +3,7 @@ import type { DocumentEnv } from "../../types";
 import { getDocStore } from "../docstore";
 import { chunkText, embedTexts, tokensSpentBefore } from "../embeddings";
 import { replaceChunks } from "../chunk-store";
+import { passageIndex } from "../passages";
 import { EXCERPT_LIMIT, safeName } from "../extract";
 
 /**
@@ -110,6 +111,7 @@ export async function fileGeneratedDocument(
           context: doc.name,
           embedding: embedded.vectors[index],
         })),
+        passageIndex(env),
       );
       if (chunkError) console.error("filing: could not save passages", chunkError);
     }

@@ -141,6 +141,21 @@ new_sqlite_classes = ["TurnRoom"]
 binding = "DOCS"
 bucket_name = "covan-docs"
 
+# Passage embeddings beside the database (migration 0116, src/lib/passages.ts).
+# Optional — leave it out and `document_chunks.embedding` is the index, as on
+# Node. Bound, new passages keep their vectors here instead, and the background
+# tick moves the ones already in the column across a page at a time; a free
+# Supabase database is mostly vectors otherwise. Create the index and its
+# bundle filter BEFORE binding it, and bind it on both Workers:
+#
+#   wrangler vectorize create covan-passages --dimensions=1536 --metric=cosine
+#   wrangler vectorize create-metadata-index covan-passages --property-name=bundle_id --type=string
+#
+# --dimensions must match EMBEDDING_DIMENSIONS (unset is 1536).
+# [[vectorize]]
+# binding = "PASSAGES"
+# index_name = "covan-passages"
+
 # The document engine's clock: one Durable Object per document being written,
 # each section in its own alarm, so a long report keeps being written after its
 # tab closes (`src/lib/docs/host.ts`). Optional — leave both blocks out and the

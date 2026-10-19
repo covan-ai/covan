@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { putPassages, type PassageIndex } from "./passages";
 
 /**
  * How many chunk rows go in one insert.
@@ -41,14 +42,71 @@ export type ChunkRow = {
 export async function insertChunkRows(
   db: SupabaseClient,
   rows: ChunkRow[],
+  passages: PassageIndex | null = null,
 ): Promise<{ error: unknown | null }> {
   for (let i = 0; i < rows.length; i += CHUNK_INSERT_BATCH) {
-    const { error } = await db
-      .from("document_chunks")
-      .insert(rows.slice(i, i + CHUNK_INSERT_BATCH));
+    const batch = rows.slice(i, i + CHUNK_INSERT_BATCH);
+    if (!passages) {
+      const { error } = await db.from("document_chunks").insert(batch);
+      if (error) return { error };
+      continue;
+    }
+    const { error } = await insertBeside(db, batch, passages);
     if (error) return { error };
   }
   return { error: null };
+}
+
+/**
+ * One batch with its embeddings in the passage index instead of the row
+ * (0116): the rows first, for their ids, then the vectors under those ids.
+ *
+ * A row without its vector is a passage only the words can find, so a write
+ * to the index that fails takes the batch's rows back out and reports the
+ * failure like a failed insert — the callers already redo or undo those.
+ */
+async function insertBeside(
+  db: SupabaseClient,
+  batch: ChunkRow[],
+  passages: PassageIndex,
+): Promise<{ error: unknown | null }> {
+  const { data, error } = await db
+    .from("document_chunks")
+    .insert(batch.map(({ embedding: _embedding, ...row }) => row))
+    .select("id,document_id,chunk_index");
+  if (error) return { error };
+  const written = (data ?? []) as Array<{ id: string; document_id: string; chunk_index: number }>;
+  const idOf = new Map(written.map((r) => [`${r.document_id}:${r.chunk_index}`, r.id]));
+  try {
+    await putPassages(
+      passages,
+      batch.flatMap((row) => {
+        const id = idOf.get(`${row.document_id}:${row.chunk_index}`);
+        return id
+          ? [
+              {
+                id,
+                workspaceId: row.workspace_id,
+                bundleId: row.bundle_id,
+                documentId: row.document_id,
+                values: row.embedding,
+              },
+            ]
+          : [];
+      }),
+    );
+    return { error: null };
+  } catch (err) {
+    const { error: undoError } = await db
+      .from("document_chunks")
+      .delete()
+      .in(
+        "id",
+        written.map((r) => r.id),
+      );
+    if (undoError) console.error("could not remove passages the index refused", undoError);
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**
@@ -75,6 +133,7 @@ export async function replaceChunks(
   db: SupabaseClient,
   documentId: string,
   rows: ChunkRow[],
+  passages: PassageIndex | null = null,
 ): Promise<{ error: unknown | null; count: number }> {
   const { data: newest, error: readError } = await db
     .from("document_chunks")
@@ -88,6 +147,7 @@ export async function replaceChunks(
   const { error } = await insertChunkRows(
     db,
     rows.map((r) => ({ ...r, generation })),
+    passages,
   );
   if (error) {
     const { error: undoError } = await db

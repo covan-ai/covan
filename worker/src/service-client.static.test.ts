@@ -35,6 +35,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the document engine's clocks — the Durable Object's alarm, the Node timer, the cron — none of which has a caller, so there is no JWT for RLS to resolve. What each may touch is bounded to one job id: the one a route's own read returned when it kicked the host, or the one claim_due_document_jobs (0102, service role only) handed the cron",
   ],
   [
+    "lib/passages.ts",
+    "the background tick's upkeep of the passage index (0116), which has no caller and so no JWT for RLS to resolve. It reads and deletes passage_vector_changes, which 0116 grants to service_role alone because it is the engine's to-do list, and it moves embeddings out of document_chunks into the index: each row read is written to the index under its own id, bundle and workspace, and the one write back is clearing that same row's embedding. Nothing a client sent reaches it",
+  ],
+  [
     "lib/indexing/host.ts",
     "the indexing job's clocks (0105) — the Durable Object's alarm, the Node timer, the cron — none of which has a caller, so there is no JWT for RLS to resolve. What each may touch is bounded to one document id: the one an upload or reindex route's own insert or read returned when it kicked the host, or one claim_due_index_jobs (0105, service role only) handed the cron",
   ],

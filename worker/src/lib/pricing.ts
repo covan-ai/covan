@@ -48,6 +48,33 @@ const PRICES: Record<ModelId, { in: number; cachedIn: number; out: number }> = {
   "claude-haiku-4-5": { in: 1, cachedIn: 0.1, out: 5 },
 };
 
+/**
+ * The prompt tokens a pass spent, weighed by what they cost against a fresh
+ * one — for a turn's token ceiling (`maxTurnTokens`), which is a guard on
+ * spend and was counting a token read from the cache as if it were new.
+ *
+ * On 2026-10-19 three turns of five passes stopped at the 150,000 ceiling
+ * having read 95% of their prompt from the cache: 161,744 tokens counted,
+ * about 23,000 paid for. Over the thirty days before, one multi-pass turn in
+ * ten stopped there, and none of them was the runaway the ceiling is for.
+ *
+ * A read weighs `cachedIn / in` — a tenth on Claude and GPT-5, a half on the
+ * 4o models — a write `CACHE_WRITE_MULTIPLIER`, and a fresh token one. An id
+ * this file has no price for weighs every token at one: a ceiling should not
+ * assume a discount nobody measured, and that is what it counted before.
+ */
+export function promptWeight(
+  model: string,
+  usage: { promptTokens: number; cachedTokens?: number; cacheWriteTokens?: number },
+): number {
+  const p = PRICES[model as ModelId];
+  if (!p) return usage.promptTokens;
+  const cached = Math.min(Math.max(usage.cachedTokens ?? 0, 0), usage.promptTokens);
+  const written = Math.min(Math.max(usage.cacheWriteTokens ?? 0, 0), usage.promptTokens - cached);
+  const fresh = usage.promptTokens - cached - written;
+  return fresh + cached * (p.cachedIn / p.in) + written * CACHE_WRITE_MULTIPLIER;
+}
+
 // What an id this file has no row for is priced at. It tracks `DEFAULT_MODEL`
 // in `lib/models.ts` rather than naming a model of its own, because that is
 // where an unrecognised id actually ends up: `resolveModel` sends it there, so

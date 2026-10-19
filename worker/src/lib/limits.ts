@@ -85,6 +85,18 @@ export type ChatLimits = {
   /**
    * What one turn may spend, prompt plus completion, whatever the plan.
    *
+   * **Counted by what the prompt cost since 2026-10-20** (`promptWeight` in
+   * `lib/pricing.ts`): a token served from the cache weighs its price against
+   * a fresh one — a tenth on Claude and GPT-5 — and a token written to it a
+   * quarter more. Counted whole, the ceiling stopped one multi-pass turn in
+   * ten over the thirty days before, all of them five to sixteen passes of a
+   * long conversation read back from the cache, and none the runaway it is
+   * for. Weighed, the largest turn of those thirty days comes to 119,206, and
+   * a turn of five 30,000-token passes to about 25,000. The number below did
+   * not move: on Claude Opus it is still about $0.75 of prompt, which is a
+   * turn gone wrong, and on a model `pricing.ts` has no price for every token
+   * still weighs one.
+   *
    * **The same on both, and deliberately so: this is a runaway-loop guard, not
    * a billing one.** Billing is the workspace's credits, which already know who
    * is paying. This is

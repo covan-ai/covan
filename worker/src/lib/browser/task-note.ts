@@ -28,7 +28,7 @@ const TASK_CHARS = 100;
 /** How much of a failure's reason. */
 const ERROR_CHARS = 120;
 
-const COLUMNS = "task, status, error, stop_reason, signin_host, created_at";
+const COLUMNS = "task, status, error, stop_reason, signin_host, created_at, then_step";
 
 type TaskRow = {
   task?: unknown;
@@ -36,7 +36,21 @@ type TaskRow = {
   error?: unknown;
   stop_reason?: unknown;
   signin_host?: unknown;
+  then_step?: unknown;
 };
+
+/** How much of the step after a task. */
+const THEN_CHARS = 300;
+
+/**
+ * What the agent said it would do with the answer (0117), so the turn that
+ * carries on knows what it is carrying on with — and a turn asked "so?" an
+ * hour later does too.
+ */
+function afterwards(row: TaskRow): string {
+  const step = typeof row.then_step === "string" ? row.then_step.trim() : "";
+  return step ? `; afterwards you said you would: "${clip(step, THEN_CHARS)}"` : "";
+}
 
 function clip(text: string, max: number): string {
   const line = text.replace(/\s+/g, " ").trim();
@@ -115,7 +129,8 @@ export async function browserTaskNote(
     const rows = (Array.isArray(data) ? (data as TaskRow[]) : []).reverse();
     if (rows.length === 0) return null;
     const lines = rows.map(
-      (row, i) => `${i + 1}. "${clip(String(row.task ?? ""), TASK_CHARS)}" — ${standing(row)}`,
+      (row, i) =>
+        `${i + 1}. "${clip(String(row.task ?? ""), TASK_CHARS)}" — ${standing(row)}${afterwards(row)}`,
     );
     return [
       "Browser tasks in this conversation in the last day, oldest first. This is Covan's own " +
@@ -124,7 +139,8 @@ export async function browserTaskNote(
       "When the person asks about these tasks, answer from this list and nothing else: do not " +
         "say a task is running, waiting or done unless the list says so, and do not start one " +
         "again while it is listed as running. What a task did is in its answer message: do not " +
-        "contradict it, and do not guess why a site stopped it.",
+        "contradict it, and do not guess why a site stopped it. When a finished task says what " +
+        "you would do afterwards and that is not done yet in this conversation, do it now.",
     ].join("\n");
   } catch {
     console.warn("could not read a conversation's browser tasks for its prompt");

@@ -157,6 +157,8 @@ export async function queueBrowserTask(
     /** As `recordBrowserTask` takes them: the routine run it answers, and no jar. */
     routineRunId?: string;
     jarless?: boolean;
+    /** What the agent will do with the answer (0117), when it said. */
+    thenStep?: string;
   },
   overrides: Partial<QueueDeps> = {},
 ): Promise<string | null> {
@@ -175,6 +177,7 @@ export async function queueBrowserTask(
       login_host: input.site,
       ...(input.routineRunId ? { routine_run_id: input.routineRunId } : {}),
       ...(input.jarless ? { jarless: true } : {}),
+      ...(input.thenStep ? { then_step: input.thenStep } : {}),
     })
     .select("id")
     .single();

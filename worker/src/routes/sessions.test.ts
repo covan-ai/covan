@@ -658,6 +658,9 @@ describe("GET /sessions/:id/browser-tasks", () => {
           stopReason: null,
           browserSessionId: "bs-1",
           signInHost: "linkedin.com",
+          thenStep: null,
+          deliveredAt: null,
+          continuedAt: null,
           carriedSavedLogin: false,
           savedLogin: null,
         },
@@ -713,5 +716,53 @@ describe("GET /sessions/:id/browser-tasks", () => {
     expect(columns).toContain("stop_reason");
     expect(columns).toContain("browser_session_id");
     expect(columns).not.toMatch(/provider_/);
+  });
+});
+
+describe("POST /sessions/:id/browser-tasks/continue", () => {
+  const ID = "4b1f7c0e-2d7a-4c55-9b7e-0d6a1f3e9c21";
+
+  it("claims the step through the caller's own client and hands it back", async () => {
+    const claimed: Array<Record<string, unknown>> = [];
+    const { app } = appWith({
+      rpc: {
+        claim_browser_continuation: (args) => {
+          claimed.push(args);
+          return { data: ["write the leads to Qrucial"], error: null };
+        },
+      },
+    });
+
+    const res = await app.request(`/sessions/${ID}/browser-tasks/continue`, { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ steps: ["write the leads to Qrucial"] });
+    expect(claimed).toEqual([{ p_session_id: ID }]);
+  });
+
+  it("answers no steps when there is nothing to carry on with", async () => {
+    const { app } = appWith({
+      rpc: { claim_browser_continuation: () => ({ data: [], error: null }) },
+    });
+    const res = await app.request(`/sessions/${ID}/browser-tasks/continue`, { method: "POST" });
+    expect(await res.json()).toEqual({ steps: [] });
+  });
+
+  it("asks nothing for an id that is not a conversation's", async () => {
+    const { app } = appWith({ rpc: {} });
+    const res = await app.request("/sessions/not-an-id/browser-tasks/continue", {
+      method: "POST",
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("says it failed when the claim does", async () => {
+    const { app } = appWith({
+      rpc: {
+        claim_browser_continuation: () => ({ data: null, error: { code: "XX000" } as never }),
+      },
+    });
+    const res = await app.request(`/sessions/${ID}/browser-tasks/continue`, { method: "POST" });
+    expect(res.status).toBe(500);
   });
 });

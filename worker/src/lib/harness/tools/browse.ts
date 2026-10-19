@@ -394,6 +394,23 @@ async function sharedLoginOverOwnJar(
   }
 }
 
+/** How long `then` may be: one step, said plainly. 0117 checks the same bound. */
+export const MAX_THEN_CHARS = 1000;
+
+/**
+ * The step after the browser, or null (0117). A model that sends `then` on a
+ * task that has none writes an empty string or a placeholder more often than
+ * it leaves the key out, and a step of "none" would send the conversation on
+ * to do nothing — so those are no step at all. Too long is clipped rather
+ * than refused: the task is worth more than the length of its afterword.
+ */
+function thenOf(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const step = value.trim();
+  if (!step || /^(none|n\/a|nothing|-)$/i.test(step)) return null;
+  return step.slice(0, MAX_THEN_CHARS);
+}
+
 export const browseTool: AgentTool = {
   name: "browse",
   description:
@@ -406,7 +423,10 @@ export const browseTool: AgentTool = {
     "shown a password: when the task has to sign in to a site, put that site's host in `site` " +
     "and, if the person saved a login for it, the browser is given it to type in itself. The " +
     "browser opens beside the conversation, where the person can watch it and take over at any " +
-    "time. Use http_request instead when the thing you want has an API.",
+    "time. When the person asked for more than this task — something to do with the answer " +
+    "once it arrives — put that next step in `then`: the conversation carries on with it by " +
+    "itself when the browser is done, so do not tell the person to come back for it. Use " +
+    "http_request instead when the thing you want has an API.",
   input: {
     type: "object",
     properties: {
@@ -422,6 +442,14 @@ export const browseTool: AgentTool = {
         description:
           "The host whose saved login the task needs, like linkedin.com — only when it has to " +
           "sign in there; leave it out otherwise.",
+      },
+      then: {
+        type: "string",
+        maxLength: MAX_THEN_CHARS,
+        description:
+          "What you will do with the answer once it arrives, when the person asked for more " +
+          'than this task — like "write the leads to a new page in the Outreach space". ' +
+          "Leave it out when the answer is all they asked for.",
       },
     },
     required: ["task"],
@@ -457,7 +485,7 @@ export const browseTool: AgentTool = {
     },
   },
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const input = args as { task?: unknown; site?: unknown };
+    const input = args as { task?: unknown; site?: unknown; then?: unknown };
     if (typeof input.task !== "string" || !input.task.trim()) {
       return { kind: "error", message: "task is required" };
     }
@@ -468,6 +496,8 @@ export const browseTool: AgentTool = {
         message: "say what to do in one sentence — which site, and what to get or do there",
       };
     }
+    // A routine reports what it found and has no conversation to carry on in.
+    const thenStep = ctx.routineBrowser ? null : thenOf(input.then);
     const named = siteOf(input.site);
     if (named === INVALID_SITE) {
       // Before the card and before the meter (ruling R13's order): a refusal
@@ -693,6 +723,7 @@ export const browseTool: AgentTool = {
         site,
         browserSessionId: session.value.id,
         ...forRoutine,
+        ...(thenStep ? { thenStep } : {}),
       });
       if (!queued) {
         return {
@@ -793,6 +824,7 @@ export const browseTool: AgentTool = {
       task,
       providerRunId: begun.value.run.id,
       browserSessionId: session.value.id,
+      ...(thenStep ? { thenStep } : {}),
       // Ruling R32: the saved login this run carried, so a login wall
       // afterwards is blamed on it — and on nothing the run was never given.
       ...(begun.value.credentialId ? { credentialId: begun.value.credentialId } : {}),

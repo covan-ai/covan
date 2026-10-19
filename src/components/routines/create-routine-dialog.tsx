@@ -213,10 +213,19 @@ export function CreateRoutineDialog({
       // need not have arrived yet.
       setWantedChannelKind(draft.channelKind);
       setChannelTouched(false);
-    } catch {
+    } catch (err) {
       // 422 means the parser could not read the request. Trapping the user on
       // step one retrying prose helps nobody; the form is always reachable.
-      toast.message("Couldn't read that one — fill it in below instead.");
+      //
+      // 503 is the model refusing rather than the words being unreadable, and
+      // "couldn't read that one" blamed the person's sentence for it — with the
+      // provider's account empty, every sentence (covan-ai/covan#350). The
+      // server's own sentence says which it is; the form is still the way on.
+      if (err instanceof ApiError && err.status === 503) {
+        toast.error(`${err.message} You can fill it in below instead.`);
+      } else {
+        toast.message("Couldn't read that one — fill it in below instead.");
+      }
       setWantedChannelKind(null);
       setChannelTouched(false);
     } finally {

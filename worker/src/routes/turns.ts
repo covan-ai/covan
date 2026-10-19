@@ -51,6 +51,11 @@ turns.get("/sessions/:id/turn", async (c) => {
           startedAt: status.startedAt,
         }
       : null,
+    // Whether "no turn" is an answer at all. With a host, it means the last
+    // one ended, so a question with nothing under it was never answered and
+    // the screen can say so (covan-ai/covan#350). Without one, every turn ends
+    // with its request and this endpoint cannot see any of them.
+    hosted: host !== null,
   });
 });
 

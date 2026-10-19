@@ -102,6 +102,22 @@ vi.mock("../lib/routines/dispatcher", async (importOriginal) => ({
   runPokedRoutine: events.runPokedRoutine,
 }));
 
+/**
+ * The one model call in this file: `POST /routines/draft`. A plain function
+ * that delegates, rather than a hoisted `vi.fn`: in this file an error thrown
+ * by the hoisted spy failed the test even after the route had caught it, and
+ * the provider throwing is exactly what one of these tests is about.
+ */
+const model = vi.hoisted(() => ({
+  complete: async (): Promise<unknown> => {
+    throw new Error("no model call was expected");
+  },
+}));
+vi.mock("../lib/completion", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/completion")>()),
+  complete: () => model.complete(),
+}));
+
 const { routines } = await import("./routines");
 
 const USER = { id: "user-1", email: "a@example.com" };
@@ -199,6 +215,42 @@ const CREATED = {
   label: "receiver.example.com/…ovan",
   created_at: "2026-09-20T00:00:00.000Z",
 };
+
+describe("POST /routines/draft", () => {
+  // covan-ai/covan#350: with the provider's account empty, every draft came
+  // back 422 with the SDK's own sentence, and the screen said it "couldn't read
+  // that one" — blaming the person's words for the provider's refusal.
+  it("says the model is unavailable, not that the words were unreadable", async () => {
+    model.complete = async () => {
+      throw Object.assign(
+        new Error("429 You exceeded your current quota, please check your plan"),
+        {
+          status: 429,
+          code: "insufficient_quota",
+          requestID: "req_1",
+        },
+      );
+    };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await appWith()("POST", "/routines/draft", { text: "every monday, the news" });
+    spy.mockRestore();
+
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ code: "model_unavailable", retryable: false });
+    expect(res.body.error).toContain("unavailable");
+    // The provider's words name the account; they are the operator's to read.
+    expect(res.body.error).not.toContain("quota");
+  });
+
+  it("still answers 422 when the model answered and the draft did not parse", async () => {
+    model.complete = async () => ({
+      text: "not json at all",
+      usage: { promptTokens: 10, completionTokens: 2 },
+    });
+    const res = await appWith()("POST", "/routines/draft", { text: "something" });
+    expect(res.status).toBe(422);
+  });
+});
 
 describe("POST /delivery-channels, kind webhook", () => {
   it("mints a signing secret and returns it exactly once", async () => {

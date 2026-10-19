@@ -1,5 +1,6 @@
 // worker/src/lib/routines/executor.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { registerProviderFailureObserver, resetProviderFailureObserver } from "../provider-error";
 import {
   runRoutine,
   MAX_FAILURES,
@@ -855,6 +856,41 @@ describe("runRoutine", () => {
     const patch = updates.find((u) => u.table === "routines" && "consecutive_failures" in u.values);
     expect(patch?.values.status).toBe("paused");
     expect(patch?.values.paused_reason).toMatch(/404/);
+  });
+
+  // covan-ai/covan#350. The provider's empty account refused every summary for
+  // a day; counted like a 404, it would have paused every routine in every
+  // workspace at five, each one an owner's to resume by hand for something they
+  // did not cause. And it is the operator who has to hear about it.
+  it("does not pause at five when the model provider refuses, and tells the operator", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db, updates } = makeDb();
+    const deps = makeDeps(db) as any;
+    deps.summarise = vi.fn(async () => {
+      throw Object.assign(new Error("429 You exceeded your current quota"), {
+        status: 429,
+        code: "insufficient_quota",
+        requestID: "req_1",
+      });
+    });
+    const observed = vi.fn(async () => {});
+    registerProviderFailureObserver(observed);
+    try {
+      await runRoutine(
+        routine({
+          consecutive_failures: MAX_FAILURES - 1,
+          cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+        }),
+        deps,
+      );
+    } finally {
+      resetProviderFailureObserver();
+    }
+
+    const patch = updates.find((u) => u.table === "routines" && "consecutive_failures" in u.values);
+    expect(patch?.values.consecutive_failures).toBe(MAX_FAILURES);
+    expect(patch?.values.status).toBeUndefined();
+    expect(observed).toHaveBeenCalledWith(deps.env, expect.objectContaining({ kind: "quota" }));
   });
 
   // ---- a run something else started ------------------------------------

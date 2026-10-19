@@ -110,6 +110,18 @@ const MESSAGE_PAGE = 100;
 const STEP_STATUSES = new Set(["running", "ok", "failed", "refused", "pending"]);
 
 /**
+ * How long before the server's "no turn is running" a question must have been
+ * asked to count as one that will never be answered. Covers the browser's
+ * clock disagreeing with the database's, which is where `createdAt` comes from.
+ */
+const UNANSWERED_SLACK_MS = 30_000;
+/**
+ * The same, on a deployment that cannot see turns at all. Age is then the only
+ * evidence, and a long tool turn has run past two minutes in production.
+ */
+const UNANSWERED_UNHOSTED_MS = 10 * 60_000;
+
+/**
  * Which ceiling a stored reply stopped at, read from `messages.outcome`.
  *
  * The other outcomes are not ceilings: `answered` finished, `paused` is waiting
@@ -517,6 +529,28 @@ function ChatTab() {
     message: string;
     /** Refused for credits rather than broken: a different row, a different next step. */
     credits?: boolean;
+    /**
+     * False when the server said asking again cannot help — the model
+     * provider refusing every request, or the turn's own request ceiling.
+     * A Try again button beside "trying again won't help" is a loop.
+     */
+    retryable?: boolean;
+  } | null>(null);
+  /**
+   * The server's word, when this conversation was opened, that no turn was
+   * running in it.
+   *
+   * `failed` lives in this tab's memory and is gone on a reload, which left a
+   * question that never got an answer looking exactly like one still being
+   * written — forever (covan-ai/covan#350). This is what lets the screen tell
+   * the two apart afterwards. `checkedAt` because only a question asked before
+   * the check is known to be unanswered: one asked since may be another
+   * person's, running now.
+   */
+  const [idleTurn, setIdleTurn] = useState<{
+    sessionId: string;
+    hosted: boolean;
+    checkedAt: number;
   } | null>(null);
   const [streamText, setStreamText] = useState("");
   /**
@@ -714,6 +748,25 @@ function ChatTab() {
     replyingIn !== active?.id &&
     !allMessages.some((m) => m.role === "assistant" && !kept.before.has(m.id));
 
+  // A question nothing will answer: the last word is the person's, and the
+  // server said no turn was running when it was asked. Only questions asked
+  // well before that check, so a reply another person's turn is still writing
+  // is never called missing — and much longer before it where the server
+  // cannot see turns at all, where all that is left to go on is age.
+  const lastMessage = allMessages[allMessages.length - 1];
+  const unanswered =
+    idleTurn !== null &&
+    idleTurn.sessionId === active?.id &&
+    replyingIn !== active?.id &&
+    failed?.sessionId !== active?.id &&
+    !outOfCredits &&
+    !searchQuery &&
+    !keptShown &&
+    !(pendingConfirm && pendingConfirm.sessionId === active?.id) &&
+    lastMessage?.role === "user" &&
+    lastMessage.createdAt <
+      idleTurn.checkedAt - (idleTurn.hosted ? UNANSWERED_SLACK_MS : UNANSWERED_UNHOSTED_MS);
+
   const invalidateMessages = (sessionId: string) => {
     void queryClient.invalidateQueries({ queryKey: ["messages", sessionId] });
     void queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -904,6 +957,8 @@ function ChatTab() {
             text?: string;
             message?: Message;
             error?: string;
+            /** On `error`: false when asking again cannot help. Absent from older workers. */
+            retryable?: boolean;
             // The harness's own three. Read defensively, because an older
             // worker sends none of them and a newer one may send a status
             // this build has no word for.
@@ -1095,7 +1150,11 @@ function ChatTab() {
             }
           } else if (event.type === "error") {
             terminalSeen = true;
-            setFailed({ sessionId, message: event.error ?? "The assistant hit an error." });
+            setFailed({
+              sessionId,
+              message: event.error ?? "The assistant hit an error.",
+              retryable: event.retryable,
+            });
             setStreamText("");
             setThinkingText("");
             setThinking(false);
@@ -1564,8 +1623,12 @@ function ChatTab() {
     if (streamAbort.current) return;
     api.sessions
       .turn(sessionId)
-      .then(({ turn }) => {
-        if (!turn?.running || !turn.mine || streamAbort.current) return;
+      .then(({ turn, hosted }) => {
+        if (!turn?.running) {
+          setIdleTurn({ sessionId, hosted: hosted ?? false, checkedAt: Date.now() });
+          return;
+        }
+        if (!turn.mine || streamAbort.current) return;
         // Somebody may have moved on again while the answer was on its way.
         if (active?.id !== sessionId) return;
         void streamReply(sessionId, { resume: true });
@@ -2023,7 +2086,7 @@ function ChatTab() {
                   >
                     <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
                     <span className="min-w-0 flex-1">{failed.message}</span>
-                    {isOwner && (
+                    {isOwner && failed.retryable !== false && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -2034,6 +2097,23 @@ function ChatTab() {
                     )}
                   </div>
                 )}
+
+              {/* After a reload, where the red row above has nothing to go on:
+                  a question the server is not answering and never answered. */}
+              {unanswered && (
+                <div
+                  role="status"
+                  className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
+                >
+                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                  <span className="min-w-0 flex-1">This question didn't get an answer.</span>
+                  {isOwner && active && (
+                    <Button variant="outline" size="sm" onClick={() => void streamReply(active.id)}>
+                      <RefreshCw className="h-3.5 w-3.5" /> Try again
+                    </Button>
+                  )}
+                </div>
+              )}
 
               {/* A stopped reply's words, until its row is in the transcript
                   above — see `kept`. Not while another answer is streaming

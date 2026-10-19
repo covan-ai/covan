@@ -6,6 +6,7 @@ import type { RoutineEnv } from "../../types";
 import { nextRunAt, windowDays } from "./schedule";
 import { fetchSource, type FetchDeps, type SourceResult } from "./source";
 import { UpstreamError } from "./upstream-error";
+import { classifyProviderError, isProviderError, reportProviderFailure } from "../provider-error";
 import { fetchConnectionItems } from "./connection-source";
 import { diffItems, type Cursor, type FeedItem } from "./feed";
 import {
@@ -64,6 +65,22 @@ export const NOTHING_RELEVANT_REASON = "skipped: nothing in this run matched the
  * pausing for; three rate-limited ticks in an afternoon is not.
  */
 export const MAX_TRANSIENT_FAILURES = 20;
+
+/**
+ * Whether a failed run counts against the transient allowance rather than the
+ * five that pause a routine.
+ *
+ * A model provider's refusal is never a statement about the routine. A 429 or a
+ * 5xx is the same bad minute a feed has; an empty provider account
+ * (covan-ai/covan#350) is the operator's to fix, and pausing every routine in
+ * every workspace for it would leave each owner a routine to resume by hand
+ * for something they could not have caused. So all of them are transient —
+ * `isProviderError` first, so a feed's own 403 is not mistaken for one.
+ */
+function transientFailure(err: unknown): boolean {
+  if (err instanceof UpstreamError) return err.transient;
+  return isProviderError(err);
+}
 
 /** Backoff never pushes a routine more than this far past its natural next run. */
 const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
@@ -1218,6 +1235,7 @@ export async function runRoutine(
     return { status: "ok", itemsNew: items.length, summary: body };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (isProviderError(err)) await reportProviderFailure(deps.env, classifyProviderError(err));
 
     // Hand back anything reserved but *not sent*, so the next run retries it.
     // `delivered` is the whole point: once the message is out, a failure in the
@@ -1245,7 +1263,7 @@ export async function runRoutine(
         itemsNew: 0,
         tokens: 0,
         error: recorded,
-        transient: err instanceof UpstreamError && err.transient,
+        transient: transientFailure(err),
       });
     } catch {
       // Recording the failure failed too. Clear the claim on its own so the row

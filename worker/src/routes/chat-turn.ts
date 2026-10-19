@@ -15,6 +15,13 @@ import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
 import type { ComposioTool } from "../lib/composio/client";
 import type { KnowledgeScope, RetrievedSource } from "../lib/retrieval";
 import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
+import type { ModelProvider } from "../lib/models";
+import {
+  classifyProviderError,
+  explainProviderFailure,
+  type ProviderFailure,
+  type ProviderFailureKind,
+} from "../lib/provider-error";
 import { completionSpend, spends, type Entitlements } from "../lib/entitlements";
 
 /**
@@ -381,12 +388,47 @@ export function isAbort(err: unknown, signal: AbortSignal): boolean {
  * The flag rather than only `err`, because by the time an error reaches a catch
  * it has been through an SDK and says `Connection error.` — see
  * `lib/runtime-limit.ts` for why that disguise costs an evening.
+ *
+ * And a third case since covan-ai/covan#350: the provider refusing. An empty
+ * account answers every request the same way, so "try again" is a loop with no
+ * exit — `lib/provider-error.ts` tells that apart from a bad minute, and the
+ * frame carries `retryable` so the screen can say so rather than guess from the
+ * words. `failure` is handed back for the caller to report; this only explains.
  */
-export function explainTurnFailure(err: unknown, runtimeLimit: RuntimeLimitFlag): string {
-  return runtimeLimit.hit || isRuntimeLimit(err)
-    ? "This turn ran out of the requests it is allowed to make. Ask for something " +
-        "narrower, or break the question into two."
-    : "The assistant hit an error. Please try again.";
+export type TurnFailure = {
+  error: string;
+  code: "runtime" | ProviderFailureKind;
+  retryable: boolean;
+  failure: ProviderFailure | null;
+};
+
+export function explainTurnFailure(
+  err: unknown,
+  runtimeLimit: RuntimeLimitFlag,
+  provider: ModelProvider | null = null,
+): TurnFailure {
+  if (runtimeLimit.hit || isRuntimeLimit(err)) {
+    return {
+      error:
+        "This turn ran out of the requests it is allowed to make. Ask for something " +
+        "narrower, or break the question into two.",
+      code: "runtime",
+      retryable: false,
+      failure: null,
+    };
+  }
+  const failure = classifyProviderError(err, provider);
+  return {
+    // Not every error that reaches here is a provider's — a database write can
+    // throw too — so one this cannot place keeps the sentence it always had.
+    error:
+      failure.kind === "unknown"
+        ? "The assistant hit an error. Please try again."
+        : explainProviderFailure(failure),
+    code: failure.kind,
+    retryable: failure.retryable,
+    failure,
+  };
 }
 
 /**

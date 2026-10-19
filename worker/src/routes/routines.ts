@@ -35,8 +35,15 @@ import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { siteHostOf } from "../lib/browser/credentials";
 import { createRoutine } from "../lib/routines/create";
-import { resolveModel } from "../lib/models";
+import { providerFor, resolveModel } from "../lib/models";
+import {
+  classifyProviderError,
+  explainProviderFailure,
+  isProviderError,
+  reportProviderFailure,
+} from "../lib/provider-error";
 import { complete } from "../lib/completion";
+import { deferred } from "../lib/defer";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { completionSpend, spends, type Spend } from "../lib/entitlements";
 import { apiKeyIdOf, refuseIfKeyAuthenticated } from "../lib/api-key-rule";
@@ -98,6 +105,24 @@ routines.post("/routines/draft", async (c) => {
     });
     return c.json(draft);
   } catch (err) {
+    // The model refusing is not the text being unreadable, and saying it was
+    // sent people to an empty form to type by hand what the model would have
+    // filled in a minute later — or, with the provider's account empty, never
+    // (covan-ai/covan#350). The SDK's own words stay in the log: they name the
+    // account, and are the operator's to read.
+    if (isProviderError(err)) {
+      console.error("routine draft: the model refused", err);
+      const failure = classifyProviderError(err, providerFor(model));
+      deferred(c, reportProviderFailure(env, failure));
+      return c.json(
+        {
+          error: explainProviderFailure(failure),
+          code: "model_unavailable",
+          retryable: failure.retryable,
+        },
+        503,
+      );
+    }
     return c.json({ error: err instanceof Error ? err.message : "could not read that" }, 422);
   } finally {
     await recordCredits(c, spends(...spent));

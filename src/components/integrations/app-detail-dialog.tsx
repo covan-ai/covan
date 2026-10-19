@@ -208,7 +208,7 @@ export function AppDetailDialog({
               <p className="text-meta leading-[1.45] text-muted-foreground">
                 {kind === null
                   ? `Covan could not check what ${toolkit.name} needs just now. Try again in a moment.`
-                  : `Composio cannot connect ${toolkit.name} until somebody sets it up in Composio’s dashboard first.`}
+                  : `${toolkit.name} can’t be connected yet. It has to be set up in Composio, the service Covan connects apps through, before anyone here can sign in to it.`}
               </p>
             )}
           </DialogFooter>
@@ -258,8 +258,11 @@ function authLabel(toolkit: ComposioToolkit): string {
       const { noun, article } = credentialWords(toolkit.credentialScheme);
       return `Needs ${article} ${noun} from ${toolkit.name}`;
     }
+    // The person reading this does not know what Composio is, and does not
+    // need to in order to learn that this one is not available. The footer
+    // says why, for whoever does want to know (covan-cloud#407).
     default:
-      return "Needs setup in Composio";
+      return "Not available yet";
   }
 }
 
@@ -331,7 +334,13 @@ function Operations({ state }: { state: OperationsState }) {
             <span className="mt-[6px] h-2 w-2 shrink-0 rounded-full bg-foreground" />
             <span className="flex min-w-0 flex-col gap-[3px]">
               <span className="flex flex-wrap items-center gap-1.5">
-                <span className="font-mono text-xs [overflow-wrap:anywhere]">{operation.slug}</span>
+                {/* Composio's display name, not its slug. `GMAIL_SEND_EMAIL`
+                    is an identifier for a program; the person deciding whether
+                    to connect Gmail reads "Send email" (covan-cloud#407). The
+                    route falls back to the slug when there is no name. */}
+                <span className="text-sm font-medium [overflow-wrap:anywhere]">
+                  {operation.name || operation.slug}
+                </span>
                 {/* Only on `true`. `null` means Composio annotated nothing,
                     which is not the same as "safe" and must not read as it. */}
                 {operation.destructive === true ? (

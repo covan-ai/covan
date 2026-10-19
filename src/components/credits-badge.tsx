@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import { creditsFrom, wholeCredits } from "@/lib/credits";
+import { creditsFrom, creditsPhrase } from "@/lib/credits";
 
 /**
  * The workspace's balance, in the corner of every screen.
@@ -20,9 +20,7 @@ export function CreditsBadge() {
   if (!raw || !raw.metered) return null;
 
   const view = creditsFrom(data);
-  const label = raw.unlimited
-    ? "Unlimited"
-    : `${wholeCredits(view?.balance ?? 0).toLocaleString()} credits`;
+  const label = raw.unlimited ? "Unlimited" : creditsPhrase(view?.balance ?? 0);
   const warn = !raw.unlimited && view !== null && view.level !== "fine";
 
   return (

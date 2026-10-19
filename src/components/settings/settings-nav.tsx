@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { ArrowLeft, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -63,11 +64,69 @@ export function SettingsNav({ workspaceName }: { workspaceName?: string }) {
   );
 }
 
+/**
+ * Which edges of the tab row have tabs past them, for the fade that says so.
+ *
+ * Four tabs are about 445px and a 390px phone leaves the row about 320, so the
+ * last one or two start out of sight. The row always scrolled; nothing said it
+ * did — no scrollbar on a phone, no cut-off word with anything after it — and
+ * the pilot read "Usa…" as the end of the list (covan-cloud#407).
+ */
+function useOverflowEdges(ref: React.RefObject<HTMLElement | null>) {
+  const [edges, setEdges] = useState({ start: false, end: false });
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const start = el.scrollLeft > 1;
+    const end = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setEdges((was) => (was.start === start && was.end === end ? was : { start, end }));
+  }, [ref]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    resize?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      resize?.disconnect();
+    };
+  }, [ref, measure]);
+  return { edges, measure };
+}
+
+const FADE = {
+  none: undefined,
+  end: "linear-gradient(to right, black calc(100% - 32px), transparent)",
+  start: "linear-gradient(to right, transparent, black 32px)",
+  both: "linear-gradient(to right, transparent, black 32px, black calc(100% - 32px), transparent)",
+};
+
 /** The same pages as a row of tabs, for a screen too narrow for the column. */
 export function SettingsTabs() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const row = useRef<HTMLElement>(null);
+  const { edges, measure } = useOverflowEdges(row);
+
+  // The page you are on, in view: arriving on Account from a link put the one
+  // tab that says where you are past the edge of the screen.
+  useEffect(() => {
+    const active = row.current?.querySelector<HTMLElement>('[aria-current="page"]');
+    active?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
+    measure();
+  }, [pathname, measure]);
+
+  const fade = edges.start ? (edges.end ? "both" : "start") : edges.end ? "end" : "none";
+  const mask = FADE[fade];
   return (
-    <nav aria-label="Settings pages" className="flex gap-1 overflow-x-auto">
+    <nav
+      ref={row}
+      aria-label="Settings pages"
+      data-fade={fade}
+      className="flex gap-1 overflow-x-auto"
+      style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+    >
       {SETTINGS_PAGES.map((page) => {
         const active = isSettingsPage(pathname, page.to);
         const Icon = page.icon;

@@ -213,6 +213,22 @@ describe("retrievalQuery", () => {
     expect(out).toContain("peki ikinci maddesi?");
   });
 
+  // A short question about something else entirely borrowed the document
+  // question before it, and its answer came back citing that document
+  // (covan-cloud#407).
+  it("lets a sum stand on its own", () => {
+    const turns = (question: string) => [
+      { role: "user" as const, content: "Summarize the vacation policy in handbook.md" },
+      { role: "assistant" as const, content: "It gives 20 days, accrued monthly." },
+      { role: "user" as const, content: question },
+    ];
+    expect(retrievalQuery(turns("what is 2+2"))).toBe("what is 2+2");
+    expect(retrievalQuery(turns("12 * 7?"))).toBe("12 * 7?");
+    // A number alone is still a follow-up: "and 2024?" asks about the subject
+    // before it.
+    expect(retrievalQuery(turns("and 2024?"))).toContain("handbook.md");
+  });
+
   it("reaches past the assistant for the antecedent, not into it", () => {
     // The assistant's reply is long and full of its own vocabulary; letting it
     // into the vector would drown the question rather than complete it.

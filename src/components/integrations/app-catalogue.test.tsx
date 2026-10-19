@@ -196,7 +196,7 @@ describe("AppCatalogue", () => {
     );
     render(<AppCatalogue connected={new Set()} />);
     expect(screen.getByText("Product analytics")).toBeInTheDocument();
-    expect(screen.queryByText("Needs setup in Composio")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not available yet")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /PostHog/ }));
     await userEvent.click(
@@ -226,7 +226,7 @@ describe("AppCatalogue", () => {
     );
     render(<AppCatalogue connected={new Set()} />);
     expect(screen.getByText("Product analytics")).toBeInTheDocument();
-    expect(screen.queryByText("Needs setup in Composio")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not available yet")).not.toBeInTheDocument();
   });
 
   it("lets somebody read about an application nobody can connect, and offers no Connect", async () => {
@@ -252,7 +252,7 @@ describe("AppCatalogue", () => {
     render(<AppCatalogue connected={new Set()} />);
 
     const tile = screen.getByRole("button", { name: /DocuSign/ });
-    expect(screen.getByText("Needs setup in Composio")).toBeInTheDocument();
+    expect(screen.getByText("Not available yet")).toBeInTheDocument();
 
     await userEvent.click(tile);
     const card = within(screen.getByRole("dialog"));
@@ -260,7 +260,7 @@ describe("AppCatalogue", () => {
     // Said generically now, because it is not always an OAuth client: some of
     // these want a machine client of the workspace's own, and ninety-five want
     // something Composio documents nowhere.
-    expect(card.getByText(/sets it up in Composio/)).toBeInTheDocument();
+    expect(card.getByText(/can’t be connected yet/)).toBeInTheDocument();
   });
 
   it("never disables the grid while a connect is in flight", async () => {

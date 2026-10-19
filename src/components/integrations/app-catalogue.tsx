@@ -228,7 +228,7 @@ function CatalogueTile({ toolkit, onOpen }: { toolkit: ComposioToolkit; onOpen: 
           <span className="truncate text-xs leading-tight text-muted-foreground">
             {connectable
               ? toolkit.description || "Connect it and your agents can call it."
-              : "Needs setup in Composio"}
+              : "Not available yet"}
           </span>
         </span>
       </button>

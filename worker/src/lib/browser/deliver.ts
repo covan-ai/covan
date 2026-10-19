@@ -494,8 +494,9 @@ async function savedLoginState(
  * sentence about a different repair: the saved login didn't get past the sign-in
  * (it may be a code, an SMS or a passkey step), and the offer is to update it. A wall on a site whose saved login the run never
  * carried (`"unused"`) is today's sentence and one true clause more: asking
- * again would use it. A block says what stopped it. Everything else,
- * including every v2 task, is answered as before.
+ * again would use it. A run that did part says what it did and what is left; a
+ * block says what the site showed. Everything else, including every v2 task,
+ * is answered as before.
  */
 function brief(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginState): string {
   const asked = [`What was asked: ${row.task}`, ""];
@@ -538,11 +539,21 @@ function brief(row: BrowserTaskRow, outcome: FinishedTask, saved: SavedLoginStat
     ].join("\n");
   }
 
+  if (outcome.reported?.status === "partial") {
+    return [
+      ...asked,
+      ...reported,
+      "It reports that it did only part of the task. Say what it did and what is left, from its",
+      "report alone: do not add a reason it did not give.",
+    ].join("\n");
+  }
+
   if (outcome.reported?.status === "blocked") {
     return [
       ...asked,
       ...reported,
-      "It reports that something stopped it before it could finish. Say in one sentence what stopped it.",
+      "It reports that the site refused it before it could finish. Say in one sentence what the",
+      "site showed, from its report alone, and anything it reports doing first.",
     ].join("\n");
   }
 

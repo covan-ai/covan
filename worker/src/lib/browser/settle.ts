@@ -55,10 +55,10 @@ export type ReportedOutcome = {
  * only positive signal the panel's "needs you to sign in" can key on — and it
  * is kept nowhere else.
  */
-function reportedReason(outcome: FinishedTask): "login_required" | "blocked" | null {
+function reportedReason(outcome: FinishedTask): Exclude<OutcomeStatus, "done"> | null {
   if (outcome.status === "finished") return null;
   const said = outcome.reported?.status;
-  return said === "login_required" || said === "blocked" ? said : null;
+  return said && said !== "done" ? said : null;
 }
 
 function textOf(value: unknown): string | null {

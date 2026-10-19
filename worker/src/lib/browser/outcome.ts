@@ -28,8 +28,17 @@ import {
  * written twice. Reading the answer is `deliver`'s business, not this file's.
  */
 
-/** `done`, or one of the two reasons a run stopped short. */
-export const OUTCOME_STATUSES = ["done", "login_required", "blocked"] as const;
+/**
+ * `done`, or one of the three ways a run stopped short.
+ *
+ * `partial` is apart from `blocked` because the two were one word once, and
+ * the word was read as the site's doing. On 2026-10-19 a run asked to message
+ * ten LinkedIn connections sent two, could not pick the third recipient in its
+ * own script, stopped — and, offered only `done` or `blocked`, said `blocked`.
+ * The conversation then told the person LinkedIn had caught them and that
+ * nothing had been sent; LinkedIn had shown nothing, and two messages had gone.
+ */
+export const OUTCOME_STATUSES = ["done", "login_required", "partial", "blocked"] as const;
 
 export type OutcomeStatus = (typeof OUTCOME_STATUSES)[number];
 
@@ -94,9 +103,15 @@ export const RUN_PREAMBLE =
   "Your budget is small and a run that exhausts it ends with no answer at all, so for a task " +
   "that asks for many items or open-ended exploration, stop once you have a useful answer and " +
   "report what you have, saying what is missing. " +
+  "When the task has you send, post or submit something for several items, do them one at a " +
+  "time and see each one go through before the next; never report one as done that you did " +
+  "not see succeed. " +
   "End with your final answer as exactly one JSON object matching this JSON Schema — " +
-  "`done` when the task is finished, `blocked` when something else stopped you, and what " +
-  `you found or did in \`answer\`: ${JSON.stringify(OUTCOME_SCHEMA)}`;
+  "`done` when the task is finished; `partial` when you did only some of it, for any reason, " +
+  "saying in `answer` what was done and what was not; `blocked` only when the site itself " +
+  "refused you (an access-denied, restriction or verification page you could not pass), " +
+  "quoting what it showed; and what you found or did in `answer`: " +
+  JSON.stringify(OUTCOME_SCHEMA);
 
 /** The task text a run is created with: the preamble, then the person's sentence untouched. */
 export function runTask(task: string): string {

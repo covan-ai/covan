@@ -653,6 +653,20 @@ describe("settleBrowserTask", () => {
       });
     });
 
+    it("is partial for a run that did part of it, and the row is not finished", async () => {
+      const { mem, deps } = setup();
+      const outcome = finishedRun(
+        summary({ output: { status: "partial", answer: "sent 2 of 10" } }),
+      );
+      await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, outcome, deps);
+      expect(mem.tables.browser_tasks[0]).toMatchObject({
+        status: "failed",
+        stop_reason: "partial",
+        output: "sent 2 of 10",
+        signin_host: null,
+      });
+    });
+
     it("is not written for a run that did not complete but returned text", async () => {
       const { mem, deps } = setup();
       const outcome = finishedRun(summary({ status: "failed", result: "got halfway there" }));

@@ -501,13 +501,17 @@ describe("once approved", () => {
     expect(body.outputSchema).toEqual(OUTCOME_SCHEMA);
     const status = (body.outputSchema as { properties: { status: { enum: string[] } } }).properties
       .status;
-    expect(status.enum).toEqual(["done", "login_required", "blocked"]);
+    expect(status.enum).toEqual(["done", "login_required", "partial", "blocked"]);
 
     const task = String(body.task);
     expect(task).toContain(
       "If a page requires signing in and you have no credential for it, stop and report " +
         "`login_required` with the site's host.",
     );
+    // A run that did some of it says so, and "blocked" is kept for the site's refusal.
+    expect(task).toContain("`partial` when you did only some of it");
+    expect(task).toContain("`blocked` only when the site itself refused you");
+    expect(task).toContain("do them one at a time and see each one go through");
     // The same constant, so the words and the schema cannot drift apart.
     expect(task).toContain(JSON.stringify(OUTCOME_SCHEMA));
     // The preamble comes first and the person's sentence is untouched after it.

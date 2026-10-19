@@ -1,6 +1,7 @@
 import type { Bindings } from "../types";
 import { embeddingDimensions } from "./embeddings";
 import { ragMinSimilarity } from "./rag";
+import { passageCeiling } from "./knowledge-ceiling";
 import { lexicalSearchEnabled } from "./search-terms";
 
 /** Absent or empty means unset — a blank line in a .env file is not a value. */
@@ -198,6 +199,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
   // reads it at `docker compose up` instead of inferring it a week later.
   embeddingDimensions(source);
   ragMinSimilarity(source);
+  passageCeiling(source);
   lexicalSearchEnabled(source);
 
   return {
@@ -220,6 +222,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     EMBEDDING_MODEL: source.EMBEDDING_MODEL,
     EMBEDDING_DIMENSIONS: source.EMBEDDING_DIMENSIONS,
     RAG_MIN_SIMILARITY: source.RAG_MIN_SIMILARITY,
+    WORKSPACE_MAX_PASSAGES: source.WORKSPACE_MAX_PASSAGES,
     RAG_LEXICAL: source.RAG_LEXICAL,
     ROUTINE_SECRET_KEY: source.ROUTINE_SECRET_KEY!,
     // Composio's catalogue, on the same terms as the OAuth pairs below:

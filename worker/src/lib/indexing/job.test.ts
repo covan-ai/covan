@@ -34,18 +34,20 @@ afterEach(async () => {
   vi.mocked(embedTexts).mockClear();
 });
 
-const env = () =>
+const env = (over: Record<string, string> = {}) =>
   ({
     SUPABASE_URL: "https://x.supabase.co",
     SUPABASE_SERVICE_ROLE_KEY: "service",
     OPENAI_API_KEY: "sk-test",
     DOCS_DIR: root,
+    ...over,
   }) as never;
 
 const matches = (row: Row, filters: Filter[]) =>
   filters.every((f) => {
     const v = row[f.column] as number;
     if (f.kind === "eq") return row[f.column] === f.value;
+    if (f.kind === "neq") return row[f.column] !== f.value;
     if (f.kind === "lt") return v < (f.value as number);
     if (f.kind === "gte") return v >= (f.value as number);
     return true;
@@ -244,6 +246,56 @@ describe("advanceIndexJob", () => {
     expect(state.doc.index_status).toBe("indexing");
     expect(state.inserts).toEqual(Array(UNIT / CHUNK_INSERT_BATCH).fill(CHUNK_INSERT_BATCH));
     expect(CHUNK_INSERT_BATCH).toBeLessThanOrEqual(64);
+  });
+});
+
+/**
+ * covan-cloud#314: passages are what fill the database, about 8.5 times the
+ * text they come from, and nothing stopped one workspace filling it alone.
+ */
+describe("advanceIndexJob under a workspace ceiling", () => {
+  const others = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      document_id: "d-other",
+      workspace_id: "ws-1",
+      generation: 0,
+      chunk_index: i,
+      content: "x",
+    }));
+
+  it("fails a document that would take the workspace past it, and embeds nothing", async () => {
+    await store("b1/handbook", sentences(200));
+    const { state, db } = world(queued(), others(9));
+
+    const next = await advanceIndexJob(db, env({ WORKSPACE_MAX_PASSAGES: "10" }), "d1");
+
+    expect(next).toEqual({ next: "none" });
+    expect(state.doc.index_status).toBe("failed");
+    expect(state.doc.index_error).toMatch(/knowledge is full: it holds 9 passages/);
+    expect(state.doc.index_error).toMatch(/the limit is 10/);
+    expect(embedTexts).not.toHaveBeenCalled();
+  });
+
+  it("does not count a document's own passages against its reindex", async () => {
+    await store("b1/handbook", sentences(10)); // one passage
+    const own = { document_id: "d1", workspace_id: "ws-1", generation: 0, chunk_index: 0 };
+    const { state, db } = world(queued(), [...others(9), own]);
+
+    let next = await advanceIndexJob(db, env({ WORKSPACE_MAX_PASSAGES: "10" }), "d1");
+    while (next.next !== "none") {
+      next = await advanceIndexJob(db, env({ WORKSPACE_MAX_PASSAGES: "10" }), "d1");
+    }
+
+    expect(state.doc.index_status).toBe("ready");
+  });
+
+  it("has no ceiling when none is set", async () => {
+    await store("b1/handbook", sentences(200));
+    const { state, db } = world(queued(), others(5000));
+
+    await drive(db);
+
+    expect(state.doc.index_status).toBe("ready");
   });
 });
 

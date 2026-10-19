@@ -8,6 +8,7 @@ import { ocrAvailable, ocrPdf, OCR_MAX_BYTES, type OcrEnv } from "../formats/rea
 import { EXCERPT_LIMIT, hasIndexableText, MAX_INDEX_CHARS, extOf } from "../extract";
 import { UnreadableFile } from "../formats/read";
 import { readStoredText, sidecarKey, type StoredText } from "../document-text";
+import { ceilingReason, passageCeiling, passagesOutside } from "../knowledge-ceiling";
 
 /**
  * One document's indexing, a unit at a time.
@@ -229,6 +230,17 @@ async function begin(
     });
   }
 
+  // The workspace's ceiling, before a passage is embedded: a document that
+  // will not fit fails here, having spent nothing (covan-cloud#314). Its own
+  // passages are not counted against it, so a reindex is never refused for
+  // the space it already holds.
+  const total = chunkText(found.text).length;
+  const ceiling = passageCeiling(env);
+  if (ceiling !== null) {
+    const held = await passagesOutside(db, workspaceId, doc.id);
+    if (held + total > ceiling) throw new Permanent(ceilingReason(held, total, ceiling));
+  }
+
   // One above anything the document already has. Its old passages keep
   // answering until the last unit of this run replaces them.
   const { data: newest } = await db
@@ -244,7 +256,7 @@ async function begin(
     .update({
       content: found.text.slice(0, EXCERPT_LIMIT),
       index_status: "indexing",
-      index_total: chunkText(found.text).length,
+      index_total: total,
       index_cursor: 0,
       index_generation: generation,
       index_truncated: found.truncated,

@@ -714,6 +714,93 @@ describe("a turn that outlives the screen", () => {
   });
 });
 
+/**
+ * covan-ai/covan#350. A turn the model provider refused used to end in a row
+ * that offered "Try again" whatever the reason, and on a reload in nothing at
+ * all: the question sat there looking like one still being answered.
+ */
+describe("a question the model did not answer", () => {
+  it("offers no Try again when the server says trying again cannot help", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            {
+              type: "error",
+              error: "The model is unavailable right now.",
+              code: "quota",
+              retryable: false,
+            },
+          ]),
+        ),
+      ),
+    );
+    await renderChat();
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "how much?{Enter}",
+    );
+
+    expect(await screen.findByText("The model is unavailable right now.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+  });
+
+  it("still offers it when the far end only had a bad minute", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "error", error: "The model didn't answer this time.", retryable: true },
+          ]),
+        ),
+      ),
+    );
+    await renderChat();
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "how much?{Enter}",
+    );
+
+    expect(await screen.findByText("The model didn't answer this time.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+  });
+
+  it("says so after a reload, once the server says no turn is running", async () => {
+    turnStatus.mockResolvedValue({ turn: null, hosted: true });
+    const fetchMock = vi.fn(() => Promise.resolve(openStream()));
+    vi.stubGlobal("fetch", fetchMock);
+    await renderChat();
+
+    expect(await screen.findByText("This question didn't get an answer.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toMatch(/\/chat\/stream$/);
+  });
+
+  it("says nothing while somebody else's turn is still answering it", async () => {
+    turnStatus.mockResolvedValue({
+      turn: { running: true, mine: false, startedAt: 0 },
+      hosted: true,
+    });
+    await renderChat();
+    await waitFor(() => expect(turnStatus).toHaveBeenCalledWith("session-1"));
+
+    expect(screen.queryByText("This question didn't get an answer.")).not.toBeInTheDocument();
+  });
+
+  it("says nothing about a question asked since the server was asked", async () => {
+    // The server's "no turn" is only evidence about what was there before it
+    // answered. A question newer than that may be another person's, running.
+    listMessages.mockResolvedValue([{ ...question, createdAt: Date.now() + 60_000 }]);
+    turnStatus.mockResolvedValue({ turn: null, hosted: true });
+    await renderChat();
+    await waitFor(() => expect(turnStatus).toHaveBeenCalledWith("session-1"));
+
+    expect(screen.queryByText("This question didn't get an answer.")).not.toBeInTheDocument();
+  });
+});
+
 describe("what a screen reader is told", () => {
   it("reads the transcript as a log, and only what is added to it", async () => {
     await renderChat();

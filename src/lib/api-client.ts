@@ -758,12 +758,15 @@ export const api = {
      * one this browser asked for before it opened another conversation or
      * closed the tab. `mine` is whether this caller may stop it. Null when
      * there is none, and always null on a deployment whose turns end with
-     * their request.
+     * their request — which `hosted: false` says, where the server is new
+     * enough to say anything.
      */
     turn: (
       id: string,
-    ): Promise<{ turn: { running: boolean; mine: boolean; startedAt: number } | null }> =>
-      request("GET", `/sessions/${id}/turn`),
+    ): Promise<{
+      turn: { running: boolean; mine: boolean; startedAt: number } | null;
+      hosted?: boolean;
+    }> => request("GET", `/sessions/${id}/turn`),
     /**
      * Stop the conversation's turn, answering once it has written down what it
      * had. `message` is the reply it kept, when it kept one; `stopped` is false

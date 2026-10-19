@@ -1,10 +1,14 @@
 import { Hono } from "hono";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type OpenAI from "openai";
 import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
 import { searchTerms } from "../lib/search-terms";
 import { chat } from "./chat";
+import {
+  registerProviderFailureObserver,
+  resetProviderFailureObserver,
+} from "../lib/provider-error";
 import { MAX_STEPS, MAX_TOOL_OUTPUT_CHARS } from "../lib/harness/budget";
 import { NOT_RUN_EXCERPT, NOT_RUN_FOR_A_QUESTION } from "../lib/harness/loop";
 import type { AgentTool, ToolContext, ToolResult } from "../lib/harness/registry";
@@ -3094,6 +3098,56 @@ describe("a turn that dies mid-flight", () => {
     const error = frames((await ask(app)).body).find((f) => f.type === "error");
     expect(String(error?.error)).toContain("ran out of the requests");
     expect(String(error?.error)).not.toContain("Please try again");
+  });
+
+  /**
+   * The third sentence (covan-ai/covan#350). An empty provider account answers
+   * every request the same way, so "try again" is a loop with no exit — and
+   * the one person who can fix it is the operator, who was not told for a day.
+   */
+  describe("when the model provider refuses", () => {
+    const observed = vi.fn(async () => {});
+    beforeEach(() => {
+      observed.mockClear();
+      registerProviderFailureObserver(observed);
+    });
+    afterEach(() => resetProviderFailureObserver());
+
+    function refuseWith(error: Record<string, unknown>, message: string) {
+      completionCreate.mockImplementation(async (body: { stream?: boolean }) => {
+        if (!body.stream) return titleOf("A question");
+        throw Object.assign(new Error(message), { requestID: "req_1" }, error);
+      });
+    }
+
+    it("says the model is unavailable, and tells the operator, when the account is empty", async () => {
+      const { app } = appWith({ question: "How many days?" });
+      refuseWith(
+        { status: 429, code: "insufficient_quota" },
+        "429 You exceeded your current quota",
+      );
+      const error = frames((await ask(app)).body).find((f) => f.type === "error");
+      expect(String(error?.error)).toContain("unavailable");
+      expect(String(error?.error)).not.toContain("Please try again");
+      expect(error?.code).toBe("quota");
+      expect(error?.retryable).toBe(false);
+      await vi.waitFor(() =>
+        expect(observed).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ kind: "quota", provider: "openai" }),
+        ),
+      );
+    });
+
+    it("says try again for a rate limit, and tells nobody", async () => {
+      const { app } = appWith({ question: "How many days?" });
+      refuseWith({ status: 429, code: "rate_limit_exceeded" }, "429 Rate limit reached");
+      const error = frames((await ask(app)).body).find((f) => f.type === "error");
+      expect(String(error?.error)).toContain("Please try again");
+      expect(error?.code).toBe("rate");
+      expect(error?.retryable).toBe(true);
+      expect(observed).not.toHaveBeenCalled();
+    });
   });
 
   it("writes down the tool call that really ran", async () => {

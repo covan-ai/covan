@@ -3,7 +3,14 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
-import { resolveModel, modelSpec, titleModelFor, availableModels } from "../lib/models";
+import {
+  resolveModel,
+  modelSpec,
+  titleModelFor,
+  availableModels,
+  providerFor,
+} from "../lib/models";
+import { reportProviderFailure } from "../lib/provider-error";
 import { type CompletionMessage, type CompletionUsage, type ToolCall } from "../lib/completion";
 import {
   answerUnanswered,
@@ -992,7 +999,14 @@ chat.post("/chat/stream", async (c) => {
         console.error("chat stream error", err);
         await recordSpend();
         await salvagePartial({ service, spend, persisted, persist: persistAssistant });
-        send({ type: "error", error: explainTurnFailure(err, runtimeLimit) });
+        const failed = explainTurnFailure(err, runtimeLimit, providerFor(model));
+        if (failed.failure) deferred(c, reportProviderFailure(env, failed.failure));
+        send({
+          type: "error",
+          error: failed.error,
+          code: failed.code,
+          retryable: failed.retryable,
+        });
         controller.close();
       }
     },
@@ -1671,7 +1685,18 @@ chat.post("/chat/confirm/:id", async (c) => {
         // The same recovery `/chat/stream` does, and for a stronger reason —
         // see `carried` above.
         await salvagePartial({ service, spend, carried, persisted, persist: persistAssistant });
-        send({ type: "error", error: explainTurnFailure(err, runtimeLimit) });
+        const failed = explainTurnFailure(
+          err,
+          runtimeLimit,
+          providerFor(pause.model ?? resolveModel(null, env)),
+        );
+        if (failed.failure) deferred(c, reportProviderFailure(env, failed.failure));
+        send({
+          type: "error",
+          error: failed.error,
+          code: failed.code,
+          retryable: failed.retryable,
+        });
         controller.close();
       }
     },

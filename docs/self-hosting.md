@@ -351,6 +351,31 @@ default this repository could ship would be. Point `VITE_TERMS_URL` and
 stop being linked. Like the other `VITE_` values they are applied when the
 container starts, so `docker compose up -d covan-web` is enough.
 
+## What a self-hosted Covan sends, and to whom
+
+Nothing to us. There is no telemetry, no analytics, no error reporting, no
+update check and no licence check in this repository, on by default or
+otherwise. The open build's entitlements are `unlimitedEntitlements`, which
+counts nothing and asks nobody.
+
+Everything that does leave your install is a call to a service you configured,
+made because somebody used the feature behind it:
+
+| Service                      | When                                                     | What goes                                                                       |
+| ---------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| OpenAI, or `OPENAI_BASE_URL` | every reply, every indexed document, dictation           | the conversation, the agent's persona, retrieved passages, document text, audio |
+| Anthropic                    | an agent set to a Claude model                           | the same, for that agent                                                        |
+| Composio                     | a connected app is used; the catalogue is opened         | the operation and its arguments, and what the app answers; logo requests        |
+| Browser Use                  | an agent uses a website                                  | the task, the pages visited, what is typed there                                |
+| Resend                       | invitations, routine results by email, inbound mail      | the mail                                                                        |
+| Notion, Google Drive         | a connected source syncs                                 | the grant's requests; files and pages come back                                 |
+| Slack                        | the Slack app is installed; a routine posts to a webhook | questions in, answers out; routine results                                      |
+| Google, GitHub               | sign-in with either is turned on                         | the sign-in exchange                                                            |
+| Feeds and pages              | a routine watches one                                    | a fetch of that address; a push subscription through the feed's own hub         |
+
+The in-app `/privacy` page says the same to the people using your install, and
+`VITE_PRIVACY_URL` replaces it if you run Covan as a service for others.
+
 ## Reading the feedback people send you
 
 The sidebar has a **Send feedback** button, and what it writes is addressed to

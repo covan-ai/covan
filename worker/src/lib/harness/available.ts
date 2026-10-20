@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { configuredTools, type AgentTool, type ToolEnv } from "./registry";
 import { connectionsManifest, listConnections } from "./connections";
+import { promptOverrides, withToolDescriptions } from "../prompt-overrides";
 
 /**
  * What this agent, in this workspace, for this person, can actually do — and
@@ -105,7 +106,10 @@ export async function capabilitiesFor(input: {
     );
   }
 
-  return { tools, manifest: parts.filter(Boolean).join("\n\n") };
+  // Last, so a reworded description reaches every surface that asks this
+  // question — chat, the confirm route and a scheduled run — and none can forget.
+  const tuned = withToolDescriptions(tools, await promptOverrides(input.env));
+  return { tools: tuned, manifest: parts.filter(Boolean).join("\n\n") };
 }
 
 /**

@@ -54,6 +54,7 @@ import {
   reasoningEffortFor,
   promptParts,
 } from "../lib/prompt";
+import { promptOverrides } from "../lib/prompt-overrides";
 import { effectiveMode, effectiveTuning } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
 import { generateFollowUps } from "../lib/follow-ups";
@@ -287,6 +288,7 @@ chat.post("/chat/stream", async (c) => {
       webSearchEnabled: tuning.webSearch,
       now: new Date(),
       timezone: visitorZone,
+      overrides: await promptOverrides(env),
     }) + (manifest ? `\n\n${manifest}` : "");
 
   // Budget the history down to the most recent turns that fit, so long chats

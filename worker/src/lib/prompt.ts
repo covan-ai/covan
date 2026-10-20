@@ -1,4 +1,5 @@
 import { REASONING_EFFORTS, type ReasoningEffort } from "./models";
+import type { PromptOverrides } from "./prompt-overrides";
 
 export const DEFAULT_PERSONA = "You are a helpful AI assistant for a team workspace.";
 
@@ -210,15 +211,24 @@ export function buildSystemPrefix(input: {
    * clock should say nothing about the date, not quietly guess UTC. */
   now?: Date;
   timezone?: string | null;
+  /**
+   * Wording this deployment tuned in place of the defaults below
+   * (`lib/prompt-overrides.ts`). Absent is the open build: every part is the
+   * text in this file.
+   */
+  overrides?: PromptOverrides;
 }): string {
+  const tuned = input.overrides?.parts ?? {};
   const persona =
-    input.persona && input.persona.trim().length > 0 ? input.persona : DEFAULT_PERSONA;
+    input.persona && input.persona.trim().length > 0
+      ? input.persona
+      : (tuned.default_persona ?? DEFAULT_PERSONA);
 
   let prefix = persona;
 
   // Add capabilities (web search only if enabled)
   if (input.webSearchEnabled) {
-    prefix += `\n\n${CAPABILITIES}`;
+    prefix += `\n\n${tuned.capabilities ?? CAPABILITIES}`;
   }
 
   if (input.now) {
@@ -226,13 +236,13 @@ export function buildSystemPrefix(input: {
   }
 
   if (input.mode === "brainstorm") {
-    prefix += `\n\n${BRAINSTORM_INSTRUCTIONS}`;
+    prefix += `\n\n${tuned.brainstorm ?? BRAINSTORM_INSTRUCTIONS}`;
   } else if (input.mode === "report") {
-    prefix += `\n\n${REPORT_INSTRUCTIONS}`;
+    prefix += `\n\n${tuned.report ?? REPORT_INSTRUCTIONS}`;
   } else if (input.mode === "document") {
-    prefix += `\n\n${DOCUMENT_INSTRUCTIONS}`;
+    prefix += `\n\n${tuned.document ?? DOCUMENT_INSTRUCTIONS}`;
   } else {
-    prefix += `\n\n${CONCISION_INSTRUCTIONS}`;
+    prefix += `\n\n${tuned.concision ?? CONCISION_INSTRUCTIONS}`;
   }
   const names = input.docNames.filter((n) => n && n.trim().length > 0);
   if (names.length > 0) {

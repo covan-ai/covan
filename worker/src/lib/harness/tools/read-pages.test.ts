@@ -29,7 +29,7 @@ vi.mock("../spend", () => ({
   wasBilled: (status: number) => status !== 501 && status !== 502,
 }));
 
-const { cursorArgument, nextCursor, readPages, readerModel, maxPages } =
+const { cursorArgument, nextCursor, readPages, readerModel, maxPages, withPageSize } =
   await import("./read-pages");
 
 const USAGE = { promptTokens: 1000, completionTokens: 50, cachedTokens: null };
@@ -94,6 +94,34 @@ describe("finding the next page", () => {
     expect(cursorArgument({ properties: { start_cursor: {} } })).toBe("start_cursor");
     expect(cursorArgument({ properties: { query: {} } })).toBeNull();
     expect(cursorArgument(null)).toBeNull();
+  });
+
+  it("asks for full pages, whatever the model asked for", () => {
+    // Gmail's own default is one message a page, which read forty-five
+    // messages of a two-week inbox in six minutes.
+    const gmail = {
+      properties: { query: {}, page_token: {}, max_results: { type: "integer", maximum: 500 } },
+    };
+    expect(withPageSize(gmail, { query: "newer_than:14d" })).toEqual({
+      query: "newer_than:14d",
+      max_results: 50,
+    });
+    expect(withPageSize(gmail, { max_results: 500 }).max_results).toBe(50);
+    expect(withPageSize(gmail, { max_results: 1 }).max_results).toBe(50);
+  });
+
+  it("stays under the operation's own maximum", () => {
+    const small = { properties: { cursor: {}, limit: { type: "integer", maximum: 20 } } };
+    expect(withPageSize(small, {})).toEqual({ limit: 20 });
+  });
+
+  it("leaves an operation with no page token, or no numeric size, as it was", () => {
+    const args = { max_results: 3 };
+    const single = { properties: { max_results: { type: "integer" } } };
+    expect(withPageSize(single, args)).toBe(args);
+    const textual = { properties: { page_token: {}, limit: { type: "string" } } };
+    expect(withPageSize(textual, args)).toBe(args);
+    expect(withPageSize(null, args)).toBe(args);
   });
 });
 

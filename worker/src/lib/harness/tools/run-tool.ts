@@ -7,7 +7,14 @@ import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import type { RunApproval } from "../registry";
 import { mayChangeThings, VIEWERS_READ_ONLY } from "../role";
-import { cursorArgument, maxPages, nextCursor, readPages, READ_TIMEOUT_MS } from "./read-pages";
+import {
+  cursorArgument,
+  maxPages,
+  nextCursor,
+  readPages,
+  READ_TIMEOUT_MS,
+  withPageSize,
+} from "./read-pages";
 
 /**
  * Run one operation at a connected application.
@@ -655,7 +662,7 @@ export const runToolTool: AgentTool = {
         slug,
         label: connection.label,
         question,
-        args: callArgs,
+        args: withPageSize(schema, callArgs),
         cursorArg: cursorArgument(schema),
         account,
       });

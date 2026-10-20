@@ -707,7 +707,9 @@ customers complained about this month, every invoice from one supplier — the
 agent can pass `question` to `run_tool`. Covan then follows the operation's page
 token itself, has a smaller model (Claude Haiku, or GPT-4o mini on an
 OpenAI-only install) read each page for that question, and hands the agent only
-what answered it, with the ids to open in full. Only for an operation the
+what answered it, with the ids to open in full. Each page asks for fifty items,
+or the operation's maximum if that is lower, whatever size the agent asked for.
+Only for an operation the
 service marks as read-only, since paging repeats the call. The approval card
 says how many pages it may read; on Workers Paid that is fifteen, on Free three
 in a conversation and one in a scheduled run, and it stops early to finish in

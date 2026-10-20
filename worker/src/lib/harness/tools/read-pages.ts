@@ -95,6 +95,42 @@ export function cursorArgument(schema: Record<string, unknown> | null | undefine
   return Object.keys(properties).find((key) => CURSOR_ARGUMENTS.has(normalised(key))) ?? null;
 }
 
+/** Names an operation's page-size argument goes by, normalised as above. */
+const PAGE_SIZE_ARGUMENTS = new Set(["maxresults", "limit", "pagesize", "perpage"]);
+
+/**
+ * How many items a page is asked for when every page is read.
+ *
+ * What `PAGE_CHARS` was sized for. Left to the model, the size was whatever the
+ * operation defaults to, and Gmail's is one: on 2026-10-21 a two-week scan read
+ * fifteen pages of one message each, three times over, and saw forty-five
+ * messages in six minutes. When every page is read, the size no longer decides
+ * how many items the answer covers, only how many calls it takes, so the
+ * model's own number is replaced rather than respected — a hundred-item page is
+ * as wrong as a one-item page, because the reader sees `PAGE_CHARS` of it.
+ */
+export const READ_PAGE_SIZE = 50;
+
+/**
+ * `args` with the page size set to `READ_PAGE_SIZE`, or to the schema's
+ * maximum if that is lower. Unchanged for an operation with no numeric
+ * page-size argument, or no page token to read the next page with.
+ */
+export function withPageSize(
+  schema: Record<string, unknown> | null | undefined,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = schema?.properties;
+  if (typeof properties !== "object" || properties === null) return args;
+  if (!cursorArgument(schema)) return args;
+  const key = Object.keys(properties).find((k) => PAGE_SIZE_ARGUMENTS.has(normalised(k)));
+  if (!key) return args;
+  const property = (properties as Record<string, { type?: unknown; maximum?: unknown }>)[key];
+  if (property?.type !== "integer" && property?.type !== "number") return args;
+  const maximum = typeof property.maximum === "number" ? property.maximum : Infinity;
+  return { ...args, [key]: Math.min(READ_PAGE_SIZE, maximum) };
+}
+
 /**
  * The model that reads the pages: the small one, as for a title.
  *

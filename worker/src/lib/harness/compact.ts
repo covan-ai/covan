@@ -304,8 +304,25 @@ function isProse(text: string): boolean {
   return /\s/.test(text);
 }
 
+/**
+ * Longer than any id or page token a service hands out, so a string past this
+ * with no space in it is a blob: an inline image, an encoded attachment, a
+ * tracking link the length of a page. Exempting those as if they were ids is
+ * what let one mail of them hold a whole list over the budget, and the list
+ * then fell through to `cap` and came back as its first item — measured
+ * 2026-10-20 on the first pilot mailbox read after #365, at 12,054 characters
+ * twice in a row. Half of a blob is worth nothing either, so it is not cut but
+ * left out, with its size.
+ */
+const BLOB_CHARS = 1_000;
+
+function isBlob(text: string): boolean {
+  return text.length > BLOB_CHARS && !isProse(text);
+}
+
 function shorten(node: Json, limit: number): Json {
   if (typeof node === "string") {
+    if (isBlob(node)) return `[${node.length} characters with no spaces, left out]`;
     return node.length > limit && isProse(node) ? `${node.slice(0, limit)}${SHORTENED}` : node;
   }
   if (Array.isArray(node)) return node.map((child) => shorten(child, limit));
@@ -318,7 +335,7 @@ function shorten(node: Json, limit: number): Json {
 }
 
 function longestString(node: Json): number {
-  if (typeof node === "string") return isProse(node) ? node.length : 0;
+  if (typeof node === "string") return isProse(node) || isBlob(node) ? node.length : 0;
   if (typeof node !== "object" || node === null) return 0;
   let longest = 0;
   for (const value of Object.values(node as Record<string, Json>)) {
@@ -349,6 +366,93 @@ function fairShare(node: Json, max: number): string | null {
     }
   }
   return best;
+}
+
+/** The largest array in a result, by how much of it it is: the list to cut. */
+function largestArray(
+  node: Json,
+  path: (string | number)[] = [],
+): { path: (string | number)[]; items: Json[]; size: number } | null {
+  if (typeof node !== "object" || node === null) return null;
+  let best: { path: (string | number)[]; items: Json[]; size: number } | null = null;
+  if (Array.isArray(node) && node.length > 1) {
+    best = { path, items: node, size: JSON.stringify(node).length };
+  }
+  const entries: [string | number, Json][] = Array.isArray(node)
+    ? node.map((child, i) => [i, child])
+    : Object.entries(node as Record<string, Json>);
+  for (const [key, child] of entries) {
+    const found = largestArray(child, [...path, key]);
+    if (found && (!best || found.size > best.size)) best = found;
+  }
+  return best;
+}
+
+function replaceAt(node: Json, path: (string | number)[], value: Json): Json {
+  if (path.length === 0) return value;
+  const [head, ...rest] = path;
+  if (Array.isArray(node)) {
+    return node.map((child, i) => (i === head ? replaceAt(child, rest, value) : child));
+  }
+  const out = blank();
+  for (const [key, child] of Object.entries(node as Record<string, Json>)) {
+    out[key] = key === head ? replaceAt(child, rest, value) : child;
+  }
+  return out;
+}
+
+/**
+ * The first items of the result's main list that fit, with every text in them
+ * at the shortest share — the last thing before a blind cut, and better than
+ * one because it stops between two items rather than inside one, and says how
+ * many it showed. Null when not even one item fits.
+ */
+function firstItemsThatFit(node: Json, max: number): string | null {
+  const list = largestArray(node);
+  if (!list) return null;
+  const total = list.items.length;
+  const fitted = (k: number) => {
+    const notice = `\n\n[showing the first ${k} of ${total} items; ask for fewer, or a narrower range, for the rest]`;
+    return JSON.stringify(replaceAt(node, list.path, list.items.slice(0, k))) + notice;
+  };
+  let lo = 1;
+  let hi = total - 1;
+  let best: string | null = null;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const text = fitted(mid);
+    if (text.length <= max) {
+      best = text;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/**
+ * What a result that reached the blind cut was made of — counts and lengths,
+ * never content. It is the only trace a cut leaves: `message_steps` keeps the
+ * first two thousand characters of what the model saw, which shows that it was
+ * cut and not why.
+ */
+function shapeOf(node: Json): Record<string, number> {
+  const stats = { strings: 0, longestProse: 0, longestNoSpace: 0, longestList: 0 };
+  const walk = (n: Json) => {
+    if (typeof n === "string") {
+      stats.strings += 1;
+      if (isProse(n)) stats.longestProse = Math.max(stats.longestProse, n.length);
+      else stats.longestNoSpace = Math.max(stats.longestNoSpace, n.length);
+    } else if (Array.isArray(n)) {
+      stats.longestList = Math.max(stats.longestList, n.length);
+      n.forEach(walk);
+    } else if (typeof n === "object" && n !== null) {
+      Object.values(n as Record<string, Json>).forEach(walk);
+    }
+  };
+  walk(node);
+  return stats;
 }
 
 const SHORTENED_NOTICE =
@@ -402,6 +506,13 @@ export function compactForModel(body: string, max: number): string {
   // Then every item a share, rather than the first item all of it.
   const shared = fairShare(linkless, max - urlsNotice.length - SHORTENED_NOTICE.length);
   if (shared !== null) return shared + urlsNotice + SHORTENED_NOTICE;
+  // Then as many whole items as fit, each at the shortest share.
+  const listed = firstItemsThatFit(
+    shorten(linkless, MIN_SHARE),
+    max - urlsNotice.length - SHORTENED_NOTICE.length,
+  );
+  if (listed !== null) return listed + urlsNotice + SHORTENED_NOTICE;
+  console.warn("tool result reached the blind cut", { chars: body.length, ...shapeOf(linkless) });
   // Room for BOTH notices inside `max`. Appending them afterwards put the
   // result over the budget, and `loop.ts` then capped it a second time — which
   // cut off the one sentence that made the dropped urls recoverable and

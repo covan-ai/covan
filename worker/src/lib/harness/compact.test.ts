@@ -278,6 +278,45 @@ describe("mail", () => {
     expect(out).not.toMatch(/\[urls omitted|\[trimmed/);
   });
 
+  it("leaves out a blob with no spaces rather than let it hold the whole list over", () => {
+    // 2026-10-20, the first pilot mailbox read after #365: two list calls came
+    // back cut blind at 12,054 characters. Shortening exempted every string
+    // with no space in it, as an id; one mail carrying an inline image or a
+    // page-long encoded link was then a string nothing could shorten.
+    const blob = "data:image/png;base64," + "iVBORw0KGgo".repeat(3000);
+    const messages = Array.from({ length: 15 }, (_, i) => ({
+      messageId: `19f9${i}`,
+      subject: `Konu ${i}`,
+      messageText:
+        i === 3
+          ? `Ekte resim var ${blob}`.replace(" " + blob, blob)
+          : `Merhaba ${i}, ${"bilgi ".repeat(300)}`,
+      inline: i === 3 ? blob : undefined,
+    }));
+    const out = compactForModel(JSON.stringify({ data: { messages } }), 12_000);
+
+    expect(out.length).toBeLessThanOrEqual(12_000);
+    expect(out).not.toMatch(/\[trimmed/);
+    for (let i = 0; i < 15; i += 1) expect(out).toContain(`"subject":"Konu ${i}"`);
+    expect(out).toMatch(/characters with no spaces, left out/);
+  });
+
+  it("stops between two items, and says how many it showed, when even short ones do not fit", () => {
+    const rows = Array.from({ length: 400 }, (_, i) => ({
+      id: `r${i}`,
+      title: `Kayıt ${i} ${"başlık ".repeat(40)}`,
+      body: `Ayrıntı ${"metin ".repeat(60)}`,
+      note: `Not ${"kısa ".repeat(40)}`,
+    }));
+    const out = compactForModel(JSON.stringify({ data: { rows, next_cursor: "c2" } }), 12_000);
+
+    expect(out.length).toBeLessThanOrEqual(12_000);
+    expect(out).not.toMatch(/\[trimmed/);
+    expect(out).toMatch(/\[showing the first \d+ of 400 items/);
+    expect(out).toContain('"id":"r0"');
+    expect(out).toContain('"next_cursor":"c2"');
+  });
+
   it("never shortens a page token or an id to make a list fit", () => {
     const token = "CiAKGjBpNDd2Nmp2Zml2cXRkMjBhcHNqYXJ0YmQyGgYI" + "Q".repeat(300);
     const messages = Array.from({ length: 40 }, (_, i) => ({

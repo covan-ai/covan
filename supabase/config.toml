@@ -160,8 +160,9 @@ site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-# The two paths are the pages that report what a link did: sign-up asks GoTrue to send the
-# confirmation link to /confirmed, and the reset mail lands on /reset-password. An address missing
+# The paths are the pages that report what a link did: sign-up asks GoTrue to send the
+# confirmation link to /confirmed, the reset mail lands on /reset-password, and Google and GitHub
+# come back to /auth/callback. An address missing
 # from this list does not fail — GoTrue quietly falls back to site_url, which is the front door and
 # says nothing about the click that led there. Hosted projects keep the same list under
 # Authentication → URL Configuration → Redirect URLs; see docs/self-hosting.md.
@@ -169,6 +170,7 @@ additional_redirect_urls = [
   "https://127.0.0.1:3000",
   "http://127.0.0.1:3000/confirmed",
   "http://127.0.0.1:3000/reset-password",
+  "http://127.0.0.1:3000/auth/callback",
 ]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
@@ -333,6 +335,24 @@ max_frequency = "5s"
 # Use an external OAuth provider. The full list of providers are: `apple`, `azure`, `bitbucket`,
 # `discord`, `facebook`, `github`, `gitlab`, `google`, `keycloak`, `linkedin_oidc`, `notion`, `twitch`,
 # `twitter`, `x`, `slack`, `spotify`, `workos`, `zoom`.
+# The two the sign-in and sign-up cards offer. The buttons appear on their own once GoTrue reports
+# a provider enabled; the callback to register with each is `<external_url>/callback`, which on
+# this local stack is http://127.0.0.1:54321/auth/v1/callback.
+[auth.external.google]
+enabled = false
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET)"
+redirect_uri = ""
+url = ""
+skip_nonce_check = false
+
+[auth.external.github]
+enabled = false
+client_id = "env(SUPABASE_AUTH_EXTERNAL_GITHUB_CLIENT_ID)"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GITHUB_SECRET)"
+redirect_uri = ""
+url = ""
+
 [auth.external.apple]
 enabled = false
 client_id = ""

@@ -116,6 +116,11 @@ the 64px one the empty chat opens with). Neither is a type role.
 - **Selection** is marked by a dot, not a square: 8px, round, amber when on
   and `border`-coloured when off. The row you are on in a nav is marked by its
   background alone.
+- **Continue with Google / GitHub** on the two auth cards is a full-width
+  `secondary` button with the provider's own mark at 16px where an icon would
+  go. It is the one place a third-party mark sits outside `AppLogo`'s tile:
+  the provider's guidelines ask for the mark, and a tile inside a 36px button
+  would be a box in a box.
 - **Send** is an amber square at icon size, the primary button at icon size,
   and the brand mark is the bare logo in the ink colour, with no tile.
 

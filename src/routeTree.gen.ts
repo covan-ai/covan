@@ -28,6 +28,7 @@ import { Route as AuthedKnowledgeRouteImport } from './routes/_authed.knowledge'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedTeamRouteImport } from './routes/_authed.team'
 import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedAgentsAgentIdRouteImport } from './routes/_authed.agents.$agentId'
 import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed.settings.index'
 import { Route as AuthedSettingsAccountRouteImport } from './routes/_authed.settings.account'
@@ -137,6 +138,11 @@ const AuthedWelcomeRoute = AuthedWelcomeRouteImport.update({
   path: '/welcome',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthedAgentsAgentIdRoute = AuthedAgentsAgentIdRouteImport.update({
   id: '/agents/$agentId',
   path: '/agents/$agentId',
@@ -234,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AuthedSettingsRouteWithChildren
   '/team': typeof AuthedTeamRoute
   '/welcome': typeof AuthedWelcomeRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/settings/account': typeof AuthedSettingsAccountRoute
   '/settings/members': typeof AuthedSettingsMembersRoute
@@ -267,6 +274,7 @@ export interface FileRoutesByTo {
   '/knowledge': typeof AuthedKnowledgeRoute
   '/team': typeof AuthedTeamRoute
   '/welcome': typeof AuthedWelcomeRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/settings/account': typeof AuthedSettingsAccountRoute
   '/settings/members': typeof AuthedSettingsMembersRoute
   '/settings/usage': typeof AuthedSettingsUsageRoute
@@ -302,6 +310,7 @@ export interface FileRoutesById {
   '/_authed/settings': typeof AuthedSettingsRouteWithChildren
   '/_authed/team': typeof AuthedTeamRoute
   '/_authed/welcome': typeof AuthedWelcomeRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/_authed/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/_authed/settings/account': typeof AuthedSettingsAccountRoute
   '/_authed/settings/members': typeof AuthedSettingsMembersRoute
@@ -338,6 +347,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/team'
     | '/welcome'
+    | '/auth/callback'
     | '/agents/$agentId'
     | '/settings/account'
     | '/settings/members'
@@ -371,6 +381,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/team'
     | '/welcome'
+    | '/auth/callback'
     | '/settings/account'
     | '/settings/members'
     | '/settings/usage'
@@ -405,6 +416,7 @@ export interface FileRouteTypes {
     | '/_authed/settings'
     | '/_authed/team'
     | '/_authed/welcome'
+    | '/auth/callback'
     | '/_authed/agents/$agentId'
     | '/_authed/settings/account'
     | '/_authed/settings/members'
@@ -435,6 +447,7 @@ export interface RootRouteChildren {
   SignUpRoute: typeof SignUpRoute
   TermsRoute: typeof TermsRoute
   TwoFactorRoute: typeof TwoFactorRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -571,6 +584,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/welcome'
       preLoaderRoute: typeof AuthedWelcomeRouteImport
       parentRoute: typeof AuthedRoute
+    }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authed/agents/$agentId': {
       id: '/_authed/agents/$agentId'
@@ -756,6 +776,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignUpRoute: SignUpRoute,
   TermsRoute: TermsRoute,
   TwoFactorRoute: TwoFactorRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

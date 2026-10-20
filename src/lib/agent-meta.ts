@@ -260,6 +260,13 @@ export type PersonaTemplate = {
 
 // Starter templates surfaced in the create dialog. Picking one pre-fills the
 // icon, model, and persona so a new agent can be created in seconds.
+//
+// A persona that grounds the agent says "documents and connected apps", never
+// the knowledge base alone. The model takes the narrower reading literally: a
+// Knowledge Tutor told to stay "inside the knowledge base" answered "look at
+// my Notion page" with two document searches and "I cannot see Notion", with
+// Notion connected and named in its prompt. A persona is copied into the agent
+// when it is created, so this changes new agents only.
 export const PERSONA_TEMPLATES: PersonaTemplate[] = [
   {
     id: "support",
@@ -267,7 +274,7 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     emoji: "💬",
     model: "gpt-4o-mini",
     persona:
-      "You are a friendly, patient customer support specialist. Answer using only the team's knowledge base. Be concise, confirm you understood the issue, and give clear step-by-step help. If you don't know, say so and offer to escalate.",
+      "You are a friendly, patient customer support specialist. Answer using only the team's knowledge base and the apps it has connected. Be concise, confirm you understood the issue, and give clear step-by-step help. If you don't know, say so and offer to escalate.",
   },
   {
     id: "coding",
@@ -291,7 +298,7 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     emoji: "🎓",
     model: "gpt-4.1-mini",
     persona:
-      "You are a patient tutor. Explain concepts from the team's documents clearly, adapting to the learner's level. Use examples and analogies, check understanding with a short question, and never invent facts outside the knowledge base.",
+      "You are a patient tutor. Explain concepts from the team's documents and connected apps clearly, adapting to the learner's level. Use examples and analogies, check understanding with a short question, and never invent facts beyond what those sources say.",
   },
   {
     id: "writer",
@@ -322,7 +329,7 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     emoji: "🧭",
     model: "gpt-4o-mini",
     persona:
-      "You are the colleague a new joiner can ask anything, however small. Answer from the team's own documents rather than from general knowledge — how this team does it, not how it is usually done. Keep replies short and point to the next thing worth reading. If the documents do not cover something, say so plainly and suggest who to ask; never fill the gap with a plausible answer.",
+      "You are the colleague a new joiner can ask anything, however small. Answer from the team's own documents and connected apps rather than from general knowledge — how this team does it, not how it is usually done. Keep replies short and point to the next thing worth reading. If they do not cover something, say so plainly and suggest who to ask; never fill the gap with a plausible answer.",
   },
   {
     id: "analyst",

@@ -123,6 +123,13 @@ describe("the eval case set", () => {
     expect(ragIndex).toBe(messages.length - 2);
   });
 
+  it("puts a case's connections manifest after the prefix, where chat.ts puts it", () => {
+    const withManifest = CASES.find((c) => c.manifest);
+    expect(withManifest, "no case carries a connections manifest").toBeTruthy();
+    const system = buildMessages(withManifest!)[0].content as string;
+    expect(system.endsWith(`\n\n${withManifest!.manifest}`)).toBe(true);
+  });
+
   it("carries enough spoiled answers to test the judge with", () => {
     // `calibrate.ts` runs on exactly the cases that have one, so an empty set
     // here is a calibration run that passes by measuring nothing — which is

@@ -28,6 +28,7 @@
 
 import { NO_PASSAGE_MATCHED } from "../src/lib/harness/tools/search-documents";
 import { buildContextBlock } from "../src/lib/rag";
+import { connectionsManifest, type ToolConnection } from "../src/lib/harness/connections";
 
 /**
  * What `search_documents` says when retrieval comes back empty.
@@ -81,6 +82,12 @@ export type EvalCase = {
   persona: string;
   /** What the manifest names. Feeds `buildSystemPrefix`, so it costs tokens. */
   docNames: string[];
+  /**
+   * The connections paragraph `capabilitiesFor` appends to the system prompt,
+   * or nothing. Built with `connectionsManifest` itself, so a case that needs
+   * it reads the sentence production sends rather than a copy of it.
+   */
+  manifest?: string;
   /** Turns before this one. Empty for a question that stands on its own. */
   history: Array<{ role: "user" | "assistant"; content: string }>;
   /** The retrieved block chat.ts puts before the question, or null. */
@@ -134,6 +141,22 @@ const ANALYST =
   "from the operational database when it is connected. You are direct and you do not pad.";
 
 const DOCS = ["MERIDYEN-KB.md", "ONBOARDING.md", "COMPETITION.md", "PRICING.md"];
+
+/** A Notion account connected through Composio, as `tool_connections` holds one. */
+const NOTION_CONNECTION: ToolConnection = {
+  id: "conn-notion",
+  workspace_id: "ws-eval",
+  label: "Notion",
+  transport: "composio",
+  base_url: "https://backend.composio.dev",
+  auth_kind: "composio",
+  allowed_methods: ["GET"],
+  config: {},
+  toolkit_slug: "notion",
+  status: "active",
+  scope: "workspace",
+  created_by: null,
+};
 
 export const CASES: EvalCase[] = [
   // ---- search_documents: the material is there ---------------------------
@@ -901,5 +924,59 @@ export const CASES: EvalCase[] = [
       "Answers in Turkish, matching the conversation.",
     ],
     realSteps: 2,
+  },
+  // ---- a question about a connected app, not about the documents ---------
+  {
+    // A Knowledge Tutor with Notion connected was asked to look at the
+    // person's Notion page. It searched the documents twice, said it could not
+    // see Notion, and later that Notion had no such page — never calling
+    // find_tool, though it was offered and Notion was in the manifest. The
+    // knowledge base was empty there; here it holds a document, which is the
+    // harder version — a named file is one more pull towards searching — and
+    // what `docNames` must hold for the prompt to be production's shape.
+    id: "app-named-in-question",
+    tags: ["find_tool", "connected-app", "2-step"],
+    persona:
+      "You are a patient tutor. Explain concepts from the team's documents clearly, adapting " +
+      "to the learner's level. Use examples and analogies, check understanding with a short " +
+      "question, and never invent facts outside the knowledge base.",
+    docNames: ["ONBOARDING.md"],
+    manifest: connectionsManifest([NOTION_CONNECTION]),
+    tools: ["search_documents", "find_tool", "run_tool"],
+    history: [],
+    ragBlock: null,
+    question: "notion sayfamı incele ve kim olduğumu, ne yaptığımı anlamaya çalış",
+    toolResults: {
+      find_tool: [
+        "NOTION_SEARCH_NOTION_PAGE — Search Notion pages and databases by title.\n" +
+          "  app: notion · connectionId: conn-notion (Notion)\n" +
+          "  takes: query (string), page_size (integer)",
+      ],
+      run_tool: [
+        rows({
+          results: [
+            {
+              title: "Hakkımda",
+              url: "https://www.notion.so/Hakkimda-1f2e",
+              text:
+                "Selin Kaya. Meridyen'de operasyon lideri; sevkiyat planlamasından ve " +
+                "depo ekibinden sorumlu. Bu çeyrek: rota optimizasyonu pilotu.",
+            },
+          ],
+        }),
+      ],
+    },
+    exhausted: { search_documents: NO_PASSAGE },
+    rubric: [
+      "Reads Notion through find_tool and run_tool rather than answering from a document search.",
+      "Says who the person is and what they do from the page it read: Selin Kaya, operations lead at Meridyen, shipment planning and the warehouse team.",
+      "Does not claim it cannot see Notion, and does not describe Notion's contents from anything but what run_tool returned.",
+      "Answers in Turkish, matching the question.",
+    ],
+    realSteps: 2,
+    spoiled:
+      "Notion sayfanızı göremiyorum; bu konuşmada Notion'a erişimim yok gibi görünüyor. " +
+      "Belgelerde de kim olduğunuza dair bir bilgi bulunmuyor. Sayfanın içeriğini buraya " +
+      "yapıştırırsanız inceleyip size özetleyebilirim.",
   },
 ];

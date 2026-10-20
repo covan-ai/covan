@@ -74,6 +74,13 @@ describe("connectionsManifest", () => {
     expect(text).toContain("search_documents covers only the documents in Covan");
   });
 
+  // Asked again, the same agent said Notion had no page about the person,
+  // having read nothing from Notion at all.
+  it("forbids describing an app's contents without having read them", () => {
+    expect(connectionsManifest([GMAIL])).toContain("unless you read it with run_tool in this turn");
+    expect(connectionsManifest([WAREHOUSE])).not.toContain("run_tool in this turn");
+  });
+
   it("still sends one to describe a database, where the answer is real", () => {
     const text = connectionsManifest([WAREHOUSE]);
     expect(text).toContain("describe_connection");

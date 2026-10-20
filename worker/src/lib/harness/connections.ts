@@ -264,6 +264,11 @@ export function connectionsManifest(connections: ToolConnection[]): string {
    * that, an agent told to work "from the team's documents" answered "look at
    * my Notion page" with two document searches and "I cannot see Notion",
    * Notion listed right here the whole time. A named app is where to look.
+   *
+   * And what it says about an app has to come from reading it. Asked again,
+   * the same agent said Notion had no page about the person — having still
+   * read nothing from Notion. An answer about an app's contents that rests on
+   * an empty document search is invented, however plausible it reads.
    */
   const guidance = [
     hasOther
@@ -274,7 +279,8 @@ export function connectionsManifest(connections: ToolConnection[]): string {
       ? "A connected app needs no describing — go straight to find_tool for the operation " +
         "you need, then run_tool with that app's connection id. When the person names one " +
         "of these apps or asks about what is in it, read it there: search_documents covers " +
-        "only the documents in Covan, never a connected app."
+        "only the documents in Covan, never a connected app. Do not say what an app holds, " +
+        "or that it lacks something, unless you read it with run_tool in this turn."
       : "",
     "Never guess an id that is not on this list.",
     // Without this the sentence above forbids the very ids the overflow line

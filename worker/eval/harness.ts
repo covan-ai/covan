@@ -48,7 +48,11 @@ export function buildMessages(kase: EvalCase): CompletionMessage[] {
   });
 
   return [
-    { role: "system", content: systemPrefix },
+    // The connections paragraph after the prefix, as `routes/chat.ts` appends it.
+    {
+      role: "system",
+      content: kase.manifest ? `${systemPrefix}\n\n${kase.manifest}` : systemPrefix,
+    },
     ...kase.history,
     // `user`, as `routes/chat.ts` sends it since finding 8 of the 2026-10-08
     // audit. An eval that assembles the prompt differently from production is

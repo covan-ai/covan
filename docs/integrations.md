@@ -696,6 +696,24 @@ than the default, the fields you need rather than all of them. That sentence is
 there because the alternative was measured: without it an agent finds the limit
 by hitting it, and each attempt costs a step and is re-sent on every pass after.
 
+Mail is shaped before it is trimmed: the transport headers (`Received`, `DKIM`,
+`ARC`) are dropped, encoded bodies are decoded, HTML becomes text, and a list
+that still does not fit shows every message shortened rather than the first one
+whole. When there is another page the agent is told so, with the token to ask
+for it.
+
+**Reading many results.** For a question that spans more than a page — what
+customers complained about this month, every invoice from one supplier — the
+agent can pass `question` to `run_tool`. Covan then follows the operation's page
+token itself, has a smaller model (Claude Haiku, or GPT-4o mini on an
+OpenAI-only install) read each page for that question, and hands the agent only
+what answered it, with the ids to open in full. Only for an operation the
+service marks as read-only, since paging repeats the call. The approval card
+says how many pages it may read; on Workers Paid that is fifteen, on Free three
+in a conversation and one in a scheduled run, and it stops early to finish in
+time. Each page is a connected-app call and a small-model call on the credit
+ledger, listed as "Reading connected-app results".
+
 **The asking.** The first time an agent acts on a connected app in a
 conversation, you are shown what it proposes to do — the operation and every
 argument, including the body of the message — and it does not happen unless you

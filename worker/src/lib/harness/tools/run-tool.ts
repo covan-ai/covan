@@ -7,6 +7,7 @@ import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import type { RunApproval } from "../registry";
 import { mayChangeThings, VIEWERS_READ_ONLY } from "../role";
+import { cursorArgument, maxPages, nextCursor, readPages, READ_TIMEOUT_MS } from "./read-pages";
 
 /**
  * Run one operation at a connected application.
@@ -89,14 +90,24 @@ function confirmationSummary(
   operation: ComposioTool | undefined,
   slug: string,
   label: string,
+  reading: { question: string; pages: number } | null = null,
 ): string {
   const described = operation?.description?.trim();
   if (!described) return `Run ${slug} on ${label}?`;
   const act = firstSentence(described);
+  // A question repeats the call once a page, so the card says how far it may go.
+  const pages = reading
+    ? reading.pages === 1
+      ? ` Covan will read the results for: ${reading.question}`
+      : ` Covan will read up to ${reading.pages} pages of results for: ${reading.question}`
+    : "";
   return operation?.destructive === true
     ? `${label}: ${act}. This changes data there and cannot be undone from here.`
-    : `${label}: ${act}.`;
+    : `${label}: ${act}.${pages}`;
 }
+
+/** Long enough to say what to look for; past this it is a prompt, not a question. */
+const MAX_QUESTION_CHARS = 500;
 
 /** How many complaints one refusal carries. Enough to fix in one go, not a wall. */
 const MAX_COMPLAINTS = 6;
@@ -273,7 +284,9 @@ export const runToolTool: AgentTool = {
     "is asked to approve the first action on each service. Ask narrowly on the first " +
     "call: the answer is trimmed, so a wide request comes back cut off and costs you " +
     "another call. Use the smallest time range and result count the operation accepts, " +
-    "and name only the fields you need.",
+    "and name only the fields you need. To go through many results — a mailbox over weeks, " +
+    "a long list — pass question as well: Covan then reads every page of a read-only " +
+    "operation itself and hands you only what answers it, with the ids to open in full.",
   input: {
     type: "object",
     properties: {
@@ -293,6 +306,14 @@ export const runToolTool: AgentTool = {
           "allows.",
         additionalProperties: true,
       },
+      question: {
+        type: "string",
+        description:
+          "Only for reading many results of a read-only operation. What to look for, in a " +
+          'sentence: "complaints about late delivery, with who sent them". Every page is read ' +
+          "for it and only the answer comes back. Ask the operation for its largest page size " +
+          "and its full content when you pass this.",
+      },
     },
     required: ["connectionId", "slug"],
     additionalProperties: false,
@@ -303,8 +324,17 @@ export const runToolTool: AgentTool = {
   destructive: true,
   needs: { connection: ["composio"] },
   isConfigured: (env: ToolEnv) => composioConfigured(env),
+  timeoutFor: (args) =>
+    typeof (args as { question?: unknown } | null)?.question === "string"
+      ? READ_TIMEOUT_MS
+      : undefined,
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const input = args as { connectionId?: unknown; slug?: unknown; arguments?: unknown };
+    const input = args as {
+      connectionId?: unknown;
+      slug?: unknown;
+      arguments?: unknown;
+      question?: unknown;
+    };
     if (typeof input.connectionId !== "string" || !input.connectionId) {
       return { kind: "error", message: "connectionId is required" };
     }
@@ -319,6 +349,10 @@ export const runToolTool: AgentTool = {
       input.arguments && typeof input.arguments === "object" && !Array.isArray(input.arguments)
         ? (input.arguments as Record<string, unknown>)
         : {};
+    const question =
+      typeof input.question === "string" && input.question.trim()
+        ? input.question.trim().slice(0, MAX_QUESTION_CHARS)
+        : null;
 
     // Guard 0, and it is first because it is the only one that costs nothing.
     // The description tells the model this rule; this is what makes it true.
@@ -457,6 +491,19 @@ export const runToolTool: AgentTool = {
       };
     }
 
+    // A question pages: the same call again with each next token. That is
+    // reading only for an operation the catalogue positively marks as reading —
+    // `null` is Composio having no hint, which is how it marks GMAIL_SEND_EMAIL.
+    if (question && operation?.destructive !== false) {
+      return {
+        kind: "error",
+        message:
+          `question reads every page of an operation, which is only done for one known to ` +
+          `just read. ${operation ? `${slug} is not marked that way` : `${slug} has not been described this turn — find it with find_tool first`}. ` +
+          "Call it without question.",
+      };
+    }
+
     // Guard 3. Three ways to be allowed, in the order that costs least.
     //
     // How far the connection's own approval reaches. Everywhere, except onto a
@@ -541,7 +588,19 @@ export const runToolTool: AgentTool = {
       }
       return {
         kind: "needs_confirmation",
-        summary: confirmationSummary(operation, slug, connection.label),
+        summary: confirmationSummary(
+          operation,
+          slug,
+          connection.label,
+          question
+            ? {
+                question,
+                pages: cursorArgument(schema)
+                  ? maxPages(ctx.env, { scheduled: Boolean(ctx.routineRunId) })
+                  : 1,
+              }
+            : null,
+        ),
         proposal: {
           kind: "run_tool",
           connection: { id: connection.id, label: connection.label },
@@ -552,6 +611,7 @@ export const runToolTool: AgentTool = {
           // sentences two and three reach the person too.
           does: operation?.description?.trim() || undefined,
           arguments: callArgs,
+          ...(question ? { question } : {}),
           // And the catalogue row itself, for the second half of this turn
           // rather than for the person — `agent-steps.tsx` skips this key the
           // way it skips `kind`.
@@ -585,6 +645,19 @@ export const runToolTool: AgentTool = {
           `${connection.label} is missing the account it was connected with. It needs to be ` +
           "reconnected on the Integrations page.",
       };
+    }
+
+    if (question) {
+      const read = await readPages({
+        ctx,
+        slug,
+        label: connection.label,
+        question,
+        args: callArgs,
+        cursorArg: cursorArgument(schema),
+        account,
+      });
+      return read.kind === "ok" ? { ...read, approval: approval ?? undefined } : read;
     }
 
     const result = await executeTool(
@@ -645,12 +718,23 @@ export const runToolTool: AgentTool = {
       // is what lets the model fix its next call.
       return { kind: "error", message: result.message.slice(0, MAX_ERROR_CHARS) };
     }
+    // More pages, said in words. The token is in the JSON already, and on
+    // 2026-10-01 the model searched again eleven times rather than send it
+    // back: a list cut to fit reads as "the search was wrong", not "there is
+    // more".
+    const cursor = nextCursor(result.body);
+    const cursorArg = cursorArgument(schema);
+    const more =
+      cursor && cursorArg
+        ? `\n\n[more results: send ${cursorArg}: "${cursor}" for the next page, or pass ` +
+          "question to have every page read for you]"
+        : "";
     // Shaped before the cap has to cut it. `loop.ts` still caps what comes back
     // and is a no-op when this already fits. See `compactForModel`.
+    const shaped = compactForModel(result.body, MAX_TOOL_OUTPUT_CHARS - more.length);
     return {
       kind: "ok",
-      content:
-        compactForModel(result.body, MAX_TOOL_OUTPUT_CHARS) || "(the operation returned nothing)",
+      content: shaped ? shaped + more : "(the operation returned nothing)",
       approval: approval ?? undefined,
     };
   },

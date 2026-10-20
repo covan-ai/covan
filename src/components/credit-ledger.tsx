@@ -28,6 +28,7 @@ const PURPOSE: Record<string, string> = {
   summary: "Summary",
   coverage: "Coverage report",
   slack: "Slack answer",
+  reading: "Reading connected-app results",
 };
 
 function label(e: CreditLedgerEntry): string {

@@ -47,6 +47,15 @@ vi.mock("../../entitlements", async (importOriginal) => {
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", (...args: unknown[]) => fetchMock(...args));
 
+// The small model that reads pages for a `question`. `read-pages.test.ts` has
+// the paging itself; here it only has to answer.
+const completeMock = vi.fn(async () => ({
+  text: "- m1: late delivery",
+  usage: { promptTokens: 100, completionTokens: 10, cachedTokens: null },
+  finishReason: "stop",
+}));
+vi.mock("../../completion", () => ({ complete: () => completeMock() }));
+
 const CONNECTION = {
   id: "conn-1",
   workspace_id: "ws-1",
@@ -1198,5 +1207,95 @@ describe("how far a connection's approval reaches", () => {
       kind: "ok",
       approval: "grant",
     });
+  });
+});
+
+describe("reading many results for a question", () => {
+  const FETCH = {
+    slug: "GMAIL_FETCH_EMAILS",
+    name: "Fetch emails",
+    description: "Fetches a list of email messages.",
+    toolkit: "gmail",
+    required: [],
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string" }, page_token: { type: "string" } },
+    },
+    destructive: false,
+  };
+  const ASK = {
+    connectionId: "conn-1",
+    slug: "GMAIL_FETCH_EMAILS",
+    arguments: { query: "newer_than:14d" },
+    question: "complaints about late delivery",
+  };
+  const reading = (destructive: boolean | null = false) =>
+    new Map([[FETCH.slug, { ...FETCH, destructive }]]) as Map<
+      string,
+      import("../../composio/client").ComposioTool
+    >;
+  const mail = (next: string | null) =>
+    new Response(
+      JSON.stringify({
+        successful: true,
+        data: { messages: [{ messageId: "m1" }], ...(next ? { nextPageToken: next } : {}) },
+      }),
+      { status: 200 },
+    );
+
+  it("refuses a question on an operation not known to only read, before asking anyone", async () => {
+    const out = await runToolTool.run(
+      { ...ASK, slug: "GMAIL_SEND_EMAIL" },
+      ctxWith({ offeredOperations: describing("GMAIL_SEND_EMAIL", "gmail", null) }),
+    );
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toMatch(/only done for one known to just read/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a question on an operation this turn never described", async () => {
+    const out = await runToolTool.run(ASK, ctxWith({ grant: { mode: "always" } }));
+    expect(out.kind === "error" && out.message).toMatch(/find it with find_tool first/);
+  });
+
+  it("tells the person on the card that it will read many pages, and for what", async () => {
+    const out = await runToolTool.run(ASK, ctxWith({ offeredOperations: reading() }));
+    expect(out.kind).toBe("needs_confirmation");
+    const summary = out.kind === "needs_confirmation" ? out.summary : "";
+    expect(summary).toMatch(/read up to \d+ pages of results for: complaints about late delivery/);
+    const proposal =
+      out.kind === "needs_confirmation" ? (out.proposal as Record<string, unknown>) : {};
+    expect(proposal.question).toBe("complaints about late delivery");
+  });
+
+  it("follows the page token and hands back the findings, not the pages", async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(mail("t2")).mockResolvedValueOnce(mail(null));
+    const out = await runToolTool.run(
+      ASK,
+      ctxWith({ approved: ["conn-1"], offeredOperations: reading() }),
+    );
+    expect(out).toMatchObject({ kind: "ok", approval: "connection" });
+    expect(out.kind === "ok" && out.content).toMatch(/^Read 2 pages of GMAIL_FETCH_EMAILS/);
+    expect(out.kind === "ok" && out.content).toContain("m1: late delivery");
+    const second = JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body));
+    expect(second.arguments).toEqual({ query: "newer_than:14d", page_token: "t2" });
+  });
+
+  it("is given longer than an ordinary call, and only when it asks a question", () => {
+    expect(runToolTool.timeoutFor?.(ASK)).toBeGreaterThan(20_000);
+    expect(runToolTool.timeoutFor?.({ ...ASK, question: undefined })).toBeUndefined();
+  });
+
+  it("says in words that there is another page, and which argument takes it", async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(mail("t2"));
+    const out = await runToolTool.run(
+      { ...ASK, question: undefined },
+      ctxWith({ approved: ["conn-1"], offeredOperations: reading() }),
+    );
+    expect(out.kind === "ok" && out.content).toMatch(
+      /\[more results: send page_token: "t2" for the next page/,
+    );
   });
 });

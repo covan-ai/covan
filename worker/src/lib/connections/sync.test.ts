@@ -125,6 +125,8 @@ function db(
     activeWorkspace?: string | null;
     /** The connection's bundle is in Recently Deleted. */
     bundleTrashed?: boolean;
+    /** How many passages the workspace already holds, for the ceiling. */
+    passages?: number;
   } = {},
 ) {
   const documents = options.documents ?? [];
@@ -169,7 +171,7 @@ function db(
         }),
       },
       document_chunks: {
-        select: () => ({ data: [], error: null }),
+        select: () => ({ data: [], error: null, count: options.passages ?? 0 }),
         delete: () => ({ data: null, error: null }),
         insert: () => ({ data: null, error: null }),
       },
@@ -732,6 +734,66 @@ describe("a file that is more than its text", () => {
     expect(outcome).toMatchObject({ status: "ok", added: 1, more: false });
     const run = fake.callsTo("connection_runs")[0]?.values as { error?: string };
     expect(run.error).toContain(`${photos.length} files were not imported`);
+  });
+});
+
+describe("a synced document is indexed the way an upload is", () => {
+  // Uploads embed each passage under its document's name; a sync used to
+  // embed it bare, so a short Notion passage lost to the same words in an
+  // upload (covan-cloud#438).
+  it("embeds each passage under the document's name", async () => {
+    fakeProvider.listFiles.mockResolvedValue([{ ...file("leave"), name: "Leave policy.md" }]);
+    fakeProvider.readFile.mockResolvedValue("Twenty days a year.");
+
+    await runConnection(await connection(), deps(db()));
+
+    const embedded = vi.mocked(embedTexts).mock.calls[0][1];
+    expect(embedded).toEqual(["Leave policy.md\n\nTwenty days a year."]);
+  });
+
+  it("holds a file the workspace has no room for, and names it", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("big"), file("small")]);
+    fakeProvider.readFile.mockResolvedValue("Some readable text about leave.");
+    const fake = db({ passages: 10 });
+
+    const outcome = await runConnection(await connection(), {
+      ...deps(fake),
+      env: { ...env(), WORKSPACE_MAX_PASSAGES: "10" },
+    });
+
+    expect(outcome).toMatchObject({ added: 0 });
+    expect(embedTexts).not.toHaveBeenCalled();
+    const run = fake.callsTo("connection_runs")[0]?.values as { error?: string };
+    expect(run.error).toContain("this workspace's knowledge is full");
+    // Not recorded, so it imports itself once there is room.
+    expect(versionWrites(fake)).toEqual([]);
+  });
+
+  it("imports what fits under the ceiling", async () => {
+    fakeProvider.listFiles.mockResolvedValue([file("page-1")]);
+    fakeProvider.readFile.mockResolvedValue("Some readable text about leave.");
+
+    const outcome = await runConnection(await connection(), {
+      ...deps(db({ passages: 3 })),
+      env: { ...env(), WORKSPACE_MAX_PASSAGES: "10" },
+    });
+
+    expect(outcome).toMatchObject({ status: "ok", added: 1 });
+  });
+
+  // Free's five is about fifty subrequests; Paid has ten thousand.
+  it("imports more per run on a paid plan", async () => {
+    const many = Array.from({ length: 25 }, (_, i) => file(`page-${i}`));
+    fakeProvider.listFiles.mockResolvedValue(many);
+    fakeProvider.readFile.mockResolvedValue("Some readable text.");
+
+    const outcome = await runConnection(await connection(), {
+      ...deps(db()),
+      env: { ...env(), WORKER_PLAN: "paid" as const },
+    });
+
+    expect(outcome.added).toBe(20);
+    expect(outcome.more).toBe(true);
   });
 });
 

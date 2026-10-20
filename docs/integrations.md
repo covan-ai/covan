@@ -40,10 +40,19 @@ That has three consequences worth knowing before you connect anything:
 
 ### The schedule
 
-A connection re-reads itself every six hours by default; hourly, daily and
-weekly are the other choices. A sync imports at most five documents per run and
-comes straight back for the rest, so a first sync of a large folder finishes
-over a few runs rather than in one.
+A connection re-reads itself every thirty minutes by default; every fifteen
+minutes, hourly, every six hours, daily and weekly are the other choices. A run
+that finds nothing changed costs a listing and no embeddings, so a short
+interval buys freshness rather than spend.
+
+A sync imports at most five documents per run (twenty on a deployment that sets
+`WORKER_PLAN=paid`) and comes straight back a minute later for the rest, so a
+first sync of a large folder finishes over a few runs rather than in one.
+
+Synced documents are indexed exactly as uploads are: each passage is embedded
+under the document's name, and they count against the workspace's passage
+ceiling (`WORKSPACE_MAX_PASSAGES`). A file that would take the workspace past
+it is named on the run and imported once there is room.
 
 Runs are recorded. `skipped` means it looked and nothing had changed — it is the
 healthy state, not a failure.

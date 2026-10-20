@@ -584,7 +584,8 @@ connections.patch("/connections/:id", async (c) => {
 
 // POST /connections/:id/sync — run it now.
 //
-// Bounded by the same MAX_DOCUMENTS_PER_RUN as a scheduled run, so this is
+// Bounded by the same per-run cap as a scheduled run (`sync.documentsPerRun`
+// in `lib/limits.ts`), so this is
 // "make progress now" rather than "import everything now" — a folder of two
 // hundred files takes the same number of runs either way, and the reply says
 // whether there is more.

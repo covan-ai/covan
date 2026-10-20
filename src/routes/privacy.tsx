@@ -113,7 +113,9 @@ function PrivacyPage() {
           These are the only outside services the software contacts, and every one of them is a call
           the server makes on purpose. Everything after the first is contacted only if the operator
           configured it. Nothing is reached by your browser on its own: the page loads no script,
-          stylesheet or font from anywhere but the install you are signed in to.
+          stylesheet or font from anywhere but the install you are signed in to. The one exception
+          is the live view of an agent&apos;s browser, which is the browser provider&apos;s own
+          page, shown in a frame when you open it.
         </p>
         <LegalList>
           <LegalItem>
@@ -143,8 +145,40 @@ function PrivacyPage() {
             routine, posted to a webhook URL you supply.
           </LegalItem>
           <LegalItem>
+            <strong className="font-medium text-foreground">Composio</strong> — the sign-in behind a
+            connected app, and the road every call to that app takes. It runs both ways: an agent
+            reads a thread through Composio and sends the reply through Composio, so what passes can
+            include the body of a message somebody here wrote. Nothing reaches it until somebody
+            connects an app, and the app logos in the catalogue are fetched from it by the server.
+          </LegalItem>
+          <LegalItem>
+            <strong className="font-medium text-foreground">Browser Use</strong> — the browser an
+            agent drives when it is asked to use a website: the task, the pages it visits, and what
+            it types there, including a login somebody saved for it. Only an install whose operator
+            set <code>BROWSER_USE_API_KEY</code> has a browser at all.
+          </LegalItem>
+          <LegalItem>
+            <strong className="font-medium text-foreground">Notion</strong> and{" "}
+            <strong className="font-medium text-foreground">Google Drive</strong> — a connected
+            source is read from them: pages, or the files in the folder somebody chose. Nothing of
+            yours is written back. What they receive is the credential the grant produced and the
+            requests made with it.
+          </LegalItem>
+          <LegalItem>
+            <strong className="font-medium text-foreground">The Slack app</strong> — when somebody
+            asks an agent in Slack, the question arrives from Slack and the answer, with what it was
+            built from, is posted back there.
+          </LegalItem>
+          <LegalItem>
+            <strong className="font-medium text-foreground">Google</strong> and{" "}
+            <strong className="font-medium text-foreground">GitHub</strong> — when you sign in with
+            either, they tell this install your name and email address. Only if the operator turned
+            that sign-in on.
+          </LegalItem>
+          <LegalItem>
             <strong className="font-medium text-foreground">Pages a routine watches</strong> — a
-            routine you point at a feed or a page fetches that address on its schedule.
+            routine you point at a feed or a page fetches that address on its schedule, and a feed
+            that offers push updates is subscribed to through the hub it names.
           </LegalItem>
         </LegalList>
       </LegalSection>

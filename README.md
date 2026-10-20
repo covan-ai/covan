@@ -355,7 +355,9 @@ tiers and no licence keys. The interface the hosted product's credits hang off
 is here too — it reports what was consumed and never what it costs — and the
 open build satisfies it with `unlimitedEntitlements`, a real implementation
 rather than a stub that throws, so nothing phones home and nothing counts.
-Nothing that works today will move behind a paywall later.
+Nothing that works today will move behind a paywall later. The same goes for
+what the harness grows next: agent memory, skills and sub-agents are parts of
+the tool loop, and they will arrive here, on this side of the line.
 
 There is a hosted Covan, and what it sells is not features: it is somebody else
 running the database, the backups and the upgrades.
@@ -398,6 +400,10 @@ A commercial licence covers what the FSL does not: hosting Covan for other
 people, or an organisation whose procurement rules cannot accept a licence the
 OSI has not approved — the code is the same, only the agreement changes. Write
 to efe@covan.app.
+
+The licence covers the code, not the name. "Covan" and its logo are the
+project's marks, and [`TRADEMARKS.md`](TRADEMARKS.md) says what you may do with
+them — in short, say your fork is based on Covan, but do not call it Covan.
 
 Some files here started as copies of MIT-licensed work — shadcn/ui and
 prompt-kit — and their notices live in

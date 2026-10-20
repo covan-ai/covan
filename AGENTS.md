@@ -23,6 +23,13 @@ Guidance for coding agents and for humans who want the short version.
   Do not reach for `env.DOCS` or `c.executionCtx` in a route.
 - **Never commit** real `wrangler.toml`, `.env`, `.dev.vars`, account IDs, or
   keys.
+- **No real person's data in the repository.** Not in code comments, tests,
+  fixtures, eval cases or commit messages: no customer or workspace names, email
+  addresses, message text, subjects, document contents or ids copied from a
+  production row. Production evidence goes in as numbers and shapes ("30
+  messages asked for, the headers of one returned") or as invented stand-ins
+  (`ada@acme.test`). Eval cases built from a pilot's real data live in the
+  private hosted repository, never in `worker/eval/`.
 
 ## Commands
 

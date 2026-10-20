@@ -67,7 +67,7 @@ Numbers must be unique **within** a directory, not across directories.
 
 `scripts/migration-numbering.test.mjs` runs as part of `bun run test` and fails
 on a collision, so one is found in seconds rather than in a schema. But it finds
-it *after* both branches have already picked, and the cost then is a red `main`
+it _after_ both branches have already picked, and the cost then is a red `main`
 and a rebase. Re-checking the number is what avoids that; the guard is what
 catches you not doing it.
 
@@ -76,10 +76,10 @@ catches you not doing it.
 Two tools record what they have already applied, and they disagree about what
 identifies a migration:
 
-| Applied by | Ledger | Keyed on |
-| --- | --- | --- |
-| `docker/migrate.sh` — the compose stack, CI, production | `covan_meta.migrations` | the **filename** |
-| the Supabase CLI — `supabase start`, a local reset | `supabase_migrations.schema_migrations` | the **number** alone |
+| Applied by                                              | Ledger                                  | Keyed on             |
+| ------------------------------------------------------- | --------------------------------------- | -------------------- |
+| `docker/migrate.sh` — the compose stack, CI, production | `covan_meta.migrations`                 | the **filename**     |
+| the Supabase CLI — `supabase start`, a local reset      | `supabase_migrations.schema_migrations` | the **number** alone |
 
 So `0039_a.sql` and `0039_b.sql` are two migrations to `migrate.sh` and one
 migration to the CLI. The CLI applies whichever it reaches first, writes `0039`,
@@ -87,7 +87,7 @@ and skips the other one permanently: no error, and a schema missing a migration
 that nothing will ever try to apply again.
 
 It then hides itself. `tests/rls/preflight.ts` treats a file as applied if
-*either* ledger knows about it, so that single `0039` row vouches for both files
+_either_ ledger knows about it, so that single `0039` row vouches for both files
 — and the preflight whose job is to catch a database behind the checkout reports
 everything present. The suite goes green against a schema that is missing a
 table. A collision is not untidy filenames; it is a silently incomplete
@@ -190,6 +190,24 @@ This lets the project change its license later — in either direction, toward
 something more permissive or more restrictive — without tracking down every past
 contributor. It is how Covan moved from AGPL-3.0 to FSL-1.1-ALv2. If you cannot
 agree to this, say so in the pull request and we will discuss it.
+
+## Real data stays out
+
+This repository is public, and people's data must never reach it. A fix often
+starts from something that went wrong in a real workspace; what comes into the
+repository is what was measured, not what was there:
+
+- Numbers and shapes are fine: "every turn ended at the token ceiling", "one
+  message's headers are 10,000 characters".
+- Names, email addresses, message bodies, subjects, file names, document text
+  and ids taken from a real row are not, in a comment, a test, a fixture, an eval
+  case, a screenshot or a commit message. Invent a stand-in (`ada@acme.test`,
+  "Anadolu Lojistik") with the same shape.
+- Eval cases made from a real team's data are kept privately by whoever runs
+  that deployment. `worker/eval/` holds invented cases only.
+
+A pull request that breaks this is closed and its branch deleted, and the
+history is rewritten if it was already merged.
 
 ## Security
 

@@ -175,6 +175,23 @@ pass of the loop rather than once per turn. So budget a gpt-5 pass by its
 effort, run `--dry` first, and read the measured spend the script prints at the
 end.
 
+## Cases made from real data
+
+The cases here are synthetic because this repository is public. A deployment
+that wants to measure against what its own teams actually ask keeps those
+cases somewhere else, and points the runner at them:
+
+```bash
+EVAL_CASES=/path/outside/this/repo/cases.ts bun eval/run.ts --variant baseline --freeze
+```
+
+The module exports `CASES` in the same shape as `cases.ts`. Everything the run
+writes — results, traces and the frozen `ref/` answers, which are a model's
+summary of somebody's documents — goes to `.results/agent-turn/` beside that
+file, or wherever `EVAL_OUT` says, and never into `.claude/hillclimb/`, whose
+`ref/` directories are tracked here. A path inside this repository is refused
+for either variable (`eval/source.ts`). `calibrate.ts` reads the same source.
+
 ## The frozen reference
 
 A freeze writes `.claude/hillclimb/agent-turn/<variant>/ref/<id>.json`, one

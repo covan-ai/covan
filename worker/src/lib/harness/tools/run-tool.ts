@@ -286,7 +286,9 @@ export const runToolTool: AgentTool = {
     "another call. Use the smallest time range and result count the operation accepts, " +
     "and name only the fields you need. To go through many results — a mailbox over weeks, " +
     "a long list — pass question as well: Covan then reads every page of a read-only " +
-    "operation itself and hands you only what answers it, with the ids to open in full.",
+    "operation itself and hands you only what answers it, with the ids to open in full. " +
+    "Not for a short list you can read in one call: the last ten emails is one call " +
+    "without question.",
   input: {
     type: "object",
     properties: {

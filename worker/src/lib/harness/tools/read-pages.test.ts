@@ -133,6 +133,13 @@ describe("reading every page", () => {
     expect(req.messages[1].content).toContain('"messageId":"m1"');
   });
 
+  it("says so when a page's notes ran out of room, so a short list is not read as whole", async () => {
+    execute.mockResolvedValueOnce(page(1, null));
+    complete.mockResolvedValueOnce({ text: "- m1: late", usage: USAGE, finishReason: "length" });
+    const out = await readPages(input());
+    expect(out.kind === "ok" && out.content).toMatch(/notes on this page were cut off/);
+  });
+
   it("leaves out a page that had nothing, and says when nothing did", async () => {
     execute.mockResolvedValueOnce(page(1, null));
     complete.mockResolvedValueOnce({ text: "NONE", usage: USAGE, finishReason: "stop" });

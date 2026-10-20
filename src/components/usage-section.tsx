@@ -93,8 +93,9 @@ export function UsageSection() {
           {credits.level === "spent" && <CreditsWall />}
 
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
-            A credit is a cent of what the models and connected services cost us, with nothing
-            marked up inside it. Every member of the workspace spends from the same balance.
+            A credit is a quarter of a cent. Work is charged at what the models, browsers and
+            connected services cost us, at the rate the terms set. Every member of the workspace
+            spends from the same balance.
           </p>
           <Disclosure className="mt-2" label="Where the reply estimate comes from">
             {credits.repliesSeen === 0

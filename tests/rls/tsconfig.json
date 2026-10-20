@@ -1,0 +1,17 @@
+{
+  // The RLS suite's own compiler settings. The root `include` is `src/**` and
+  // `worker/tsconfig.json` is `src` and `eval`, so before this file nothing
+  // typechecked `tests/rls/` at all — "both typechecks are clean" said nothing
+  // about it, and a test reading a field its fixture never had (`seeded.workspaceId`)
+  // passed by inserting `undefined` and being refused for that instead.
+  //
+  // Node, not the DOM: these run in vitest's node environment against a real
+  // Postgres. The root `typecheck` script runs this config too, so CI needs no
+  // extra step.
+  "extends": "../../tsconfig.json",
+  "include": ["./**/*.ts"],
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  }
+}

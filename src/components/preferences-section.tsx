@@ -169,7 +169,7 @@ export function DefaultModelSection({ me }: { me: Me | undefined }) {
  */
 function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
   const queryClient = useQueryClient();
-  const { data } = useQuery({
+  const { data, isError, refetch, isFetching } = useQuery({
     queryKey: ["coverage", "preference", workspaceId],
     queryFn: api.coverage.preference,
   });
@@ -200,6 +200,22 @@ function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
           A weekly report of topics nothing covered — it never shows names or anybody&rsquo;s
           question.
         </p>
+        {/* A switch left disabled with no sentence reads as "not for you". This
+            is a consent control, so a failed read says so and offers the read
+            again, rather than looking like a setting that does not apply. */}
+        {isError && !data && (
+          <p role="alert" className="mt-1 text-xs text-muted-foreground">
+            Couldn&rsquo;t load this setting.{" "}
+            <button
+              type="button"
+              className="underline underline-offset-2 disabled:opacity-50"
+              onClick={() => void refetch()}
+              disabled={isFetching}
+            >
+              {isFetching ? "Trying…" : "Try again"}
+            </button>
+          </p>
+        )}
       </div>
       <Switch
         checked={data ? data.excluded : false}

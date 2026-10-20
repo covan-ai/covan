@@ -36,7 +36,7 @@ function label(e: CreditLedgerEntry): string {
   return KIND[e.kind] ?? e.kind;
 }
 
-/** Two decimals under one credit, whole credits above — a cent is the unit, not a rounding. */
+/** Two decimals under one credit, whole credits above — a credit is the unit, not a rounding. */
 function amount(n: number): string {
   const abs = Math.abs(n);
   const shown = abs >= 1 ? abs.toFixed(abs >= 100 ? 0 : 1) : abs.toFixed(2);

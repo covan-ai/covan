@@ -45,7 +45,7 @@ export function CoverageNotice({
   // Skipped once dismissed — a member who has already been told costs this
   // workspace nothing more. Skipped while the workspace has not turned the
   // report on at all: there is nothing yet to be told about.
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ["coverage", "preference", workspaceId],
     queryFn: () => api.coverage.preference(),
     enabled: enabled && !dismissed,
@@ -68,7 +68,15 @@ export function CoverageNotice({
   // preference is still loading (no spinner on a notice — same choice
   // `WorkspaceCoverageSection` makes), and for somebody who already opted out:
   // showing it again would be asking a question they already answered.
-  if (!enabled || dismissed || !data || data.excluded) return null;
+  //
+  // NOT hidden when the preference could not be read. This notice is the one
+  // place a member is told the report exists, and hiding it on a failed fetch
+  // meant a member whose fetch kept failing was never told at all. Both
+  // buttons still work without the answer: excluding is idempotent, and
+  // staying in is only a local dismissal. The cost is that somebody already
+  // excluded may be asked again — the harmless direction.
+  if (!enabled || dismissed) return null;
+  if (!isError && (!data || data.excluded)) return null;
 
   return (
     <SectionCard className="mt-8">
@@ -79,6 +87,12 @@ export function CoverageNotice({
         member here. It never shows names and never shows anybody&rsquo;s question. You can leave
         your questions out, now or later in Settings.
       </p>
+      {isError && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          We couldn&rsquo;t check whether you&rsquo;ve already left them out. If you have, choosing
+          again changes nothing.
+        </p>
+      )}
 
       <div className="mt-4 flex items-center gap-2">
         <Button type="button" variant="outline" size="sm" onClick={exclude} disabled={excluding}>

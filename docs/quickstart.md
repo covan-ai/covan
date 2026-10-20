@@ -187,13 +187,15 @@ fails, the turn falls back to a persona-only answer instead of failing.
 
 ## What it costs, on the hosted service
 
-Every workspace starts with 500 free credits, once, and spends them from one
-pool that every member shares. A credit is a cent of what Covan pays for the
-work — the model, the embeddings behind search and uploads, dictation, a
-connected-app call, a browser task — with nothing marked up inside it. There
-is no monthly reset: the balance goes down when your agents work and up when
-credits are added. An ordinary reply costs a fraction of a credit to a couple
-of credits, so 500 lasts a long time.
+Every workspace starts with 2,000 free credits, once, and spends them from one
+pool that every member shares. A credit is a quarter of a cent, so $25 is
+10,000 credits. Work is charged at what
+Covan pays for it — the model, the embeddings behind search and uploads,
+dictation, a connected-app call, and a browser task's model, browser time and
+proxy traffic — at the rate the [terms](https://covan.app/terms) set. There is
+no monthly reset: the balance goes down when your agents work and up when
+credits are added. An ordinary reply is a few credits to a few dozen,
+depending on the model.
 
 Nobody budgets in credits until they have seen what a reply costs, so the app
 converts: under the composer you get the balance and roughly how many replies it

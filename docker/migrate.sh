@@ -14,9 +14,9 @@
 # something the Data API should serve.
 #
 # MIGRATION_DIRS is a space-separated list, applied left to right, and missing
-# directories are skipped. That is what lets one script serve every path this
-# schema is applied through — the compose stack, CI, and a production database —
-# and lets a deployment carry schema of its own without forking the file.
+# directories are skipped. That is what lets one script serve every database it
+# is for — see "What this script is for" below — and lets a deployment carry
+# schema of its own without forking the file.
 # Defaults are the container mount points:
 #
 #   /migrations        supabase/migrations/  the schema, always present
@@ -27,6 +27,41 @@
 #   POSTGRES_HOST=db.<ref>.supabase.co POSTGRES_PORT=5432 POSTGRES_DB=postgres \
 #   POSTGRES_PASSWORD=... MIGRATION_DIRS="supabase/migrations supabase/cloud" \
 #   sh docker/migrate.sh
+#
+# What this script is for, and what it is not:
+#
+# It is the road for the `docker compose` stack, for CI, and for a self-hoster's
+# own Postgres. It is NOT the road to a hosted Supabase project. That project's
+# direct Postgres host is IPv6-only and can refuse a password from a developer
+# machine, while the Supabase API (`apply_migration`) and the dashboard's SQL
+# editor need neither — so a hosted project's migrations go through the API, one
+# file per call.
+#
+# That route does not know about this ledger. It records Supabase's own
+# `supabase_migrations.schema_migrations`, which looks every bit as authoritative
+# from the dashboard, and `covan_meta.migrations` silently falls behind — after
+# which this script, pointed at that database, would try to re-apply files that
+# are already there. So every migration applied by hand carries its own ledger
+# row as the LAST statement of the same call:
+#
+#   insert into covan_meta.migrations (filename)
+#     values ('00NN_the_file_you_just_applied.sql')
+#     on conflict do nothing;
+#
+# Two things to know when asking a database where it is:
+#
+#   - `select max(filename) from covan_meta.migrations` is not the answer. A
+#     ledger can hold a later file while missing earlier ones, and `max()` then
+#     reports the database as further along than it is. Ask for the set
+#     difference against the files on disk instead:
+#
+#       ls supabase/migrations/*.sql | xargs -n1 basename | sort > on-disk
+#       psql ... -tAc 'select filename from covan_meta.migrations order by 1' > ledger
+#       comm -23 on-disk ledger    # on disk, never recorded as applied
+#
+#   - A migration whose effect is a deletion cannot be verified by looking for
+#     what it made. Dropping a column or an index leaves only an absence, so the
+#     proof that it ran is that the thing is gone.
 set -eu
 
 export PGPASSWORD="$POSTGRES_PASSWORD"

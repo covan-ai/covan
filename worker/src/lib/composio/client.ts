@@ -60,6 +60,21 @@ const MAX_ERROR_CHARS = 2_000;
 const MAX_BYTES = 256 * 1024;
 
 /**
+ * What an operation's result may weigh before the read stops.
+ *
+ * Not `MAX_BYTES`, because 256KB is less than one ordinary page of mail: fifty
+ * Gmail messages fetched with their bodies passed it on 2026-10-21, and a body
+ * cut there loses both the messages after the cut and the page token, which
+ * Gmail sends last. `compactForModel` shapes the result down to what the model
+ * is shown, dropping HTML twins and transport headers first, so what this
+ * decides is how much of a page that shaping gets to choose from. Four
+ * megabytes is a string and one `JSON.parse` in an isolate with 128MB, read
+ * once per call (twice while `read-pages.ts` fetches ahead). Past it,
+ * `compactForModel` keeps the whole items before the cut and says so.
+ */
+const MAX_RESULT_BYTES = 4 * 1024 * 1024;
+
+/**
  * What a CATALOGUE page may weigh before the read is abandoned.
  *
  * A different question from `MAX_BYTES` above, even though that number shipped as
@@ -1197,6 +1212,7 @@ export async function executeTool(
         user_id: call.userId,
         arguments: call.arguments,
       },
+      maxBytes: MAX_RESULT_BYTES,
     },
     opts,
   );

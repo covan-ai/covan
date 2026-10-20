@@ -472,16 +472,73 @@ function capNoticeLength(text: string, max: number): number {
   return cap(text, max).length - Math.min(text.length, max);
 }
 
+/**
+ * The longest start of a cut JSON document that ends between two items of a
+ * list, closed so it parses. Null when there is no such point, or the body was
+ * never JSON.
+ *
+ * A body arrives cut when it is larger than the read allows
+ * (`composio/client.ts`), and a cut body is not JSON, so everything above was
+ * skipped and it went to `cap` raw. Measured 2026-10-21: fifty full Gmail
+ * messages passed the read cap, and both pilot mailbox tests got 12,000
+ * characters of the first one's HTML — the same 12,054 the blob fix (#374) had
+ * been aimed at, for a different reason. What the far end sent before the cut
+ * is whole items, so they are kept and shaped like any other result.
+ */
+function completePrefix(body: string): Json | null {
+  const open: string[] = [];
+  let inString = false;
+  let escaped = false;
+  let cut = -1;
+  let closers = "";
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") open.push(ch);
+    else if (ch === "}" || ch === "]") {
+      open.pop();
+      if (open[open.length - 1] === "[") {
+        cut = i + 1;
+        closers = open
+          .map((o) => (o === "[" ? "]" : "}"))
+          .reverse()
+          .join("");
+      }
+    }
+  }
+  if (cut < 0) return null;
+  try {
+    return JSON.parse(body.slice(0, cut) + closers);
+  } catch {
+    return null;
+  }
+}
+
+const CUT_AT_READ =
+  "\n\n[the service sent more than could be read, so this is only the start of it; " +
+  "ask for fewer items per call, or a narrower range]";
+
 export function compactForModel(body: string, max: number): string {
   let parsed: Json;
   try {
     parsed = JSON.parse(body);
   } catch {
+    const start = completePrefix(body);
     // Not JSON, so there is nothing to shape. The cap is all there is.
-    return cap(body, max);
+    if (start === null || max <= CUT_AT_READ.length) return cap(body, max);
+    return shapeParsed(JSON.stringify(start), start, max - CUT_AT_READ.length, true) + CUT_AT_READ;
   }
+  return shapeParsed(body, parsed, max, false);
+}
 
-  const touched = { changed: false };
+function shapeParsed(body: string, parsed: Json, max: number, cutAtRead: boolean): string {
+  const touched = { changed: cutAtRead };
   // Mail is shaped whatever its size. What goes is transport, markup and a
   // second copy of the same text, never something a person wrote, and a
   // ten-message list that fits at 11,000 characters is still re-sent on every

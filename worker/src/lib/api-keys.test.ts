@@ -98,11 +98,13 @@ describe("the token minted for a key's owner", () => {
     expect(claims(token).aal).toBe("aal2");
   });
 
-  it("expires in a minute, so a captured one is worth nothing by the time it is read", async () => {
+  it("outlives a whole agent turn, and not much more", async () => {
+    // A turn reads and writes through this one token from its first tool call
+    // to its last; at sixty seconds a two-minute mailbox read failed half-way.
     const token = await mintUserToken(SECRET, user, KEY);
     const { iat, exp } = claims(token) as { iat: number; exp: number };
 
-    expect(exp - iat).toBe(60);
+    expect(exp - iat).toBe(15 * 60);
     expect(exp * 1000).toBeGreaterThan(Date.now());
   });
 

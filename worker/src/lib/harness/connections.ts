@@ -259,6 +259,11 @@ export function connectionsManifest(connections: ToolConnection[]): string {
    * connected-app path says outright that the step is not needed. Cheaper than
    * making `describe_connection` do something useful here, and more honest:
    * the tool was right, the instruction was wrong.
+   *
+   * The connected-app sentence also says which questions it is for. Without
+   * that, an agent told to work "from the team's documents" answered "look at
+   * my Notion page" with two document searches and "I cannot see Notion",
+   * Notion listed right here the whole time. A named app is where to look.
    */
   const guidance = [
     hasOther
@@ -267,7 +272,9 @@ export function connectionsManifest(connections: ToolConnection[]): string {
       : "",
     hasComposio
       ? "A connected app needs no describing — go straight to find_tool for the operation " +
-        "you need, then run_tool with that app's connection id."
+        "you need, then run_tool with that app's connection id. When the person names one " +
+        "of these apps or asks about what is in it, read it there: search_documents covers " +
+        "only the documents in Covan, never a connected app."
       : "",
     "Never guess an id that is not on this list.",
     // Without this the sentence above forbids the very ids the overflow line

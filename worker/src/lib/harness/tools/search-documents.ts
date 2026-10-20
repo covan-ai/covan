@@ -3,6 +3,7 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import { spend } from "../spend";
 import { embeddingSpend, spends } from "../../entitlements";
 import { embeddingModel } from "../../embeddings";
+import { listConnections } from "../connections";
 
 /**
  * The first tool, and the one that proves the loop without taking any risk.
@@ -45,6 +46,44 @@ export const NO_PASSAGE_MATCHED =
   "do not cover it rather than answering from memory. Search again only with genuinely " +
   "different words, and not more than once — repeating a search that found nothing is the " +
   "single most expensive thing you can do here.";
+
+/**
+ * The same, for a workspace that has connected apps — which are named, because
+ * "another source" was not enough of a hint.
+ *
+ * A person connected Notion, asked "look at my Notion page", and the agent
+ * searched the documents twice, found nothing, and told them it could not see
+ * Notion — then, asked again, that Notion did not cover it. `find_tool` and
+ * `run_tool` were offered on every one of those turns and Notion was in the
+ * manifest; nothing was ever called. A connected app's contents are never in
+ * these documents, so an empty search is exactly the moment to say where they
+ * are, by name.
+ */
+export function noPassageMatched(apps: string[]): string {
+  if (apps.length === 0) return NO_PASSAGE_MATCHED;
+  return (
+    `${NO_PASSAGE_MATCHED} This search reads only the documents in Covan, never a connected ` +
+    `app. Connected here: ${apps.join(", ")}. If the question is about what is in one of ` +
+    "them, use find_tool for the operation and run_tool with that app's connection id " +
+    "instead of searching again."
+  );
+}
+
+/**
+ * The connected apps this caller can reach, by label, or none.
+ *
+ * Read only when a search came back empty, which is the one answer that needs
+ * them. Best-effort: a search that found nothing still says so when this read
+ * fails, which is all it said before.
+ */
+async function connectedApps(ctx: ToolContext): Promise<string[]> {
+  try {
+    const connections = await listConnections(ctx.db, ctx.workspaceId, ctx.userId);
+    return connections.filter((c) => c.transport === "composio").map((c) => c.label);
+  } catch {
+    return [];
+  }
+}
 
 export const searchDocumentsTool: AgentTool = {
   name: "search_documents",
@@ -93,7 +132,7 @@ export const searchDocumentsTool: AgentTool = {
     await spend(ctx, spends(embeddingSpend(embeddingModel(ctx.env), embeddingTokens, "retrieval")));
 
     if (!ragBlock.trim()) {
-      return { kind: "ok", content: NO_PASSAGE_MATCHED };
+      return { kind: "ok", content: noPassageMatched(await connectedApps(ctx)) };
     }
 
     // Cited by the reply too, not only named to the model. Deduped the way

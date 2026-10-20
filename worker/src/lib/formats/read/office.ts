@@ -152,7 +152,7 @@ function columnOf(ref: string): number {
   return n - 1;
 }
 
-function csvCell(v: string): string {
+export function csvCell(v: string): string {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 

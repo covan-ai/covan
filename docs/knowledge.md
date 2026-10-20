@@ -164,8 +164,9 @@ bundle the connection feeds while leaving the row where you put it, so the
 document was listed in one bundle and retrievable only through another. A sync
 now writes a document's passages into the bundle the document is in.
 
-The accepted extensions are `docx`, `pptx`, `xlsx`, `odt`, `rtf`, `html`, `md`,
-`markdown`, `txt`, `csv`, `tsv`, `json`, `xml` and `pdf`, up to 100 MB each, and
+The accepted extensions are `docx`, `pptx`, `xlsx`, `doc`, `ppt`, `xls`, `odt`,
+`rtf`, `html`, `md`, `markdown`, `txt`, `csv`, `tsv`, `json`, `xml` and `pdf`,
+up to 100 MB each, and
 the [Quickstart](quickstart.md#give-it-something-to-read) has the table. The extension check reads the file **name** — the characters after
 the last dot, looked up in a fixed set, with the bytes never inspected. Renaming
 a `.docx` to `.txt` therefore gets past that gate, and is then caught by the

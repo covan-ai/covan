@@ -114,6 +114,7 @@ Accepted file types are exactly these, up to 100 MB each:
 | Extension                                                   | Read by                                                                         |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | `.docx`, `.pptx`, `.xlsx`, `.odt`                           | The server: headings, lists, tables, slides and their notes, every sheet as CSV |
+| `.doc`, `.ppt`, `.xls` (Office 97-2003)                     | The server: the text, footnotes, slides and their notes, every sheet as CSV     |
 | `.md`, `.markdown`, `.txt`, `.csv`, `.tsv`, `.json`, `.xml` | The server, as text — UTF-8, UTF-16 or Windows-1254                             |
 | `.html`, `.htm`, `.rtf`                                     | The server, with the markup taken out                                           |
 | `.pdf`                                                      | Your browser, before the upload leaves it                                       |
@@ -121,6 +122,17 @@ Accepted file types are exactly these, up to 100 MB each:
 An extension that is not on it is refused with `unsupported file type` before
 anything is stored. Images inside a document are not read, and neither is a
 scanned PDF with no text layer.
+
+The Office 97-2003 readers get the words out, not the formatting: a `.doc`
+comes through as paragraphs with no headings marked, its tables as rows of
+tab-separated cells, and a field (a hyperlink, a page number) as what it
+shows. Headers, footers and comments are left out. A `.doc` that is really an
+RTF file, a web page or a renamed `.docx` — Word will save any of them under
+that name — is read as what it is, and so is an `.xls` that is an HTML table.
+A file with a password to open it is refused with that reason; remove the
+password and upload it again. Word 6 and Word 95 documents, and Excel
+workbooks older than Excel 95, are not read: save them as `.docx` or `.xlsx`
+first.
 
 A file is indexed after it uploads, not during: the Knowledge tab shows it as
 **Queued**, then **Indexing** with a percentage, then **Indexed**. A document

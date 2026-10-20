@@ -62,7 +62,7 @@ function utf16Without(bytes: Uint8Array): "le" | "be" | null {
   return null;
 }
 
-function decodeUtf16(bytes: Uint8Array, littleEndian: boolean): string {
+export function decodeUtf16(bytes: Uint8Array, littleEndian: boolean): string {
   const units = Math.floor(bytes.length / 2);
   const parts: string[] = [];
   const CHUNK = 8192;
@@ -117,7 +117,20 @@ const CP1254_HIGH: Record<number, number> = {
   0xfe: 0x015f,
 };
 
-export function decodeWindows1254(bytes: Uint8Array): string {
+/**
+ * Windows-1252 differs from 1254 in seven places: the six Turkish letters are
+ * Latin-1's Ð Ý Þ ð ý þ again, and 0x8E/0x9E are Ž/ž. It is what Word means by
+ * a "compressed" run of text and what an Excel 95 file says when its code
+ * page is 1252, so it is decoded as itself rather than as 1254: read as 1254,
+ * a German "Größe" would survive but an Icelandic "Þór" would come out "Şór".
+ */
+const CP1252_HIGH: Record<number, number> = {
+  ...Object.fromEntries(Object.entries(CP1254_HIGH).filter(([b]) => Number(b) < 0xa0)),
+  0x8e: 0x017d,
+  0x9e: 0x017e,
+};
+
+function decodeSingleByte(bytes: Uint8Array, high: Record<number, number>): string {
   const parts: string[] = [];
   const CHUNK = 8192;
   for (let start = 0; start < bytes.length; start += CHUNK) {
@@ -125,9 +138,33 @@ export function decodeWindows1254(bytes: Uint8Array): string {
     const codes = new Array<number>(end - start);
     for (let i = start; i < end; i++) {
       const b = bytes[i];
-      codes[i - start] = b < 0x80 ? b : (CP1254_HIGH[b] ?? (b >= 0xa0 ? b : 0xfffd));
+      codes[i - start] = b < 0x80 ? b : (high[b] ?? (b >= 0xa0 ? b : 0xfffd));
     }
     parts.push(String.fromCharCode(...codes));
+  }
+  return parts.join("");
+}
+
+export function decodeWindows1254(bytes: Uint8Array): string {
+  return decodeSingleByte(bytes, CP1254_HIGH);
+}
+
+export function decodeWindows1252(bytes: Uint8Array): string {
+  return decodeSingleByte(bytes, CP1252_HIGH);
+}
+
+/**
+ * Bytes that are the low halves of UTF-16 code units — what Excel 97 and
+ * PowerPoint 97 store as "compressed" text. Not Windows-1252: 0x80–0x9F here
+ * are the C1 controls they are in Unicode, because the high byte is just zero.
+ */
+export function decodeLatin1(bytes: Uint8Array): string {
+  const parts: string[] = [];
+  const CHUNK = 8192;
+  for (let start = 0; start < bytes.length; start += CHUNK) {
+    parts.push(
+      String.fromCharCode(...bytes.subarray(start, Math.min(bytes.length, start + CHUNK))),
+    );
   }
   return parts.join("");
 }

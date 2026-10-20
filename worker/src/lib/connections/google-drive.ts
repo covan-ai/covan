@@ -137,12 +137,19 @@ const NATIVE_EXPORTS: Record<string, { mimeType: string; extension: string; bina
  * PDFs used to be absent, on the note that pdf.js does not run on the server.
  * It does — see `lib/formats/read/pdf.ts` — and a PDF with no text layer is read
  * by Claude when the deployment has a key, the same as an upload.
+ *
+ * The Office 97-2003 formats were listed as not imported, with advice to
+ * re-save them, until `lib/formats/read` learned to read compound files. A
+ * team's Drive that goes back twenty years is mostly them.
  */
 const BINARY_MIME: Record<string, string> = {
   "application/pdf": "pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/msword": "doc",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.ms-powerpoint": "ppt",
   "application/vnd.oasis.opendocument.text": "odt",
   "application/rtf": "rtf",
   "text/rtf": "rtf",
@@ -206,13 +213,6 @@ export function importableName(file: DriveFile): string | null {
   return null;
 }
 
-/** The old Office formats, which are not zip files and which nothing here reads. */
-const LEGACY_OFFICE = new Set([
-  "application/msword",
-  "application/vnd.ms-excel",
-  "application/vnd.ms-powerpoint",
-]);
-
 /**
  * Why a file Drive lists is not imported. Always an answer.
  *
@@ -227,9 +227,6 @@ function notImportedBecause(file: DriveFile): string {
   if (mime.startsWith("image/")) return "an image — Covan reads text, not pictures";
   if (mime.startsWith("video/")) return "a video";
   if (mime.startsWith("audio/")) return "an audio file";
-  if (LEGACY_OFFICE.has(mime)) {
-    return "an old Office format (.doc, .xls or .ppt) — open it in Drive and save it as a Google file or as .docx, .xlsx or .pptx";
-  }
   if (mime === "application/vnd.google-apps.drawing") return "a Google Drawing";
   if (mime === "application/vnd.google-apps.form") {
     return "a Google Form — its responses sheet can be synced instead";

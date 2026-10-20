@@ -3,6 +3,7 @@ import { googleDriveProvider, importableName, listFolders, folderIdOf } from "./
 import { FileSkip, type ProviderContext } from "./types";
 import { tinyPdf } from "../../test-support/tiny-pdf";
 import { makeZip } from "../../test-support/make-zip";
+import { makeDoc } from "../../test-support/make-office97";
 
 const env = { GOOGLE_CLIENT_ID: "client", GOOGLE_CLIENT_SECRET: "secret" };
 
@@ -82,6 +83,19 @@ describe("what Drive can import", () => {
         mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       }),
     ).toBe("Budget.xlsx");
+  });
+
+  // Listed as not imported, with advice to re-save them, until they could be read.
+  it("imports Office 97-2003 files under their own extension", () => {
+    expect(importableName({ id: "8", name: "Teklif", mimeType: "application/msword" })).toBe(
+      "Teklif.doc",
+    );
+    expect(
+      importableName({ id: "9", name: "Bütçe.xls", mimeType: "application/vnd.ms-excel" }),
+    ).toBe("Bütçe.xls");
+    expect(
+      importableName({ id: "10", name: "Sunum", mimeType: "application/vnd.ms-powerpoint" }),
+    ).toBe("Sunum.ppt");
   });
 });
 
@@ -489,6 +503,44 @@ describe("google drive provider", () => {
     expect(original).toEqual(pdf);
   });
 
+  it("reads a Word 97-2003 file's text, and keeps the file", async () => {
+    const doc = makeDoc([{ text: "İhbar süresi bir aydır\r", compressed: false }]);
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("alt=media")) return new Response(doc.slice(), { status: 200 });
+      return json({ id: "doc-1", name: "sozlesme.doc", mimeType: "application/msword" });
+    }) as unknown as typeof fetch;
+
+    const read = await googleDriveProvider.readFile(ctx(fetchImpl, { folderId: "f" }), {
+      externalId: "doc-1",
+      name: "sozlesme.doc",
+      version: "v1",
+      url: null,
+    });
+
+    const { text, original } = read as { text: string; original: Uint8Array };
+    expect(text).toBe("İhbar süresi bir aydır");
+    expect(original).toEqual(doc);
+  });
+
+  it("names a password-protected Word file on the run, rather than failing it", async () => {
+    const doc = makeDoc([{ text: "gizli\r", compressed: true }], { encrypted: true });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("alt=media")) return new Response(doc.slice(), { status: 200 });
+      return json({ id: "doc-2", name: "gizli.doc", mimeType: "application/msword" });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      googleDriveProvider.readFile(ctx(fetchImpl, { folderId: "f" }), {
+        externalId: "doc-2",
+        name: "gizli.doc",
+        version: "v1",
+        url: null,
+      }),
+    ).rejects.toThrow(/password-protected/);
+  });
+
   it("names a file that is not what its name says, rather than failing the run", async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -524,7 +576,8 @@ describe("google drive provider", () => {
     const listed = await googleDriveProvider.listFiles(ctx(fetchImpl, { folderId: "root" }));
 
     const reasons = Object.fromEntries(listed.map((f) => [f.externalId, f.skipReason]));
-    expect(reasons.a).toMatch(/old Office format/);
+    // A `.doc` was on this list until the old Office formats could be read.
+    expect(reasons.a).toBeUndefined();
     expect(reasons.b).toMatch(/an image/);
     expect(reasons.c).toMatch(/audio/);
     expect(reasons.d).toMatch(/Google Form/);

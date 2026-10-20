@@ -16,6 +16,7 @@ import {
   PER_MESSAGE_CHAR_CAP,
 } from "../history";
 import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../prompt";
+import { promptOverrides } from "../prompt-overrides";
 import { resolveModel } from "../models";
 import { complete, type CompletionMessage } from "../completion";
 import { replyOutcome } from "../harness/usage";
@@ -286,6 +287,7 @@ export async function handleSlackEvent(
     // better than the silence it replaces: an agent asked "what's on this
     // week" in Slack was inferring the date from the question.
     now: new Date(),
+    overrides: await promptOverrides(runEnv),
   });
 
   // Same assembly as the chat route: the stable prefix and prior turns first so

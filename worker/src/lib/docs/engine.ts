@@ -5,6 +5,7 @@ import { complete as realComplete } from "../completion";
 import type { CompletionMessage, CompletionUsage } from "../completion";
 import { resolveModel } from "../models";
 import { buildSystemPrefix, reasoningEffortFor, temperatureFor } from "../prompt";
+import { promptOverrides, type PromptOverrides } from "../prompt-overrides";
 import {
   completionSpend,
   embeddingSpend,
@@ -267,7 +268,12 @@ async function loadAgent(service: SupabaseClient, job: DocumentJob): Promise<Age
 }
 
 /** System, conversation, sources — the part every call of one job shares. */
-function groundedMessages(job: DocumentJob, agent: AgentRow, now: Date): CompletionMessage[] {
+function groundedMessages(
+  job: DocumentJob,
+  agent: AgentRow,
+  now: Date,
+  overrides: PromptOverrides,
+): CompletionMessage[] {
   // The retrieval block, as the job saved it when it was asked for.
   const ragBlock = job.sources;
   return [
@@ -278,6 +284,7 @@ function groundedMessages(job: DocumentJob, agent: AgentRow, now: Date): Complet
         mode: "document",
         docNames: [],
         now,
+        overrides,
       }),
     },
     ...(Array.isArray(job.history) ? job.history : []),
@@ -330,7 +337,7 @@ async function writeOutline(
     maxTokens: OUTLINE_MAX_TOKENS,
     reasoningEffort: reasoningEffortFor(agent.reasoning_effort),
     messages: [
-      ...groundedMessages(job, agent, new Date(deps.now())),
+      ...groundedMessages(job, agent, new Date(deps.now()), await promptOverrides(env)),
       { role: "user", content: outlineRequest(job) },
     ],
   });
@@ -403,7 +410,7 @@ async function writeSection(
   const model = resolveModel(agent.model, env);
   const section = sections[job.cursor];
   const base: CompletionMessage[] = [
-    ...groundedMessages(job, agent, new Date(deps.now())),
+    ...groundedMessages(job, agent, new Date(deps.now()), await promptOverrides(env)),
     { role: "user", content: sectionRequest(job, sections, job.cursor) },
   ];
 

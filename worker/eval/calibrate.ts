@@ -27,7 +27,7 @@
  * Costs about $0.40 for six cases. It calls the model twice per case and the
  * judge twice per case.
  */
-import { CASES } from "./cases";
+import { loadCases, EvalSourceError } from "./source";
 import { runCase } from "./harness";
 import { judgePair } from "./judge";
 import { estimateCostUsd } from "../src/lib/pricing";
@@ -56,6 +56,13 @@ const only = arg("only")
   .map((s) => s.trim())
   .filter(Boolean);
 
+// The same source a run reads (`source.ts`). Calibration writes nothing to
+// disk, so there is no output location to keep out of the repository.
+const { cases: CASES } = await loadCases().catch((err: unknown) => {
+  if (!(err instanceof EvalSourceError)) throw err;
+  console.error(err.message);
+  process.exit(1);
+});
 const selected = CASES.filter((c) => c.spoiled && (!only || only.some((p) => c.id.startsWith(p))));
 
 const env = loadEnv();

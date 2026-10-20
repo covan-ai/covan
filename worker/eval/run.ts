@@ -17,7 +17,8 @@
  * Every invocation spends real money. The script prints what it is about to
  * run and what the last run cost before it starts, and `--dry` stops there.
  *
- * Results land in `.claude/hillclimb/agent-turn/<variant>/`:
+ * Results land in `.claude/hillclimb/agent-turn/<variant>/` — or, for cases
+ * named by `EVAL_CASES`, outside this repository (`source.ts`):
  *
  *   results.jsonl   one row per (case, rep), written as it completes
  *   errors.jsonl    one row per attempt that never produced a scorable answer
@@ -44,7 +45,8 @@ import {
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CASES, type EvalCase } from "./cases";
+import type { EvalCase } from "./cases";
+import { loadCases, EvalSourceError } from "./source";
 import { runCase, toTrace } from "./harness";
 import { judgePair } from "./judge";
 import { estimateCostUsd } from "../src/lib/pricing";
@@ -53,7 +55,17 @@ import { loadEnv, requireKeysFor, isAccountError } from "./env";
 import { resolvePlan, describeConfig, refsAtRisk, EvalConfigError } from "./config";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, "..", "..", ".claude", "hillclimb", "agent-turn");
+
+// The public cases unless `EVAL_CASES` names private ones, and then never a
+// byte of what they produce inside this repository. See `source.ts`.
+const source = await loadCases().catch((err: unknown) => {
+  if (!(err instanceof EvalSourceError)) throw err;
+  console.error(err.message);
+  process.exit(1);
+});
+const CASES = source.cases;
+const ROOT = source.out;
+if (source.external) console.log(`Cases: ${CASES.length} from EVAL_CASES; results in ${ROOT}`);
 
 const MODEL = process.env.EVAL_MODEL ?? "claude-sonnet-5";
 const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL ?? "claude-opus-5";

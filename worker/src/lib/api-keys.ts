@@ -30,11 +30,16 @@ export const API_KEY_PREFIX = "covan_sk_";
 const DISPLAY_PREFIX_LENGTH = API_KEY_PREFIX.length + 6;
 
 /**
- * How long the minted token lives. Long enough for one request and its retries,
- * short enough that a token captured in a log is worthless by the time anyone
- * reads it. It is never returned to the caller and never leaves the Worker.
+ * How long the minted token lives. Long enough for one request, and one request
+ * can be a whole agent turn: `/chat/stream` reads and writes through this token
+ * from its first tool call to its last, and at sixty seconds every turn past a
+ * minute failed its next call with "JWT expired" (two pilot mailbox reads on
+ * 2026-10-21, at 133 and 121 seconds). Fifteen minutes is past any turn the
+ * step and time budgets allow, and still short enough that a token captured in
+ * a log is worthless by the time anyone reads it. It is never returned to the
+ * caller and never leaves the Worker.
  */
-const MINTED_TOKEN_TTL_SECONDS = 60;
+const MINTED_TOKEN_TTL_SECONDS = 15 * 60;
 
 /**
  * How stale `last_used_at` may get before it is worth a write. A forgotten key

@@ -349,6 +349,41 @@ describe("mail", () => {
   });
 });
 
+describe("a body cut at the read", () => {
+  // Mail the size of a real inbox page: each message carries a long body, and
+  // the page token comes last, the way Gmail sends it.
+  const page = JSON.stringify({
+    data: {
+      messages: Array.from({ length: 50 }, (_, i) => ({
+        messageId: `m${i}`,
+        subject: `Subject ${i}`,
+        messageText: `Message ${i} says something. `.repeat(400),
+      })),
+      nextPageToken: "05941700273317640759",
+    },
+  });
+  const cut = page.slice(0, Math.floor(page.length * 0.6));
+
+  it("keeps the whole messages before the cut and shapes them like any result", () => {
+    const out = compactForModel(cut, 12_000);
+    expect(out.length).toBeLessThanOrEqual(12_000);
+    expect(out).not.toContain("[trimmed");
+    expect(out).toContain("only the start of it");
+    const json = JSON.parse(out.slice(0, out.indexOf("\n\n[")));
+    expect(json.data.messages[0].messageId).toBe("m0");
+    expect(json.data.messages.length).toBeGreaterThan(1);
+  });
+
+  it("falls back to the cap when nothing whole arrived", () => {
+    const text = '{"data":{"messages":[{"messageText":"' + "x y ".repeat(5_000);
+    expect(compactForModel(text, 12_000)).toContain("[trimmed");
+  });
+
+  it("still caps a body that was never JSON", () => {
+    expect(compactForModel("plain words ".repeat(2_000), 12_000)).toContain("[trimmed");
+  });
+});
+
 /**
  * The literals above are a budget, not THE budget.
  *

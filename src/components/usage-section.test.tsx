@@ -57,7 +57,7 @@ describe("UsageSection", () => {
     expect(screen.getByText(/412 of 500/)).toBeInTheDocument();
     expect(screen.getByText(/replies left/)).toBeInTheDocument();
     // What a credit is, said on the screen that shows them.
-    expect(screen.getByText(/A credit is a cent/)).toBeInTheDocument();
+    expect(screen.getByText(/A credit is a quarter of a cent/)).toBeInTheDocument();
   });
 
   it("offers the way out only once the credits are actually spent", () => {

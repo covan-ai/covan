@@ -2,19 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiError } from "@/lib/api-client";
 import { CreateRoutineDialog } from "./create-routine-dialog";
 
-const { draft, channelsList, me, createRoutine, eventCatalog, toast } = vi.hoisted(() => ({
+const { draft, channelsList, me, createRoutine, eventCatalog } = vi.hoisted(() => ({
   draft: vi.fn(),
   eventCatalog: vi.fn(),
   channelsList: vi.fn(),
   me: vi.fn(),
   createRoutine: vi.fn(),
-  toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
-
-vi.mock("sonner", () => ({ toast }));
 
 // The event picker links to Integrations for an app that is not connected —
 // a router <Link>, which needs a context this test has no reason to build.
@@ -65,9 +61,6 @@ describe("CreateRoutineDialog", () => {
     createRoutine.mockResolvedValue({});
     eventCatalog.mockReset();
     eventCatalog.mockResolvedValue([]);
-    toast.success.mockReset();
-    toast.error.mockReset();
-    toast.message.mockReset();
     me.mockResolvedValue({
       user: { id: "u1", name: "Ada", email: "ada@example.com", avatarUrl: null },
       workspace: {
@@ -143,49 +136,6 @@ describe("CreateRoutineDialog", () => {
     expect(payload).not.toHaveProperty("deliveryChannelId");
   });
 
-  /** Fills the hand-written form with no channel yet, so step 2 asks for an address. */
-  async function fillFirstRoutine(address: string) {
-    channelsList.mockResolvedValue([]);
-    me.mockResolvedValue({
-      user: { id: "u1", email: "me@example.com" },
-      workspace: {},
-      members: [{ id: "u1", role: "admin" }],
-    });
-    const user = userEvent.setup();
-
-    renderDialog();
-    await user.click(screen.getByRole("button", { name: /new routine/i }));
-    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
-    await user.type(await screen.findByLabelText(/name/i), "First week");
-    await user.type(screen.getByLabelText(/instruction/i), "say something");
-    await user.clear(screen.getByLabelText(/deliver to/i));
-    await user.type(screen.getByLabelText(/deliver to/i), address);
-    await user.click(screen.getByRole("button", { name: /^Create routine$/i }));
-  }
-
-  it("puts the server's email refusal under the address it refused, not in a toast", async () => {
-    // The schedule's refusal already lands on its field. The address is the
-    // one field a first routine cannot be created without, so a toast for it
-    // left the person to work out which field it meant.
-    createRoutine.mockRejectedValue(new ApiError(400, "not an email address"));
-
-    await fillFirstRoutine("me@example");
-
-    expect(await screen.findByText(/doesn't look like an email address/i)).toBeInTheDocument();
-    expect(toast.error).not.toHaveBeenCalled();
-    // Still open, with the address there to correct.
-    expect(screen.getByLabelText(/deliver to/i)).toHaveValue("me@example");
-  });
-
-  it("still toasts a refusal that belongs to no field", async () => {
-    createRoutine.mockRejectedValue(new ApiError(500, "something else went wrong"));
-
-    await fillFirstRoutine("me@example.com");
-
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("something else went wrong"));
-    expect(screen.queryByText(/doesn't look like an email address/i)).not.toBeInTheDocument();
-  });
-
   it("sends a channel id rather than an address when channels already exist", async () => {
     channelsList.mockResolvedValue([
       { id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0, confirmed: true },
@@ -207,6 +157,92 @@ describe("CreateRoutineDialog", () => {
 
   // A draft the parser cannot read must not trap the user on step one retrying
   // prose; the form is always reachable.
+  /**
+   * covan-cloud#305. A list that has not answered is not an empty one: the
+   * address box used to render while channels loaded, then turn into a
+   * pre-selected Select, dropping what was typed and enabling Create for a
+   * channel nobody picked.
+   */
+  it("offers neither the address nor a channel until the channel list answers", async () => {
+    let resolveChannels!: (value: unknown) => void;
+    channelsList.mockImplementation(() => new Promise((resolve) => (resolveChannels = resolve)));
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+
+    expect(screen.queryByPlaceholderText("you@company.com")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Create routine$/i })).toBeDisabled();
+
+    resolveChannels([{ id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0 }]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^Create routine$/i })).not.toBeDisabled(),
+    );
+    expect(screen.queryByPlaceholderText("you@company.com")).not.toBeInTheDocument();
+  });
+
+  /**
+   * covan-cloud#310. The schedule refusal lands on the schedule; the address
+   * refusal used to be a toast, so the one field a new account must fill
+   * reported its own rejection somewhere else.
+   */
+  it("puts an address the API refuses under the address, not in a toast", async () => {
+    channelsList.mockResolvedValue([]);
+    const { ApiError } = await import("@/lib/api-client");
+    createRoutine.mockRejectedValue(
+      new (ApiError as unknown as new (s: number, m: string) => Error)(400, "not an email address"),
+    );
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+    const field = screen.getByLabelText(/deliver to/i);
+    await user.clear(field);
+    await user.type(field, "me@nowhere");
+    await user.click(screen.getByRole("button", { name: /^Create routine$/i }));
+
+    expect(await screen.findByText(/doesn.t look like an email address/i)).toBeInTheDocument();
+    expect(field).toHaveAttribute("aria-invalid", "true");
+
+    // Editing the field takes the refusal back down.
+    await user.type(field, ".com");
+    expect(screen.queryByText(/doesn.t look like an email address/i)).not.toBeInTheDocument();
+  });
+
+  it("still toasts a refusal that belongs to no field", async () => {
+    channelsList.mockResolvedValue([]);
+    const { ApiError } = await import("@/lib/api-client");
+    createRoutine.mockRejectedValue(
+      new (ApiError as unknown as new (s: number, m: string) => Error)(
+        500,
+        "something else went wrong",
+      ),
+    );
+    const { toast } = await import("sonner");
+    const toastError = vi.spyOn(toast, "error");
+    const user = userEvent.setup();
+
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: /new routine/i }));
+    await user.click(screen.getByRole("button", { name: /set it up myself/i }));
+    await user.type(await screen.findByLabelText(/name/i), "First week");
+    await user.type(screen.getByLabelText(/instruction/i), "say something");
+    const field = screen.getByLabelText(/deliver to/i);
+    await user.clear(field);
+    await user.type(field, "me@example.com");
+    await user.click(screen.getByRole("button", { name: /^Create routine$/i }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("something else went wrong"));
+    expect(screen.queryByText(/doesn.t look like an email address/i)).not.toBeInTheDocument();
+    toastError.mockRestore();
+  });
+
   it("falls through to the editable form when the draft cannot be read", async () => {
     channelsList.mockResolvedValue([
       { id: "c1", kind: "email", label: "m…a@x.com", createdAt: 0, confirmed: true },

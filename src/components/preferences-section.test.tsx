@@ -136,6 +136,26 @@ describe("the coverage opt-out in Preferences", () => {
   // makes that distinguishable from "it refetched and corrected itself a
   // moment later" — the assertion below is checked with no `await`, right
   // after the switch, before workspace B's own fetch could possibly resolve.
+  /**
+   * covan-cloud#311. A read that fails used to leave the switch disabled with
+   * no sentence, which reads as "this does not apply to you" — on a consent
+   * control. It now says so, and the read can be asked again.
+   */
+  it("says the setting could not be loaded, and loads it again on request", async () => {
+    preference.mockRejectedValueOnce(new Error("network"));
+    renderSection();
+
+    expect(await screen.findByText(/couldn.t load this setting/i)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: SWITCH_NAME })).toBeDisabled();
+
+    preference.mockResolvedValueOnce({ excluded: true });
+    await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+
+    const toggle = await findReadySwitch();
+    expect(toggle).toBeChecked();
+    expect(screen.queryByText(/couldn.t load this setting/i)).not.toBeInTheDocument();
+  });
+
   it("does not carry one workspace's exclusion into another's", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     preference.mockResolvedValueOnce({ excluded: true }); // workspace A's answer

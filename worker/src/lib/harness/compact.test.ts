@@ -137,6 +137,179 @@ describe("compactForModel", () => {
   });
 });
 
+const b64url = (s: string) =>
+  Buffer.from(s, "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+/**
+ * One message as `GMAIL_FETCH_EMAILS` returns it: the text Composio extracted,
+ * then the Gmail API payload under it with every transport header and the
+ * same body twice, once as plain text and once as HTML, both in base64url.
+ */
+function gmailMessage(i: number, text = `Toplantı notları ${i}. ${"Ayrıntı ".repeat(150)}`) {
+  const transport = Array.from({ length: 12 }, (_, h) => ({
+    name: h % 2 ? "Received" : "ARC-Message-Signature",
+    value: `from mail-${h}.google.com (mail-${h}.google.com. [209.85.0.${h}]) ${"k".repeat(400)}`,
+  }));
+  return {
+    messageId: `19f9${String(i).padStart(12, "0")}`,
+    threadId: `19f9${String(i).padStart(12, "0")}`,
+    subject: `Konu ${i}`,
+    sender: `kisi${i}@example.com`,
+    messageText: text,
+    attachmentList: [
+      { filename: "teklif.pdf", attachmentId: `ANGjdJ${i}`, mimeType: "application/pdf" },
+    ],
+    payload: {
+      mimeType: "multipart/mixed",
+      headers: [
+        ...transport,
+        { name: "From", value: `Kişi ${i} <kisi${i}@example.com>` },
+        { name: "Subject", value: `Konu ${i}` },
+        { name: "Date", value: "Wed, 1 Oct 2026 09:00:00 +0300" },
+        { name: "DKIM-Signature", value: "v=1; a=rsa-sha256; " + "b".repeat(600) },
+      ],
+      parts: [
+        {
+          mimeType: "multipart/alternative",
+          parts: [
+            { mimeType: "text/plain", body: { size: text.length, data: b64url(text) } },
+            {
+              mimeType: "text/html",
+              body: { size: 9_000, data: b64url(`<div dir="ltr"><p>${text}</p></div>`.repeat(3)) },
+            },
+          ],
+        },
+        {
+          mimeType: "application/pdf",
+          filename: "teklif.pdf",
+          body: { size: 3, attachmentId: `ANGjdJ${i}`, data: b64url("%PDF\u0000\u0001") },
+        },
+      ],
+    },
+  };
+}
+
+describe("mail", () => {
+  it("keeps the headers a person reads and drops the transport", () => {
+    const out = compactForModel(JSON.stringify({ data: { messages: [gmailMessage(1)] } }), 12_000);
+    expect(out).not.toMatch(/Received|ARC-Message-Signature|DKIM-Signature/);
+    const headers = JSON.parse(out).data.messages[0].payload.headers;
+    expect(headers.map((h: { name: string }) => h.name)).toEqual(["From", "Subject", "Date"]);
+  });
+
+  it("decodes the plain part, drops its HTML twin and sizes the attachment", () => {
+    const out = JSON.parse(
+      compactForModel(JSON.stringify({ data: { messages: [gmailMessage(1)] } }), 12_000),
+    );
+    const [alternative, pdf] = out.data.messages[0].payload.parts;
+    expect(alternative.parts).toHaveLength(1);
+    expect(alternative.parts[0].body.data).toMatch(/^Toplantı notları 1\./);
+    expect(pdf.body.data).toMatch(/^\[binary, \d+ bytes\]$/);
+    // What fetching the attachment needs is still there.
+    expect(pdf.body.attachmentId).toBe("ANGjdJ1");
+  });
+
+  it("reads an HTML part as text when it is the only one", () => {
+    const html = `<html><body><table><tr><td><p>Fatura ektedir.</p></td></tr></table></body></html>`;
+    const body = JSON.stringify({
+      payload: { mimeType: "text/html", body: { size: html.length, data: b64url(html) } },
+    });
+    const out = JSON.parse(compactForModel(body, 12_000));
+    expect(out.payload.body.data).toContain("Fatura ektedir.");
+    expect(out.payload.body.data).not.toContain("<td>");
+  });
+
+  it("leaves a body that arrived already decoded as it was", () => {
+    const body = JSON.stringify({
+      payload: { mimeType: "text/plain", body: { size: 9, data: "Hello Ada" } },
+      headers: [{ name: "Received", value: "from x" }],
+    });
+    expect(JSON.parse(compactForModel(body, 12_000)).payload.body.data).toBe("Hello Ada");
+  });
+
+  it("leaves a list of name/value settings that is not mail alone", () => {
+    const body = JSON.stringify({ settings: [{ name: "theme", value: "dark" }] });
+    expect(compactForModel(body, 12_000)).toBe(body);
+  });
+
+  it("fits thirty messages that came back as their transport headers", () => {
+    // `verbose: false`, the shape of 2026-10-01: thirty messages asked for, the
+    // header list of one returned, and the turn spent eleven Gmail calls and
+    // 300,000 prompt tokens re-asking for what the cap had cut.
+    const messages = Array.from({ length: 30 }, (_, i) => {
+      const { messageId, threadId, payload } = gmailMessage(i);
+      return { messageId, threadId, labelIds: ["INBOX"], payload: { headers: payload.headers } };
+    });
+    const body = JSON.stringify({ data: { messages, resultSizeEstimate: 30 } });
+    expect(body.length).toBeGreaterThan(150_000);
+
+    const out = compactForModel(body, 12_000);
+
+    expect(out.length).toBeLessThanOrEqual(12_000);
+    expect(out).not.toMatch(/\[trimmed|\[long text/);
+    for (let i = 0; i < 30; i += 1) expect(out).toContain(`"value":"Konu ${i}"`);
+  });
+
+  it("shows every message of a long list, each cut short, rather than the first one whole", () => {
+    // `verbose: true`: no payload, but each message's whole body as HTML.
+    const messages = Array.from({ length: 20 }, (_, i) => ({
+      messageId: `19f9${String(i).padStart(12, "0")}`,
+      subject: `Konu ${i}`,
+      sender: `kisi${i}@example.com`,
+      messageText: `<table><tr><td><div><p>Merhaba ${i},</p>${"<p>Ayrıntı</p>".repeat(300)}</div></td></tr></table>`,
+      attachmentList: [],
+    }));
+    const body = JSON.stringify({ data: { messages, nextPageToken: "abc" } });
+    expect(body.length).toBeGreaterThan(80_000);
+
+    const out = compactForModel(body, 12_000);
+
+    expect(out.length).toBeLessThanOrEqual(12_000);
+    expect(out).not.toContain("<p>");
+    for (let i = 0; i < 20; i += 1) {
+      expect(out).toContain(`"subject":"Konu ${i}"`);
+      expect(out).toContain(`Merhaba ${i},`);
+    }
+    expect(out).toMatch(/\[long text shortened to fit/);
+    expect(out).not.toMatch(/\[urls omitted|\[trimmed/);
+  });
+
+  it("never shortens a page token or an id to make a list fit", () => {
+    const token = "CiAKGjBpNDd2Nmp2Zml2cXRkMjBhcHNqYXJ0YmQyGgYI" + "Q".repeat(300);
+    const messages = Array.from({ length: 40 }, (_, i) => ({
+      id: `m${i}`,
+      snippet: `Merhaba ${i}, ${"uzun bir mesaj ".repeat(60)}`,
+    }));
+    const out = compactForModel(JSON.stringify({ messages, nextPageToken: token }), 12_000);
+    expect(out).toContain(`"nextPageToken":"${token}"`);
+    expect(out).toMatch(/\[long text shortened to fit/);
+  });
+
+  it("reads an HTML email as text, and leaves an HTML file somebody opened as it is", () => {
+    const page = `<!DOCTYPE html><html><body>${"<div><p>Merhaba</p></div>".repeat(40)}</body></html>`;
+    const mail = JSON.parse(compactForModel(JSON.stringify({ messageText: page }), 12_000));
+    expect(mail.messageText).toContain("Merhaba");
+    expect(mail.messageText).not.toContain("<div>");
+
+    const file = JSON.parse(
+      compactForModel(
+        JSON.stringify({ name: "index.html", content: b64(page), encoding: "base64" }),
+        12_000,
+      ),
+    );
+    expect(file.content).toBe(page);
+  });
+
+  it("leaves a field that merely mentions a tag as it was written", () => {
+    const body = JSON.stringify({ title: "Fix the <div> that overflows", body: "x".repeat(400) });
+    expect(compactForModel(body, 12_000)).toBe(body);
+  });
+});
+
 /**
  * The literals above are a budget, not THE budget.
  *

@@ -659,19 +659,18 @@ export async function runWithTimeout(
   timeoutMs: number,
   outer: AbortSignal | undefined,
 ): Promise<ToolResult> {
-  const timeout = AbortSignal.timeout(timeoutMs);
+  // A call that needs longer says so through its tool (`timeoutFor`), and only
+  // ever gets longer: the turn's own ceiling is the floor.
+  const limit = Math.max(timeoutMs, tool.timeoutFor?.(args) ?? 0);
+  const timeout = AbortSignal.timeout(limit);
   const signal = outer ? AbortSignal.any([outer, timeout]) : timeout;
   try {
     return await Promise.race([
       tool.run(args, { ...ctx, signal }),
       new Promise<ToolResult>((_, reject) => {
-        timeout.addEventListener(
-          "abort",
-          () => reject(new Error(`timed out after ${timeoutMs}ms`)),
-          {
-            once: true,
-          },
-        );
+        timeout.addEventListener("abort", () => reject(new Error(`timed out after ${limit}ms`)), {
+          once: true,
+        });
       }),
     ]);
   } catch (err) {

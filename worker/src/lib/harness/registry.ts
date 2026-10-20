@@ -421,6 +421,14 @@ export type AgentTool = {
     ): { summary: string; proposal: unknown };
     listed(proposal: unknown): string[];
   };
+  /**
+   * How long this call may take, when that is longer than the turn gives any
+   * call (`TOOL_TIMEOUT_MS`). Read off the arguments, because it is a kind of
+   * call that needs the time and not the tool: `run_tool` with a `question`
+   * reads page after page, and the same tool fetching one page has no reason
+   * to be allowed more than twenty seconds. Undefined is the turn's own.
+   */
+  timeoutFor?(args: unknown): number | undefined;
   run(args: unknown, ctx: ToolContext): Promise<ToolResult>;
 };
 

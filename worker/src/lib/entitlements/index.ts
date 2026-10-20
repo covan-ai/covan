@@ -41,7 +41,10 @@ export type CompletionPurpose =
   | "coverage"
   | "slack"
   // A scanned PDF read by Claude while it was indexed (`lib/formats/read/ocr.ts`).
-  | "ocr";
+  | "ocr"
+  // A page of a connected app's results read for a question
+  // (`lib/harness/tools/read-pages.ts`).
+  | "reading";
 
 export type EmbeddingPurpose = "retrieval" | "index" | "reindex" | "sync" | "report";
 

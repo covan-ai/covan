@@ -13,6 +13,9 @@ export const ALLOWED_EXT = [
   "pptx",
   "xlsx",
   "odt",
+  "doc",
+  "xls",
+  "ppt",
   "rtf",
   "md",
   "markdown",
@@ -44,7 +47,7 @@ export const ACCEPTED_SUMMARY = `PDF, Word, PowerPoint, Excel, Markdown, text an
 // What the extension list is called when a person has to read it. `markdown` is
 // left out on purpose: it is the same format as `md` and naming both explains
 // nothing.
-const SPOKEN_EXT = "pdf, docx, pptx, xlsx, odt, rtf, md, txt, csv, json, html";
+const SPOKEN_EXT = "pdf, docx, pptx, xlsx, doc, xls, ppt, odt, rtf, md, txt, csv, json, html";
 
 /** The characters after the last dot, lowercased. "" when there is no dot. */
 export function extOf(name: string): string {

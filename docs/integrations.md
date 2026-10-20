@@ -253,16 +253,21 @@ that is text: `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.html`, `.yaml`, code
 files and logs. Files other than Google's own are kept as they are, with their
 text beside them, so they download as what they were.
 
+**Office 97-2003 files are imported too.** `.doc`, `.xls` and `.ppt` are read
+on the server the way an upload of one is (see
+[the upload table](quickstart.md#give-it-something-to-read)), Turkish text
+included. One with a password to open it, or a Word 6/95 document, is listed
+as not imported with that reason.
+
 **PDFs are read on the server.** Their text layer is read with pdf.js (through
 `unpdf`, which runs on both the Workers runtime and Node). A PDF with no text
 layer — a scan — is read by Claude when the deployment has an
 `ANTHROPIC_API_KEY`, exactly as an uploaded scan is, and the workspace is
 charged for the call. Without a key, a scan is listed as not imported.
 
-**What is not imported, and is said so.** Images, audio and video; the old
-binary Office formats (`.doc`, `.xls`, `.ppt` — open them in Drive and save
-them as Google files or as `.docx`, `.xlsx`, `.pptx`); Google Forms, Drawings
-and other Google files with no text export; archives; and anything over 10 MB.
+**What is not imported, and is said so.** Images, audio and video; Google
+Forms, Drawings and other Google files with no text export; archives;
+password-protected Office files; and anything over 10 MB.
 Every one of them is named on the run with its reason, and the connection's
 card under Integrations shows the last run's list. Files that cannot be read
 do not use up a run's allowance, so a folder full of photos still imports its

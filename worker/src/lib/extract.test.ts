@@ -22,6 +22,13 @@ describe("what an upload may be", () => {
     }
   });
 
+  // Office 97-2003, which the Drives of the teams piloting Covan are full of.
+  it("takes the old Office formats, served as what they are", () => {
+    expect(contentTypeFor("Teklif.doc")).toBe("application/msword");
+    expect(contentTypeFor("Bütçe.XLS")).toBe("application/vnd.ms-excel");
+    expect(contentTypeFor("Sunum.ppt")).toBe("application/vnd.ms-powerpoint");
+  });
+
   // Served as itself, an HTML or XML upload would be a page on this origin the
   // moment the preview framed it.
   it("serves markup as plain text", () => {

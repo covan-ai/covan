@@ -41,7 +41,15 @@ describe("validateUpload", () => {
   });
 
   it("accepts Office documents", () => {
-    for (const name of ["deck.pptx", "contract.docx", "budget.xlsx", "notes.odt"]) {
+    for (const name of [
+      "deck.pptx",
+      "contract.docx",
+      "budget.xlsx",
+      "notes.odt",
+      "eski-teklif.doc",
+      "Bütçe 2003.xls",
+      "sunum.ppt",
+    ]) {
       expect(validateUpload(file(name))).toEqual({ ok: true });
     }
   });
@@ -84,5 +92,22 @@ describe("MAX_SIZE and the worker's MAX_UPLOAD_BYTES", () => {
 
   it("read the value the module actually exports, so the parse cannot rot", () => {
     expect(declared("src/lib/uploads.ts", "MAX_SIZE")).toBe(MAX_SIZE);
+  });
+});
+
+/**
+ * The same arrangement for the extension list: the worker's `TYPE_BY_EXT` is
+ * what upload enforces, and a type the form refuses but the server takes (or
+ * the other way round) is a file a person is told they cannot add, or one sent
+ * only to be refused.
+ */
+describe("ALLOWED_EXT and the worker's TYPE_BY_EXT", () => {
+  it("name the same extensions", () => {
+    const source = readFileSync("worker/src/lib/extract.ts", "utf8");
+    const table = /const TYPE_BY_EXT: Record<string, string> = \{([\s\S]*?)\n\};/.exec(source);
+    expect(table, "TYPE_BY_EXT in worker/src/lib/extract.ts").not.toBeNull();
+    const workerExt = [...table![1].matchAll(/^\s*([a-z0-9]+):/gm)].map((m) => m[1]);
+    expect(workerExt.length).toBeGreaterThan(10);
+    expect([...ALLOWED_EXT].sort()).toEqual(workerExt.sort());
   });
 });

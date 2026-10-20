@@ -66,6 +66,14 @@ describe("connectionsManifest", () => {
     expect(text).toContain("find_tool");
   });
 
+  // "Look at my Notion page", answered with two document searches and "I
+  // cannot see Notion" while Notion sat in this manifest.
+  it("sends a question about a named app to the app, not to the documents", () => {
+    const text = connectionsManifest([GMAIL]);
+    expect(text).toContain("names one of these apps");
+    expect(text).toContain("search_documents covers only the documents in Covan");
+  });
+
   it("still sends one to describe a database, where the answer is real", () => {
     const text = connectionsManifest([WAREHOUSE]);
     expect(text).toContain("describe_connection");

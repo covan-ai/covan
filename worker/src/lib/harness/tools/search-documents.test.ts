@@ -12,7 +12,12 @@ vi.mock("../../entitlements", async (importOriginal) => ({
   entitlementsFor: () => ({ record: (...a: unknown[]) => record(...a) }),
 }));
 
-const { searchDocumentsTool } = await import("./search-documents");
+const listConnections = vi.fn();
+vi.mock("../connections", () => ({
+  listConnections: (...a: unknown[]) => listConnections(...a),
+}));
+
+const { searchDocumentsTool, NO_PASSAGE_MATCHED } = await import("./search-documents");
 
 const ctx = {
   db: {},
@@ -84,5 +89,54 @@ describe("search_documents", () => {
     );
 
     expect(retrieveForAgent.mock.calls.at(-1)?.[5]).toEqual({ sharedOnly: true });
+  });
+
+  // A person who connected Notion and asked about their Notion page was told,
+  // twice, that the documents did not cover it — and never sent to Notion.
+  it("names the connected apps when a search finds nothing", async () => {
+    retrieveForAgent.mockResolvedValue({ ragBlock: "", sources: [], embeddingTokens: 1 });
+    listConnections.mockResolvedValue([
+      { label: "Notion", transport: "composio" },
+      { label: "Warehouse", transport: "sql" },
+    ]);
+
+    const result = await searchDocumentsTool.run({ query: "who am I" }, ctx);
+
+    expect(result.kind).toBe("ok");
+    const content = (result as { content: string }).content;
+    expect(content).toContain("Connected here: Notion.");
+    expect(content).toContain("find_tool");
+    expect(content).not.toContain("Warehouse");
+  });
+
+  it("says only that nothing matched when there are no connected apps", async () => {
+    retrieveForAgent.mockResolvedValue({ ragBlock: "", sources: [], embeddingTokens: 1 });
+    listConnections.mockResolvedValue([]);
+
+    const result = await searchDocumentsTool.run({ query: "who am I" }, ctx);
+
+    expect(result).toEqual({ kind: "ok", content: NO_PASSAGE_MATCHED });
+  });
+
+  it("still answers when the connections cannot be read", async () => {
+    retrieveForAgent.mockResolvedValue({ ragBlock: "", sources: [], embeddingTokens: 1 });
+    listConnections.mockRejectedValue(new Error("down"));
+
+    const result = await searchDocumentsTool.run({ query: "who am I" }, ctx);
+
+    expect(result).toEqual({ kind: "ok", content: NO_PASSAGE_MATCHED });
+  });
+
+  it("does not read the connections when the search found something", async () => {
+    listConnections.mockClear();
+    retrieveForAgent.mockResolvedValue({
+      ragBlock: "Document: Handbook.md\nTwenty days.",
+      sources: [{ id: "d1", name: "Handbook.md" }],
+      embeddingTokens: 2,
+    });
+
+    await searchDocumentsTool.run({ query: "holidays" }, ctx);
+
+    expect(listConnections).not.toHaveBeenCalled();
   });
 });

@@ -24,10 +24,10 @@ import type { RoutineEnv } from "../types";
  * it runs conservatively, where a Free deployment that had to opt out would
  * fail at a ceiling nothing reports.
  *
- * WHAT IS NOT HERE YET. The automation numbers — routine and connection batch
- * sizes, per-run document and removal caps, the tick deadline — belong in this
- * record and are not in it, because nothing reads them yet. They arrive with
- * their readers; this file is the agreed place for them.
+ * WHAT IS NOT HERE YET. The rest of the automation numbers — routine and
+ * connection batch sizes, the per-run removal cap, the tick deadline — belong
+ * in this record and are not in it, because nothing reads them yet. They
+ * arrive with their readers, as the per-run document cap (`sync`) did.
  */
 
 /** The two plans this codebase distinguishes. Absent means the first one. */
@@ -188,6 +188,25 @@ export type PlanLimits = {
    */
   subrequests: number;
   chat: ChatLimits;
+  sync: SyncLimits;
+};
+
+/** What one run of a connected source may do, on this plan. */
+export type SyncLimits = {
+  /**
+   * How many documents one run imports before it stops and asks to come back
+   * in a minute.
+   *
+   * Free's five is arithmetic about fifty subrequests, and it is written out
+   * beside `MAX_DOCUMENTS_PER_RUN` in `lib/connections/sync.ts`. On Paid the
+   * subrequests stop binding — twenty documents are some 150 of 10,000 — and
+   * what is left is how long a person watching "Sync now" waits: a document is
+   * a download and an embedding call, a second or two each, so twenty is
+   * under a minute. Five meant a first sync of a 200-file folder took forty
+   * ticks, over three hours of a pilot team's first day looking at a bundle
+   * that was still filling.
+   */
+  documentsPerRun: number;
 };
 
 /**
@@ -205,6 +224,7 @@ const FREE: PlanLimits = Object.freeze({
     maxTurnTokens: 150_000,
     trimAbovePromptTokens: 80_000,
   }),
+  sync: Object.freeze({ documentsPerRun: 5 }),
 });
 
 /**
@@ -223,6 +243,7 @@ const PAID: PlanLimits = Object.freeze({
     maxTurnTokens: 150_000,
     trimAbovePromptTokens: 80_000,
   }),
+  sync: Object.freeze({ documentsPerRun: 20 }),
 });
 
 /** Which plan this environment says it is on. Anything but `"paid"` is Free. */

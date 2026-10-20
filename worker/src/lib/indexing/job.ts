@@ -10,6 +10,7 @@ import { UnreadableFile } from "../formats/read";
 import { readStoredText, sidecarKey, type StoredText } from "../document-text";
 import { ceilingReason, passageCeiling, passagesOutside } from "../knowledge-ceiling";
 import { passageIndex } from "../passages";
+import { tableHeader, withBearings } from "../bearings";
 
 /**
  * One document's indexing, a unit at a time.
@@ -447,19 +448,4 @@ async function readByOcr(
     truncated: result.truncated || result.text.length > MAX_INDEX_CHARS,
     fromSidecar: false,
   };
-}
-
-/** The header row of a table-shaped document, or "" for anything else. */
-export function tableHeader(name: string, text: string): string {
-  const ext = extOf(name);
-  if (ext !== "csv" && ext !== "tsv" && ext !== "xlsx") return "";
-  // An Excel file's text opens with its first sheet's heading line.
-  const lines = text.split("\n", 4).filter((l) => l.trim() && !l.startsWith("## Sheet"));
-  return (lines[0] ?? "").slice(0, 300);
-}
-
-/** A passage as it is embedded: under its document's name, and its table's header. */
-export function withBearings(name: string, header: string, content: string): string {
-  const head = header && !content.startsWith(header) ? `${header}\n` : "";
-  return `${name}\n\n${head}${content}`;
 }

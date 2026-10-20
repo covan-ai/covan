@@ -15,6 +15,9 @@ import {
   safeName,
 } from "../extract";
 import { sidecarKey } from "../document-text";
+import { tableHeader, withBearings } from "../bearings";
+import { ceilingReason, passageCeiling, passagesOutside } from "../knowledge-ceiling";
+import { planLimits } from "../limits";
 import { ocrAvailable, ocrPdf, OCR_MAX_BYTES, type OcrEnv } from "../formats/read/ocr";
 import { decryptSecret, encryptSecret } from "../secret-box";
 import { providerFor } from "./registry";
@@ -62,6 +65,8 @@ import { holderPresent } from "./holder";
  * completing.
  */
 export const MAX_DOCUMENTS_PER_RUN = 5;
+// That is Free's number, and the one a first deploy gets. A deployment on
+// Workers Paid imports more per run (`lib/limits.ts`, `sync.documentsPerRun`).
 
 /**
  * How many documents one run may remove.
@@ -483,6 +488,8 @@ export async function runConnection(
       return current.external_version !== file.version;
     });
 
+    const perRun = planLimits(deps.env).sync.documentsPerRun;
+    const room: Room = { ceiling: passageCeiling(deps.env), held: null };
     let added = 0;
     let updated = 0;
     /**
@@ -507,7 +514,7 @@ export async function runConnection(
     const importable = changed.filter((file) => !file.skipReason);
     let firstFailure: unknown = null;
     let attempted = 0;
-    for (const file of importable.slice(0, MAX_DOCUMENTS_PER_RUN)) {
+    for (const file of importable.slice(0, perRun)) {
       attempted++;
       try {
         const result = await importOne(
@@ -518,6 +525,7 @@ export async function runConnection(
           ctx,
           file,
           byId.get(file.externalId),
+          room,
         );
         tokens += result.tokens;
         if (result.imported === "added") added++;
@@ -548,8 +556,12 @@ export async function runConnection(
     // approved a 280-document removal would watch it drain twenty per sync
     // interval — three and a half days on the default cadence — having
     // already said yes.
+    //
+    // A full workspace is not work left over: coming back in a minute would
+    // read the same files again only to be refused the same room. It waits
+    // for the interval, by which time somebody may have made some.
     const more =
-      importable.length > MAX_DOCUMENTS_PER_RUN || vanished.length > MAX_REMOVALS_PER_RUN;
+      (importable.length > perRun && !room.full) || vanished.length > MAX_REMOVALS_PER_RUN;
     await charge(tokens);
 
     return finish(connection, deps, startedAt, {
@@ -686,6 +698,7 @@ async function importOne(
   ctx: ProviderContext,
   file: RemoteFile,
   existing: ExistingDocument | undefined,
+  room: Room,
 ): Promise<{
   imported: "added" | "updated" | "skipped";
   tokens: number;
@@ -723,6 +736,15 @@ async function importOne(
       reason: original ? noTextMessage(file.name) : undefined,
     };
   }
+
+  // The workspace's ceiling, before anything is stored or embedded — the same
+  // question the indexing job asks of an upload, which a sync used to skip
+  // (covan-cloud#438): a large Notion workspace could grow past the limit the
+  // hosted database is sized for. A file that does not fit is this file's
+  // problem, named on the run, and its version is not recorded, so it imports
+  // itself once somebody makes room.
+  const chunks = chunkText(text);
+  await makeRoom(deps, connection, existing, chunks.length, room);
 
   // The file as the source has it when there is one, and its text beside it
   // either way. The text is what every reader here asks for first
@@ -812,8 +834,13 @@ async function importOne(
   // Embed before touching the stored chunks, so a failure never leaves the
   // document worse off than it was — the same order `POST /documents/:id/reindex`
   // uses, and the reason a half-synced document still answers questions.
-  const chunks = chunkText(text);
-  const embedded = await embedTexts(runEnv, chunks);
+  // Under the document's name, and a table's header row, exactly as an upload
+  // is embedded (`lib/bearings.ts`). The stored passage stays as it was.
+  const header = tableHeader(file.name, text);
+  const embedded = await embedTexts(
+    runEnv,
+    chunks.map((content) => withBearings(file.name, header, content)),
+  );
   // Raw embedding tokens: what the ledger is charged and what the run row keeps.
   const tokens = embedded.tokens;
 
@@ -846,6 +873,44 @@ async function importOne(
   if (versionError) console.error("could not record the synced version", documentId, versionError);
 
   return { imported: existing ? "updated" : "added", tokens };
+}
+
+/**
+ * The workspace's passage ceiling, as one run sees it.
+ *
+ * `held` is counted once, on the first document that needs it, and grown by
+ * what each import adds — so an ordinary run asks the database one question,
+ * not one per file. It over-counts an update, which replaces passages it is
+ * added on top of here; that only matters near the ceiling, and near the
+ * ceiling the question is asked again exactly, leaving the document's own
+ * passages out (`passagesOutside`), as the indexing job does.
+ */
+type Room = { ceiling: number | null; held: number | null; full?: boolean };
+
+/** An id no document has, for counting every passage in a workspace. */
+const NO_DOCUMENT = "00000000-0000-0000-0000-000000000000";
+
+async function makeRoom(
+  deps: SyncDeps,
+  connection: ConnectionRow,
+  existing: ExistingDocument | undefined,
+  needed: number,
+  room: Room,
+): Promise<void> {
+  if (room.ceiling === null) return;
+  room.held ??= await passagesOutside(deps.db, connection.workspace_id, NO_DOCUMENT);
+  if (room.held + needed <= room.ceiling) {
+    room.held += needed;
+    return;
+  }
+  const outside = existing
+    ? await passagesOutside(deps.db, connection.workspace_id, existing.id)
+    : room.held;
+  if (outside + needed > room.ceiling) {
+    room.full = true;
+    throw new FileSkip(ceilingReason(outside, needed, room.ceiling));
+  }
+  room.held = outside + needed;
 }
 
 /** A stored document and the text kept beside it, which go together. */

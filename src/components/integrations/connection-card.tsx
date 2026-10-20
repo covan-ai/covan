@@ -35,6 +35,8 @@ import { PROVIDER_MARK } from "./brand-marks";
  * hour — only a staleness the team is willing to tolerate.
  */
 const INTERVALS = [
+  { minutes: 15, label: "Every 15 minutes" },
+  { minutes: 30, label: "Every 30 minutes" },
   { minutes: 60, label: "Every hour" },
   { minutes: 360, label: "Every 6 hours" },
   { minutes: 1440, label: "Daily" },

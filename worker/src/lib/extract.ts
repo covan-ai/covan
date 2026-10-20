@@ -1,7 +1,8 @@
 // What an upload may be, how big, and how it is served back. Reading a
-// document's text lives in `lib/formats/read`; PDFs are the exception, read in
-// the browser at upload time because pdf.js does not bundle reliably for the
-// Workers runtime, and their text is stored beside the file.
+// document's text lives in `lib/formats/read`; an uploaded PDF is the
+// exception, read in the browser at upload time and its text stored beside
+// the file. A synced PDF, with no browser behind it, is read on the server by
+// `lib/formats/read/pdf.ts`.
 
 import { decodeText } from "./formats/read/text";
 import { extOf } from "./formats/read";

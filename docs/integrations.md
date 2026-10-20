@@ -246,15 +246,30 @@ for a product sold to others.
 stays paused between them, because a connection that defaulted to all of My
 Drive would be a product that quietly embedded somebody's tax return.
 
-**What is imported.** Google Docs (as Markdown), Sheets (as CSV — the first tab
-only, which is all Drive's export offers), Slides (as plain text), and ordinary
-text files: `.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.xml`, `.html`.
+**What is imported.** Google Docs (as Markdown), Sheets (as a workbook, so
+every tab — each one becomes a section named after it), Slides (as plain text),
+PDFs, Word, PowerPoint, Excel, OpenDocument text and RTF files, and anything
+that is text: `.txt`, `.md`, `.csv`, `.json`, `.xml`, `.html`, `.yaml`, code
+files and logs. Files other than Google's own are kept as they are, with their
+text beside them, so they download as what they were.
 
-**PDFs are skipped**, and it is deliberate. Covan extracts PDF text in the
-browser at upload time, because pdf.js does not run on the server. There is no
-browser in a scheduled sync, so an imported PDF would be a document that is
-listed, named to the agent on every turn, and impossible to retrieve a sentence
-of. Upload those by hand.
+**PDFs are read on the server.** Their text layer is read with pdf.js (through
+`unpdf`, which runs on both the Workers runtime and Node). A PDF with no text
+layer — a scan — is read by Claude when the deployment has an
+`ANTHROPIC_API_KEY`, exactly as an uploaded scan is, and the workspace is
+charged for the call. Without a key, a scan is listed as not imported.
+
+**What is not imported, and is said so.** Images, audio and video; the old
+binary Office formats (`.doc`, `.xls`, `.ppt` — open them in Drive and save
+them as Google files or as `.docx`, `.xlsx`, `.pptx`); Google Forms, Drawings
+and other Google files with no text export; archives; and anything over 10 MB.
+Every one of them is named on the run with its reason, and the connection's
+card under Integrations shows the last run's list. Files that cannot be read
+do not use up a run's allowance, so a folder full of photos still imports its
+documents on the first run.
+
+**The first sync starts when the folder is chosen**, rather than at the next
+five-minute tick.
 
 **Shortcuts are followed.** "Add shortcut to Drive" is how most people get a
 document from a shared drive into the folder they actually work in, so a real
@@ -263,11 +278,6 @@ at — the target's name, and the target's modified time, so editing the documen
 re-imports it. A shortcut to a subfolder is walked into like any other folder.
 If the folder holds both a file and a shortcut to that same file, it is imported
 once.
-
-Word, PowerPoint, Excel, OpenDocument and RTF files are read the way an upload
-is. Files larger than 10 MB are skipped — a sync still embeds inside its own run —
-and so are PDFs; both are named on the run, with the reason, rather than left
-out silently.
 
 **Limits.** One folder, two levels of subfolders, six listing requests and
 twenty-five resolved shortcuts per sync — enough for a few hundred files in an

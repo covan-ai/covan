@@ -1,11 +1,21 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SyncEnv } from "../../types";
-import { embeddingSpend, spends, type Entitlements } from "../entitlements";
+import { completionSpend, embeddingSpend, spends, type Entitlements } from "../entitlements";
 import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../embeddings";
 import { replaceChunks } from "../chunk-store";
 import { passageIndex } from "../passages";
 import { getDocStore } from "../docstore";
-import { EXCERPT_LIMIT, hasIndexableText, safeName } from "../extract";
+import {
+  contentTypeFor,
+  EXCERPT_LIMIT,
+  extOf,
+  hasIndexableText,
+  MAX_INDEX_CHARS,
+  noTextMessage,
+  safeName,
+} from "../extract";
+import { sidecarKey } from "../document-text";
+import { ocrAvailable, ocrPdf, OCR_MAX_BYTES, type OcrEnv } from "../formats/read/ocr";
 import { decryptSecret, encryptSecret } from "../secret-box";
 import { providerFor } from "./registry";
 import {
@@ -485,14 +495,19 @@ export async function runConnection(
      * run after. Only when nothing at all could be imported is it the
      * connection's failure, which is what a revoked grant actually looks like.
      */
-    const skips: { name: string; reason: string }[] = [];
+    //
+    // A file the listing already refused is reported, not counted against the
+    // run's allowance. They used to share one slice, which was harmless while
+    // only PDFs were listed with a reason and stopped being harmless when every
+    // file is: a folder of thirty photos and four documents would fill each
+    // run's twenty with photos, report `more`, and never reach the documents.
+    const skips: { name: string; reason: string }[] = changed
+      .filter((file) => file.skipReason)
+      .map((file) => ({ name: file.name, reason: file.skipReason! }));
+    const importable = changed.filter((file) => !file.skipReason);
     let firstFailure: unknown = null;
     let attempted = 0;
-    for (const file of changed.slice(0, MAX_DOCUMENTS_PER_RUN)) {
-      if (file.skipReason) {
-        skips.push({ name: file.name, reason: file.skipReason });
-        continue;
-      }
+    for (const file of importable.slice(0, MAX_DOCUMENTS_PER_RUN)) {
       attempted++;
       try {
         const result = await importOne(
@@ -507,6 +522,9 @@ export async function runConnection(
         tokens += result.tokens;
         if (result.imported === "added") added++;
         if (result.imported === "updated") updated++;
+        if (result.imported === "skipped" && result.reason) {
+          skips.push({ name: file.name, reason: result.reason });
+        }
       } catch (err) {
         tokens += tokensSpentBefore(err);
         if (!(err instanceof FileSkip)) firstFailure ??= err;
@@ -530,7 +548,8 @@ export async function runConnection(
     // approved a 280-document removal would watch it drain twenty per sync
     // interval — three and a half days on the default cadence — having
     // already said yes.
-    const more = changed.length > MAX_DOCUMENTS_PER_RUN || vanished.length > MAX_REMOVALS_PER_RUN;
+    const more =
+      importable.length > MAX_DOCUMENTS_PER_RUN || vanished.length > MAX_REMOVALS_PER_RUN;
     await charge(tokens);
 
     return finish(connection, deps, startedAt, {
@@ -667,21 +686,59 @@ async function importOne(
   ctx: ProviderContext,
   file: RemoteFile,
   existing: ExistingDocument | undefined,
-): Promise<{ imported: "added" | "updated" | "skipped"; tokens: number }> {
-  const text = await provider.readFile(ctx, file);
+): Promise<{
+  imported: "added" | "updated" | "skipped";
+  tokens: number;
+  /** Why a file was skipped, when that is worth telling somebody. */
+  reason?: string;
+}> {
+  const read = await provider.readFile(ctx, file);
+  const original = typeof read === "string" ? undefined : read.original;
+  let text = typeof read === "string" ? read : read.text;
+
+  // A PDF with no text layer — a scan, a photographed contract — is read by
+  // Claude when this deployment has a key for it, exactly as an uploaded one
+  // is by the indexing job, and charged to the workspace the same way.
+  if (
+    !hasIndexableText(text) &&
+    original &&
+    extOf(file.name) === "pdf" &&
+    ocrAvailable(deps.env as OcrEnv)
+  ) {
+    text = await readScan(connection, deps, file, original);
+  }
 
   // The same gate the upload form applies, for the same reason: a document with
   // no readable text uploads successfully, is listed, is named to the model on
   // every turn, and is impossible to retrieve a sentence of. An empty Notion
-  // page is the common case here and is not an error — it is skipped, and the
-  // version is deliberately not recorded, so it imports itself the moment
-  // somebody writes in it.
-  if (!hasIndexableText(text)) return { imported: "skipped", tokens: 0 };
+  // page is the common case here and is not an error — it is skipped without a
+  // word, and the version is deliberately not recorded, so it imports itself
+  // the moment somebody writes in it. A *file* with no text is different: it
+  // is a scan nobody could read or a binary wearing the wrong name, and the
+  // person who put it in the folder is told which.
+  if (!hasIndexableText(text)) {
+    return {
+      imported: "skipped",
+      tokens: 0,
+      reason: original ? noTextMessage(file.name) : undefined,
+    };
+  }
 
-  const bytes = new TextEncoder().encode(text);
+  // The file as the source has it when there is one, and its text beside it
+  // either way. The text is what every reader here asks for first
+  // (`readStoredText` reads the sidecar before the file), so a reindex of a
+  // synced document never has to work the file out again — and for a name the
+  // server cannot read at all, `notes.py` say, it never could have.
+  const textBytes = new TextEncoder().encode(text);
+  const bytes = original ?? textBytes;
   const store = getDocStore(deps.env);
   const key = `${connection.bundle_id}/${crypto.randomUUID()}-${safeName(file.name)}`;
-  await store.put(key, bytes.buffer as ArrayBuffer, { contentType: "text/plain; charset=utf-8" });
+  await store.put(key, bytes.slice().buffer as ArrayBuffer, {
+    contentType: original ? contentTypeFor(file.name) : "text/plain; charset=utf-8",
+  });
+  await store.put(sidecarKey(key), textBytes.buffer as ArrayBuffer, {
+    contentType: "text/plain; charset=utf-8",
+  });
 
   const row = {
     name: file.name,
@@ -791,6 +848,7 @@ async function importOne(
   return { imported: existing ? "updated" : "added", tokens };
 }
 
+/** A stored document and the text kept beside it, which go together. */
 async function safeDelete(
   store: ReturnType<typeof getDocStore>,
   key: string | null,
@@ -798,9 +856,51 @@ async function safeDelete(
   if (!key) return;
   try {
     await store.delete(key);
+    await store.delete(sidecarKey(key));
   } catch (e) {
     console.error("document store delete failed", e);
   }
+}
+
+/**
+ * A scanned PDF's text, read by Claude and charged to the workspace.
+ *
+ * The indexing job's `readByOcr`, for a file that arrived from a sync rather
+ * than an upload. A refusal is a `FileSkip` — this file's problem, named on
+ * the run — and an empty transcript is returned as empty, which the caller
+ * reports as a scan with nothing on it.
+ */
+async function readScan(
+  connection: ConnectionRow,
+  deps: SyncDeps,
+  file: RemoteFile,
+  bytes: Uint8Array,
+): Promise<string> {
+  if (bytes.byteLength > OCR_MAX_BYTES) {
+    throw new FileSkip("a scan with no text layer, too large to read (over 24 MB)");
+  }
+  let result;
+  try {
+    result = await ocrPdf(deps.env as OcrEnv, bytes);
+  } catch (err) {
+    const message = (err as Error)?.message ?? String(err);
+    if (/100 pages|page limit|too many pages/i.test(message)) {
+      throw new FileSkip("a scan with no text layer and more than 100 pages, too many to read");
+    }
+    throw err;
+  }
+  const spent = spends(completionSpend(result.model, result.usage, "ocr"));
+  if (spent.length > 0) {
+    try {
+      await deps.entitlements.record(connection.workspace_id, spent, {
+        connectionId: connection.id,
+        userId: connection.user_id ?? undefined,
+      });
+    } catch (err) {
+      console.error(`sync ${connection.id}: could not record OCR credits for ${file.name}`, err);
+    }
+  }
+  return result.text.slice(0, MAX_INDEX_CHARS);
 }
 
 /**

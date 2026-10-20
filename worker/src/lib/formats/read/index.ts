@@ -10,10 +10,10 @@ import { ZipError } from "./zip";
  * upload's allowlist (`lib/extract.ts`), the indexing job and the Drive sync
  * all come here, so a format is supported everywhere or nowhere.
  *
- * PDFs are the exception and say so: their text comes from the browser, which
- * runs pdf.js where it bundles reliably, and is stored beside the file
- * (`lib/document-text.ts`). Asked for a PDF this returns null, which the
- * caller reads as "look for the text the upload kept".
+ * PDFs are the exception and say so: an upload's text comes from the browser
+ * and is stored beside the file (`lib/document-text.ts`). Asked for a PDF this
+ * returns null, which the caller reads as "look for the text the upload kept".
+ * A file with nothing kept beside it — a Drive sync's — is read by `pdf.ts`.
  */
 
 export type Extracted = {

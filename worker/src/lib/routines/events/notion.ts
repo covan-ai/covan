@@ -32,7 +32,7 @@
 
 import { z } from "zod";
 import type { RoutineEnv } from "../../../types";
-import type { ProviderEnv } from "../../connections/types";
+import { textOf, type ProviderEnv } from "../../connections/types";
 import {
   NOTION_API,
   NOTION_VERSION,
@@ -332,15 +332,17 @@ export function notionAdapter(deps: NotionAdapterDeps = {}): EventAdapter {
         body = text ? `Comment: ${text}` : "";
       } else if (page) {
         try {
-          body = await notionProvider.readFile(
-            { token: grant.token, config: grant.config, fetchImpl },
-            {
-              externalId: pageId,
-              name: title,
-              version: "",
-              url: str(page.url) || null,
-              listing: page,
-            },
+          body = textOf(
+            await notionProvider.readFile(
+              { token: grant.token, config: grant.config, fetchImpl },
+              {
+                externalId: pageId,
+                name: title,
+                version: "",
+                url: str(page.url) || null,
+                listing: page,
+              },
+            ),
           );
         } catch (err) {
           console.error(`notion event: could not read page ${pageId}`, err);

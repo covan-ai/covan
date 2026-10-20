@@ -43,6 +43,7 @@
     "hono": "^4.13.5",
     "marked": "^18.0.14",
     "openai": "^7.5.0",
+    "unpdf": "^1.8.1",
     "zod": "^4.6.2"
   },
   "//overrides": "Raises a leaf that only a development tool reaches (vitest > vite > postcss), inside its own major, to the release with the published fix. undici and sharp, which wrangler's miniflare brings, are left alone: they are pinned by miniflare across majors, run only on a developer's machine, and are not in the API image (Dockerfile.api installs --production).",

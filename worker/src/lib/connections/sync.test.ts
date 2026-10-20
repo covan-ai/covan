@@ -33,7 +33,25 @@ vi.mock("../embeddings", async (importOriginal) => {
   };
 });
 
+// Claude's reading of a scan, without Claude: what is tested here is when the
+// sync asks and what it charges, not the transcript.
+vi.mock("../formats/read/ocr", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../formats/read/ocr")>();
+  return {
+    ...actual,
+    ocrPdf: vi.fn(async () => ({
+      text: "Signed by both parties on 1 March.",
+      truncated: false,
+      model: "claude-haiku-4-5",
+      usage: { promptTokens: 2000, completionTokens: 40 },
+    })),
+  };
+});
+
 import { fakeDb, type QueryContext } from "../../test-support/fake-db";
+import { getDocStore } from "../docstore";
+import { sidecarKey } from "../document-text";
+import { ocrPdf } from "../formats/read/ocr";
 import { embedTexts } from "../embeddings";
 import { runConnection, isNarrowing, MAX_DOCUMENTS_PER_RUN, type ConnectionRow } from "./sync";
 import { encryptSecret } from "../secret-box";
@@ -633,6 +651,87 @@ describe("syncing a connection", () => {
       documents_removed: 0,
     });
     expect(run?.values?.tokens).toBeGreaterThan(0);
+  });
+});
+
+describe("a file that is more than its text", () => {
+  const original = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
+
+  // Stored as text under a `.docx` name, a synced Word file downloaded as a
+  // text file and failed its next reindex trying to unzip prose.
+  it("keeps the file as the source has it, and its text beside it", async () => {
+    fakeProvider.listFiles.mockResolvedValue([{ ...file("plan"), name: "plan.docx" }]);
+    fakeProvider.readFile.mockResolvedValue({ text: "Q3 hiring plan.", original });
+    const fake = db();
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome).toMatchObject({ status: "ok", added: 1 });
+    const inserted = fake.callsTo("documents").find((c) => c.op === "insert")?.values as {
+      r2_key: string;
+      size: number;
+    };
+    expect(inserted.size).toBe(original.byteLength);
+    const store = getDocStore(env());
+    const stored = await store.get(inserted.r2_key);
+    expect(new Uint8Array(await stored!.arrayBuffer())).toEqual(original);
+    const sidecar = await store.get(sidecarKey(inserted.r2_key));
+    expect(await new Response(await sidecar!.arrayBuffer()).text()).toBe("Q3 hiring plan.");
+  });
+
+  it("reads a scan with Claude, and charges the workspace for it", async () => {
+    fakeProvider.listFiles.mockResolvedValue([{ ...file("deal"), name: "deal.pdf" }]);
+    fakeProvider.readFile.mockResolvedValue({ text: "", original });
+    const fake = db();
+
+    const outcome = await runConnection(await connection(), {
+      ...deps(fake),
+      env: { ...env(), ANTHROPIC_API_KEY: "sk-ant-test" },
+    });
+
+    expect(outcome).toMatchObject({ status: "ok", added: 1 });
+    expect(ocrPdf).toHaveBeenCalledTimes(1);
+    const inserted = fake.callsTo("documents").find((c) => c.op === "insert")?.values;
+    expect(inserted?.content).toContain("Signed by both parties");
+    const spent = unlimited.record.mock.calls.flatMap(
+      (call) => (call as unknown as [string, Array<{ kind: string; model?: string }>])[1],
+    );
+    expect(spent).toContainEqual(
+      expect.objectContaining({ kind: "completion", model: "claude-haiku-4-5" }),
+    );
+  });
+
+  it("names a file with no text it could read, rather than passing over it", async () => {
+    fakeProvider.listFiles.mockResolvedValue([{ ...file("deal"), name: "deal.pdf" }]);
+    fakeProvider.readFile.mockResolvedValue({ text: "", original });
+    const fake = db();
+
+    // No Anthropic key: nothing can read the scan.
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome).toMatchObject({ status: "skipped", added: 0 });
+    expect(ocrPdf).not.toHaveBeenCalled();
+    const run = fake.callsTo("connection_runs")[0]?.values as { error?: string };
+    expect(run.error).toContain("deal.pdf (no readable text in this PDF");
+  });
+
+  // Every file Drive lists now comes with a reason when it cannot be read, so
+  // a folder of photos would otherwise fill each run's allowance with nothing.
+  it("does not let files it cannot read take the run's allowance", async () => {
+    const photos = Array.from({ length: MAX_DOCUMENTS_PER_RUN + 5 }, (_, i) => ({
+      ...file(`photo-${i}`),
+      name: `photo-${i}.jpg`,
+      skipReason: "an image",
+    }));
+    fakeProvider.listFiles.mockResolvedValue([...photos, file("handbook")]);
+    fakeProvider.readFile.mockResolvedValue("Twenty days of leave a year.");
+    const fake = db();
+
+    const outcome = await runConnection(await connection(), deps(fake));
+
+    expect(outcome).toMatchObject({ status: "ok", added: 1, more: false });
+    const run = fake.callsTo("connection_runs")[0]?.values as { error?: string };
+    expect(run.error).toContain(`${photos.length} files were not imported`);
   });
 });
 

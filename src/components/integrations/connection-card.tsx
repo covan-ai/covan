@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { formatRelative } from "@/lib/relative-time";
 import {
+  useConnectionRuns,
   useDisconnect,
   useReconnectConnection,
   useStartConnection,
@@ -83,6 +84,25 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
   const Mark = PROVIDER_MARK[connection.provider];
 
   const paused = connection.status === "paused";
+  // The last run's sentence, when it had one: which files it could not import
+  // and why. The engine has always written it; nothing on screen used to read
+  // it, so a folder of files nothing could read synced as an empty bundle with
+  // no explanation anywhere a person would look. A pause already says more.
+  const runs = useConnectionRuns(connection.id, !connection.needsFolder);
+  const lastRun = runs.data?.[0];
+  const lastRunNote = !connection.pausedReason && lastRun?.error ? lastRun : null;
+
+  const syncNow = () =>
+    sync.mutate(connection.id, {
+      onSuccess: (outcome) =>
+        toast.success(
+          outcome.added + outcome.updated + outcome.removed === 0
+            ? "Nothing had changed."
+            : `${outcome.added} added, ${outcome.updated} updated, ${outcome.removed} removed.` +
+                (outcome.more ? " More to come — it will carry on shortly." : ""),
+        ),
+      onError: (err) => toast.error(err instanceof Error ? err.message : "Sync failed"),
+    });
   const action = paused ? pauseAction(connection.pausedCode) : "resume";
   const reconnectButton = (
     <Button
@@ -131,6 +151,10 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
         <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground">
           {connection.pausedReason}
         </p>
+      ) : lastRunNote ? (
+        <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground [overflow-wrap:anywhere]">
+          Last sync {formatRelative(lastRunNote.startedAt)}: {lastRunNote.error}
+        </p>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -170,18 +194,7 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
               size="sm"
               variant="secondary"
               disabled={paused || sync.isPending}
-              onClick={() =>
-                sync.mutate(connection.id, {
-                  onSuccess: (outcome) =>
-                    toast.success(
-                      outcome.added + outcome.updated + outcome.removed === 0
-                        ? "Nothing had changed."
-                        : `${outcome.added} added, ${outcome.updated} updated, ${outcome.removed} removed.` +
-                            (outcome.more ? " More to come — it will carry on shortly." : ""),
-                    ),
-                  onError: (err) => toast.error(err instanceof Error ? err.message : "Sync failed"),
-                })
-              }
+              onClick={syncNow}
             >
               <RefreshCw className={`h-3.5 w-3.5 ${sync.isPending ? "animate-spin" : ""}`} />
               {sync.isPending ? "Syncing…" : "Sync now"}
@@ -267,9 +280,16 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
           update.mutate(
             { id: connection.id, patch: { folderId: folder.id, folderName: folder.name } },
             {
+              // Choosing the folder starts the first sync now rather than at the
+              // engine's next tick, up to five minutes away — long enough for a
+              // person who just connected a folder to decide it is empty. The
+              // tick may still pick the same connection up meanwhile; two runs
+              // reconcile to the same documents (one row per file at the
+              // source), so the second simply finds less to do.
               onSuccess: () => {
                 setPickingFolder(false);
                 toast.success(`Syncing “${folder.name}”.`);
+                syncNow();
               },
               onError: (err) =>
                 toast.error(err instanceof Error ? err.message : "Could not save that folder"),

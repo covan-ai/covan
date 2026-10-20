@@ -4,6 +4,7 @@ import {
   ProviderError,
   type ConnectionProvider,
   type ProviderContext,
+  type FileRead,
   type ProviderEnv,
   type RemoteFile,
   type TokenEnvelope,
@@ -11,6 +12,7 @@ import {
 import { decodeFileText, extOf, MAX_DIRECT_UPLOAD_BYTES, MAX_INDEX_CHARS } from "../extract";
 import { extractFromBytes, UnreadableFile } from "../formats/read";
 import { htmlToText } from "../formats/read/text";
+import { pdfText } from "../formats/read/pdf";
 
 /**
  * Google Drive, as a source of documents.
@@ -110,33 +112,34 @@ const MAX_SHORTCUTS = 25;
  * The extension is chosen to match what the export actually produces, because
  * `lib/extract` reads the name on reindex: a Sheet exported as CSV and named
  * `.md` would be re-chunked later as if the commas were prose.
+ *
+ * `binary` marks an export that is a file to read rather than text already.
  */
-const NATIVE_EXPORTS: Record<string, { mimeType: string; extension: string }> = {
+const NATIVE_EXPORTS: Record<string, { mimeType: string; extension: string; binary?: boolean }> = {
   "application/vnd.google-apps.document": { mimeType: "text/markdown", extension: "md" },
-  // The first sheet only. Drive's CSV export has no way to say "every tab", and
-  // the alternative — one document per tab — would make a citation point at a
-  // file the person cannot find in Drive. Written down in docs/integrations.md
-  // rather than left to be discovered.
-  "application/vnd.google-apps.spreadsheet": { mimeType: "text/csv", extension: "csv" },
+  // As a workbook, so every tab comes with it. It used to be CSV, which Drive
+  // only produces for the first tab — a budget's summary without the months
+  // it summarises. The workbook is read the way an uploaded `.xlsx` is, one
+  // section per sheet, and the citation still opens the Sheet in Drive.
+  "application/vnd.google-apps.spreadsheet": {
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    extension: "xlsx",
+    binary: true,
+  },
   "application/vnd.google-apps.presentation": { mimeType: "text/plain", extension: "txt" },
 };
 
 /**
- * Ordinary files that are already text.
+ * Files whose text has to be read out of them: Office, OpenDocument, RTF and
+ * PDF, read the way an upload is (`lib/formats/read`). The file itself is kept
+ * as well as its text (`FileRead.original`), so it downloads as what it is.
  *
- * PDFs are deliberately absent. `lib/extract` returns "" for them — pdf.js does
- * not bundle for the Workers runtime, so the browser does that job at upload
- * time — and there is no browser in a cron tick. Importing them would produce
- * documents that are listed, named to the model, and impossible to retrieve a
- * sentence of, which `hasIndexableText` exists to prevent at upload and would
- * catch here too. Skipping them with a reason is the honest version.
+ * PDFs used to be absent, on the note that pdf.js does not run on the server.
+ * It does — see `lib/formats/read/pdf.ts` — and a PDF with no text layer is read
+ * by Claude when the deployment has a key, the same as an upload.
  */
-/**
- * Office and OpenDocument files, read the way an upload is (`lib/formats/read`).
- * They used to be skipped without a word, which in most companies' Drive is
- * most of the folder.
- */
-const OFFICE_MIME: Record<string, string> = {
+const BINARY_MIME: Record<string, string> = {
+  "application/pdf": "pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
@@ -145,16 +148,38 @@ const OFFICE_MIME: Record<string, string> = {
   "text/rtf": "rtf",
 };
 
-const READABLE_MIME = new Set([
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-  "text/tab-separated-values",
+/**
+ * Ordinary files that are already text, beyond `text/*`.
+ *
+ * Every `text/*` type is read as text — Drive types a Python file `text/x-python`
+ * and a log `text/plain`, and both are prose to a reader. These are the text
+ * formats that Drive files under `application/` instead.
+ */
+const TEXT_APPLICATION_MIME = new Set([
   "application/json",
+  "application/ld+json",
+  "application/x-ndjson",
   "application/xml",
-  "text/xml",
-  "text/html",
+  "application/yaml",
+  "application/x-yaml",
+  "application/toml",
+  "application/javascript",
+  "application/x-javascript",
+  "application/typescript",
+  "application/x-typescript",
+  "application/sql",
+  "application/x-sql",
+  "application/x-sh",
+  "application/x-httpd-php",
+  "application/x-tex",
+  "application/x-subrip",
 ]);
+
+function isTextMime(mimeType: string): boolean {
+  return (
+    (mimeType.startsWith("text/") && !BINARY_MIME[mimeType]) || TEXT_APPLICATION_MIME.has(mimeType)
+  );
+}
 
 type DriveFile = {
   id: string;
@@ -175,18 +200,46 @@ function withExtension(name: string, extension: string): string {
 export function importableName(file: DriveFile): string | null {
   const native = NATIVE_EXPORTS[file.mimeType];
   if (native) return withExtension(file.name, native.extension);
-  const office = OFFICE_MIME[file.mimeType];
-  if (office) return withExtension(file.name, office);
-  if (READABLE_MIME.has(file.mimeType)) return file.name;
+  const binary = BINARY_MIME[file.mimeType];
+  if (binary) return withExtension(file.name, binary);
+  if (isTextMime(file.mimeType)) return file.name;
   return null;
 }
 
-/** Why a file Drive lists is not imported, when it is worth saying. */
-function notImportedBecause(file: DriveFile): string | null {
-  // A PDF's text is read in the browser at upload; a sync has no browser.
-  if (file.mimeType === "application/pdf")
-    return "PDFs from Drive are not read yet — upload it directly";
-  return null;
+/** The old Office formats, which are not zip files and which nothing here reads. */
+const LEGACY_OFFICE = new Set([
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+]);
+
+/**
+ * Why a file Drive lists is not imported. Always an answer.
+ *
+ * It used to be one only for PDFs, and every other file was dropped from the
+ * listing without a word — a folder of `.doc` files synced as an empty bundle
+ * and a run that said nothing had changed, which is how the first Drive folder
+ * connected to covan.app looked. Now each file the sync leaves behind is named
+ * on the run with one of these, and the Integrations page shows it.
+ */
+function notImportedBecause(file: DriveFile): string {
+  const mime = file.mimeType;
+  if (mime.startsWith("image/")) return "an image — Covan reads text, not pictures";
+  if (mime.startsWith("video/")) return "a video";
+  if (mime.startsWith("audio/")) return "an audio file";
+  if (LEGACY_OFFICE.has(mime)) {
+    return "an old Office format (.doc, .xls or .ppt) — open it in Drive and save it as a Google file or as .docx, .xlsx or .pptx";
+  }
+  if (mime === "application/vnd.google-apps.drawing") return "a Google Drawing";
+  if (mime === "application/vnd.google-apps.form") {
+    return "a Google Form — its responses sheet can be synced instead";
+  }
+  if (mime.startsWith("application/vnd.google-apps.")) {
+    return "a kind of Google file that cannot be exported as text";
+  }
+  if (/zip|compressed|x-tar|x-7z|x-rar|gzip/.test(mime))
+    return "an archive — unzip it into the folder";
+  return `a file type Covan cannot read (${mime || "unknown"})`;
 }
 
 async function driveFetch(
@@ -505,16 +558,13 @@ export const googleDriveProvider: ConnectionProvider = {
     for (const file of files) {
       const name = importableName(file);
       if (!name) {
-        const reason = notImportedBecause(file);
-        if (reason) {
-          out.push({
-            externalId: file.id,
-            name: file.name,
-            version: file.modifiedTime ?? "",
-            url: file.webViewLink ?? null,
-            skipReason: reason,
-          });
-        }
+        out.push({
+          externalId: file.id,
+          name: file.name,
+          version: file.modifiedTime ?? "",
+          url: file.webViewLink ?? null,
+          skipReason: notImportedBecause(file),
+        });
         continue;
       }
       const size = file.size ? Number(file.size) : 0;
@@ -535,7 +585,7 @@ export const googleDriveProvider: ConnectionProvider = {
     return out;
   },
 
-  async readFile(ctx: ProviderContext, file: RemoteFile): Promise<string> {
+  async readFile(ctx: ProviderContext, file: RemoteFile): Promise<string | FileRead> {
     // The listing already decided this file is importable; what it did not
     // carry is which of the two ways to read it. Re-read the one field that
     // decides, rather than widening RemoteFile with a provider-specific column.
@@ -551,6 +601,10 @@ export const googleDriveProvider: ConnectionProvider = {
         `${DRIVE_API}/files/${file.externalId}/export?mimeType=${encodeURIComponent(native.mimeType)}`,
         { headers: { Authorization: `Bearer ${ctx.token.accessToken}` } },
       );
+      if (exported.ok && native.binary) {
+        const bytes = new Uint8Array(await exported.arrayBuffer());
+        return { text: await readOutOf(file.name, bytes), original: bytes };
+      }
       if (exported.ok) return await exported.text();
 
       // Markdown export is comparatively new. A 400 means this Docs file cannot
@@ -583,16 +637,25 @@ export const googleDriveProvider: ConnectionProvider = {
     }
     const ext = extOf(file.name);
     if (ext === "html" || ext === "htm") return htmlToText(decodeFileText(bytes));
-    if (Object.values(OFFICE_MIME).includes(ext)) {
-      try {
-        return (
-          (await extractFromBytes(file.name, new Uint8Array(bytes), MAX_INDEX_CHARS))?.text ?? ""
-        );
-      } catch (err) {
-        if (err instanceof UnreadableFile) throw new FileSkip(err.message);
-        throw err;
-      }
+    if (Object.values(BINARY_MIME).includes(ext)) {
+      const original = new Uint8Array(bytes);
+      return { text: await readOutOf(file.name, original), original };
     }
     return decodeFileText(bytes);
   },
 };
+
+/**
+ * The text inside a file that is not text: a PDF's text layer, or what
+ * `lib/formats/read` reads out of an Office or OpenDocument file. A file that
+ * is not what its name says is this file's problem, named on the run.
+ */
+async function readOutOf(name: string, bytes: Uint8Array): Promise<string> {
+  try {
+    if (extOf(name) === "pdf") return (await pdfText(bytes, MAX_INDEX_CHARS)).text;
+    return (await extractFromBytes(name, bytes, MAX_INDEX_CHARS))?.text ?? "";
+  } catch (err) {
+    if (err instanceof UnreadableFile) throw new FileSkip(err.message);
+    throw err;
+  }
+}

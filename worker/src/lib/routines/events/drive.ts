@@ -33,7 +33,7 @@
 
 import { z } from "zod";
 import type { RoutineEnv } from "../../../types";
-import type { ProviderEnv, TokenEnvelope } from "../../connections/types";
+import { textOf, type ProviderEnv, type TokenEnvelope } from "../../connections/types";
 import { folderIdOf, googleDriveProvider, importableName } from "../../connections/google-drive";
 import { base64url } from "../../jwt";
 import { timingSafeEqual } from "../../hmac";
@@ -471,14 +471,16 @@ export function driveAdapter(deps: DriveAdapterDeps = {}): EventAdapter {
       if (only && readable) {
         try {
           const grant = await freshGrant(ctx);
-          content = await googleDriveProvider.readFile(
-            { token: grant.token, config: grant.config, fetchImpl },
-            {
-              externalId: only.id!,
-              name: readable,
-              version: str(only.modifiedTime),
-              url: str(only.webViewLink) || null,
-            },
+          content = textOf(
+            await googleDriveProvider.readFile(
+              { token: grant.token, config: grant.config, fetchImpl },
+              {
+                externalId: only.id!,
+                name: readable,
+                version: str(only.modifiedTime),
+                url: str(only.webViewLink) || null,
+              },
+            ),
           );
         } catch (err) {
           console.error(`drive event: could not read ${only.id}`, err);

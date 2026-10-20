@@ -5,7 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Connection } from "@/lib/connections-api";
 import { ConnectionCard, ConnectSourceCard } from "./connection-card";
 
-const { update, sync, disconnect, start, reconnect } = vi.hoisted(() => ({
+const { update, sync, disconnect, start, reconnect, runs } = vi.hoisted(() => ({
+  runs: { data: undefined as unknown },
   update: { mutate: vi.fn(), isPending: false },
   sync: { mutate: vi.fn(), isPending: false },
   disconnect: { mutate: vi.fn(), isPending: false },
@@ -22,7 +23,20 @@ vi.mock("@/lib/api-client", () => ({
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// The picker itself asks the API for a tree; what is under test here is what
+// choosing a folder sets off, so the dialog is reduced to the choice.
+vi.mock("./drive-folder-dialog", () => ({
+  DriveFolderDialog: (props: {
+    open: boolean;
+    onChoose: (folder: { id: string; name: string }) => void;
+  }) =>
+    props.open ? (
+      <button onClick={() => props.onChoose({ id: "f-1", name: "Lyrics" })}>pick Lyrics</button>
+    ) : null,
+}));
+
 vi.mock("@/hooks/use-connections", () => ({
+  useConnectionRuns: () => runs,
   useUpdateConnection: () => update,
   useSyncConnection: () => sync,
   useDisconnect: () => disconnect,
@@ -59,6 +73,7 @@ function renderCard(ui: React.ReactElement) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  runs.data = undefined;
 });
 
 describe("a connected source", () => {
@@ -85,6 +100,48 @@ describe("a connected source", () => {
     expect(screen.getByText("Paused")).toBeInTheDocument();
     expect(screen.getByText(/Notion refused the connection/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+  });
+
+  // The engine always wrote this sentence; nothing on screen read it, so a
+  // folder nothing could import synced as an empty bundle with no word why.
+  it("says which files the last sync could not import", () => {
+    runs.data = [
+      {
+        id: "run-1",
+        status: "skipped",
+        added: 0,
+        updated: 0,
+        removed: 0,
+        error: "1 file was not imported: lyrics.doc (an old Office format).",
+        durationMs: 900,
+        startedAt: Date.now() - 120_000,
+      },
+    ];
+    renderCard(<ConnectionCard connection={connection({ provider: "google_drive" })} />);
+
+    expect(
+      screen.getByText(/Last sync 2 minutes ago: 1 file was not imported: lyrics\.doc/),
+    ).toBeInTheDocument();
+  });
+
+  it("starts the first sync as soon as a folder is chosen", async () => {
+    update.mutate.mockImplementation((_vars: unknown, options?: { onSuccess?: () => void }) =>
+      options?.onSuccess?.(),
+    );
+    renderCard(
+      <ConnectionCard
+        connection={connection({ provider: "google_drive", needsFolder: true, status: "paused" })}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Choose a folder" }));
+    await userEvent.click(screen.getByRole("button", { name: "pick Lyrics" }));
+
+    expect(update.mutate).toHaveBeenCalledWith(
+      { id: "conn-1", patch: { folderId: "f-1", folderName: "Lyrics" } },
+      expect.anything(),
+    );
+    expect(sync.mutate).toHaveBeenCalledWith("conn-1", expect.anything());
   });
 
   it("offers nothing but a folder until a Drive connection has one", () => {

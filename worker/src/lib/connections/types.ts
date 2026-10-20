@@ -84,6 +84,27 @@ export type RemoteFile = {
   skipReason?: string;
 };
 
+/**
+ * What reading a file produced, when it was more than its text.
+ *
+ * A Notion page or an exported Google Doc *is* its text, and a provider returns
+ * a plain string for those. A `.docx` or a PDF is not: the text is something
+ * read out of it, and storing only that under the file's own name was how a
+ * synced Word document came to download as a text file called `.docx`, and to
+ * fail its next reindex trying to unzip prose. With `original`, the sync keeps
+ * the file as the source has it and the text beside it — the same arrangement
+ * an upload has.
+ */
+export type FileRead = {
+  text: string;
+  original?: Uint8Array;
+};
+
+/** The text of whatever `readFile` returned. */
+export function textOf(read: string | FileRead): string {
+  return typeof read === "string" ? read : read.text;
+}
+
 /** What a provider needs to talk to its API on one connection's behalf. */
 export type ProviderContext = {
   token: TokenEnvelope;
@@ -148,8 +169,11 @@ export interface ConnectionProvider {
    */
   listFiles(ctx: ProviderContext): Promise<RemoteFile[]>;
 
-  /** One file, as indexable plain text. */
-  readFile(ctx: ProviderContext, file: RemoteFile): Promise<string>;
+  /**
+   * One file, as indexable plain text — and, when the text is not the file,
+   * the file itself.
+   */
+  readFile(ctx: ProviderContext, file: RemoteFile): Promise<string | FileRead>;
 
   /**
    * Withdraw the grant at the provider, where the provider has a way to.

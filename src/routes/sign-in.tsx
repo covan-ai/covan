@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
+import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -92,6 +93,8 @@ function SignIn() {
         </>
       }
     >
+      <OAuthButtons remember={remember} onError={setError} />
+
       {/* `method="post"` matters even though `handleSubmit` calls
           preventDefault and this form is never posted anywhere.
           There is a window between the HTML arriving and React attaching that

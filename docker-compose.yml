@@ -142,6 +142,19 @@ services:
       # GOTRUE_SMTP_*) before putting the stack on a network.
       GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-true}
       GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      # "Continue with Google" / "Continue with GitHub" on the sign-in and
+      # sign-up cards. Off unless both halves of a pair are set; the buttons
+      # appear on their own once GoTrue reports the provider on. These are not
+      # GOOGLE_CLIENT_ID below, which is the Drive integration's client and asks
+      # for different scopes. See docs/self-hosting.md.
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: ${SIGN_IN_GOOGLE_ENABLED:-false}
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ${SIGN_IN_GOOGLE_CLIENT_ID:-}
+      GOTRUE_EXTERNAL_GOOGLE_SECRET: ${SIGN_IN_GOOGLE_SECRET:-}
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: ${SUPABASE_PUBLIC_URL:-http://localhost:8000}/auth/v1/callback
+      GOTRUE_EXTERNAL_GITHUB_ENABLED: ${SIGN_IN_GITHUB_ENABLED:-false}
+      GOTRUE_EXTERNAL_GITHUB_CLIENT_ID: ${SIGN_IN_GITHUB_CLIENT_ID:-}
+      GOTRUE_EXTERNAL_GITHUB_SECRET: ${SIGN_IN_GITHUB_SECRET:-}
+      GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI: ${SUPABASE_PUBLIC_URL:-http://localhost:8000}/auth/v1/callback
       GOTRUE_SMS_AUTOCONFIRM: "false"
       # Eight, as every form in the app asks. `secure_password_change` (an
       # emailed code for a password change from a session over a day old) is

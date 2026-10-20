@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
+import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -140,6 +141,9 @@ function SignUp() {
         </>
       }
     >
+      {/* Remembered, as the email form below is: this page has no box to clear. */}
+      <OAuthButtons remember onError={setError} />
+
       {/* method="post" for the reason spelled out in sign-in.tsx: submitted before
           hydration, a form with no method is a GET and puts what was typed in
           the URL. */}

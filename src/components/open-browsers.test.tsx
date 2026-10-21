@@ -160,6 +160,16 @@ describe("OpenBrowsersList", () => {
     ).toBeInTheDocument();
   });
 
+  it("calls an untitled conversation what the sidebar calls it", async () => {
+    open.mockResolvedValue({
+      browsers: [{ ...IDLE, conversation: { id: "chat-9", title: null } }],
+      takeover: null,
+    });
+    renderList();
+
+    expect(await rowOf("New thread")).toBeInTheDocument();
+  });
+
   it("says something neutral for a conversation the person can no longer open", async () => {
     open.mockResolvedValue({ browsers: [OUT_OF_SIGHT], takeover: null });
     renderList();

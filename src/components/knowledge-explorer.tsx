@@ -16,6 +16,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Bot,
   ChevronRight,
   Download,
   ExternalLink,
@@ -48,6 +49,7 @@ import type { UploadPhase } from "@/lib/api-client";
 import { canEditAgent } from "@/lib/agent-access";
 import { Chip, EmptyState } from "@/components/section-card";
 import { DocumentPreviewDialog } from "@/components/document-preview-dialog";
+import { AttachBundleDialog } from "@/components/attach-bundle-dialog";
 import { TextPromptDialog } from "@/components/text-prompt-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -275,6 +277,21 @@ export function KnowledgeExplorer({
     return map;
   }, [store.agents]);
 
+  /**
+   * Attaching a folder to an agent, from here.
+   *
+   * Only on the workspace page — the agent's own tab has the Switch beside
+   * every folder — and only for somebody who can edit at least one agent,
+   * since attaching takes Can edit (0104). A tester uploaded a file here,
+   * asked the agent about it, and could not find the screen that would have
+   * made the agent read it; the upload toast, the folder's menu and the strip
+   * above its files now all lead to the same dialog.
+   */
+  const editableAgents = useMemo(() => store.agents.filter(canEditAgent), [store.agents]);
+  const [attaching, setAttaching] = useState<(typeof bundles)[number] | null>(null);
+  const onAttach =
+    !agent && editableAgents.length > 0 ? (b: (typeof bundles)[number]) => setAttaching(b) : null;
+
   // Counted before the search and after nothing, so a filter's number is how
   // many files in this folder it would find — not how many of what is on the
   // screen right now.
@@ -392,6 +409,40 @@ export function KnowledgeExplorer({
     const patch = (id: string, change: Partial<Uploading>) =>
       setUploading((prev) => prev.map((u) => (u.id === id ? { ...u, ...change } : u)));
 
+    // The next step, on the toast, when the folder these went into is one no
+    // agent reads: a file nobody has attached cannot ground an answer, and the
+    // page that says so is not the one the person is on. Once per drop, so a
+    // ten-file upload does not raise ten offers. Twelve seconds, as the invite
+    // toast gives its action: one nobody has time to read is no action at all.
+    const folder = openBundle;
+    let offered = false;
+    const attachOffer = (): Parameters<typeof toast.success>[1] | undefined => {
+      if (agent || offered || (readersByBundle[bundleId] ?? []).length > 0) return undefined;
+      if (editableAgents.length === 0) return undefined;
+      offered = true;
+      if (editableAgents.length === 1) {
+        const a = editableAgents[0];
+        return {
+          duration: 12000,
+          action: {
+            label: `Attach to ${a.name}`,
+            onClick: () =>
+              void Promise.resolve(store.attachBundle(a.id, bundleId)).then((ok) => {
+                if (ok) toast.success(`${folder.name} is now read by ${a.name}`);
+              }),
+          },
+        };
+      }
+      return {
+        duration: 12000,
+        action: { label: "Choose agents", onClick: () => setAttaching(folder) },
+      };
+    };
+    const added = (message: string) => {
+      const offer = attachOffer();
+      return offer ? toast.success(message, offer) : toast.success(message);
+    };
+
     const uploadOne = async ({ id, file }: { id: string; file: File }) => {
       try {
         const doc = await store.uploadToBundle(
@@ -407,9 +458,9 @@ export function KnowledgeExplorer({
         if (previous) {
           toast.success(`Replaced ${file.name} — indexing the new version`);
         } else if (doc.indexStatus === "queued" || doc.indexStatus === "indexing") {
-          toast.success(`Added ${file.name} — indexing it now`);
+          added(`Added ${file.name} — indexing it now`);
         } else if (doc.indexed) {
-          toast.success(`Added ${file.name}`);
+          added(`Added ${file.name}`);
         } else {
           toast.warning(
             `${file.name} went in but could not be indexed, so answers won't be grounded in it.`,
@@ -563,6 +614,7 @@ export function KnowledgeExplorer({
             canWrite={canWrite}
             dropping={!!dragging}
             readers={agent ? null : readersByBundle}
+            onAttach={onAttach}
           />
 
           {/* The pane is the drop target, all of it: a file dragged in from
@@ -604,6 +656,7 @@ export function KnowledgeExplorer({
               onFilter={setFilter}
               tallies={tallies}
               readers={agent || !openBundle ? null : (readersByBundle[openBundle.id] ?? [])}
+              onAttach={onAttach && openBundle ? () => onAttach(openBundle) : null}
             />
 
             {selectedDocs.length > 0 ? (
@@ -738,6 +791,12 @@ export function KnowledgeExplorer({
           </section>
         </div>
 
+        <AttachBundleDialog
+          bundle={attaching}
+          onOpenChange={(open) => {
+            if (!open) setAttaching(null);
+          }}
+        />
         {previewing ? (
           <DocumentPreviewDialog
             documentId={previewing.id}
@@ -963,6 +1022,7 @@ function Sidebar({
   canWrite,
   dropping,
   readers,
+  onAttach,
 }: {
   bundles: ReturnType<typeof useAgentsStore>["bundles"];
   agent?: Agent;
@@ -977,6 +1037,8 @@ function Sidebar({
    * and naming the others would answer a question the screen is not about.
    */
   readers: Record<string, string[]> | null;
+  /** Opens the attach dialog for a folder; null where there is nothing to attach to. */
+  onAttach: ((b: ReturnType<typeof useAgentsStore>["bundles"][number]) => void) | null;
 }) {
   const store = useAgentsStore();
   const [railQuery, setRailQuery] = useState("");
@@ -1003,6 +1065,7 @@ function Sidebar({
       canWrite={canWrite}
       dropping={dropping}
       store={store}
+      onAttach={onAttach}
     />
   );
 
@@ -1138,6 +1201,7 @@ function FolderRow({
   canWrite,
   dropping,
   store,
+  onAttach,
 }: {
   bundle: ReturnType<typeof useAgentsStore>["bundles"][number];
   agent?: Agent;
@@ -1148,6 +1212,7 @@ function FolderRow({
   canWrite: boolean;
   dropping: boolean;
   store: ReturnType<typeof useAgentsStore>;
+  onAttach: ((b: ReturnType<typeof useAgentsStore>["bundles"][number]) => void) | null;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(bundle.name);
@@ -1295,6 +1360,12 @@ function FolderRow({
               <Pencil className="mr-2 h-4 w-4" />
               Rename
             </DropdownMenuItem>
+            {onAttach ? (
+              <DropdownMenuItem onSelect={() => onAttach(bundle)}>
+                <Bot className="mr-2 h-4 w-4" />
+                Attach to agents…
+              </DropdownMenuItem>
+            ) : null}
             {/* Only its maker shares it or takes it back (0106). */}
             {bundle.mine ? (
               <DropdownMenuItem onSelect={() => toggleShared()}>
@@ -1551,6 +1622,7 @@ function PaneNotes({
   onFilter,
   tallies,
   readers,
+  onAttach,
 }: {
   openBundle: ReturnType<typeof useAgentsStore>["bundles"][number] | null;
   canWrite: boolean;
@@ -1562,6 +1634,8 @@ function PaneNotes({
    * the answer is the agent whose tab it is.
    */
   readers: string[] | null;
+  /** Opens the attach dialog for the open folder; null where nothing can be attached. */
+  onAttach: (() => void) | null;
 }) {
   // A filter with nothing to find is not offered — except the one that is on,
   // which has to stay on the screen or there would be no way back to All.
@@ -1581,9 +1655,22 @@ function PaneNotes({
           count in the sidebar says nothing about that. */}
       {readers ? (
         <span>
-          {readers.length === 0
-            ? "No agent reads this folder yet — attach it from an agent's Knowledge tab."
-            : `Read by ${listOf(readers)}.`}
+          {readers.length > 0 ? (
+            `Read by ${listOf(readers)}.`
+          ) : onAttach ? (
+            <>
+              No agent reads this folder yet.{" "}
+              <button
+                type="button"
+                onClick={onAttach}
+                className="font-medium text-foreground underline-offset-2 hover:underline"
+              >
+                Attach it to an agent
+              </button>
+            </>
+          ) : (
+            "No agent reads this folder yet — attach it from an agent's Knowledge tab."
+          )}
         </span>
       ) : null}
       {viewerNote ? (

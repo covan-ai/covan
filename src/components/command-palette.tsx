@@ -10,6 +10,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { useAgentsStore } from "@/lib/agents-store";
+import { sessionLabel } from "@/lib/session-label";
 import { AgentAvatar } from "@/components/avatars";
 import { useTheme } from "@/lib/theme";
 import {
@@ -112,7 +113,7 @@ export function CommandPalette() {
                   <span className="line-clamp-1 flex-1">{m.content}</span>
                   {session && (
                     <span className="ml-auto text-xs text-muted-foreground">
-                      {session.title || "Untitled"}
+                      {sessionLabel(session)}
                     </span>
                   )}
                 </CommandItem>

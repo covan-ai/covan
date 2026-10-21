@@ -57,6 +57,11 @@ describe("a session in the sidebar", () => {
     expect(screen.getByText("New brainstorm")).toBeInTheDocument();
   });
 
+  it("does not draw a blank row for a title of spaces", () => {
+    renderRow({ title: "   " });
+    expect(screen.getByText("New thread")).toBeInTheDocument();
+  });
+
   it("opens the chat when the name is clicked", async () => {
     const { onOpen } = renderRow();
     await userEvent.click(screen.getByText("Q3 pricing review"));

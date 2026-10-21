@@ -305,7 +305,12 @@ type Store = {
     onProgress?: (pct: number) => void,
     onPhase?: (phase: UploadPhase) => void,
   ) => Promise<Agent["documents"][number]>;
-  attachBundle: (agentId: string, bundleId: string) => void;
+  /**
+   * Resolves true once the agent list has been re-read with the folder on it,
+   * false after the error toast. Never rejects, so a Switch can ignore it and a
+   * toast action can confirm only what actually happened.
+   */
+  attachBundle: (agentId: string, bundleId: string) => Promise<boolean>;
   detachBundle: (agentId: string, bundleId: string) => void;
   removeBundle: (id: string) => void;
   deleteAgent: (id: string) => void;
@@ -481,12 +486,15 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         return doc;
       },
 
-      attachBundle: (agentId, bundleId) => {
-        void api.bundles
+      attachBundle: (agentId, bundleId) =>
+        api.bundles
           .attach(agentId, bundleId)
           .then(() => queryClient.invalidateQueries({ queryKey: ["agents"] }))
-          .catch(() => toast.error("Couldn't attach the knowledge bundle."));
-      },
+          .then(() => true)
+          .catch(() => {
+            toast.error("Couldn't attach the knowledge bundle.");
+            return false;
+          }),
 
       detachBundle: (agentId, bundleId) => {
         void api.bundles

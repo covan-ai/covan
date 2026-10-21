@@ -34,7 +34,7 @@ function renderDial(over: Partial<TurnDialProps> = {}) {
     session: { kind: "chat", model: null, reasoningEffort: null, webSearch: null, mode: null },
     agent: { model: "gpt-4.1", reasoningEffort: null, webSearch: false, mode: "normal" },
     models: ["gpt-4.1", "claude-opus-5"],
-    modelCosts: { "gpt-4.1": 0.008, "claude-opus-5": 0.03 },
+    prices: { unit: "usd", byModel: { "gpt-4.1": 0.008, "claude-opus-5": 0.03 } },
     modelSpecs: specs,
     canTune: true,
     busy: false,
@@ -99,6 +99,14 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
     pick(screen.getByRole("menuitemcheckbox", { name: /Smartest/ }));
 
     expect(onChange).toHaveBeenCalledWith({ model: "claude-opus-5" });
+  });
+
+  it("quotes the menu in credits where the deployment charges credits", () => {
+    renderDial({ prices: { unit: "credits", byModel: { "gpt-4.1": 9.6, "claude-opus-5": 36 } } });
+
+    open("Model: gpt-4.1");
+    expect(screen.getByText("~36 credits")).toBeInTheDocument();
+    expect(screen.queryByText(/\$/)).toBeNull();
   });
 
   it("stores null, not the id, when the agent's own model is picked back", () => {

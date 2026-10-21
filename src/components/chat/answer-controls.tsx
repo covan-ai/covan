@@ -6,7 +6,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModelCost } from "@/components/model-cost";
-import { costFor } from "@/lib/agent-meta";
+import { priceFor, type ReplyPrices } from "@/lib/agent-meta";
 
 /**
  * The two controls that are about an answer having been given more than once.
@@ -82,11 +82,11 @@ export function VersionPicker({
  */
 export function RetryOn({
   models,
-  costs,
+  prices,
   onPick,
 }: {
   models: string[];
-  costs: Record<string, number> | undefined;
+  prices: ReplyPrices | undefined;
   onPick: (model: string) => void;
 }) {
   if (models.length === 0) return null;
@@ -111,7 +111,7 @@ export function RetryOn({
           >
             <span className="flex w-full items-center justify-between">
               <span>{model}</span>
-              <ModelCost cost={costFor(costs, model)} />
+              <ModelCost price={priceFor(prices, model)} />
             </span>
           </DropdownMenuItem>
         ))}

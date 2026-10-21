@@ -13,14 +13,15 @@ import { ModelCost } from "@/components/model-cost";
 import {
   DIAL_EFFORTS,
   DIAL_EFFORT_HINTS,
-  costFor,
   effortWord,
   modelLabel,
   modelTiers,
+  priceFor,
   specFor,
   thinkingOf,
   type ModelSpec,
   type ReasoningEffort,
+  type ReplyPrices,
 } from "@/lib/agent-meta";
 import type { ChatSession, SessionTuning } from "@/lib/agents-store";
 import { cn } from "@/lib/utils";
@@ -72,7 +73,8 @@ export type TurnDialProps = {
   agent: DialAgent;
   /** What the model menu offers — `modelsFor(me.models, agent.model)`. */
   models: string[];
-  modelCosts: Record<string, number> | undefined;
+  /** What each costs per reply, in the unit the server answers in — `replyPricesOf(me)`. */
+  prices: ReplyPrices | undefined;
   modelSpecs: Record<string, ModelSpec> | undefined;
   /** Whether this person may change the conversation: its owner, and nobody else. */
   canTune: boolean;
@@ -102,7 +104,7 @@ export const TurnDial = memo(function TurnDial({
   session,
   agent,
   models,
-  modelCosts,
+  prices,
   modelSpecs,
   canTune,
   busy,
@@ -186,7 +188,7 @@ export const TurnDial = memo(function TurnDial({
                     {t.model} · {t.description}
                   </span>
                 </span>
-                <ModelCost cost={costFor(modelCosts, t.model)} />
+                <ModelCost price={priceFor(prices, t.model)} />
               </span>
             </DropdownMenuCheckboxItem>
           );
@@ -212,7 +214,7 @@ export const TurnDial = memo(function TurnDial({
                   {m}
                   {agents && <span className="ml-1.5 text-muted-foreground">(agent's)</span>}
                 </span>
-                <ModelCost cost={costFor(modelCosts, m)} />
+                <ModelCost price={priceFor(prices, m)} />
               </span>
             </DropdownMenuCheckboxItem>
           );

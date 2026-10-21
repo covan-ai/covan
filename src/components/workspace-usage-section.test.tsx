@@ -8,6 +8,14 @@ const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
 vi.mock("@tanstack/react-query", () => ({ useQuery }));
 vi.mock("@/lib/api-client", () => ({ api: { workspaceUsage: vi.fn() } }));
 
+// Whether this is the hosted service, which decides the unit every figure is
+// in. Flipped per test; `creditsPhrase` and the rest stay real.
+const hosted = { value: false };
+vi.mock("@/lib/credits", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/credits")>()),
+  useIsHosted: () => hosted.value,
+}));
+
 const TOTALS = {
   messageCount: 12,
   promptTokens: 90_000,
@@ -49,7 +57,10 @@ function renderWith(data: WorkspaceUsageResponse | undefined, isLoading = false)
   render(<WorkspaceUsageSection />);
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  hosted.value = false;
+});
 
 describe("WorkspaceUsageSection", () => {
   it("shows what the workspace spent, by agent", () => {
@@ -152,5 +163,58 @@ describe("WorkspaceUsageSection", () => {
 
     expect(screen.queryByText(/last .* months/i)).not.toBeInTheDocument();
     expect(screen.getByText("The workspace")).toBeInTheDocument();
+  });
+});
+
+describe("on the hosted service, where the unit is credits", () => {
+  beforeEach(() => {
+    hosted.value = true;
+  });
+
+  it("prices agents and months in credits, and never in dollars", () => {
+    renderWith(
+      response({
+        agents: [{ ...AGENT, cacheWriteTokens: 0, estCredits: 1680 }],
+        months: [
+          {
+            month: "2026-07-01",
+            messageCount: 0,
+            totalTokens: 0,
+            cachedTokens: 0,
+            cacheWriteTokens: 0,
+            estCostUsd: 0,
+            estCredits: 0,
+          },
+          {
+            month: "2026-08-01",
+            messageCount: 12,
+            totalTokens: 120_000,
+            cachedTokens: 0,
+            cacheWriteTokens: 0,
+            estCostUsd: 1.4,
+            estCredits: 1680,
+          },
+        ],
+      }),
+    );
+
+    expect(screen.getAllByText("1,680 credits").length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toMatch(/\$/);
+    expect(screen.getByText(/in credits at today's rate/)).toBeInTheDocument();
+    expect(screen.getByText(/the ledger below is what was actually charged/)).toBeInTheDocument();
+  });
+
+  it("shows no money for a row the API has not quoted, rather than dollars", () => {
+    renderWith(response({ agents: [{ ...AGENT, cacheWriteTokens: 0 }] }));
+
+    expect(screen.queryByText("$1.40")).toBeNull();
+    expect(screen.getByText("GTM Agent")).toBeInTheDocument();
+  });
+
+  it("no longer claims a reply does not record its model", () => {
+    renderWith(response());
+
+    expect(screen.queryByText(/does not record which model/)).toBeNull();
+    expect(screen.getByText(/priced by the model that wrote it/)).toBeInTheDocument();
   });
 });

@@ -44,7 +44,7 @@ const base = {
   uploadedAt: new Map<string, number>(),
   canRegenerate: false,
   pickableModels: [] as string[],
-  modelCosts: undefined,
+  prices: undefined,
   truncated: false,
   stoppedShort: null,
   canSpeak: false,
@@ -209,6 +209,22 @@ describe("AnswerTurn", () => {
     );
     expect(container.firstElementChild?.className).toMatch(/\bgroup\b/);
     expect(container.querySelector("[data-part='cost']")?.className).toMatch(/group-hover/);
+  });
+
+  it("prices the badge in dollars only where dollars are the unit", () => {
+    // The badge is priced in the browser from list prices, which is a dollar
+    // figure and nothing else. Where the deployment charges credits, that
+    // figure is the wrong unit and the tokens stand alone.
+    const tokens = message({ promptTokens: 100, completionTokens: 50 });
+    const { container, rerender } = render(
+      <AnswerTurn {...base} message={tokens} prices={{ unit: "usd", byModel: {} }} />,
+    );
+    expect(container.querySelector("[data-part='cost']")?.textContent).toMatch(/\$/);
+
+    rerender(<AnswerTurn {...base} message={tokens} prices={{ unit: "credits", byModel: {} }} />);
+    const badge = container.querySelector("[data-part='cost']")?.textContent ?? "";
+    expect(badge).toMatch(/100 in · 50 out/);
+    expect(badge).not.toMatch(/\$/);
   });
 
   it("offers nothing to read aloud where the browser cannot", () => {

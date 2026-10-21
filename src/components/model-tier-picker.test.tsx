@@ -15,7 +15,12 @@ const costs = {
 function renderPicker(value: string, models = ALL) {
   const onChange = vi.fn();
   const view = render(
-    <ModelTierPicker value={value} onChange={onChange} models={models} costs={costs} />,
+    <ModelTierPicker
+      value={value}
+      onChange={onChange}
+      models={models}
+      prices={{ unit: "usd", byModel: costs }}
+    />,
   );
   return { onChange, ...view };
 }

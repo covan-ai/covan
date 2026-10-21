@@ -321,6 +321,68 @@ export function formatReplyCost(cost: number): string {
 }
 
 /**
+ * The per-model reply prices a picker shows, in the one unit this deployment
+ * answers in.
+ *
+ * Credits on the hosted service, where `/me` sends `modelCredits`; dollars on
+ * an install that has no credits, where it sends `modelCosts` alone. The unit
+ * travels with the figures so that no screen ever converts — the rate is the
+ * hosted build's, and the open tree does not have it.
+ */
+export type ReplyPriceUnit = "credits" | "usd";
+export type ReplyPrices = { unit: ReplyPriceUnit; byModel: Record<string, number> };
+export type ReplyPrice = { unit: ReplyPriceUnit; amount: number };
+
+/** Credits when the server sent them, else dollars, else nothing. */
+export function replyPricesOf(
+  me:
+    | { modelCosts?: Record<string, number>; modelCredits?: Record<string, number> }
+    | null
+    | undefined,
+): ReplyPrices | undefined {
+  if (!me) return undefined;
+  if (me.modelCredits) return { unit: "credits", byModel: me.modelCredits };
+  if (me.modelCosts) return { unit: "usd", byModel: me.modelCosts };
+  return undefined;
+}
+
+/** `costFor`, carrying the unit. Null for an id with no price. */
+export function priceFor(
+  prices: ReplyPrices | undefined,
+  model: string | null | undefined,
+): ReplyPrice | null {
+  const amount = costFor(prices?.byModel, model);
+  return prices && amount !== null ? { unit: prices.unit, amount } : null;
+}
+
+/**
+ * "~14 credits", "~270 credits", "~1 credit", "<1 credit".
+ *
+ * Whole credits under twenty and two figures above, the way `approximateReplies`
+ * rounds replies: a per-reply price to three decimals would claim a precision
+ * the reference reply does not have. Its own rounding rather than that
+ * function's, because `credits.ts` reaches `api-client` at import and this
+ * module is meant to stay free of it.
+ */
+export function formatReplyCredits(credits: number): string {
+  if (credits < 1) return "<1 credit";
+  let rounded: number;
+  if (credits < 20) rounded = Math.round(credits);
+  else {
+    const magnitude = 10 ** (Math.floor(Math.log10(credits)) - 1);
+    rounded = Math.round(credits / magnitude) * magnitude;
+  }
+  return `~${rounded.toLocaleString()} ${rounded === 1 ? "credit" : "credits"}`;
+}
+
+/** A reply price in its own unit. */
+export function formatReplyPrice(price: ReplyPrice): string {
+  return price.unit === "credits"
+    ? formatReplyCredits(price.amount)
+    : formatReplyCost(price.amount);
+}
+
+/**
  * What a model will accept, as the server described it.
  *
  * The fallback matters more than the lookup. `modelSpecs` arrives with /me and

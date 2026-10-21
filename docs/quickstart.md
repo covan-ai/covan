@@ -188,20 +188,21 @@ fails, the turn falls back to a persona-only answer instead of failing.
 ## What it costs, on the hosted service
 
 Every workspace starts with 2,000 free credits, once, and spends them from one
-pool that every member shares. A credit is a quarter of a cent, so $25 is
-10,000 credits. Work is charged at what
-Covan pays for it — the model, the embeddings behind search and uploads,
-dictation, a connected-app call, and a browser task's model, browser time and
-proxy traffic — at the rate the [terms](https://covan.app/terms) set. There is
-no monthly reset: the balance goes down when your agents work and up when
-credits are added. An ordinary reply is a few credits to a few dozen,
-depending on the model.
+pool that every member shares. Credits are the only unit the app shows: the
+balance in the corner, the per-reply price beside each model, Settings → Usage,
+all in credits. Everything an agent does is charged in them — the model, the
+embeddings behind search and uploads, dictation, a connected-app call, and a
+browser task's model, browser time and proxy traffic — at the rate the
+[terms](https://covan.app/terms) set. There is no monthly reset: the balance
+goes down when your agents work and up when credits are added. An ordinary
+reply is a few credits to a few dozen, depending on the model.
 
-Nobody budgets in credits until they have seen what a reply costs, so the app
-converts: under the composer you get the balance and roughly how many replies it
-is worth, and once it runs low that becomes a banner above it. The conversion
-uses what your workspace's replies have averaged so far, which is why the figure
-can move after a long grounded conversation.
+Nobody budgets in credits until they have seen what a reply costs, so once
+your workspace has sent about ten replies the app converts: under the composer
+you get the balance and roughly how many replies it is worth, and once it runs
+low that becomes a banner above it. The conversion uses what your workspace's
+replies have averaged so far, which is why the figure can move after a long
+grounded conversation.
 
 When the balance reaches zero, replies, routines and connected-app calls stop
 until credits are added. There is no checkout yet: Settings → Usage has a form

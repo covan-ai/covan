@@ -10,6 +10,7 @@ import { SettledSteps, toStepViews } from "@/components/agent-steps";
 import { MsgAction } from "@/components/chat/turn-actions";
 import { VersionPicker, RetryOn } from "@/components/chat/answer-controls";
 import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
+import type { ReplyPrices } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";
 
 /**
@@ -57,7 +58,7 @@ export const AnswerTurn = memo(function AnswerTurn({
   uploadedAt,
   canRegenerate,
   pickableModels,
-  modelCosts,
+  prices,
   truncated,
   stoppedShort,
   canSpeak,
@@ -86,7 +87,8 @@ export const AnswerTurn = memo(function AnswerTurn({
   /** The last answer, to a question, in a session the reader owns. */
   canRegenerate: boolean;
   pickableModels: string[];
-  modelCosts: Record<string, number> | undefined;
+  /** What each model costs per reply, in the unit the server answers in. */
+  prices: ReplyPrices | undefined;
   /** The answer stopped at its length cap and can be carried on. */
   truncated: boolean;
   /** The turn stopped at a ceiling, and which one. */
@@ -232,15 +234,23 @@ export const AnswerTurn = memo(function AnswerTurn({
             {message.cachedTokens != null && message.cachedTokens > 0 && (
               <> · {formatTokens(message.cachedTokens)} cached</>
             )}
-            {" · "}
-            {formatCost(
-              estimateCostUsd(
-                model,
-                message.promptTokens,
-                message.completionTokens,
-                message.cachedTokens ?? 0,
-                message.cacheWriteTokens ?? 0,
-              ),
+            {/* Priced here, in the browser, from list prices — which is a
+                dollar figure and nothing else. Where the deployment charges
+                credits that figure is the wrong unit, and the server has not
+                quoted this message, so the tokens stand alone. */}
+            {prices?.unit !== "credits" && (
+              <>
+                {" · "}
+                {formatCost(
+                  estimateCostUsd(
+                    model,
+                    message.promptTokens,
+                    message.completionTokens,
+                    message.cachedTokens ?? 0,
+                    message.cacheWriteTokens ?? 0,
+                  ),
+                )}
+              </>
             )}
           </div>
         )}
@@ -293,7 +303,7 @@ export const AnswerTurn = memo(function AnswerTurn({
               <MsgAction label="Regenerate" onClick={() => onRegenerate()}>
                 <RefreshCw className="h-3.5 w-3.5" />
               </MsgAction>
-              <RetryOn models={pickableModels} costs={modelCosts} onPick={onRegenerate} />
+              <RetryOn models={pickableModels} prices={prices} onPick={onRegenerate} />
             </>
           )}
         </div>

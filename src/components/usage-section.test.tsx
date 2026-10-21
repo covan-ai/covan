@@ -56,8 +56,75 @@ describe("UsageSection", () => {
     expect(screen.getByText("Workspace credits")).toBeInTheDocument();
     expect(screen.getByText(/412 of 500/)).toBeInTheDocument();
     expect(screen.getByText(/replies left/)).toBeInTheDocument();
-    // What a credit is, said on the screen that shows them.
-    expect(screen.getByText(/A credit is a quarter of a cent/)).toBeInTheDocument();
+    // What a credit is, said on the screen that shows them — and never as a
+    // dollar rate, which is the hosted build's to set and change.
+    expect(
+      screen.getByText(/Credits are what every piece of work here is charged in/),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/quarter of a cent|is a cent|\$/);
+  });
+
+  it("holds the replies estimate back until the workspace has sent about ten", () => {
+    renderWith(metered(412.7, { replies: 3, spent: 6 }));
+
+    expect(screen.getByText(/412 of 500/)).toBeInTheDocument();
+    expect(screen.queryByText(/replies left/)).toBeNull();
+    expect(screen.getByText(/appears once this workspace has sent about ten/)).toBeInTheDocument();
+  });
+
+  it("shows the replies estimate however few replies it has seen once the balance is low", () => {
+    renderWith(metered(30, { replies: 3, spent: 470 }));
+
+    expect(screen.getByText(/replies left/)).toBeInTheDocument();
+  });
+
+  it("prices each agent in credits on the hosted service, never in dollars", () => {
+    const data = metered(412.7);
+    data.agents = [
+      {
+        agentId: "a1",
+        name: "GTM Agent",
+        emoji: "📈",
+        model: "gpt-4.1",
+        messageCount: 4,
+        promptTokens: 1000,
+        completionTokens: 200,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        measuredPromptTokens: 0,
+        totalTokens: 1200,
+        estCostUsd: 0.2,
+        estCredits: 240,
+      },
+    ];
+    renderWith(data);
+
+    expect(screen.getByText("240 credits")).toBeInTheDocument();
+    expect(screen.queryByText("$0.20")).toBeNull();
+  });
+
+  it("keeps dollars on an install that has no credits", () => {
+    const data = usage({ metered: false });
+    data.agents = [
+      {
+        agentId: "a1",
+        name: "GTM Agent",
+        emoji: "📈",
+        model: "gpt-4.1",
+        messageCount: 4,
+        promptTokens: 1000,
+        completionTokens: 200,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        measuredPromptTokens: 0,
+        totalTokens: 1200,
+        estCostUsd: 0.2,
+      },
+    ];
+    renderWith(data);
+
+    expect(screen.getByText("$0.20")).toBeInTheDocument();
+    expect(screen.queryByText("Workspace credits")).toBeNull();
   });
 
   it("offers the way out only once the credits are actually spent", () => {

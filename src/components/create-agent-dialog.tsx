@@ -17,7 +17,13 @@ import {
 import { Upload, X, FileText, ChevronRight, ChevronLeft, Sparkles } from "lucide-react";
 import { useAgentsStore } from "@/lib/agents-store";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
-import { EMOJIS, startingModelFor, PERSONA_TEMPLATES, modelsFor, costFor } from "@/lib/agent-meta";
+import {
+  EMOJIS,
+  startingModelFor,
+  PERSONA_TEMPLATES,
+  modelsFor,
+  replyPricesOf,
+} from "@/lib/agent-meta";
 import { ModelTierPicker } from "@/components/model-tier-picker";
 import { NewAgentSharingSelect } from "@/components/new-agent-sharing-select";
 import { newAgentSharing, type NewAgentSharing } from "@/lib/agent-access";
@@ -244,7 +250,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
               value={model}
               onChange={setModel}
               models={models}
-              costs={me?.modelCosts}
+              prices={replyPricesOf(me)}
             />
           </div>
           <div className="space-y-2">

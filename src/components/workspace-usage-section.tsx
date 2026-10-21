@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, type UsageMonth } from "@/lib/api-client";
+import { api, type AgentUsage, type UsageMonth } from "@/lib/api-client";
+import { creditsPhrase, useIsHosted } from "@/lib/credits";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, Disclosure, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
@@ -46,11 +47,20 @@ export function WorkspaceUsageSection() {
     queryKey: ["usage", "workspace"],
     queryFn: api.workspaceUsage,
   });
+  // Credits on the hosted service, dollars on an install that has none. Read
+  // from the `["usage"]` query the ledger below already shares.
+  const hosted = useIsHosted() === true;
 
   if (isLoading || !data?.available) return null;
 
   const used = data.agents.filter((a) => a.messageCount > 0);
   const months = data.months;
+  const money = (a: AgentUsage) =>
+    hosted
+      ? typeof a.estCredits === "number"
+        ? creditsPhrase(a.estCredits)
+        : null
+      : usd(a.estCostUsd);
 
   return (
     <section className="mt-16">
@@ -59,7 +69,7 @@ export function WorkspaceUsageSection() {
         description="Everyone's conversations together, by agent — never by person."
       />
 
-      {months.length > 0 && <MonthlyTrend months={months} />}
+      {months.length > 0 && <MonthlyTrend months={months} hosted={hosted} />}
 
       <SectionCard padded={false} className="mt-3 overflow-hidden">
         {used.length === 0 ? (
@@ -80,7 +90,7 @@ export function WorkspaceUsageSection() {
                       <span className="block font-medium text-foreground">
                         {compact(a.totalTokens)}
                       </span>
-                      {usd(a.estCostUsd)}
+                      {money(a)}
                     </span>
                   }
                 />
@@ -91,17 +101,22 @@ export function WorkspaceUsageSection() {
       </SectionCard>
 
       <p className="mt-3 text-xs text-muted-foreground">
-        Everything anybody in this workspace has ever asked, at list prices. Nothing here is broken
-        down by person, and there is no view that does.
+        Everything anybody in this workspace has ever asked, at list prices
+        {hosted ? ", in credits at today's rate" : ""}. Nothing here is broken down by person, and
+        there is no view that does.
       </p>
 
       {/* The methodology folds; the two claims above it do not. One says what
           the figures cover and the other is a promise about what they never
           will. */}
       <Disclosure className="mt-3" label="How a reply is priced">
-        The model shown is the agent's current one, and it prices every reply that agent has ever
-        sent — changing an agent's model re-prices its history, because a reply does not record
-        which model wrote it.
+        Each reply is priced by the model that wrote it, which a reply has recorded since
+        2026-09-27; older replies are priced at their agent's model. The model shown beside an agent
+        is the one it is set to now — what its next reply will use — so it can differ from what
+        priced the rows.
+        {hosted
+          ? " These are list-price estimates in credits; the ledger below is what was actually charged."
+          : ""}
       </Disclosure>
 
       <CreditLedger />
@@ -119,16 +134,20 @@ export function WorkspaceUsageSection() {
  * generates the span so a quiet month cannot silently close up and make a fall
  * look like a flat line.
  */
-function MonthlyTrend({ months }: { months: UsageMonth[] }) {
+function MonthlyTrend({ months, hosted }: { months: UsageMonth[]; hosted: boolean }) {
   const peak = Math.max(...months.map((m) => m.totalTokens), 1);
+  // One unit per screen: the credits figure where there are credits, the
+  // dollar one otherwise, and never a fallback from one to the other.
+  const amountOf = (m: UsageMonth) => (hosted ? m.estCredits : m.estCostUsd);
+  const money = (n: number) => (hosted ? creditsPhrase(n) : usd(n));
   // Summed only over the months that carry one. A month whose cost is absent is
   // a month nothing can price — an API or a database without `0071` — and
   // folding it in as zero would quietly understate the total instead of saying
   // the figure is incomplete. All or nothing is the honest pair of options, and
   // nothing is the one that cannot mislead.
-  const priced = months.filter((m) => typeof m.estCostUsd === "number");
+  const priced = months.filter((m) => typeof amountOf(m) === "number");
   const spend =
-    priced.length === months.length ? priced.reduce((n, m) => n + m.estCostUsd!, 0) : null;
+    priced.length === months.length ? priced.reduce((n, m) => n + (amountOf(m) ?? 0), 0) : null;
 
   return (
     <SectionCard className="mt-6">
@@ -136,7 +155,9 @@ function MonthlyTrend({ months }: { months: UsageMonth[] }) {
         <span className="text-sm text-muted-foreground">Last {months.length} months</span>
         <span className="text-sm font-medium">
           {compact(months.reduce((n, m) => n + m.totalTokens, 0))} tokens
-          {spend === null ? null : <span className="ml-2 text-muted-foreground">{usd(spend)}</span>}
+          {spend === null ? null : (
+            <span className="ml-2 text-muted-foreground">{money(spend)}</span>
+          )}
         </span>
       </div>
 
@@ -148,8 +169,8 @@ function MonthlyTrend({ months }: { months: UsageMonth[] }) {
             <div
               className="flex h-16 w-full items-end"
               title={
-                typeof m.estCostUsd === "number"
-                  ? `${compact(m.totalTokens)} tokens · ${usd(m.estCostUsd)}`
+                typeof amountOf(m) === "number"
+                  ? `${compact(m.totalTokens)} tokens · ${money(amountOf(m) ?? 0)}`
                   : `${compact(m.totalTokens)} tokens`
               }
             >
@@ -170,7 +191,7 @@ function MonthlyTrend({ months }: { months: UsageMonth[] }) {
         {months.map((m) => (
           <li key={m.month}>
             {monthLabel(m.month)}: {m.totalTokens} tokens across {m.messageCount} replies
-            {typeof m.estCostUsd === "number" ? `, ${usd(m.estCostUsd)}` : ""}
+            {typeof amountOf(m) === "number" ? `, ${money(amountOf(m) ?? 0)}` : ""}
           </li>
         ))}
       </ul>

@@ -1,4 +1,11 @@
-import { COST_BANDS, costBandIndex, formatReplyCost } from "@/lib/agent-meta";
+import {
+  COST_BANDS,
+  costBandIndex,
+  formatReplyCost,
+  formatReplyCredits,
+  formatReplyPrice,
+  type ReplyPrice,
+} from "@/lib/agent-meta";
 import { Disclosure } from "@/components/section-card";
 
 /**
@@ -10,14 +17,18 @@ import { Disclosure } from "@/components/section-card";
  * they have to learn. `lib/pricing.ts` on the server computes it, so this and
  * the usage screen are reading one price list.
  *
+ * In credits on the hosted service and in dollars on an install that has no
+ * credits: the unit comes with the figure (`ReplyPrice`), decided by the
+ * server, so no screen converts and a person never meets both.
+ *
  * Nothing is rendered when there is no price. Under a custom endpoint every id
  * is unknown by design, and a blank is the honest shape of that.
  */
-export function ModelCost({ cost }: { cost: number | null }) {
-  if (cost === null) return null;
+export function ModelCost({ price }: { price: ReplyPrice | null }) {
+  if (price === null) return null;
   return (
     <span className="ml-3 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-      {formatReplyCost(cost)}
+      {formatReplyPrice(price)}
     </span>
   );
 }
@@ -39,8 +50,32 @@ export function ModelCost({ cost }: { cost: number | null }) {
  * kind of claim this design system's first failure mode is about — somebody
  * whose agent reads forty-page documents should be able to tell at a glance
  * that this is not their number.
+ *
+ * In credits there is no ruler. Its three edges are absolute amounts of money
+ * (`COST_BANDS`), and labelling them in credits would need the credits-per-
+ * dollar rate on the client — the one number the open tree keeps out of
+ * reach (`boundary.test.ts`), and one that would go stale the day the markup
+ * changed. The figure and its assumption carry the information.
  */
-export function ModelCostScale({ cost }: { cost: number | null }) {
+export function ModelCostScale({ price }: { price: ReplyPrice | null }) {
+  if (price?.unit === "credits") {
+    return (
+      <div className="space-y-1.5">
+        <span className="font-mono text-xs tabular-nums">
+          {formatReplyCredits(price.amount)} / reply
+        </span>
+        <p className="text-xs text-muted-foreground">
+          Estimated from the average reply measured on this deployment, at today&rsquo;s rate.
+        </p>
+        <Disclosure label="What that assumes">
+          A 2,248-token prompt and a 921-token answer, priced as a fresh prompt. Longer
+          conversations and larger documents cost more.
+        </Disclosure>
+      </div>
+    );
+  }
+
+  const cost = price?.amount ?? null;
   const active = costBandIndex(cost);
 
   return (

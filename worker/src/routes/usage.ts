@@ -3,7 +3,7 @@ import type { AppEnv } from "../types";
 import { callerWorkspaceId } from "../lib/workspace";
 import { resolveModel, type ModelEnv } from "../lib/models";
 import { estimateCostUsd } from "../lib/pricing";
-import type { CreditSnapshot } from "../lib/entitlements";
+import { quoteOf, type CreditSnapshot } from "../lib/entitlements";
 
 const usage = new Hono<AppEnv>();
 
@@ -106,7 +106,9 @@ const emptyTotals = {
 
 /** One agent's row, priced. Shared by the per-caller and workspace-wide reads,
     which return identical columns on purpose so one renderer can read either. */
-function mapAgent(r: UsageRow, env?: ModelEnv) {
+type Quote = ((usd: number) => number) | null;
+
+function mapAgent(r: UsageRow, env?: ModelEnv, quote: Quote = null) {
   // What this deployment will actually answer with, which is the question this
   // field is for — an agent set to Claude on an install with no Anthropic key
   // answers with the default, and saying so is the point of resolving it.
@@ -130,6 +132,18 @@ function mapAgent(r: UsageRow, env?: ModelEnv) {
   // Only the prompt tokens on replies that carry a cache measurement — the
   // honest denominator for a hit rate. See 0025.
   const measuredPromptTokens = Number(r.measured_prompt_tokens) || 0;
+  // Priced by what answered, not by `model` above — which is what the agent
+  // is set to now, and therefore what it will answer with NEXT. The two
+  // disagreeing on a row is the fact rather than a glitch: see `costOf`.
+  const estCostUsd =
+    costOf(r.by_model, r.agent_model) ??
+    estimateCostUsd(
+      r.agent_model ?? "",
+      promptTokens,
+      completionTokens,
+      cachedTokens,
+      cacheWriteTokens,
+    );
   return {
     agentId: r.agent_id,
     name: r.agent_name,
@@ -142,23 +156,15 @@ function mapAgent(r: UsageRow, env?: ModelEnv) {
     cacheWriteTokens,
     measuredPromptTokens,
     totalTokens: promptTokens + completionTokens,
-    // Priced by what answered, not by `model` above — which is what the agent
-    // is set to now, and therefore what it will answer with NEXT. The two
-    // disagreeing on a row is the fact rather than a glitch: see `costOf`.
-    estCostUsd:
-      costOf(r.by_model, r.agent_model) ??
-      estimateCostUsd(
-        r.agent_model ?? "",
-        promptTokens,
-        completionTokens,
-        cachedTokens,
-        cacheWriteTokens,
-      ),
+    estCostUsd,
+    // The same estimate in credits, from the hosted build alone. Absent on an
+    // install with no credits, and the screen shows dollars there instead.
+    ...(quote ? { estCredits: quote(estCostUsd) } : {}),
   };
 }
 
-function sumTotals(agents: ReturnType<typeof mapAgent>[]) {
-  return agents.reduce(
+function sumTotals(agents: ReturnType<typeof mapAgent>[], quote: Quote = null) {
+  const totals = agents.reduce(
     (acc, a) => ({
       messageCount: acc.messageCount + a.messageCount,
       promptTokens: acc.promptTokens + a.promptTokens,
@@ -171,6 +177,9 @@ function sumTotals(agents: ReturnType<typeof mapAgent>[]) {
     }),
     { ...emptyTotals },
   );
+  // Quoted on the sum rather than summed over the quotes: the same number,
+  // because the conversion is a factor, and one call rather than one per row.
+  return quote ? { ...totals, estCredits: quote(totals.estCostUsd) } : totals;
 }
 
 // GET /usage — per-agent message + token totals and an estimated cost, scoped
@@ -185,6 +194,7 @@ usage.get("/usage", async (c) => {
   }
 
   const credits = await creditsOf(c.get("entitlements"), workspaceId);
+  const quote = quoteOf(c.get("entitlements"));
 
   const { data, error } = await db.rpc("workspace_usage", { p_workspace_id: workspaceId });
   if (error) {
@@ -192,8 +202,8 @@ usage.get("/usage", async (c) => {
     return c.json({ error: "failed to load usage" }, 500);
   }
 
-  const agents = ((data ?? []) as UsageRow[]).map((r) => mapAgent(r, c.env));
-  return c.json({ agents, totals: sumTotals(agents), credits });
+  const agents = ((data ?? []) as UsageRow[]).map((r) => mapAgent(r, c.env, quote));
+  return c.json({ agents, totals: sumTotals(agents, quote), credits });
 });
 
 /**
@@ -325,7 +335,8 @@ usage.get("/usage/workspace", async (c) => {
     return c.json({ error: "failed to load usage" }, 500);
   }
 
-  const agents = ((wide.data ?? []) as UsageRow[]).map((r) => mapAgent(r, c.env));
+  const quote = quoteOf(c.get("entitlements"));
+  const agents = ((wide.data ?? []) as UsageRow[]).map((r) => mapAgent(r, c.env, quote));
   const months = ((monthly.data ?? []) as MonthRow[]).map((m) => {
     const promptTokens = Number(m.prompt_tokens) || 0;
     const completionTokens = Number(m.completion_tokens) || 0;
@@ -345,11 +356,11 @@ usage.get("/usage/workspace", async (c) => {
       // Spread rather than set, so a database without `0071` returns a month
       // with no cost at all instead of a free one. There is no agent to fall
       // back to at this grain; a month is every agent at once.
-      ...(cost === null ? {} : { estCostUsd: cost }),
+      ...(cost === null ? {} : { estCostUsd: cost, ...(quote ? { estCredits: quote(cost) } : {}) }),
     };
   });
 
-  return c.json({ available: true, agents, totals: sumTotals(agents), months });
+  return c.json({ available: true, agents, totals: sumTotals(agents, quote), months });
 });
 
 export { usage };

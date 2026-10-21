@@ -40,7 +40,7 @@ import {
   REASONING_EFFORTS,
   REASONING_EFFORT_HINTS,
   type ReasoningEffort,
-  costFor,
+  replyPricesOf,
 } from "@/lib/agent-meta";
 import { ModelTierPicker } from "@/components/model-tier-picker";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -177,7 +177,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 value={model}
                 onChange={setModel}
                 models={models}
-                costs={me?.modelCosts}
+                prices={replyPricesOf(me)}
               />
             </div>
             <div className="space-y-2">

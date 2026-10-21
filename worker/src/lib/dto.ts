@@ -587,6 +587,12 @@ export type MeDTO = {
    */
   modelCosts: Record<string, number>;
   /**
+   * The same reference reply, in credits at today's rate. Present only from a
+   * hosted API, which is the only one with a unit to answer in; when it is,
+   * the picker shows it and never `modelCosts`.
+   */
+  modelCredits?: Record<string, number>;
+  /**
    * Where this account stands with its first run. The `_authed` layout gates on
    * `completed`, which is why this rides along with /me rather than having an
    * endpoint of its own — every page load needs the answer, and this response

@@ -231,6 +231,7 @@ describe("the schema", () => {
     ["profiles", "a person; co-member visibility goes through shares_workspace, which is scoped"],
     ["slack_identities", "a Slack user linked to a person"],
     ["user_onboarding", "a person's own progress"],
+    ["onboarding_events", "a person's own first run, step by step (0119)"],
     ["user_usage", "a person's own counters"],
     ["signup_grants", "hosted builds: keyed by person and outliving the workspace it names"],
     ["routine_deliveries", "no policies at all: the service role is the only reader"],

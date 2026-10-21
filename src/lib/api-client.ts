@@ -122,7 +122,32 @@ export type Me = {
    * `OPENAI_MODEL` makes the picked id irrelevant — both mean "no price".
    */
   modelCosts?: Record<string, number>;
-  onboarding: { completed: boolean; answers: OnboardingAnswers };
+  onboarding: OnboardingState;
+};
+
+/**
+ * Where this account stands with its first run, as `/me` and `/onboarding`
+ * both answer it. `lastStep` is the screen that was open when the person last
+ * left; `agentId` and `sessionId` are what the finish made (0119), null until
+ * it has.
+ */
+export type OnboardingState = {
+  completed: boolean;
+  lastStep: string | null;
+  agentId: string | null;
+  sessionId: string | null;
+  answers: OnboardingAnswers;
+};
+
+/** One thing that happened on one screen of the first run. */
+export type OnboardingEvent = {
+  step: string;
+  event: "viewed" | "completed" | "skipped";
+  /** ISO 8601. */
+  at: string;
+  elapsedMs?: number;
+  /** Minted by the client so a batch sent twice is counted once. */
+  clientId: string;
 };
 
 export type WorkspaceSummary = { id: string; name: string; slug: string; role: string };
@@ -1385,11 +1410,28 @@ export const api = {
       request("PATCH", "/notification-preferences", patch),
   },
   onboarding: {
-    /** The same answers /me carries, for an account /me cannot answer yet. */
-    get: (): Promise<{ completed: boolean; answers: OnboardingAnswers }> =>
-      request("GET", "/onboarding"),
-    update: (patch: AnswerPatch): Promise<OnboardingAnswers> =>
+    /** The same state /me carries, for an account /me cannot answer yet. */
+    get: (): Promise<OnboardingState> => request("GET", "/onboarding"),
+    update: (patch: AnswerPatch): Promise<OnboardingState> =>
       request("PATCH", "/onboarding", patch),
+    /**
+     * What happened on the way through, in a batch. First-party and own-row:
+     * nothing here reaches anyone but this install (0119).
+     */
+    events: (events: OnboardingEvent[]): Promise<{ accepted: number }> =>
+      request("POST", "/onboarding/events", { events }),
+    /**
+     * The end of a run that named an assistant: makes the agent and the
+     * conversation it opens in, once, and says which. Calling it again hands
+     * back the same two ids, which is what makes a reload of the last screen
+     * safe.
+     */
+    finish: (input: {
+      persona?: string;
+      model?: string;
+    }): Promise<{ completed: true; agentId: string; sessionId: string; created: boolean }> =>
+      request("POST", "/onboarding/finish", input),
+    /** The end of a run that did not: an invitation accepted, a workspace started. */
     complete: (): Promise<{ completed: true }> => request("POST", "/onboarding/complete"),
   },
   feedback: {

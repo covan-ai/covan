@@ -196,7 +196,7 @@ function TeamPage() {
           turn="Everyone who needs it."
           action={
             isAdmin ? (
-              <Button onClick={() => setInviteOpen(true)}>
+              <Button onClick={() => setInviteOpen(true)} data-coach="invite-member">
                 <UserPlus className="h-4 w-4" /> Invite
               </Button>
             ) : undefined

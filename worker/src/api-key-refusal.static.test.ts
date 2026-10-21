@@ -73,6 +73,9 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
   "routes/account.ts DELETE /account":
     "closes the account, which destroys the evidence and the account in one call and cannot be undone by revoking anything",
 
+  "routes/onboarding.ts POST /onboarding/finish":
+    "stamps an account as arrived, makes its first agent and conversation and sends its welcome — a first run is the person's own to finish, and none of it is undone by revoking the key",
+
   // -- people
   "routes/invitations.ts POST /invitations":
     "invites people, and what comes back is a second person with their own session — access in a third party's hands that revoking the key does not touch",
@@ -253,6 +256,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/onboarding.ts GET /onboarding",
   "routes/onboarding.ts PATCH /onboarding",
   "routes/onboarding.ts POST /onboarding/complete",
+  "routes/onboarding.ts POST /onboarding/events",
   "routes/persona.ts POST /persona/suggest",
   "routes/reports.ts POST /sessions/:id/report",
   "routes/document-jobs.ts GET /sessions/:id/document-jobs",

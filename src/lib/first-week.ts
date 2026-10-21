@@ -14,7 +14,7 @@ import type { Agent, ChatSession } from "./agents-store";
  * none, and the alternative is a counters table that has to be kept true.
  */
 export type FirstWeekStep = {
-  key: "knowledge" | "ask" | "team" | "routine";
+  key: "ask" | "connect" | "knowledge" | "team" | "routine";
   label: string;
   hint: string;
   done: boolean;
@@ -26,29 +26,47 @@ export type FirstWeekInput = {
   /** Everyone in the workspace, including the person reading this. */
   memberCount: number;
   routineCount: number;
+  /**
+   * Applications wired up and working — the length of `mergeConnectedApps`,
+   * plus Slack if installed. Absent reads as none, so a caller that has not
+   * fetched connections sees the step open rather than ticked on a guess.
+   */
+  connectedCount?: number;
 };
 
+/**
+ * The labels here are what the list says when nothing else does. The setup
+ * list beside the first conversation reads its own words from
+ * `onboarding-config.ts` and only the `done` flags from here.
+ */
 export function firstWeekSteps({
   agents,
   sessions,
   memberCount,
   routineCount,
+  connectedCount = 0,
 }: FirstWeekInput): FirstWeekStep[] {
   return [
+    {
+      key: "ask",
+      label: "Ask it something",
+      hint: "The reply names where it came from — that is the difference between this and a chat window.",
+      // `messageCount`, not `sessions.length`: opening the composer starts a
+      // session before anybody has said anything, so counting sessions would
+      // tick this box for a workspace that has never asked a question.
+      done: sessions.some((s) => s.messageCount > 0),
+    },
+    {
+      key: "connect",
+      label: "Connect an app",
+      hint: "Mail, calendar, a CRM, a wiki. The agent can then read and act in it, with your say-so.",
+      done: connectedCount > 0,
+    },
     {
       key: "knowledge",
       label: "Upload what the team knows",
       hint: "A process doc, a contract, a research note. This is what the agent answers from.",
       done: agents.some((a) => a.documents.length > 0),
-    },
-    {
-      key: "ask",
-      label: "Ask it something the document answers",
-      hint: "The reply names the file it came from — that is the difference between this and a chat window.",
-      // `messageCount`, not `sessions.length`: opening the composer starts a
-      // session before anybody has said anything, so counting sessions would
-      // tick this box for a workspace that has never asked a question.
-      done: sessions.some((s) => s.messageCount > 0),
     },
     {
       key: "team",

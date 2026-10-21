@@ -594,16 +594,87 @@ export type MeDTO = {
    * browser mid-survey resumes on the question they stopped at instead of
    * starting over.
    */
-  onboarding: {
-    completed: boolean;
-    answers: {
-      role: string | null;
-      useCase: string | null;
-      teamSize: string | null;
-      referralSource: string | null;
-    };
+  onboarding: OnboardingDTO;
+};
+
+/**
+ * The columns `/me` and `/onboarding` both read. One string, so the two
+ * cannot drift: before 0119 `/me` mapped the row by hand and `/onboarding`
+ * had its own copy, and a column added to one was a column the other never
+ * served.
+ */
+export const ONBOARDING_COLUMNS =
+  "completed_at, role, use_case, team_size, referral_source, assistant_name, assistant_emoji, assistant_role, tools, purpose, mode, last_step, agent_id, session_id";
+
+export type OnboardingRow = {
+  completed_at: string | null;
+  role: string | null;
+  use_case: string | null;
+  team_size: string | null;
+  referral_source: string | null;
+  assistant_name: string | null;
+  assistant_emoji: string | null;
+  assistant_role: string | null;
+  tools: string[] | null;
+  purpose: string | null;
+  mode: string | null;
+  last_step: string | null;
+  agent_id: string | null;
+  session_id: string | null;
+};
+
+/**
+ * Where an account stands with its first run.
+ *
+ * `lastStep` is the screen that was open, so a reload resumes there rather
+ * than at the first unanswered question. `agentId` and `sessionId` are what
+ * the finish made (0119), and are null until it has. The four survey answers
+ * at the top of `answers` are the old run's; they stay readable because the
+ * rows that carry them are still here.
+ *
+ * `tools` is `null` when the question has not been reached and `[]` when it
+ * was skipped. The difference is what lets a resume tell "not yet" from "no".
+ */
+export type OnboardingDTO = {
+  completed: boolean;
+  lastStep: string | null;
+  agentId: string | null;
+  sessionId: string | null;
+  answers: {
+    role: string | null;
+    useCase: string | null;
+    teamSize: string | null;
+    referralSource: string | null;
+    assistantName: string | null;
+    assistantEmoji: string | null;
+    assistantRole: string | null;
+    tools: string[] | null;
+    purpose: string | null;
+    mode: string | null;
   };
 };
+
+/** No row is the normal state of a new account, not an error: nothing answered, nothing finished. */
+export function mapOnboarding(row: OnboardingRow | null | undefined): OnboardingDTO {
+  return {
+    completed: Boolean(row?.completed_at),
+    lastStep: row?.last_step ?? null,
+    agentId: row?.agent_id ?? null,
+    sessionId: row?.session_id ?? null,
+    answers: {
+      role: row?.role ?? null,
+      useCase: row?.use_case ?? null,
+      teamSize: row?.team_size ?? null,
+      referralSource: row?.referral_source ?? null,
+      assistantName: row?.assistant_name ?? null,
+      assistantEmoji: row?.assistant_emoji ?? null,
+      assistantRole: row?.assistant_role ?? null,
+      tools: row?.tools ?? null,
+      purpose: row?.purpose ?? null,
+      mode: row?.mode ?? null,
+    },
+  };
+}
 
 export function toEpochMs(value: string): number {
   return new Date(value).getTime();

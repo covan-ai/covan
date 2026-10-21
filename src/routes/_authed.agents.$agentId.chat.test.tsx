@@ -123,6 +123,11 @@ vi.mock("@/lib/api-client", () => ({
     },
     brainstorm: { suggest: vi.fn() },
     ideas: { create: vi.fn() },
+    // Read only by the conversation the first run opened, for its Connect
+    // card. Nothing connected, which is what a first run has.
+    toolConnections: { list: () => Promise.resolve({ connections: [], tools: [] }) },
+    connections: { list: () => Promise.resolve({ connections: [], providers: [] }) },
+    slack: { get: () => Promise.resolve({ configured: false, installation: null }) },
   },
 }));
 
@@ -176,6 +181,13 @@ vi.mock("@/components/idea-board", () => ({ IdeaBoard: () => null }));
 vi.mock("@/hooks/use-connections", () => ({
   useConnections: () => ({ data: { connections: [], providers: [] } }),
   useToolConnections: () => ({ data: { connections: [], tools: [] } }),
+  // The keys the Connect card under an opening reads its connections by, and
+  // the two hooks it connects with. Only the first run's conversation asks.
+  toolConnectionsKey: ["tool-connections"],
+  connectionsKey: ["connections"],
+  slackKey: ["slack"],
+  useConnectComposio: () => ({ mutate: vi.fn(), isPending: false }),
+  useStartConnection: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 vi.mock("@/components/source-chip", () => ({ SourceChip: () => null }));
 
@@ -2027,5 +2039,89 @@ describe("opening a thread's link before the sessions have loaded", () => {
         expect.objectContaining({ search: { s: "session-new" }, replace: true }),
       ),
     );
+  });
+});
+
+/**
+ * The conversation the first run opens.
+ *
+ * The welcome screen leaves a flag under `chat-kickoff:<id>` and lands here on
+ * an empty conversation. The assistant speaks first — one `/chat/stream` call
+ * with `kickoff: true`, the flag spent as it is read — and the Connect card
+ * for the first tool the person named sits under what it said, drawn by this
+ * screen rather than by the model.
+ */
+describe("the conversation the first run opens", () => {
+  const opening = {
+    id: "msg-k",
+    role: "assistant" as const,
+    content: "Hi Ada. This is Desk.",
+    createdAt: Date.parse("2026-09-17T10:00:00Z"),
+  };
+
+  beforeEach(() => {
+    meReply = {
+      ...meDefault,
+      onboarding: {
+        completed: true,
+        lastStep: "done",
+        agentId: "agent-1",
+        sessionId: "session-1",
+        answers: { tools: ["gmail", "notion"], mode: "solo" },
+      },
+    };
+    listMessages.mockResolvedValue([]);
+    sessionStorage.clear();
+    localStorage.clear();
+  });
+
+  it("opens once, spends the flag, and puts the Connect card under the opening", async () => {
+    sessionStorage.setItem("chat-kickoff:session-1", "1");
+    // Empty when the screen opens — that is what fires the opening — and the
+    // opening on every read after it, as the server would answer once the
+    // reply is written.
+    listMessages.mockResolvedValueOnce([]).mockResolvedValue([opening]);
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        streamOf([
+          { type: "delta", text: "Hi Ada. This is Desk." },
+          { type: "done", message: opening },
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderChat();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(url)).toMatch(/\/chat\/stream$/);
+    expect(JSON.parse(init.body as string)).toEqual({ sessionId: "session-1", kickoff: true });
+    expect(sessionStorage.getItem("chat-kickoff:session-1")).toBeNull();
+
+    expect(await screen.findByText("Hi Ada. This is Desk.")).toBeInTheDocument();
+    expect(await screen.findByText("Connect Gmail")).toBeInTheDocument();
+    // Still one call: the reply landing re-rendered the screen with the
+    // flag already spent.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not open again on a reload, and keeps the card under the opening", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    listMessages.mockResolvedValue([opening]);
+
+    await renderChat();
+
+    expect(await screen.findByText("Connect Gmail")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows no card in any other conversation, and none once it is put down", async () => {
+    listMessages.mockResolvedValue([opening]);
+    localStorage.setItem("covan:kickoff-card:session-1", "1");
+    await renderChat();
+    await screen.findByText("Hi Ada. This is Desk.");
+    expect(screen.queryByText("Connect Gmail")).not.toBeInTheDocument();
   });
 });

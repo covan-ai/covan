@@ -13,8 +13,6 @@ import { Chip, DataRow, EmptyState } from "@/components/section-card";
 import { AgentAvatar, AvatarStack, UserAvatar } from "@/components/avatars";
 import { useCredits, creditsSentence } from "@/lib/credits";
 import { CoverageNotice } from "@/components/coverage-notice";
-import { FirstWeekChecklist } from "@/components/first-week-checklist";
-import { firstWeekSteps, firstWeekRemaining, useChecklistDismissed } from "@/lib/first-week";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,24 +60,6 @@ function Home() {
   );
   const [agentId, setAgentId] = useState<string | undefined>(undefined);
   const selected = agents.find((a) => a.id === agentId) ?? defaultAgent;
-
-  // The one fact the checklist needs that the home screen does not already
-  // hold. Asked for only while it could still change the answer, so a
-  // settled workspace stops paying for it on every visit.
-  const { dismissed, dismiss } = useChecklistDismissed(me?.workspace.id);
-  const showChecklist = canWrite && !dismissed && agents.length > 0;
-  const { data: routines = [] } = useQuery({
-    queryKey: ["routines"],
-    queryFn: () => api.routines.list(),
-    enabled: showChecklist,
-  });
-
-  const steps = firstWeekSteps({
-    agents,
-    sessions,
-    memberCount: members.length,
-    routineCount: routines.length,
-  });
 
   // The ⌘K "New agent" action deep-links here with ?new=true.
   //
@@ -164,14 +144,9 @@ function Home() {
           workspaceId={me?.workspace.id ?? ""}
           enabled={me?.workspace.gapReportEnabled ?? false}
         />
-        {/* Under the composer, never over it: the composer is the product and
-            this is scaffolding. Hidden from a viewer, since the policies refuse
-            them three of the four steps, and hidden while the workspace has no
-            agents at all — that screen has one job and the composer above is
-            already saying it. */}
-        {showChecklist && firstWeekRemaining(steps) > 0 && (
-          <FirstWeekChecklist steps={steps} agentId={agents[0].id} onDismiss={dismiss} />
-        )}
+        {/* The setup checklist used to sit here. It lives in the sidebar now
+            (`setup-list.tsx`), where it is reachable from every page rather
+            than from this one. */}
       </div>
 
       <div className="mx-auto w-full max-w-[1200px] space-y-20 px-5 pb-32 pt-24 lg:px-8">

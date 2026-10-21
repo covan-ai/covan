@@ -1,7 +1,15 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { mapProfile, PROFILE_COLUMNS, type MeDTO, type ProfileRow } from "../lib/dto";
+import {
+  mapOnboarding,
+  mapProfile,
+  ONBOARDING_COLUMNS,
+  PROFILE_COLUMNS,
+  type MeDTO,
+  type OnboardingRow,
+  type ProfileRow,
+} from "../lib/dto";
 import { BCP47_RE, canonicalTimeZone } from "../lib/profile-fields";
 import { callerWorkspaceId } from "../lib/workspace";
 import { availableModels, modelSpecsFor } from "../lib/models";
@@ -156,7 +164,7 @@ me.get("/me", async (c) => {
   // refusing to serve /me over this would lock a working account out of the app.
   const { data: onboardingRow } = await db
     .from("user_onboarding")
-    .select("completed_at, role, use_case, team_size, referral_source")
+    .select(ONBOARDING_COLUMNS)
     .eq("user_id", user.id)
     .maybeSingle();
 
@@ -174,15 +182,7 @@ me.get("/me", async (c) => {
     modelSpecs: modelSpecsFor(availableModels(c.env)),
     // Empty under a custom endpoint, where the picked id is not what answers.
     modelCosts: modelCostsFor(availableModels(c.env), c.env),
-    onboarding: {
-      completed: Boolean(onboardingRow?.completed_at),
-      answers: {
-        role: (onboardingRow?.role as string | null) ?? null,
-        useCase: (onboardingRow?.use_case as string | null) ?? null,
-        teamSize: (onboardingRow?.team_size as string | null) ?? null,
-        referralSource: (onboardingRow?.referral_source as string | null) ?? null,
-      },
-    },
+    onboarding: mapOnboarding(onboardingRow as OnboardingRow | null),
   };
 
   return c.json(result);

@@ -8,7 +8,22 @@
 // with no matching item, so the picker shows a blank — on the new agent, and
 // again every time somebody opens its settings afterwards.
 // `agent-meta.test.ts` pins that.
-export const EMOJIS = ["🎓", "🚀", "🧑‍💻", "📊", "🧠", "✍️", "🎨", "🔬", "⚖️", "💬", "🧭"] as const;
+export const EMOJIS = [
+  "🎓",
+  "🚀",
+  "🧑‍💻",
+  "📊",
+  "🧠",
+  "✍️",
+  "🎨",
+  "🔬",
+  "⚖️",
+  "💬",
+  "🧭",
+  "🧰",
+  "📬",
+  "🗂️",
+] as const;
 
 /**
  * Every model this build knows, in picker order.
@@ -338,5 +353,25 @@ export const PERSONA_TEMPLATES: PersonaTemplate[] = [
     model: "gpt-4.1",
     persona:
       "You are a rigorous data analyst. Interpret the team's data and documents, surface the key insight first, then the supporting detail. State assumptions explicitly and never overclaim beyond what the data shows.",
+  },
+  // The two below are what the first run's "What will it mostly do?" answers
+  // start from (`onboarding-config.ts`): sales and operations had no template
+  // of their own, and the nearest ones — GTM, Support — answered the wrong
+  // questions for both.
+  {
+    id: "sales",
+    label: "Sales Assistant",
+    emoji: "🧰",
+    model: "gpt-4.1-mini",
+    persona:
+      "You are a sharp, organised sales assistant. Help with leads, follow-ups, proposals and account notes, grounded in the team's documents and connected apps. Keep track of who was promised what and when. Draft messages in the team's voice, suggest the next step on each deal, and never invent a figure, a date or a commitment that is not in the sources.",
+  },
+  {
+    id: "operations",
+    label: "Operations Assistant",
+    emoji: "🗂️",
+    model: "gpt-4.1-mini",
+    persona:
+      "You are a calm, precise operations assistant. Answer the questions that repeat — how this team does a thing, who owns it, what the steps are — from the team's documents and connected apps rather than from general practice. Turn a vague request into a checklist, flag a handoff that is missing an owner, and say plainly when the documents do not cover something instead of filling the gap.",
   },
 ];

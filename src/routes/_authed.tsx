@@ -7,6 +7,7 @@ import { readSession } from "@/lib/supabase/session";
 import { api } from "@/lib/api-client";
 import { onboardingRedirect } from "@/lib/onboarding-gate";
 import { hasPendingGrant } from "@/lib/sensitive-url";
+import { CoachMarkLayer } from "@/components/coach-mark";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
@@ -160,5 +161,12 @@ function AuthedLayout() {
     );
   }
 
-  return <Outlet />;
+  return (
+    <>
+      <Outlet />
+      {/* Once, above every signed-in page, so the setup list's "Try" can
+          point at something on whichever page it just went to. */}
+      <CoachMarkLayer />
+    </>
+  );
 }

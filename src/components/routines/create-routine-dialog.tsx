@@ -386,7 +386,7 @@ export function CreateRoutineDialog({
 
   return (
     <>
-      <Button onClick={() => setOpen(true)}>
+      <Button onClick={() => setOpen(true)} data-coach="new-routine">
         <Plus className="mr-1.5 h-4 w-4" /> New routine
       </Button>
 

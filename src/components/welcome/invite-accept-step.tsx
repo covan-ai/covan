@@ -12,12 +12,10 @@ import { OPEN_THE_EMAIL, useAcceptInvitation } from "@/lib/accept-invitation";
 export function InviteAcceptStep({
   onJoined,
   onSkip,
-  skipLabel = "Not now",
 }: {
   onJoined: () => void;
+  /** Also what the bar's skip does; here it only backs the empty state. */
   onSkip: () => void;
-  /** An account with no workspace of its own is offered to start one instead. */
-  skipLabel?: string;
 }) {
   const { data: incoming = [] } = useQuery({
     queryKey: ["invitations", "incoming"],
@@ -63,13 +61,6 @@ export function InviteAcceptStep({
           )}
         </div>
       ))}
-      <button
-        type="button"
-        onClick={onSkip}
-        className="w-full text-center text-meta text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-      >
-        {skipLabel}
-      </button>
     </div>
   );
 }

@@ -41,6 +41,7 @@ import { parseReportCommand } from "@/lib/reports";
 import { useCredits, creditsSentence } from "@/lib/credits";
 import { startersFor } from "@/lib/chat-starters";
 import { visibleDocuments } from "@/lib/visible-documents";
+import { sessionLabel } from "@/lib/session-label";
 import { dialLabel, modelsFor, specFor } from "@/lib/agent-meta";
 import { dateDividers } from "@/lib/message-groups";
 import { gapBefore, GAP_CLASS } from "@/lib/chat-rhythm";
@@ -1890,7 +1891,7 @@ function ChatTab() {
           </div>
         ) : (
           <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
-            {active?.title?.trim() || (isBrainstorm ? "New brainstorm" : "New thread")}
+            {active ? sessionLabel(active) : "New thread"}
           </h1>
         )}
 

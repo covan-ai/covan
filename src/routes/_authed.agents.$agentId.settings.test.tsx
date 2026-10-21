@@ -278,3 +278,30 @@ describe("access to this agent", () => {
     expect(await screen.findByText("GH")).toBeInTheDocument();
   });
 });
+
+describe("the model, as three words", () => {
+  it("offers the tiers as chips once the install serves one, with the list underneath", async () => {
+    // The fixture's models are no tier, so every other test sees the plain
+    // Select. Here one tier is served and the chips appear.
+    const before = me.models;
+    me.models = [...before, "claude-sonnet-5"];
+    try {
+      renderSettings();
+
+      const balanced = await screen.findByRole("radio", { name: /Balanced/ });
+      expect(balanced).toHaveAttribute("aria-checked", "false");
+      // gpt-4o is no tier, so the state the chips cannot stand for is shown as Custom.
+      expect(screen.getByRole("radio", { name: /Custom/ })).toHaveAttribute("aria-checked", "true");
+      expect(screen.getByText("All models")).toBeInTheDocument();
+
+      await userEvent.click(balanced);
+      expect(screen.getByRole("radio", { name: /Balanced/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      expect(screen.queryByRole("radio", { name: /Custom/ })).toBeNull();
+    } finally {
+      me.models = before;
+    }
+  });
+});

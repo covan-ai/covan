@@ -74,8 +74,88 @@ export const MODELS = [
  * would have made the per-agent temperature setting inert on every new agent —
  * and it does not bill thinking against the answer's ceiling. Cheaper is
  * available (`gpt-4o-mini`) and one Select away for anyone who wants it.
+ *
+ * Since the picker grew tiers this is the *fallback*, not the usual answer:
+ * `startingModelFor` seeds the Balanced tier wherever the install serves it,
+ * and lands here on an install without an Anthropic key — which is why this
+ * must stay an OpenAI id, and why `agent-meta.test.ts` pins that.
  */
 export const DEFAULT_NEW_AGENT_MODEL = "gpt-4.1-mini";
+
+/**
+ * The three choices a person who does not know the model names is offered.
+ *
+ * Thirteen ids in a Select is a question most people cannot answer; a tester
+ * who was not an engineer said as much. Three words they can — fast, balanced,
+ * smartest — each standing for one model this build is confident in, with the
+ * full list a disclosure away for anyone who wants an id.
+ *
+ * The descriptions are the pricing table in words (haiku < sonnet < opus per
+ * reply), not a promise about any one answer. Absolute, like `COST_BANDS`:
+ * adding a model to the catalogue moves none of these.
+ *
+ * One provider for all three on purpose. Mixing providers across tiers would
+ * mean tool use, thinking and web search behaving differently between "fast"
+ * and "balanced" for reasons the words do not explain.
+ */
+export const MODEL_TIERS = [
+  {
+    id: "fast",
+    label: "Fast",
+    description: "Quick answers, lowest cost",
+    model: "claude-haiku-4-5",
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    description: "Good at most things",
+    model: "claude-sonnet-5",
+  },
+  {
+    id: "smartest",
+    label: "Smartest",
+    description: "Hardest questions, highest cost",
+    model: "claude-opus-5",
+  },
+] as const;
+
+export type ModelTier = (typeof MODEL_TIERS)[number];
+
+/**
+ * The tiers a picker can offer: those whose model is in `models` — what the
+ * picker already lists, so an agent sitting on a tier model the install no
+ * longer serves still shows its tier, carried in the way `modelsFor` carries
+ * the id. Empty on an OpenAI-only install, where the picker stays a list.
+ */
+export function modelTiers(models: readonly string[]): ModelTier[] {
+  return MODEL_TIERS.filter((t) => models.includes(t.model));
+}
+
+/** The tier a model id stands for, or null for one that is no tier. */
+export function tierOf(model: string | null | undefined): ModelTier | null {
+  return MODEL_TIERS.find((t) => t.model === model) ?? null;
+}
+
+/** What a chip or a sentence calls a model: its tier's word, else its id. */
+export function modelLabel(model: string): string {
+  return tierOf(model)?.label ?? model;
+}
+
+/**
+ * Where a new agent starts: the workspace's own default when it has named
+ * one, else the Balanced tier wherever this install serves it, else
+ * `DEFAULT_NEW_AGENT_MODEL`. Balanced rather than Fast because most people
+ * accept the default, and the default decides what the product feels like;
+ * the cheaper tier is one press away.
+ */
+export function startingModelFor(
+  available: readonly string[] | undefined,
+  workspaceDefault: string | null | undefined,
+): string {
+  if (workspaceDefault) return workspaceDefault;
+  const balanced = MODEL_TIERS[1].model;
+  return available?.includes(balanced) ? balanced : DEFAULT_NEW_AGENT_MODEL;
+}
 
 /**
  * What a model picker should list: what this install offers, plus whatever the
@@ -167,7 +247,8 @@ export function effortWord(effort: ReasoningEffort): string {
 
 /**
  * What a conversation is answered with, in the few words a chip has room for:
- * `claude-opus-5 · Medium`, or `gpt-4.1` alone.
+ * `Smartest · Medium`, or `gpt-4.1` alone — the tier's word where the model
+ * is a tier (`modelLabel`), the id where it is not.
  *
  * The effort is dropped on a model that does not reason, and not because it
  * would be untidy: the worker ignores an effort it cannot send, so printing
@@ -181,8 +262,9 @@ export function dialLabel(
   effort: ReasoningEffort | null | undefined,
   reasons: boolean,
 ): string {
-  if (!reasons || effort == null) return model;
-  return `${model} · ${effortWord(effort)}`;
+  const name = modelLabel(model);
+  if (!reasons || effort == null) return name;
+  return `${name} · ${effortWord(effort)}`;
 }
 
 /**

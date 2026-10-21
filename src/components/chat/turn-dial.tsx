@@ -15,6 +15,8 @@ import {
   DIAL_EFFORT_HINTS,
   costFor,
   effortWord,
+  modelLabel,
+  modelTiers,
   specFor,
   thinkingOf,
   type ModelSpec,
@@ -127,6 +129,13 @@ export const TurnDial = memo(function TurnDial({
     onChange({ [key]: next } as SessionTuning);
   };
 
+  // The three tiers first, by their words, then every other id under "All
+  // models" — the same shape as the picker on the agent's settings page, so
+  // the chip and the page call one model one thing.
+  const tiers = modelTiers(models);
+  const tiered = new Set<string>(tiers.map((t) => t.model));
+  const rest = models.filter((m) => !tiered.has(m));
+
   const live = canTune && !busy;
   const why = !canTune
     ? "Only the person who started this conversation can change this"
@@ -145,26 +154,57 @@ export const TurnDial = memo(function TurnDial({
       className="flex min-w-0 items-center gap-1 overflow-x-auto"
     >
       <Dial
-        label={`Model: ${model}`}
+        label={`Model: ${modelLabel(model)}`}
         tip={why ?? "The model for this conversation"}
         live={live}
         readOnly={!canTune}
         chip={
           <DialChip>
-            {model}
+            {modelLabel(model)}
             {canTune && <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
           </DialChip>
         }
       >
-        {models.map((m) => {
+        {tiers.map((t) => {
+          const agents = t.model === agent.model;
+          return (
+            <DropdownMenuCheckboxItem
+              key={t.model}
+              checked={t.model === model}
+              // Picking the agent's own model stores null rather than its id,
+              // so the conversation goes on following the agent if the agent
+              // is moved later — which is what "the agent's" means.
+              onSelect={() => set("model", agents ? null : t.model)}
+            >
+              <span className="flex w-full items-center justify-between gap-3">
+                <span className="flex flex-col">
+                  <span>
+                    {t.label}
+                    {agents && <span className="ml-1.5 text-muted-foreground">(agent's)</span>}
+                  </span>
+                  <span className="text-meta text-muted-foreground">
+                    {t.model} · {t.description}
+                  </span>
+                </span>
+                <ModelCost cost={costFor(modelCosts, t.model)} />
+              </span>
+            </DropdownMenuCheckboxItem>
+          );
+        })}
+        {tiers.length > 0 && rest.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-meta font-normal text-muted-foreground">
+              All models
+            </DropdownMenuLabel>
+          </>
+        )}
+        {rest.map((m) => {
           const agents = m === agent.model;
           return (
             <DropdownMenuCheckboxItem
               key={m}
               checked={m === model}
-              // Picking the agent's own model stores null rather than its id,
-              // so the conversation goes on following the agent if the agent
-              // is moved later — which is what "the agent's" means.
               onSelect={() => set("model", agents ? null : m)}
             >
               <span className="flex w-full items-center justify-between">

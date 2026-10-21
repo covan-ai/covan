@@ -17,14 +17,8 @@ import {
 import { Upload, X, FileText, ChevronRight, ChevronLeft, Sparkles } from "lucide-react";
 import { useAgentsStore } from "@/lib/agents-store";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
-import {
-  EMOJIS,
-  DEFAULT_NEW_AGENT_MODEL,
-  PERSONA_TEMPLATES,
-  modelsFor,
-  costFor,
-} from "@/lib/agent-meta";
-import { ModelCost, ModelCostScale } from "@/components/model-cost";
+import { EMOJIS, startingModelFor, PERSONA_TEMPLATES, modelsFor, costFor } from "@/lib/agent-meta";
+import { ModelTierPicker } from "@/components/model-tier-picker";
 import { NewAgentSharingSelect } from "@/components/new-agent-sharing-select";
 import { newAgentSharing, type NewAgentSharing } from "@/lib/agent-access";
 import { cn } from "@/lib/utils";
@@ -64,7 +58,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
   const navigate = useNavigate();
   // Shares the cache the dashboard already filled, so this costs no request.
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
-  const startingModel = me?.workspace.defaultModel ?? DEFAULT_NEW_AGENT_MODEL;
+  const startingModel = startingModelFor(me?.models, me?.workspace.defaultModel);
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState("");
@@ -246,22 +240,12 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
           </div>
           <div className="space-y-2">
             <Label className="text-xs">Model</Label>
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {models.map((m) => (
-                  <SelectItem key={m} value={m}>
-                    <span className="flex w-full items-center justify-between">
-                      <span>{m}</span>
-                      <ModelCost cost={costFor(me?.modelCosts, m)} />
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <ModelCostScale cost={costFor(me?.modelCosts, model)} />
+            <ModelTierPicker
+              value={model}
+              onChange={setModel}
+              models={models}
+              costs={me?.modelCosts}
+            />
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">

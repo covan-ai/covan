@@ -42,7 +42,7 @@ import {
   type ReasoningEffort,
   costFor,
 } from "@/lib/agent-meta";
-import { ModelCost, ModelCostScale } from "@/components/model-cost";
+import { ModelTierPicker } from "@/components/model-tier-picker";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AgentAvatar, AvatarStack } from "@/components/avatars";
 import { ShareAgentDialog } from "@/components/share-agent-dialog";
@@ -173,22 +173,12 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
             </div>
             <div className="space-y-2">
               <Label className="text-xs">Model</Label>
-              <Select value={model} onValueChange={setModel}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      <span className="flex w-full items-center justify-between">
-                        <span>{m}</span>
-                        <ModelCost cost={costFor(me?.modelCosts, m)} />
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <ModelCostScale cost={costFor(me?.modelCosts, model)} />
+              <ModelTierPicker
+                value={model}
+                onChange={setModel}
+                models={models}
+                costs={me?.modelCosts}
+              />
             </div>
             <div className="space-y-2">
               <Label className="text-xs">Mode</Label>

@@ -12,6 +12,11 @@ import {
   modelsFor,
   specFor,
   DEFAULT_NEW_AGENT_MODEL,
+  MODEL_TIERS,
+  modelTiers,
+  tierOf,
+  modelLabel,
+  startingModelFor,
   DIAL_EFFORTS,
   DIAL_EFFORT_HINTS,
   REASONING_EFFORT_HINTS,
@@ -153,6 +158,39 @@ describe("the model a new agent starts on", () => {
   });
 });
 
+describe("the three tiers", () => {
+  it("stand for models this build knows, cheapest to dearest, one provider", () => {
+    for (const t of MODEL_TIERS) expect(MODELS).toContain(t.model);
+    expect(MODEL_TIERS.map((t) => t.id)).toEqual(["fast", "balanced", "smartest"]);
+    expect(new Set(MODEL_TIERS.map((t) => t.model.split("-")[0])).size).toBe(1);
+  });
+
+  it("are offered only where their model is served, in order", () => {
+    expect(modelTiers(["claude-opus-5", "gpt-4.1", "claude-haiku-4-5"]).map((t) => t.id)).toEqual([
+      "fast",
+      "smartest",
+    ]);
+    // An OpenAI-only install: the picker stays a list.
+    expect(modelTiers(["gpt-4.1", "gpt-4o-mini"])).toEqual([]);
+  });
+
+  it("name a model by its tier, and by its id when it is no tier", () => {
+    expect(tierOf("claude-sonnet-5")?.label).toBe("Balanced");
+    expect(tierOf("gpt-4.1")).toBeNull();
+    expect(tierOf(null)).toBeNull();
+    expect(modelLabel("claude-haiku-4-5")).toBe("Fast");
+    expect(modelLabel("claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
+  });
+
+  it("start a new agent on the workspace's default, else Balanced where it is served", () => {
+    expect(startingModelFor(["claude-sonnet-5"], "gpt-4o")).toBe("gpt-4o");
+    expect(startingModelFor(["gpt-4.1", "claude-sonnet-5"], null)).toBe("claude-sonnet-5");
+    // Not served here, so the OpenAI fallback — which every install can run.
+    expect(startingModelFor(["gpt-4.1", "gpt-4.1-mini"], null)).toBe(DEFAULT_NEW_AGENT_MODEL);
+    expect(startingModelFor(undefined, undefined)).toBe(DEFAULT_NEW_AGENT_MODEL);
+  });
+});
+
 describe("costFor", () => {
   it("reads the price the server sent", () => {
     expect(costFor({ "gpt-4o": 0.0148 }, "gpt-4o")).toBe(0.0148);
@@ -288,9 +326,11 @@ describe("the conversation's thinking dial", () => {
   });
 
   it("names the effort beside a model that reasons, and nowhere else", () => {
-    expect(dialLabel("claude-opus-5", "medium", true)).toBe("claude-opus-5 · Medium");
-    expect(dialLabel("claude-opus-5", "minimal", true)).toBe("claude-opus-5 · Thinking off");
-    expect(dialLabel("claude-opus-5", null, true)).toBe("claude-opus-5");
+    // A tier model goes by its tier's word; any other by its id.
+    expect(dialLabel("claude-opus-5", "medium", true)).toBe("Smartest · Medium");
+    expect(dialLabel("claude-opus-5", "minimal", true)).toBe("Smartest · Thinking off");
+    expect(dialLabel("claude-opus-5", null, true)).toBe("Smartest");
     expect(dialLabel("gpt-4.1", "high", false)).toBe("gpt-4.1");
+    expect(dialLabel("claude-sonnet-4-6", "high", true)).toBe("claude-sonnet-4-6 · High");
   });
 });

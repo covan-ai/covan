@@ -238,6 +238,7 @@ describe("the schema", () => {
     ["passage_vector_changes", "no policies at all: the passage index's queue, service role only"],
     ["credit_holds", "hosted builds: no policies at all, the service role is the only reader"],
     ["signup_grant_addresses", "hosted builds: no policies, and outlives every account"],
+    ["onboarding_rewards", "hosted builds: no policies at all, the trigger is the only reader"],
   ]);
 
   it("holds every workspace table to the key's workspace", async () => {

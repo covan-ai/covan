@@ -19,19 +19,21 @@ import { anonClient, closeSql, sql } from "./harness";
  * through the service-role client, which bypasses RLS: `routine_deliveries` by
  * the scheduled sync, and — on the hosted service only — `credit_holds` by the
  * credit check before every step of a turn (supabase/cloud/0004),
- * `signup_grant_addresses` by the new-workspace trigger (cloud/0005), and
- * `passage_vector_changes` by 0116's trigger and the background tick.
+ * `signup_grant_addresses` by the new-workspace trigger (cloud/0005),
+ * `passage_vector_changes` by 0116's trigger and the background tick, and
+ * `onboarding_rewards` by the first-document trigger (cloud/0012).
  */
 const SERVICE_ROLE_ONLY = new Set([
   "routine_deliveries",
   "credit_holds",
   "signup_grant_addresses",
   "passage_vector_changes",
+  "onboarding_rewards",
 ]);
 
-// The two that exist only where supabase/cloud/ is applied. A database without
+// The ones that exist only where supabase/cloud/ is applied. A database without
 // them is the open-source one, not a stale list.
-const HOSTED_ONLY = new Set(["credit_holds", "signup_grant_addresses"]);
+const HOSTED_ONLY = new Set(["credit_holds", "signup_grant_addresses", "onboarding_rewards"]);
 
 let tables: string[] = [];
 

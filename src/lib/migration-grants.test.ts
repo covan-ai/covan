@@ -55,6 +55,9 @@ const NO_CLIENT_GRANT = new Set([
   "credit_holds",
   "signup_grant_addresses",
   "passage_vector_changes",
+  // Hosted only (cloud/0012): which workspaces have had which setup reward,
+  // written and read by the first-document trigger alone.
+  "onboarding_rewards",
 ]);
 
 /**

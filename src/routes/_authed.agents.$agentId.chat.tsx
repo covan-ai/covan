@@ -1953,10 +1953,20 @@ function ChatTab() {
             </HeaderAction>
           )}
           {/* Owners get the toggle; everyone else gets the state it is in.
-              One home per control (DESIGN.md §5). */}
+              One home per control (DESIGN.md §5), and the one place the
+              screen says who can read the thread: it used to be said here as
+              an icon, again under the greeting and again under the composer,
+              and a tester who read "private" in one of them and "shared" in
+              another could not tell which to believe. In words, because this
+              is the fact about a thread worth reading without hovering. */}
           {isOwner && active ? (
             <HeaderAction
-              label="Share with your workspace"
+              label={
+                isShared
+                  ? "Shared with your workspace. Press to make it private"
+                  : "Private to you. Press to share it with your workspace"
+              }
+              words={isShared ? "Shared with workspace" : "Private to you"}
               active={isShared}
               onClick={() =>
                 setVisibilityMutation.mutate({
@@ -1968,11 +1978,9 @@ function ChatTab() {
               {isShared ? <Users className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
             </HeaderAction>
           ) : (
-            <span
-              title={isShared ? "Shared with your workspace" : "Private to you"}
-              className="grid h-9 w-9 place-items-center text-muted-foreground"
-            >
+            <span className="flex h-9 items-center gap-1.5 px-2.5 text-sm text-muted-foreground">
               {isShared ? <Users className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+              {isShared ? "Shared with workspace" : "Private to you"}
             </span>
           )}
         </div>
@@ -1996,11 +2004,14 @@ function ChatTab() {
               <p className="text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[2.125rem]">
                 What can I do for you {dayPart()}?
               </p>
+              {/* A brainstorm opens shared, which is the one default a person
+                  would not guess from "threads start private", so it is said
+                  where the brainstorm opens. Who can read a thread is the
+                  header's to say (above); this line does not repeat it. */}
               <p className="mx-auto mt-3 max-w-sm text-sm text-muted-foreground">
-                {isShared
-                  ? "This thread is shared with your workspace"
-                  : "This thread is private to you"}
-                , grounded in your team's shared knowledge.
+                {isBrainstorm
+                  ? "Brainstorms are shared with your team from the start, so everyone can add ideas."
+                  : "Grounded in your team's shared knowledge."}
               </p>
               {/* Two groups, because they answer two questions: what this
                   agent has READ, and what it can REACH. The second draws
@@ -2557,17 +2568,16 @@ function ChatTab() {
           {/* What the header used to say twice over, said once, here, where
               it is read before you type rather than every time you look up. */}
           <p className="mt-2 flex flex-wrap items-center justify-center gap-x-1.5 text-xs text-muted-foreground">
-            {isShared ? <Users className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
             {/* The model in force, not the agent's, or this sentence would
-                contradict the chip a few pixels above it. */}
+                contradict the chip a few pixels above it. Who can read the
+                thread is not repeated here: the header says it, once. */}
             {agent.name} ·{" "}
             {dialLabel(
               effectiveModel,
               active?.reasoningEffort ?? agent.reasoningEffort,
               specFor(me?.modelSpecs, effectiveModel).reasoning,
             )}{" "}
-            · {isShared ? "shared with your workspace" : "private to you"} · grounded in{" "}
-            {readable.length} team {readable.length === 1 ? "document" : "documents"}
+            · grounded in {readable.length} team {readable.length === 1 ? "document" : "documents"}
             {credits?.level === "fine" && <> · {creditsSentence(credits)}</>}
           </p>
           {privateFoldersNote && (

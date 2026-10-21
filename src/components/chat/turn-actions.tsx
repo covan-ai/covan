@@ -54,11 +54,19 @@ export function HeaderAction({
   active,
   onClick,
   children,
+  words,
 }: {
   label: string;
   active?: boolean;
   onClick: () => void;
   children: ReactNode;
+  /**
+   * Said on the button itself, beside the icon, for the one control whose
+   * state has to be readable without hovering: who can see this thread. A
+   * tester read a lock in one place and "shared" in another and could not
+   * tell which to believe; the words make the control the answer.
+   */
+  words?: string;
 }) {
   return (
     <button
@@ -68,11 +76,15 @@ export function HeaderAction({
       aria-label={label}
       aria-pressed={active}
       className={cn(
-        "grid h-9 w-9 place-items-center rounded-md transition-colors duration-200 hover:bg-accent",
+        "h-9 rounded-md transition-colors duration-200 hover:bg-accent",
+        words
+          ? "flex items-center gap-1.5 px-2.5 text-sm font-medium"
+          : "grid w-9 place-items-center",
         active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
       )}
     >
       {children}
+      {words}
     </button>
   );
 }

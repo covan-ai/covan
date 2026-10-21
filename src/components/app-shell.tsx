@@ -391,12 +391,21 @@ function AgentPanel({ agent, onNavigate }: { agent: Agent; onNavigate: () => voi
           <PenSquare className="h-4 w-4 shrink-0" />
           New thread
         </button>
+        {/* A brainstorm opens shared with the team, unlike a thread, and the
+            row says so before it is pressed: the same Users glyph this column
+            uses for every shared conversation below it. */}
         <button
           onClick={() => void startBrainstorm(agent.id).then((s) => openChat(s.id))}
           className={cn(ROW, ROW_IDLE)}
+          title="Starts a brainstorm the whole team can read"
         >
           <Sparkles className="h-4 w-4 shrink-0" />
           New brainstorm
+          <Users
+            className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <span className="sr-only">, shared with the team</span>
         </button>
         {pages.map((p) => {
           const href = p.to.replace("$agentId", agent.id);

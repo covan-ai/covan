@@ -1000,6 +1000,13 @@ chat.post("/chat/stream", async (c) => {
                 titleModelFor(model, env),
                 question,
                 spend.text.slice(0, 800),
+                // What was asked before this turn, so the chips do not offer a
+                // question back. `history` ends with the question just
+                // answered, which the drafter already has as `question`.
+                history
+                  .filter((m) => m.role === "user")
+                  .map((m) => m.content)
+                  .slice(0, -1),
               );
               if (questions.length > 0) {
                 send({ type: "suggestions", questions });

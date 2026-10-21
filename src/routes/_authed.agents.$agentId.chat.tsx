@@ -75,6 +75,7 @@ import {
   PromptInputTextarea,
 } from "@/components/prompt-kit/prompt-input";
 import { ConnectedStarters } from "@/components/chat/connected-starters";
+import { FirstDocument } from "@/components/chat/first-document";
 import { HeaderAction } from "@/components/chat/turn-actions";
 import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
@@ -167,6 +168,8 @@ function ChatTab() {
   // Files dropped, pasted or picked in this conversation. They land in the
   // agent's chat bundle, which is created on the first one.
   const uploads = useChatUploads(agent);
+  // The composer's picker, so the empty screen can open it too.
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   /**
    * What the reader is searching for in this conversation.
@@ -286,6 +289,9 @@ function ChatTab() {
   // Named after a real file once one is indexed, so the first tap on a fresh
   // agent returns an answer with a citation on it rather than a general one.
   const starters = useMemo(() => startersFor(readable), [readable]);
+  // Nothing indexed means nothing to ask about: the empty screen then asks
+  // for a document instead of offering "Summarize what you know".
+  const hasKnowledge = readable.some((d) => d.indexed);
   const isBrainstorm = active?.kind === "brainstorm";
   const setVisibilityMutation = useMutation({
     mutationFn: ({ id, visibility }: { id: string; visibility: "private" | "shared" }) =>
@@ -2022,20 +2028,34 @@ function ChatTab() {
                 <h4 className="text-xs font-medium uppercase tracking-[0.06em] text-micro-foreground">
                   Knowledge
                 </h4>
-                <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-                  {starters.map((s) => (
-                    <Button
-                      key={s}
-                      variant="outline"
-                      onClick={() => void submit(s)}
-                      // A starter is a sentence, not a label: it wraps, it is
-                      // left-aligned, and it is as tall as it needs to be.
-                      className="h-auto justify-start whitespace-normal bg-surface px-4 py-3 text-left hover:bg-surface-hover"
-                    >
-                      {s}
-                    </Button>
-                  ))}
-                </div>
+                {hasKnowledge ? (
+                  <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                    {starters.map((s) => (
+                      <Button
+                        key={s}
+                        variant="outline"
+                        onClick={() => void submit(s)}
+                        // A starter is a sentence, not a label: it wraps, it is
+                        // left-aligned, and it is as tall as it needs to be.
+                        className="h-auto justify-start whitespace-normal bg-surface px-4 py-3 text-left hover:bg-surface-hover"
+                      >
+                        {s}
+                      </Button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-3">
+                    <FirstDocument
+                      agentName={agent.name}
+                      canUpload={canUpload}
+                      isShared={isShared}
+                      onPick={() => fileInputRef.current?.click()}
+                      onKnowledge={() =>
+                        navigate({ to: "/agents/$agentId/knowledge", params: { agentId } })
+                      }
+                    />
+                  </div>
+                )}
                 {privateFoldersNote && (
                   <p className="mt-3 text-meta text-muted-foreground">{privateFoldersNote}</p>
                 )}
@@ -2498,7 +2518,7 @@ function ChatTab() {
             />
             <PromptInputActions className="justify-between px-3 pb-3">
               <div className="flex min-w-0 items-center gap-1">
-                <ChatAttach uploads={uploads} canWrite={canUpload} />
+                <ChatAttach uploads={uploads} canWrite={canUpload} inputRef={fileInputRef} />
                 <ChatReport reports={reports} canWrite={canWrite} />
                 <ChatMic dictation={dictation} />
               </div>

@@ -44,6 +44,9 @@ const agent = {
   emoji: "📈",
   model: "gpt-4.1",
   mode: "normal" as const,
+  // Can use it, cannot change it: the access most tests mean. Typed wide so a
+  // test about uploading can make the reader an editor and put it back.
+  myAccess: "use" as "use" | "edit" | "manage",
   documents: [] as {
     id: string;
     name: string;
@@ -2254,6 +2257,74 @@ describe("who can read this thread", () => {
       expect(control).toHaveAttribute("aria-pressed", "true");
     } finally {
       session.kind = "chat";
+      session.visibility = "private";
+    }
+  });
+});
+
+describe("the first thing to do in an empty conversation", () => {
+  // The screen used to offer "Summarize what you know" to an agent that knew
+  // nothing, and the first answer a new workspace saw was "I couldn't find
+  // that". A tester said the first minute is where a product earns its "oh,
+  // nice", and spent it on that.
+  it("asks an editor for a document instead of offering starters about nothing", async () => {
+    agent.myAccess = "edit";
+    listMessages.mockResolvedValue([]);
+    try {
+      await renderChat();
+
+      expect(screen.getByRole("button", { name: "Upload a document" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Open the Knowledge tab" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Summarize what you know" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "What can you help me with?" })).toBeNull();
+
+      await userEvent.click(screen.getByRole("button", { name: "Open the Knowledge tab" }));
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/agents/$agentId/knowledge",
+        params: { agentId: "agent-1" },
+      });
+    } finally {
+      agent.myAccess = "use";
+    }
+  });
+
+  it("tells somebody who cannot upload that nothing has been added, and offers no button", async () => {
+    listMessages.mockResolvedValue([]);
+    await renderChat();
+
+    expect(screen.getByText("Nobody has added documents to GTM Agent yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upload a document" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Summarize what you know" })).toBeNull();
+  });
+
+  it("goes back to starters, named after a real file, once something is indexed", async () => {
+    agent.documents = [{ id: "d1", name: "handbook.md", indexed: true, createdAt: Date.now() }];
+    listMessages.mockResolvedValue([]);
+    try {
+      await renderChat();
+
+      expect(
+        screen.getByRole("button", { name: "What does handbook.md say?" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("Upload your first document")).toBeNull();
+    } finally {
+      agent.documents = [];
+    }
+  });
+
+  it("sends a shared thread to the Knowledge tab rather than the picker", async () => {
+    agent.myAccess = "edit";
+    session.visibility = "shared";
+    listMessages.mockResolvedValue([]);
+    try {
+      await renderChat();
+
+      expect(
+        screen.getByRole("button", { name: "Add documents on the Knowledge tab" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Upload a document" })).toBeNull();
+    } finally {
+      agent.myAccess = "use";
       session.visibility = "private";
     }
   });

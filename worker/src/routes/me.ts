@@ -13,6 +13,7 @@ import {
 import { BCP47_RE, canonicalTimeZone } from "../lib/profile-fields";
 import { callerWorkspaceId } from "../lib/workspace";
 import { availableModels, modelSpecsFor } from "../lib/models";
+import { quoteEach, quoteOf } from "../lib/entitlements";
 import { modelCostsFor } from "../lib/pricing";
 
 const me = new Hono<AppEnv>();
@@ -168,6 +169,11 @@ me.get("/me", async (c) => {
     .eq("user_id", user.id)
     .maybeSingle();
 
+  const models = availableModels(c.env);
+  const modelCosts = modelCostsFor(models, c.env);
+  // The same reference reply in credits, from the hosted build alone.
+  const quote = quoteOf(c.get("entitlements"));
+
   const result: MeDTO = {
     user: mapProfile({ ...(profile as ProfileRow), id: user.id }, user.email),
     workspace: {
@@ -178,10 +184,11 @@ me.get("/me", async (c) => {
       gapReportEnabled: workspace.gap_report_enabled === true,
     },
     members,
-    models: availableModels(c.env),
-    modelSpecs: modelSpecsFor(availableModels(c.env)),
+    models,
+    modelSpecs: modelSpecsFor(models),
     // Empty under a custom endpoint, where the picked id is not what answers.
-    modelCosts: modelCostsFor(availableModels(c.env), c.env),
+    modelCosts,
+    ...(quote ? { modelCredits: quoteEach(quote, modelCosts) } : {}),
     onboarding: mapOnboarding(onboardingRow as OnboardingRow | null),
   };
 

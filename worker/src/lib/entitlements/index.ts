@@ -20,6 +20,9 @@ import type { RoutineEnv } from "../../types";
  * connected-app call, a browser task and the provider's own figure for it. The
  * price book that turns those into credits belongs to the hosted build. Prices
  * do not belong in a public tree, and `boundary.test.ts` fails if they come back.
+ * `quote` below is the one crossing, and it goes the safe way: a caller hands
+ * over a dollar figure it estimated at list price and gets back the credits the
+ * hosted build would charge for it. The rate never comes across.
  *
  * Credits belong to a workspace, not a person: one pool, any member spends it,
  * an admin tops it up. Every method is keyed by the workspace the work belongs
@@ -172,6 +175,44 @@ export interface Entitlements {
 
   /** The work under `holdId` has been recorded, or is over: stop holding it. */
   release?(holdId: string): Promise<void>;
+
+  /**
+   * What `usd` of provider cost is charged as, in credits, right now.
+   *
+   * The open tree can estimate what work cost at list price — a usage row
+   * from its token counts, a model from the reference reply in
+   * `lib/pricing.ts` — but it does not know what a credit is worth or what
+   * the operator marks up, and `boundary.test.ts` keeps it that way. This is
+   * how a screen gets a credits figure beside such an estimate without the
+   * rate ever crossing into the open code: the hosted build applies its price
+   * book's conversion, at the markup of this moment, and answers a number.
+   *
+   * An estimate, like the dollar figure it accompanies. The ledger is the
+   * record of what was charged, and nothing quoted here replaces a row in it.
+   *
+   * Synchronous on purpose: the rate is a constant and a date, not a read, so
+   * a route maps a hundred rows without a hundred awaits.
+   *
+   * Optional: an implementation that charges nobody has no unit to quote in,
+   * and a caller leaves the credits figure out rather than inventing one.
+   */
+  quote?(usd: number): number;
+}
+
+/** `quote` as a plain function, or null where there is none — one `if` per route. */
+export function quoteOf(
+  e: Pick<Entitlements, "quote"> | undefined,
+): ((usd: number) => number) | null {
+  const q = e?.quote;
+  return q ? (usd) => q.call(e, usd) : null;
+}
+
+/** `quote` over a map of dollar figures by id, for the model prices `/me` sends. */
+export function quoteEach(
+  quote: (usd: number) => number,
+  byId: Record<string, number>,
+): Record<string, number> {
+  return Object.fromEntries(Object.entries(byId).map(([id, usd]) => [id, quote(usd)]));
 }
 
 export type EntitlementsFactory = (env: RoutineEnv) => Entitlements;

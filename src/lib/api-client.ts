@@ -122,6 +122,12 @@ export type Me = {
    * `OPENAI_MODEL` makes the picked id irrelevant — both mean "no price".
    */
   modelCosts?: Record<string, number>;
+  /**
+   * The same reference reply, in credits at today's rate. Only a hosted API
+   * sends it, because only a hosted API has a unit to answer in; when it is
+   * here it is what the picker shows, and `modelCosts` is not.
+   */
+  modelCredits?: Record<string, number>;
   onboarding: OnboardingState;
 };
 
@@ -1578,6 +1584,12 @@ export type AgentUsage = {
   completionTokens: number;
   totalTokens: number;
   estCostUsd: number;
+  /**
+   * `estCostUsd` in credits at today's rate, from a hosted API only; absent on
+   * a self-hosted install, which has no unit to answer in. When present it is
+   * what the screen shows, and `estCostUsd` is not.
+   */
+  estCredits?: number;
 };
 
 /**
@@ -1636,6 +1648,8 @@ export type UsageTotals = {
   completionTokens: number;
   totalTokens: number;
   estCostUsd: number;
+  /** As on `AgentUsage`: credits from a hosted API, absent elsewhere. */
+  estCredits?: number;
 };
 
 export type UsageResponse = {
@@ -1660,6 +1674,8 @@ export type UsageMonth = {
   messageCount: number;
   totalTokens: number;
   estCostUsd?: number;
+  /** `estCostUsd` in credits, on the same terms, from a hosted API only. */
+  estCredits?: number;
   cachedTokens: number;
   cacheWriteTokens: number;
 };

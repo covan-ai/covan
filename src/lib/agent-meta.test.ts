@@ -12,6 +12,9 @@ import {
   modelsFor,
   specFor,
   DEFAULT_NEW_AGENT_MODEL,
+  formatReplyCredits,
+  replyPricesOf,
+  priceFor,
   MODEL_TIERS,
   modelTiers,
   tierOf,
@@ -155,6 +158,36 @@ describe("the model a new agent starts on", () => {
     // A default nobody changes should not cost more than the curated starting
     // points beside it. gpt-4o is the id this is moving away from.
     expect(PERSONA_TEMPLATES.some((t) => t.model === "gpt-4o")).toBe(false);
+  });
+});
+
+describe("a reply price in the deployment's own unit", () => {
+  it("rounds credits the way the replies estimate rounds replies", () => {
+    expect(formatReplyCredits(0.6)).toBe("<1 credit");
+    expect(formatReplyCredits(1.2)).toBe("~1 credit");
+    expect(formatReplyCredits(14.2)).toBe("~14 credits");
+    expect(formatReplyCredits(268)).toBe("~270 credits");
+    expect(formatReplyCredits(1234)).toBe(`~${(1200).toLocaleString()} credits`);
+  });
+
+  it("prefers the credits the server sent, falls back to dollars, else nothing", () => {
+    expect(replyPricesOf({ modelCosts: { a: 0.01 }, modelCredits: { a: 12 } })).toEqual({
+      unit: "credits",
+      byModel: { a: 12 },
+    });
+    expect(replyPricesOf({ modelCosts: { a: 0.01 } })).toEqual({
+      unit: "usd",
+      byModel: { a: 0.01 },
+    });
+    expect(replyPricesOf({})).toBeUndefined();
+    expect(replyPricesOf(undefined)).toBeUndefined();
+  });
+
+  it("carries the unit with the figure, and is null for an id with no price", () => {
+    const prices = { unit: "credits" as const, byModel: { "gpt-4.1": 12 } };
+    expect(priceFor(prices, "gpt-4.1")).toEqual({ unit: "credits", amount: 12 });
+    expect(priceFor(prices, "nobody-knows")).toBeNull();
+    expect(priceFor(undefined, "gpt-4.1")).toBeNull();
   });
 });
 

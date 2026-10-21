@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api-client";
-import { creditsFrom, approximateReplies, wholeCredits } from "@/lib/credits";
+import { api, type AgentUsage } from "@/lib/api-client";
+import { creditsFrom, approximateReplies, wholeCredits, creditsPhrase } from "@/lib/credits";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard, DataRow, Disclosure, EmptyState } from "@/components/section-card";
 import { AgentAvatar } from "@/components/avatars";
@@ -44,6 +44,18 @@ export function UsageSection() {
   const agents = usage?.agents ?? [];
   const used = agents.filter((a) => a.messageCount > 0);
 
+  // Credits on the hosted service, dollars on an install that has none — one
+  // unit per screen, never both. The server decides which by sending
+  // `estCredits` or not; a hosted row the API has not quoted shows no money
+  // rather than falling back to dollars.
+  const hosted = usage?.credits.metered === true;
+  const money = (a: AgentUsage) =>
+    hosted
+      ? typeof a.estCredits === "number"
+        ? creditsPhrase(a.estCredits)
+        : null
+      : usd(a.estCostUsd);
+
   // Share of measured input that the provider served from its prompt cache.
   // The denominator is measuredPromptTokens, not promptTokens: replies stored
   // before the count existed report nothing, and dividing by every prompt ever
@@ -81,11 +93,18 @@ export function UsageSection() {
             />
           </div>
 
-          <p className="mt-3 text-xs text-muted-foreground">
-            {credits.level === "spent"
-              ? "Out of credits — new replies are paused until more are added"
-              : `About ${shown.toLocaleString()} ${shown === 1 ? "reply" : "replies"} left`}
-          </p>
+          {/* The replies estimate only once it has something to stand on
+              (`repliesKnown`) — or once the balance is low, where even a rough
+              number is what somebody plans around. */}
+          {credits.level === "spent" ? (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Out of credits — new replies are paused until more are added
+            </p>
+          ) : credits.level === "low" || credits.repliesKnown ? (
+            <p className="mt-3 text-xs text-muted-foreground">
+              About {shown.toLocaleString()} {shown === 1 ? "reply" : "replies"} left
+            </p>
+          ) : null}
 
           {/* The rest of the wall, only once it is actually spent. Somebody
               with credits left does not need to be told there is somewhere
@@ -93,14 +112,16 @@ export function UsageSection() {
           {credits.level === "spent" && <CreditsWall />}
 
           <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
-            A credit is a quarter of a cent. Work is charged at what the models, browsers and
-            connected services cost us, at the rate the terms set. Every member of the workspace
-            spends from the same balance.
+            Credits are what every piece of work here is charged in — a reply, indexing a document,
+            a connected-app call, a browser task. Every member of the workspace spends from the same
+            balance.
           </p>
           <Disclosure className="mt-2" label="Where the reply estimate comes from">
-            {credits.repliesSeen === 0
-              ? "It is a starting assumption until this workspace has sent something, and shifts towards what its own replies actually cost as you go."
-              : "It is mostly what this workspace's own replies have cost, weighed against a starting assumption that fades as you send more."}{" "}
+            {!credits.repliesKnown && credits.level === "fine"
+              ? "An estimate of how many replies are left appears once this workspace has sent about ten. Until then the only honest number is the balance: a single cheap question would swing an average of two or three."
+              : credits.repliesSeen === 0
+                ? "It is a starting assumption until this workspace has sent something, and shifts towards what its own replies actually cost as you go."
+                : "It is mostly what this workspace's own replies have cost, weighed against a starting assumption that fades as you send more."}{" "}
             A long conversation with documents attached costs more than a short question, and a
             browser task or a connected app costs credits of its own, so the estimate moves.
           </Disclosure>
@@ -128,7 +149,7 @@ export function UsageSection() {
                       <span className="block font-medium text-foreground">
                         {compact(a.totalTokens)}
                       </span>
-                      {usd(a.estCostUsd)}
+                      {money(a)}
                     </span>
                   }
                 />
@@ -140,8 +161,11 @@ export function UsageSection() {
       {/* Both sentences stay: the first is why these figures do not reconcile
           with the credits above, and the second is what backs the money. */}
       <p className="mt-3 text-xs text-muted-foreground">
-        Per-agent figures cover every conversation you have had, and are estimates from list prices.
-        Credits are what is actually charged, to the whole workspace.
+        Per-agent figures cover every conversation you have had, and are estimates from list prices
+        {hosted ? " at today's rate" : ""}.{" "}
+        {hosted
+          ? "The balance above is what was actually charged, to the whole workspace."
+          : "Nothing here is charged to anyone: a self-hosted install pays its providers directly."}
       </p>
       {cacheRate !== null && (
         <Disclosure

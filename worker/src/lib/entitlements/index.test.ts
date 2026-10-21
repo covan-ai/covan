@@ -9,6 +9,8 @@ import {
   unlimitedEntitlements,
   registerEntitlements,
   type Entitlements,
+  quoteOf,
+  quoteEach,
 } from "./index";
 
 const env = (over: Partial<RoutineEnv> = {}): RoutineEnv =>
@@ -37,6 +39,26 @@ describe("unlimitedEntitlements", () => {
       unlimitedEntitlements.record("w1", [{ kind: "composio_search" }], {}),
     ).resolves.toBeUndefined();
     await expect(unlimitedEntitlements.snapshot("w1")).resolves.toEqual({ metered: false });
+  });
+});
+
+describe("quote", () => {
+  it("is absent on the unmetered implementation, which has no unit to quote in", () => {
+    expect(unlimitedEntitlements.quote).toBeUndefined();
+    expect(quoteOf(unlimitedEntitlements)).toBeNull();
+    expect(quoteOf(undefined)).toBeNull();
+  });
+
+  it("is handed back as a plain function where there is one", () => {
+    const quote = quoteOf({ quote: (usd: number) => usd * 1200 });
+    expect(quote?.(0.01)).toBe(12);
+  });
+
+  it("quotes every id in a map of dollar figures", () => {
+    expect(quoteEach((usd) => usd * 1200, { "gpt-4.1": 0.01, "claude-opus-5": 0.03 })).toEqual({
+      "gpt-4.1": 12,
+      "claude-opus-5": 36,
+    });
   });
 });
 

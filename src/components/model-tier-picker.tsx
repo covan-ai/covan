@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/select";
 import { Disclosure } from "@/components/section-card";
 import { ModelCost, ModelCostScale } from "@/components/model-cost";
-import { costFor, modelTiers, tierOf } from "@/lib/agent-meta";
+import { modelTiers, priceFor, tierOf, type ReplyPrices } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,13 +30,14 @@ export function ModelTierPicker({
   value,
   onChange,
   models,
-  costs,
+  prices,
 }: {
   value: string;
   onChange: (model: string) => void;
   /** What the list offers — `modelsFor(me.models, value)`. */
   models: string[];
-  costs: Record<string, number> | undefined;
+  /** What each costs per reply, in the unit the server answers in — `replyPricesOf(me)`. */
+  prices: ReplyPrices | undefined;
 }) {
   const tiers = modelTiers(models);
   const list = (
@@ -49,7 +50,7 @@ export function ModelTierPicker({
           <SelectItem key={m} value={m}>
             <span className="flex w-full items-center justify-between">
               <span>{m}</span>
-              <ModelCost cost={costFor(costs, m)} />
+              <ModelCost price={priceFor(prices, m)} />
             </span>
           </SelectItem>
         ))}
@@ -61,7 +62,7 @@ export function ModelTierPicker({
     return (
       <div className="space-y-2">
         {list}
-        <ModelCostScale cost={costFor(costs, value)} />
+        <ModelCostScale price={priceFor(prices, value)} />
       </div>
     );
   }
@@ -115,7 +116,7 @@ export function ModelTierPicker({
       <Disclosure label="All models">
         <div className="pt-1">{list}</div>
       </Disclosure>
-      <ModelCostScale cost={costFor(costs, value)} />
+      <ModelCostScale price={priceFor(prices, value)} />
     </div>
   );
 }

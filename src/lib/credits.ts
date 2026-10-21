@@ -26,8 +26,25 @@ export type CreditsView = {
   repliesLeft: number;
   /** How many replies the estimate has actually seen. 0 before the first one. */
   repliesSeen: number;
+  /**
+   * Whether `repliesLeft` is worth printing in the fine band — see
+   * `REPLIES_BEFORE_ESTIMATE`. The low and spent bands print it regardless.
+   */
+  repliesKnown: boolean;
   level: "fine" | "low" | "spent";
 };
+
+/**
+ * How many charged replies the estimate needs before it is shown as a number.
+ *
+ * Under this the average is mostly the assumption, and a single cheap message
+ * visibly moves it: on 2026-10-21 a tester watched "about N replies left" go
+ * UP after sending one, because the prior is outvoted one reply at a time.
+ * Until then the balance is shown alone. The low and spent bands are the
+ * exception — there the number is what somebody plans around, and an exact
+ * small figure is more use than none.
+ */
+export const REPLIES_BEFORE_ESTIMATE = 10;
 
 /**
  * Below this many credits the balance is worth a warning. The same figure the
@@ -124,6 +141,7 @@ export function creditsFrom(usage: UsageResponse | undefined): CreditsView | nul
     perReply,
     repliesLeft,
     repliesSeen,
+    repliesKnown: repliesSeen >= REPLIES_BEFORE_ESTIMATE,
     level,
   };
 }
@@ -141,6 +159,8 @@ export function creditsSentence(c: CreditsView): string {
     const n = c.repliesLeft;
     return `${credits} · about ${n} ${n === 1 ? "reply" : "replies"}`;
   }
+  // The balance alone until the estimate has something to stand on.
+  if (!c.repliesKnown) return credits;
   return `${credits} · about ${approximateReplies(c.repliesLeft).toLocaleString()} replies`;
 }
 

@@ -13,6 +13,7 @@ import {
   creditsSentence,
   approximateReplies,
   LOW_BALANCE_CREDITS,
+  REPLIES_BEFORE_ESTIMATE,
 } from "./credits";
 import type { CreditSnapshot, UsageResponse } from "./api-client";
 
@@ -128,9 +129,25 @@ describe("creditsPhrase", () => {
 });
 
 describe("creditsSentence", () => {
-  it("says the balance and the replies it is worth", () => {
-    expect(creditsSentence(creditsFrom(metered({ balance: 412.7, spent: 87.3 }))!)).toMatch(
-      /^412 credits left · about \d+ replies$/,
+  it("says the balance and the replies it is worth, once it has seen enough replies", () => {
+    expect(
+      creditsSentence(creditsFrom(metered({ balance: 412.7, spent: 87.3, replies: 40 }))!),
+    ).toMatch(/^412 credits left · about \d+ replies$/);
+  });
+
+  it("says the balance alone before the estimate has something to stand on", () => {
+    // A tester watched "about N replies" go UP after one cheap message: the
+    // prior is outvoted one reply at a time, so early on the number moves for
+    // reasons nobody can see. Until ten replies, the balance is the answer.
+    expect(creditsSentence(creditsFrom(metered({ balance: 412.7, spent: 2.3, replies: 1 }))!)).toBe(
+      "412 credits left",
+    );
+    expect(creditsSentence(creditsFrom(metered({ balance: 500 }))!)).toBe("500 credits left");
+  });
+
+  it("keeps the exact number in the low band however few replies it has seen", () => {
+    expect(creditsSentence(creditsFrom(metered({ balance: 30, spent: 470, replies: 2 }))!)).toMatch(
+      /^30 credits left · about \d+ repl(y|ies)$/,
     );
   });
 
@@ -155,5 +172,16 @@ describe("approximateReplies", () => {
   it("rounds to two significant figures above it", () => {
     expect(approximateReplies(801)).toBe(800);
     expect(approximateReplies(2468)).toBe(2500);
+  });
+});
+
+describe("when the estimate is shown", () => {
+  it("is known from the tenth charged reply", () => {
+    expect(
+      creditsFrom(metered({ spent: 20, replies: REPLIES_BEFORE_ESTIMATE - 1 }))!.repliesKnown,
+    ).toBe(false);
+    expect(
+      creditsFrom(metered({ spent: 20, replies: REPLIES_BEFORE_ESTIMATE }))!.repliesKnown,
+    ).toBe(true);
   });
 });

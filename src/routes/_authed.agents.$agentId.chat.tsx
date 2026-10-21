@@ -42,7 +42,7 @@ import { useCredits, creditsSentence } from "@/lib/credits";
 import { startersFor } from "@/lib/chat-starters";
 import { visibleDocuments } from "@/lib/visible-documents";
 import { sessionLabel } from "@/lib/session-label";
-import { dialLabel, modelsFor, specFor } from "@/lib/agent-meta";
+import { dialLabel, modelsFor, replyPricesOf, specFor } from "@/lib/agent-meta";
 import { dateDividers } from "@/lib/message-groups";
 import { gapBefore, GAP_CLASS } from "@/lib/chat-rhythm";
 import { DateDivider } from "@/components/chat/date-divider";
@@ -322,6 +322,9 @@ function ChatTab() {
   });
   // Stable, so the memoised dial is not redrawn by every streamed token.
   const dialModels = useMemo(() => modelsFor(me?.models, agent.model), [me?.models, agent.model]);
+  // Per-reply prices in the unit this deployment answers in, for the dial and
+  // the retry menu. Stable for the same reason as the list above.
+  const prices = useMemo(() => replyPricesOf(me), [me]);
   // The write in flight, if one is. `submit` waits on it before it asks for a
   // reply: a chip changes the moment it is pressed, and a question sent in the
   // same second would otherwise be answered on the setting the chip no longer
@@ -2189,7 +2192,7 @@ function ChatTab() {
                         uploadedAt={uploadedAt}
                         canRegenerate={isLast && !!prevUser && isOwner}
                         pickableModels={pickableModels}
-                        modelCosts={me?.modelCosts}
+                        prices={prices}
                         truncated={
                           truncated?.messageId === m.id && truncated.sessionId === active?.id
                         }
@@ -2531,7 +2534,7 @@ function ChatTab() {
                     session={active}
                     agent={agent}
                     models={dialModels}
-                    modelCosts={me?.modelCosts}
+                    prices={prices}
                     modelSpecs={me?.modelSpecs}
                     canTune={isOwner}
                     busy={busy}

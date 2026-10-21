@@ -4,7 +4,7 @@ import { ModelCost, ModelCostScale } from "./model-cost";
 
 describe("ModelCost", () => {
   it("shows money rather than a rating", () => {
-    render(<ModelCost cost={0.0148} />);
+    render(<ModelCost price={{ unit: "usd", amount: 0.0148 }} />);
     expect(screen.getByText("$0.015")).toBeInTheDocument();
   });
 
@@ -12,14 +12,14 @@ describe("ModelCost", () => {
   // honest shape of that; a borrowed number would be a claim about somebody
   // else's hardware.
   it("renders nothing when there is no price", () => {
-    const { container } = render(<ModelCost cost={null} />);
+    const { container } = render(<ModelCost price={null} />);
     expect(container).toBeEmptyDOMElement();
   });
 });
 
 describe("ModelCostScale", () => {
   it("names the price and what it assumed to get there", () => {
-    render(<ModelCostScale cost={0.0148} />);
+    render(<ModelCostScale price={{ unit: "usd", amount: 0.0148 }} />);
 
     expect(screen.getByText("$0.015 / reply")).toBeInTheDocument();
     // The assumption is not decoration: somebody whose agent reads forty-page
@@ -29,14 +29,14 @@ describe("ModelCostScale", () => {
   });
 
   it("explains itself instead of going blank when there is no price", () => {
-    render(<ModelCostScale cost={null} />);
+    render(<ModelCostScale price={null} />);
 
     expect(screen.getByText(/No price for this model/)).toBeInTheDocument();
     expect(screen.queryByText(/\/ reply/)).not.toBeInTheDocument();
   });
 
   it("marks exactly one band, and the right one", () => {
-    const { container } = render(<ModelCostScale cost={0.0148} />);
+    const { container } = render(<ModelCostScale price={{ unit: "usd", amount: 0.0148 }} />);
     const filled = container.querySelectorAll(".bg-foreground");
 
     expect(filled).toHaveLength(1);
@@ -47,7 +47,7 @@ describe("ModelCostScale", () => {
   });
 
   it("marks no band at all when there is nothing to place", () => {
-    const { container } = render(<ModelCostScale cost={null} />);
+    const { container } = render(<ModelCostScale price={null} />);
     expect(container.querySelectorAll(".bg-foreground")).toHaveLength(0);
   });
 
@@ -55,7 +55,33 @@ describe("ModelCostScale", () => {
   // each. The Select above already points at the current model, and a band is
   // wider than 44px — so this scale is drawn in ink on purpose.
   it("spends none of the amber budget", () => {
-    const { container } = render(<ModelCostScale cost={0.0148} />);
+    const { container } = render(<ModelCostScale price={{ unit: "usd", amount: 0.0148 }} />);
+    expect(container.innerHTML).not.toMatch(/amber|accent/);
+  });
+});
+
+describe("in credits, on the hosted service", () => {
+  it("says the price in credits beside a model", () => {
+    render(<ModelCost price={{ unit: "credits", amount: 14.2 }} />);
+    expect(screen.getByText("~14 credits")).toBeInTheDocument();
+  });
+
+  it("never prints a fraction of a credit as nothing", () => {
+    render(<ModelCost price={{ unit: "credits", amount: 0.6 }} />);
+    expect(screen.getByText("<1 credit")).toBeInTheDocument();
+  });
+
+  it("gives the figure and its assumption, without the dollar ruler", () => {
+    // The ruler's edges are absolute amounts of money. Labelling them in
+    // credits would need the rate on the client, which the open tree does not
+    // have and should not guess.
+    const { container } = render(<ModelCostScale price={{ unit: "credits", amount: 14.2 }} />);
+
+    expect(screen.getByText("~14 credits / reply")).toBeInTheDocument();
+    expect(screen.getByText(/at today.s rate/)).toBeInTheDocument();
+    expect(screen.getByText(/2,248-token prompt and a 921-token answer/)).toBeInTheDocument();
+    expect(container.querySelectorAll("div.flex.gap-1 > span")).toHaveLength(0);
+    expect(container.textContent).not.toMatch(/¢|\$/);
     expect(container.innerHTML).not.toMatch(/amber|accent/);
   });
 });

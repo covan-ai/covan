@@ -40,14 +40,15 @@ function fakeDb(rpcs: Record<string, RpcResult>) {
 function appWithDb(
   db: unknown,
   snapshot: () => Promise<unknown> = async () => ({ metered: false }),
+  quote?: (usd: number) => number,
 ) {
   const app = new Hono<AppEnv>();
   app.use("/*", async (c, next) => {
     c.set("user", { id: USER_ID, email: "a@example.com" } as never);
     c.set("db", db as never);
     // `GET /usage` asks what the workspace has left. An unmetered install
-    // answers `metered: false`, which is the default here.
-    c.set("entitlements", { snapshot } as never);
+    // answers `metered: false`, which is the default here, and quotes nothing.
+    c.set("entitlements", { snapshot, ...(quote ? { quote } : {}) } as never);
     await next();
   });
   app.route("/", usage);
@@ -470,5 +471,72 @@ describe("GET /usage/credits/ledger", () => {
     });
     // A workspace's figures are never reported per person (0032).
     expect(reads[0].columns).not.toMatch(/user_id/);
+  });
+});
+
+describe("the same estimate in credits, where there are credits", () => {
+  const MONTH = {
+    month: "2026-08-01",
+    message_count: 4,
+    prompt_tokens: 1000,
+    completion_tokens: 500,
+    cached_tokens: 0,
+    by_model: [
+      {
+        model: "claude-opus-5",
+        promptTokens: 1000,
+        completionTokens: 500,
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+      },
+    ],
+  };
+  const metered = async () => ({
+    metered: true,
+    balance: 400,
+    granted: 500,
+    spent: 100,
+    unlimited: false,
+    replies: 12,
+  });
+  const quote = (usd: number) => usd * 1200;
+
+  it("puts estCredits beside estCostUsd on agents, totals and months when the entitlements quote", async () => {
+    const { db } = fakeDb({
+      workspace_usage: { data: [AGENT_ROW], error: null },
+      workspace_usage_all: { data: [AGENT_ROW], error: null },
+      workspace_usage_monthly: { data: [MONTH], error: null },
+    });
+    const app = appWithDb(db, metered, quote);
+
+    const mine = (await (await app.request("/usage")).json()) as {
+      agents: { estCostUsd: number; estCredits: number }[];
+      totals: { estCostUsd: number; estCredits: number };
+    };
+    expect(mine.agents[0].estCredits).toBeCloseTo(mine.agents[0].estCostUsd * 1200, 10);
+    expect(mine.totals.estCredits).toBeCloseTo(mine.totals.estCostUsd * 1200, 10);
+
+    const all = (await (await app.request("/usage/workspace")).json()) as {
+      months: { estCostUsd: number; estCredits: number }[];
+    };
+    expect(all.months[0].estCredits).toBeCloseTo(all.months[0].estCostUsd * 1200, 10);
+  });
+
+  it("sends no credits figure at all where nothing can quote one", async () => {
+    // A self-hosted install: dollars are the only unit it has, and a credits
+    // field it invented would be a claim about a price book it does not own.
+    const { db } = fakeDb({
+      workspace_usage: { data: [AGENT_ROW], error: null },
+      workspace_usage_all: { data: [AGENT_ROW], error: null },
+      workspace_usage_monthly: { data: [MONTH], error: null },
+    });
+    const app = appWithDb(db);
+
+    const mine = (await (await app.request("/usage")).json()) as Record<string, unknown>;
+    expect((mine.agents as Record<string, unknown>[])[0]).not.toHaveProperty("estCredits");
+    expect(mine.totals).not.toHaveProperty("estCredits");
+
+    const all = (await (await app.request("/usage/workspace")).json()) as Record<string, unknown>;
+    expect((all.months as Record<string, unknown>[])[0]).not.toHaveProperty("estCredits");
   });
 });

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError, type Me } from "@/lib/api-client";
 import { useTheme, type ThemePreference } from "@/lib/theme";
-import { modelsFor, costFor } from "@/lib/agent-meta";
+import { modelsFor, priceFor, replyPricesOf } from "@/lib/agent-meta";
 import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { SectionHeading } from "@/components/page-container";
 import { SectionCard } from "@/components/section-card";
@@ -114,7 +114,7 @@ export function DefaultModelSection({ me }: { me: Me | undefined }) {
                 <SelectItem key={m} value={m}>
                   <span className="flex w-full items-center justify-between">
                     <span>{m}</span>
-                    <ModelCost cost={costFor(me?.modelCosts, m)} />
+                    <ModelCost price={priceFor(replyPricesOf(me), m)} />
                   </span>
                 </SelectItem>
               ))}
@@ -123,7 +123,7 @@ export function DefaultModelSection({ me }: { me: Me | undefined }) {
           {/* Only once something is picked. "No preference" is not a model and
               has no price, and a scale sitting at nothing would read as a claim
               that the default is free. */}
-          {defaultModel && <ModelCostScale cost={costFor(me?.modelCosts, defaultModel)} />}
+          {defaultModel && <ModelCostScale price={priceFor(replyPricesOf(me), defaultModel)} />}
           {/* No fold here, and no sentence about price: ModelCostScale is
               directly above and it states the money better than a sentence
               can. A second <details> in this card would also stack two

@@ -117,6 +117,23 @@ const MANIFEST = (names: string) =>
   `If no excerpt is present, say which of these ` +
   `documents you would need to look at rather than inventing what it contains.`;
 
+/**
+ * What the prefix says when there is no manifest to say: no document is
+ * attached to the agent, or — in a shared conversation — none it may read.
+ *
+ * Without this the prefix was silent about documents and the model answered
+ * "I couldn't find that" to a workspace that had not uploaded anything yet,
+ * which reads as a search that failed rather than a library that is empty. A
+ * new workspace's first question is the one place the difference is the whole
+ * product. Phrased for both cases the empty manifest covers, so it stays true
+ * in a shared thread whose only documents are somebody's private ones.
+ */
+const NO_DOCUMENTS =
+  `\n\nNo documents are attached to you in this conversation. If the user asks about a ` +
+  `file, or about their team's own information, say plainly that nothing has been added ` +
+  `yet and that documents can be added under Knowledge. Do not guess what a document ` +
+  `might contain.`;
+
 function manifestNames(names: string[]): string {
   if (names.length <= MANIFEST_NAME_LIMIT) return names.join(", ");
   const shown = names.slice(0, MANIFEST_NAME_LIMIT).join(", ");
@@ -245,9 +262,7 @@ export function buildSystemPrefix(input: {
     prefix += `\n\n${tuned.concision ?? CONCISION_INSTRUCTIONS}`;
   }
   const names = input.docNames.filter((n) => n && n.trim().length > 0);
-  if (names.length > 0) {
-    prefix += MANIFEST(manifestNames(names));
-  }
+  prefix += names.length > 0 ? MANIFEST(manifestNames(names)) : NO_DOCUMENTS;
   return prefix;
 }
 

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { ChevronDown, FileText, Plus, X } from "lucide-react";
 import { Chip } from "@/components/section-card";
 import { ACCEPT } from "@/lib/uploads";
@@ -17,8 +17,22 @@ import { cn } from "@/lib/utils";
  * composer: the button belongs on the bottom row beside send, the receipts
  * belong above the text being typed.
  */
-export function ChatAttach({ uploads, canWrite }: { uploads: ChatUploads; canWrite: boolean }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+export function ChatAttach({
+  uploads,
+  canWrite,
+  inputRef,
+}: {
+  uploads: ChatUploads;
+  canWrite: boolean;
+  /**
+   * The picker, for a caller that wants to open it from somewhere else — the
+   * empty screen's "Upload a document" button opens this same input rather
+   * than mounting a second one. Optional: the button here is its own caller.
+   */
+  inputRef?: RefObject<HTMLInputElement | null>;
+}) {
+  const ownRef = useRef<HTMLInputElement>(null);
+  const ref = inputRef ?? ownRef;
 
   if (!canWrite) return null;
 
@@ -26,7 +40,7 @@ export function ChatAttach({ uploads, canWrite }: { uploads: ChatUploads; canWri
     <>
       <button
         type="button"
-        onClick={() => inputRef.current?.click()}
+        onClick={() => ref.current?.click()}
         className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label="Attach a document"
         data-coach="attach"
@@ -34,7 +48,7 @@ export function ChatAttach({ uploads, canWrite }: { uploads: ChatUploads; canWri
         <Plus className="h-[18px] w-[18px]" />
       </button>
       <input
-        ref={inputRef}
+        ref={ref}
         type="file"
         multiple
         accept={ACCEPT}

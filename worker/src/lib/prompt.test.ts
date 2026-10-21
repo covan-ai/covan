@@ -38,6 +38,18 @@ describe("buildSystemPrefix", () => {
     expect(out).toContain("never claim you cannot read files");
   });
 
+  it("says there is nothing to read when no document is attached", () => {
+    // A new workspace's first question used to get "I couldn't find that",
+    // which reads as a search that failed rather than a library that is empty.
+    const out = buildSystemPrefix({ persona: "P", mode: "normal", docNames: [] });
+    expect(out).toContain("No documents are attached to you in this conversation");
+    expect(out).toContain("can be added under Knowledge");
+    expect(out).not.toContain("The team has shared these documents");
+
+    const withDocs = buildSystemPrefix({ persona: "P", mode: "normal", docNames: ["a.md"] });
+    expect(withDocs).not.toContain("No documents are attached");
+  });
+
   it("tells the agent excerpts only arrive when retrieval finds them", () => {
     // The prefix is byte-identical on every turn, including the ones where
     // nothing was retrieved and no excerpt block follows. Promising the

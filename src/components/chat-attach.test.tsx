@@ -49,6 +49,13 @@ describe("ChatAttach", () => {
     expect(uploads.addFiles).toHaveBeenCalledWith([expect.objectContaining({ name: "notes.md" })]);
   });
 
+  it("exposes its picker through the ref it is given", () => {
+    const ref = { current: null as HTMLInputElement | null };
+    render(<ChatAttach uploads={uploadsWith()} canWrite inputRef={ref} />);
+
+    expect(ref.current).toBe(screen.getByLabelText(/choose documents/i));
+  });
+
   it("names an uploaded document and says it is retrievable", () => {
     render(<ChatReceipts uploads={uploadsWith([receipt()])} />);
 

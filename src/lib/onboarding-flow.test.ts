@@ -1,282 +1,162 @@
 import { describe, it, expect } from "vitest";
 import {
-  stepsFor,
-  plannedStepsFor,
-  resolveStep,
+  EMPTY_ANSWERS,
+  endOf,
+  firstPersonaliseStep,
   nextStep,
-  newestAgent,
+  prevStep,
+  progressFor,
+  resolveStep,
+  stepsFor,
   type FlowContext,
   type OnboardingAnswers,
 } from "./onboarding-flow";
 
-const NO_ANSWERS: OnboardingAnswers = {
-  role: null,
-  useCase: null,
-  teamSize: null,
-  referralSource: null,
+const NAMED: OnboardingAnswers = {
+  ...EMPTY_ANSWERS,
+  assistantName: "Desk",
+  assistantEmoji: "🧭",
+  assistantRole: "desk",
 };
 
-const ANSWERED: OnboardingAnswers = {
-  role: "engineering",
-  useCase: "code",
-  teamSize: "2-10",
-  referralSource: null,
-};
+const SOLO: OnboardingAnswers = { ...NAMED, tools: ["gmail"], purpose: "sales", mode: "solo" };
+const TEAM: OnboardingAnswers = { ...SOLO, mode: "team" };
 
 function ctx(over: Partial<FlowContext> = {}): FlowContext {
-  return {
-    answers: ANSWERED,
-    hosted: true,
-    hasIncomingInvite: false,
-    hasAgent: false,
-    ...over,
-  };
+  return { answers: EMPTY_ANSWERS, lastStep: null, hasIncomingInvite: false, ...over };
 }
 
+const INTRO = ["intro:documents", "intro:apps", "intro:schedule", "intro:team"];
+
 describe("stepsFor", () => {
-  it("asks where they heard about us only on a hosted install", () => {
-    expect(stepsFor(ctx({ hosted: true }))).toContain("source");
-    expect(stepsFor(ctx({ hosted: false }))).not.toContain("source");
+  it("shows the product, then asks, in that order", () => {
+    expect(stepsFor(ctx())).toEqual([...INTRO, "assistant", "tools", "purpose", "mode"]);
   });
 
-  it("skips the invite step for someone working alone", () => {
-    const solo = { ...ANSWERED, teamSize: "solo" };
-    expect(stepsFor(ctx({ answers: solo }))).not.toContain("invite");
-    expect(stepsFor(ctx())).toContain("invite");
+  it("asks about the team only once the team was chosen", () => {
+    expect(stepsFor(ctx({ answers: SOLO }))).not.toContain("team");
+    expect(stepsFor(ctx({ answers: TEAM }))).toEqual([
+      ...INTRO,
+      "assistant",
+      "tools",
+      "purpose",
+      "mode",
+      "team",
+    ]);
   });
 
-  it("gives an invitee the survey and their invitation, nothing else", () => {
-    const steps = stepsFor(ctx({ hasIncomingInvite: true }));
-
-    // Naming and furnishing a workspace they abandon on accepting is the whole
-    // thing this branch exists to avoid.
-    expect(steps).not.toContain("workspace");
-    expect(steps).not.toContain("agent");
-    expect(steps).not.toContain("invite");
-    expect(steps).toContain("invite-accept");
+  it("puts the invitation after the intro and ends on it for somebody with a workspace", () => {
+    expect(stepsFor(ctx({ hasIncomingInvite: true }))).toEqual([...INTRO, "invite-accept"]);
   });
 
-  it("asks for a document only once there is an agent to hang it on", () => {
-    expect(stepsFor(ctx({ hasAgent: false }))).not.toContain("knowledge");
-    expect(stepsFor(ctx({ hasAgent: true }))).toContain("knowledge");
+  // 0115: an account that signed up with an invitation waiting has no
+  // workspace. Declining still needs one, so setup follows.
+  it("starts a workspace for an invitee who says not now", () => {
+    expect(stepsFor(ctx({ hasIncomingInvite: true, hasWorkspace: false }))).toEqual([
+      ...INTRO,
+      "invite-accept",
+      "workspace",
+      "assistant",
+      "tools",
+      "purpose",
+      "mode",
+    ]);
   });
 
-  it("asks for the document after the agent and before the team", () => {
-    const steps = stepsFor(ctx({ hasAgent: true }));
-    expect(steps.indexOf("knowledge")).toBeGreaterThan(steps.indexOf("agent"));
-    expect(steps.indexOf("knowledge")).toBeLessThan(steps.indexOf("invite"));
-  });
-
-  it("never asks an invitee for a document", () => {
-    // They are joining a workspace that already has agents and bundles. The
-    // knowledge they were invited to is somebody else's already.
-    expect(stepsFor(ctx({ hasIncomingInvite: true, hasAgent: true }))).not.toContain("knowledge");
-  });
-});
-
-describe("plannedStepsFor", () => {
-  it("does not get longer when the agent is created", () => {
-    // The bug, as one assertion. Walked in a browser: the agent step said
-    // "Step 6 of 7", and creating the agent made it "Step 7 of 8" — the finish
-    // line moved away at the moment the hardest step was finished.
-    const before = plannedStepsFor(ctx({ hasAgent: false }));
-    const after = plannedStepsFor(ctx({ hasAgent: true }));
-    expect(before).toEqual(after);
-  });
-
-  it("counts the knowledge step before there is anything to put in it", () => {
-    // `stepsFor` must not — there is nowhere to put a document until an agent
-    // exists — and that difference is the whole reason there are two functions.
-    expect(stepsFor(ctx({ hasAgent: false }))).not.toContain("knowledge");
-    expect(plannedStepsFor(ctx({ hasAgent: false }))).toContain("knowledge");
-  });
-
-  it("still gets shorter for someone working alone", () => {
-    // Deliberately not fixed. A flow that shortens when you say you are working
-    // alone is a consequence of an answer just given; a step that appears after
-    // you finished one is not.
-    const solo = { ...ANSWERED, teamSize: "solo" };
-    expect(plannedStepsFor(ctx({ answers: solo }))).not.toContain("invite");
-  });
-
-  it("leaves the invited person's much shorter run alone", () => {
-    expect(plannedStepsFor(ctx({ hasIncomingInvite: true }))).toEqual(
-      stepsFor(ctx({ hasIncomingInvite: true })),
-    );
-  });
-
-  it("keeps every step of the real flow, in the same order", () => {
-    // The indicator takes its index from this list, so a step the flow can
-    // reach and the plan does not know about would be `indexOf` === -1.
-    const real = stepsFor(ctx({ hasAgent: true }));
-    expect(plannedStepsFor(ctx({ hasAgent: false }))).toEqual(real);
+  it("asks somebody who finished before and has no workspace for a workspace alone", () => {
+    expect(stepsFor(ctx({ completed: true, hasWorkspace: false }))).toEqual(["workspace"]);
+    expect(
+      stepsFor(ctx({ completed: true, hasWorkspace: false, hasIncomingInvite: true })),
+    ).toEqual(["invite-accept", "workspace"]);
   });
 });
 
 describe("resolveStep", () => {
-  it("starts a fresh account at the first question", () => {
-    expect(resolveStep(undefined, ctx({ answers: NO_ANSWERS }))).toBe("role");
+  it("starts on the first intro screen", () => {
+    expect(resolveStep(undefined, ctx())).toBe("intro:documents");
   });
 
-  it("returns someone who left to the question they stopped on", () => {
-    const partial = { ...NO_ANSWERS, role: "design" };
-    expect(resolveStep(undefined, ctx({ answers: partial }))).toBe("use");
+  it("resumes on the screen that was open", () => {
+    expect(resolveStep(undefined, ctx({ lastStep: "intro:schedule" }))).toBe("intro:schedule");
+    expect(resolveStep(undefined, ctx({ answers: NAMED, lastStep: "purpose" }))).toBe("purpose");
   });
 
-  it("refuses to let an unanswered survey jump into setup", () => {
-    const partial = { ...NO_ANSWERS, role: "design" };
-    expect(resolveStep("agent", ctx({ answers: partial }))).toBe("use");
+  it("honours a requested step that is in this run", () => {
+    expect(resolveStep("intro:team", ctx())).toBe("intro:team");
+    expect(resolveStep("tools", ctx({ answers: NAMED }))).toBe("tools");
   });
 
-  it("ignores a step that does not exist", () => {
-    expect(resolveStep("nonsense", ctx())).toBe("workspace");
+  it("does not let the URL skip past naming the assistant", () => {
+    // The finish makes the agent from the name (0119); a run that reaches the
+    // end without one fails there, so the name beats any request.
+    expect(resolveStep("mode", ctx())).toBe("assistant");
+    expect(resolveStep("mode", ctx({ lastStep: "mode" }))).toBe("assistant");
   });
 
-  it("ignores a step this flow does not include", () => {
-    const solo = { ...ANSWERED, teamSize: "solo" };
-    expect(resolveStep("invite", ctx({ answers: solo }))).toBe("workspace");
+  it("ignores a last step that is no longer in the run", () => {
+    expect(resolveStep(undefined, ctx({ answers: SOLO, lastStep: "team" }))).toBe("mode");
   });
 
-  it("honours a real step once the survey is answered", () => {
-    expect(resolveStep("agent", ctx())).toBe("agent");
+  it("falls back to the first unanswered question", () => {
+    expect(resolveStep(undefined, ctx({ answers: NAMED, lastStep: "nope" }))).toBe("tools");
+    expect(resolveStep(undefined, ctx({ answers: { ...NAMED, tools: [] } }))).toBe("purpose");
   });
 
-  it("does not re-ask an optional question on a cold return", () => {
-    // Referral was skipped, so it stays null forever. Defaulting back to it
-    // would strand the flow on a card the user already declined.
-    expect(resolveStep(undefined, ctx())).toBe("workspace");
+  it("does not ask for a workspace that exists, and insists on one that does not", () => {
+    expect(resolveStep("workspace", ctx({ answers: NAMED }))).toBe("tools");
+    expect(resolveStep("tools", ctx({ answers: NAMED, hasWorkspace: false }))).toBe("workspace");
   });
 
-  it("resumes after the agent step once an agent exists", () => {
-    // Walked in a browser and this is what it did: a reload with no `?step=`
-    // went back to naming the workspace even though the agent was already
-    // created, and clicking forward through a step with no idempotency made a
-    // SECOND agent. `hasAgent` is the one part of setup that leaves a row
-    // behind, so it is the only thing a cold return can key on.
-    expect(resolveStep(undefined, ctx({ hasAgent: true }))).toBe("knowledge");
-  });
-
-  it("resumes the same way when this flow has no invite step at all", () => {
-    // No knowledge step is not a case: it exists exactly when an agent does.
-    // This is the shape where the step AFTER it is missing instead.
-    const solo = { ...ANSWERED, teamSize: "solo" };
-    expect(resolveStep(undefined, ctx({ hasAgent: true, answers: solo }))).toBe("knowledge");
-  });
-
-  it("refuses to show the agent step again once one exists", () => {
-    // Not only the cold return: the back button asks for `?step=agent` by
-    // name. Every other step can be re-shown harmlessly — this is the only one
-    // that creates something, so it is the only one a request cannot reopen.
-    expect(resolveStep("agent", ctx({ hasAgent: true }))).toBe("knowledge");
-  });
-
-  it("still honours a request for a step that creates nothing", () => {
-    expect(resolveStep("workspace", ctx({ hasAgent: true }))).toBe("workspace");
-    expect(resolveStep("invite", ctx({ hasAgent: true }))).toBe("invite");
+  it("treats the intro as behind somebody who has been anywhere past it", () => {
+    expect(resolveStep(undefined, ctx({ lastStep: "assistant" }))).toBe("assistant");
   });
 });
 
-describe("nextStep", () => {
-  it("walks the survey in order", () => {
-    expect(nextStep("role", ctx())).toBe("use");
-    expect(nextStep("use", ctx())).toBe("team");
+describe("moving", () => {
+  it("steps forward to done and back to nothing", () => {
+    const c = ctx({ answers: SOLO });
+    expect(nextStep("intro:team", c)).toBe("assistant");
+    expect(nextStep("mode", c)).toBe("done");
+    expect(prevStep("intro:documents", c)).toBeNull();
+    expect(prevStep("assistant", c)).toBe("intro:team");
   });
 
-  it("goes straight to setup when there is no referral question to ask", () => {
-    expect(nextStep("team", ctx({ hosted: false }))).toBe("workspace");
-    expect(nextStep("team", ctx({ hosted: true }))).toBe("source");
+  it("advances to the team step on the very tap that chose the team", () => {
+    expect(nextStep("mode", ctx({ answers: TEAM }))).toBe("team");
+    expect(nextStep("team", ctx({ answers: TEAM }))).toBe("done");
   });
 
-  it("skips the invite step for someone working alone", () => {
-    const solo = { ...ANSWERED, teamSize: "solo" };
-    expect(nextStep("agent", ctx({ answers: solo }))).toBe("done");
-    expect(nextStep("agent", ctx())).toBe("invite");
-  });
-
-  it("offers the document step to someone who just made an agent", () => {
-    expect(nextStep("agent", ctx({ hasAgent: true }))).toBe("knowledge");
-  });
-
-  it("steps over the document question for someone who made no agent", () => {
-    // "I'll do this later" on the agent step is an answer, not a detour —
-    // asking for a file straight afterwards would have nowhere to put it.
-    expect(nextStep("agent", ctx({ hasAgent: false }))).toBe("invite");
-  });
-
-  it("ends after the document step when there is nobody to invite", () => {
-    const solo = { ...ANSWERED, teamSize: "solo" };
-    expect(nextStep("knowledge", ctx({ answers: solo, hasAgent: true }))).toBe("done");
-    expect(nextStep("knowledge", ctx({ hasAgent: true }))).toBe("invite");
-  });
-
-  it("ends after the last step", () => {
-    expect(nextStep("invite", ctx())).toBe("done");
-    expect(nextStep("invite-accept", ctx({ hasIncomingInvite: true }))).toBe("done");
+  it("skips the intro to the first question", () => {
+    expect(firstPersonaliseStep(ctx())).toBe("assistant");
+    expect(firstPersonaliseStep(ctx({ hasIncomingInvite: true }))).toBe("invite-accept");
   });
 });
 
-describe("newestAgent", () => {
-  it("has nothing to point at in an empty workspace", () => {
-    expect(newestAgent([])).toBeNull();
+describe("endOf", () => {
+  it("finishes by making the assistant when one was named", () => {
+    expect(endOf(ctx())).toBe("finish");
+    expect(endOf(ctx({ hasIncomingInvite: true, hasWorkspace: false }))).toBe("finish");
   });
 
-  it("picks the most recently created one regardless of list order", () => {
-    const agents = [
-      { id: "old", createdAt: 100 },
-      { id: "new", createdAt: 300 },
-      { id: "middle", createdAt: 200 },
-    ];
-    expect(newestAgent(agents)?.id).toBe("new");
-  });
-
-  it("keeps the first of a tie rather than picking arbitrarily", () => {
-    // Two agents created in the same millisecond is not a case worth a rule,
-    // but "whichever came first" is at least a stable answer across renders.
-    const agents = [
-      { id: "a", createdAt: 500 },
-      { id: "b", createdAt: 500 },
-    ];
-    expect(newestAgent(agents)?.id).toBe("a");
+  it("only records the end for an invitee who joins, or a workspace started alone", () => {
+    expect(endOf(ctx({ hasIncomingInvite: true }))).toBe("complete");
+    expect(endOf(ctx({ completed: true, hasWorkspace: false }))).toBe("complete");
   });
 });
 
-// 0115: an account that signed up with an invitation waiting has no workspace
-// until it accepts. Declining, or arriving after the invitation lapsed, has to
-// lead somewhere a workspace can be started — never to "done" with nothing.
-describe("an account with no workspace", () => {
-  const none = (over: Partial<FlowContext> = {}) => ctx({ hasWorkspace: false, ...over });
-
-  it("offers the invitation, then setup if it is declined", () => {
-    const steps = stepsFor(none({ hasIncomingInvite: true }));
-    expect(steps.slice(steps.indexOf("invite-accept"))).toEqual([
-      "invite-accept",
-      "workspace",
-      "agent",
-      "invite",
-    ]);
-    expect(nextStep("invite-accept", none({ hasIncomingInvite: true }))).toBe("workspace");
+describe("progressFor", () => {
+  it("shows three sections, with the dots of the one you are in", () => {
+    const p = progressFor("intro:apps", ctx());
+    expect(p.sections.map((s) => s.state)).toEqual(["current", "todo", "todo"]);
+    expect(p.sections[0].dots).toEqual(["done", "current", "todo", "todo"]);
+    expect(p.index).toBe(1);
+    expect(p.count).toBe(8);
   });
 
-  it("still ends at the invitation for somebody who already has a workspace", () => {
-    expect(nextStep("invite-accept", ctx({ hasIncomingInvite: true }))).toBe("done");
-  });
-
-  it("counts the invitation as accepted, which is the ordinary outcome", () => {
-    const planned = plannedStepsFor(none({ hasIncomingInvite: true }));
-    expect(planned[planned.length - 1]).toBe("invite-accept");
-  });
-
-  it("resumes at the invitation while one is waiting", () => {
-    expect(resolveStep(undefined, none({ hasIncomingInvite: true }))).toBe("invite-accept");
-  });
-
-  it("resumes at starting a workspace once no invitation is waiting", () => {
-    expect(resolveStep(undefined, none())).toBe("workspace");
-    // Even with an agent counted somewhere: there is nowhere to put one yet.
-    expect(resolveStep(undefined, none({ hasAgent: true }))).toBe("workspace");
-  });
-
-  it("can be asked for the workspace step after declining", () => {
-    expect(resolveStep("workspace", none({ hasIncomingInvite: true }))).toBe("workspace");
+  it("marks the intro done once past it, and never reaches Start here", () => {
+    const p = progressFor("purpose", ctx({ answers: NAMED }));
+    expect(p.sections.map((s) => s.state)).toEqual(["done", "current", "todo"]);
+    expect(p.sections[1].dots).toEqual(["done", "done", "current", "todo"]);
+    expect(p.sections[2].dots).toEqual([]);
   });
 });

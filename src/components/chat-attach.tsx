@@ -29,6 +29,7 @@ export function ChatAttach({ uploads, canWrite }: { uploads: ChatUploads; canWri
         onClick={() => inputRef.current?.click()}
         className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label="Attach a document"
+        data-coach="attach"
       >
         <Plus className="h-[18px] w-[18px]" />
       </button>

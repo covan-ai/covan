@@ -59,6 +59,11 @@ import {
 } from "@/components/chat/use-conversation-browser";
 import { LiveAnswer } from "@/components/chat/live-answer";
 import { DocumentCard } from "@/components/chat/document-card";
+import { KickoffCard } from "@/components/chat/kickoff-card";
+import { takeKickoffFire, useKickoffCardDismissed } from "@/lib/chat-kickoff";
+import { firstConnectableTool } from "@/lib/onboarding-config";
+import { connectedSlugs } from "@/lib/connected-apps";
+import { connectionsKey, slackKey, toolConnectionsKey } from "@/hooks/use-connections";
 import { DocumentPanel } from "@/components/chat/document-panel";
 import { documentJobsKey, placeJobs, useDocumentJobs } from "@/components/chat/use-document-jobs";
 import {
@@ -391,6 +396,44 @@ function ChatTab() {
   const placedJobs = useMemo(
     () => placeJobs(documentJobs.data ?? [], messages),
     [documentJobs.data, messages],
+  );
+
+  // The Connect card under the assistant's opening line (`kickoff-card.tsx`):
+  // only in the conversation the first run made, until it is put down or
+  // every tool the person named is connected. The connections are read only
+  // while the card could show, so every other conversation pays nothing.
+  const isKickoffSession = Boolean(active) && me?.onboarding?.sessionId === active?.id;
+  const { dismissed: kickoffDismissed, dismiss: dismissKickoff } = useKickoffCardDismissed(
+    active?.id,
+  );
+  const wantKickoffCard = isKickoffSession && !kickoffDismissed;
+  const { data: kickoffTools } = useQuery({
+    queryKey: toolConnectionsKey,
+    queryFn: () => api.toolConnections.list(),
+    enabled: wantKickoffCard,
+  });
+  const { data: kickoffSources } = useQuery({
+    queryKey: connectionsKey,
+    queryFn: () => api.connections.list(),
+    enabled: wantKickoffCard,
+  });
+  const { data: kickoffSlack } = useQuery({
+    queryKey: slackKey,
+    queryFn: () => api.slack.get(),
+    enabled: wantKickoffCard,
+  });
+  const kickoffTool = useMemo(() => {
+    if (!wantKickoffCard) return null;
+    const connected = connectedSlugs(
+      kickoffTools?.connections ?? [],
+      kickoffSources?.connections ?? [],
+      Boolean(kickoffSlack?.installation),
+    );
+    return firstConnectableTool(me?.onboarding?.answers.tools, connected);
+  }, [wantKickoffCard, kickoffTools, kickoffSources, kickoffSlack, me?.onboarding?.answers.tools]);
+  const firstReplyId = useMemo(
+    () => messages.find((m) => m.role === "assistant")?.id ?? null,
+    [messages],
   );
 
   // A full page came back, so there is probably another behind it. "Probably"
@@ -805,6 +848,15 @@ function ChatTab() {
        * draws it exactly as it would have been drawn live.
        */
       resume?: boolean;
+      /**
+       * Open the conversation rather than answer in it: the assistant speaks
+       * first, from what the first run learned (`lib/chat-kickoff.ts`). Only
+       * on an empty conversation the first run made; the worker refuses
+       * every other case before the stream opens, and a refusal here is
+       * silent — the Connect card under where the opening would be is the
+       * screen's own, and it is there either way.
+       */
+      kickoff?: boolean;
     } = {},
   ) => {
     if (streamAbort.current) return;
@@ -891,6 +943,7 @@ function ChatTab() {
                       ...(opts.continuing ? { continue: true } : {}),
                       ...(opts.regenerate ? { regenerate: true } : {}),
                       ...(opts.model ? { model: opts.model } : {}),
+                      ...(opts.kickoff ? { kickoff: true } : {}),
                     },
               ),
               signal: controller.signal,
@@ -1402,6 +1455,21 @@ function ChatTab() {
     // answer. It is already out of sessionStorage by here, so this ends it.
     if (parseReportCommand(draft)) return;
     void submit(draft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id, messages.length, busy]);
+
+  // The first run ends here, with the conversation it made still empty and a
+  // flag under `chat-kickoff:<id>` saying to open it. The same shape as the
+  // draft above, and for the same reason it is an effect: the flag is a
+  // handoff from another route, it is spent as it is read, and the turn can
+  // only start once the session is loaded and still empty.
+  const kickoffConsumed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!active || busy || messages.length > 0) return;
+    if (kickoffConsumed.current === active.id) return;
+    if (!takeKickoffFire(active.id)) return;
+    kickoffConsumed.current = active.id;
+    void streamReply(active.id, { kickoff: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, messages.length, busy]);
 
@@ -2087,6 +2155,14 @@ function ChatTab() {
                       {placedJobs.byMessage.get(m.id)?.map((job) => (
                         <DocumentCard key={job.id} job={job} onOpen={openJob} className="mt-3" />
                       ))}
+                      {kickoffTool && m.id === firstReplyId && (
+                        <KickoffCard
+                          tool={kickoffTool}
+                          bundleId={agent.bundleIds?.[0] ?? null}
+                          onDismiss={dismissKickoff}
+                          className="mt-3"
+                        />
+                      )}
                     </Fragment>
                   );
                 })}
@@ -2307,6 +2383,8 @@ function ChatTab() {
             // What `max-h-44` meant: eleven rem, then scroll.
             maxHeight={176}
             className="border-border p-0 transition-colors duration-200"
+            // Where the setup list's "Ask your first question" points.
+            data-coach="composer"
           >
             <ChatReceipts uploads={uploads} />
             <PromptInputTextarea

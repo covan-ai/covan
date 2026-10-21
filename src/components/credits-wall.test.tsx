@@ -21,7 +21,17 @@ function meWith(role: "admin" | "member" | "viewer"): Me {
     members: [{ id: "u1", name: "Ada", email: "ada@example.com", role, avatarUrl: null }],
     onboarding: {
       completed: true,
-      answers: { role: null, useCase: null, teamSize: null, referralSource: null },
+      lastStep: null,
+      agentId: null,
+      sessionId: null,
+      answers: {
+        assistantName: null,
+        assistantEmoji: null,
+        assistantRole: null,
+        tools: null,
+        purpose: null,
+        mode: null,
+      },
     },
   };
 }

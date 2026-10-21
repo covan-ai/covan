@@ -123,27 +123,36 @@ describe("an invitation that says who it is from", () => {
   });
 });
 
-describe("declining an invitation in the welcome step", () => {
-  it("offers what the flow asked for, and does not count as joining", async () => {
-    incoming.mockResolvedValueOnce([
-      { id: "inv-1", workspaceName: "Acme", inviterName: "Ada", role: "member" } as never,
-    ]);
+describe("the invitation in the welcome step", () => {
+  // Declining lives on the screen's bar now, not in the step. What the step
+  // keeps is the way through when the invitation was taken elsewhere.
+  it("continues through the skip when the invitation is gone, and does not count as joining", async () => {
+    incoming.mockResolvedValueOnce([]);
     const onJoined = vi.fn();
     const onSkip = vi.fn();
     const user = userEvent.setup();
     render(
       <QueryClientProvider client={seededClient()}>
-        <InviteAcceptStep
-          onJoined={onJoined}
-          onSkip={onSkip}
-          skipLabel="Start my own workspace instead"
-        />
+        <InviteAcceptStep onJoined={onJoined} onSkip={onSkip} />
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: /start my own workspace/i }));
+    await user.click(await screen.findByRole("button", { name: /continue/i }));
 
     expect(onSkip).toHaveBeenCalledTimes(1);
     expect(onJoined).not.toHaveBeenCalled();
+  });
+
+  it("offers Join for a waiting invitation", async () => {
+    incoming.mockResolvedValueOnce([
+      { id: "inv-1", workspaceName: "Acme", inviterName: "Ada", role: "member" } as never,
+    ]);
+    render(
+      <QueryClientProvider client={seededClient()}>
+        <InviteAcceptStep onJoined={vi.fn()} onSkip={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Acme")).toBeInTheDocument();
   });
 });

@@ -264,6 +264,8 @@ export const EXCLUDED: Record<string, string> = {
     "a person's setting, not a workspace's. It follows the account rather than the room, and the account is not what is being exported.",
   user_onboarding:
     "the same, and about a first run that has already happened. It would mean nothing in a new install.",
+  onboarding_events:
+    "what that first run looked like step by step — a person's own telemetry (0119), keyed by user with no workspace in it, readable only by them. It describes this install's funnel, not the work, and would mean nothing in a new one.",
   feedback:
     "addressed to the operator, not to the workspace. 0041 keeps it unreadable by anybody but its author for a reason — a note saying what is broken must not be readable by the colleague it is about — and a workspace archive is precisely the thing an admin downloads. Carrying it here would undo the policy through the back door.",
   workspace_events:

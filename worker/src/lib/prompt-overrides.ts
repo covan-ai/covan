@@ -41,6 +41,9 @@ export const PROMPT_PARTS = [
   "brainstorm",
   "report",
   "document",
+  // The rules the first run's opening turn is written to
+  // (`lib/onboarding-kickoff.ts`). The facts in that note are the turn's own.
+  "kickoff",
 ] as const;
 
 export type PromptPart = (typeof PROMPT_PARTS)[number];

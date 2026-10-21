@@ -39,7 +39,7 @@ export type ConnectedApp = {
  * silent: Drive appears twice on the empty screen, once per half, and the fix
  * is one line in this table plus the fixture that would have caught it.
  */
-const COMPOSIO_SLUG: Record<ProviderId, string> = {
+export const COMPOSIO_SLUG: Record<ProviderId, string> = {
   notion: "notion",
   google_drive: "googledrive",
 };
@@ -53,7 +53,7 @@ const COMPOSIO_SLUG: Record<ProviderId, string> = {
  * the slug has lost information — a space, an inner capital — that no rule can
  * put back. `gmail` needs no entry; `googledrive` does.
  */
-const APP_NAME: Record<string, string> = {
+export const APP_NAME: Record<string, string> = {
   github: "GitHub",
   gitlab: "GitLab",
   googlecalendar: "Google Calendar",
@@ -149,4 +149,20 @@ export function mergeConnectedApps(tools: ToolConnection[], sources: Connection[
   }
 
   return [...apps.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+/**
+ * The slugs of everything wired up and working, as one set — the two halves
+ * above plus Slack, which is neither a tool connection nor a source but is
+ * still an app somebody connected. What the first run's catalogue
+ * (`onboarding-config.ts`) checks its `connectedSlug` against.
+ */
+export function connectedSlugs(
+  tools: ToolConnection[],
+  sources: Connection[],
+  slackInstalled: boolean,
+): Set<string> {
+  const slugs = new Set(mergeConnectedApps(tools, sources).map((a) => a.slug));
+  if (slackInstalled) slugs.add("slack");
+  return slugs;
 }

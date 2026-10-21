@@ -9,7 +9,9 @@ import {
   titleModelFor,
   availableModels,
   providerFor,
+  anthropicEnabled,
 } from "../lib/models";
+import { KICKOFF_ASK, KICKOFF_MAX_TOKENS, onboardingKickoff } from "../lib/onboarding-kickoff";
 import { reportProviderFailure } from "../lib/provider-error";
 import { type CompletionMessage, type CompletionUsage, type ToolCall } from "../lib/completion";
 import {
@@ -116,6 +118,17 @@ const streamChatSchema = z.object({
    * does for an agent carrying a model whose key has been rotated out.
    */
   model: z.string().optional(),
+  /**
+   * Open the conversation, rather than answering a message in it.
+   *
+   * The first run ends on a conversation with nothing in it, and this is the
+   * turn that fills it: the assistant greets the person with what the first
+   * run learned and proposes one next step (`lib/onboarding-kickoff.ts`).
+   * Allowed only on an empty conversation of the caller's own, made by their
+   * first run for exactly this agent — every other request is refused before
+   * the stream opens, with a code the frontend can read.
+   */
+  kickoff: z.boolean().optional(),
 });
 
 /**
@@ -150,7 +163,17 @@ chat.post("/chat/stream", async (c) => {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
 
-  const { sessionId, continue: continuing = false, regenerate = false } = parsed.data;
+  const {
+    sessionId,
+    continue: continuing = false,
+    regenerate = false,
+    kickoff = false,
+  } = parsed.data;
+  // An opening finishes nothing and answers nothing again. Refused here rather
+  // than in the schema so the message names the clash.
+  if (kickoff && (continuing || regenerate)) {
+    return c.json({ error: "a kickoff cannot continue or regenerate a reply" }, 400);
+  }
 
   const { data: session, error: sessionError } = await db
     .from("chat_sessions")
@@ -198,11 +221,57 @@ chat.post("/chat/stream", async (c) => {
 
   const rows = (recentDesc ?? []).slice().reverse();
   const lastMessage = rows[rows.length - 1];
+
+  // What this deployment has reworded (`lib/prompt-overrides.ts`). Read before
+  // the opening turn below, which has a part of its own; never throws.
+  const overrides = await promptOverrides(env);
+
   // Which end of the conversation this turn is working from. Answering needs a
-  // question to answer; continuing needs an answer to continue.
-  if (continuing || regenerate) {
+  // question to answer; continuing needs an answer to continue; opening needs
+  // nothing there at all.
+  //
+  // The opening's facts, or null on every turn but one. Decided before the
+  // stream opens, like the credit check above: each refusal here is a status
+  // the frontend reads, and once the body is SSE there is no honest way to
+  // send one.
+  let intro: { note: string; ask: string } | null = null;
+  if (kickoff) {
+    if (session.user_id !== c.get("user").id) {
+      return c.json({ error: "not yours to open", code: "kickoff_refused" }, 403);
+    }
+    // A reload after the reply landed, or a second tab. The conversation has
+    // started; there is nothing to open and nothing to do.
+    if (rows.length > 0) {
+      return c.json({ error: "this conversation has already started", code: "kickoff_done" }, 409);
+    }
+    // Every other turn reaches the provider and reports its refusal in the
+    // stream. This one is answered before anything is shown, and a greeting
+    // that cannot be generated is better refused up front — the frontend has a
+    // card to show instead.
+    if (!env.OPENAI_API_KEY && !anthropicEnabled(env)) {
+      return c.json({ error: "no model is configured", code: "no_model" }, 503);
+    }
+    intro = await onboardingKickoff(
+      db,
+      c.get("user").id,
+      session.agent_id as string,
+      overrides.parts.kickoff,
+    );
+    if (!intro) {
+      return c.json(
+        { error: "not the first run's conversation for this agent", code: "kickoff_refused" },
+        403,
+      );
+    }
+  } else if (continuing || regenerate) {
     if (!lastMessage || lastMessage.role !== "assistant") {
       return c.json({ error: continuing ? "nothing to continue" : "nothing to regenerate" }, 400);
+    }
+    // A reply with no question before it is an opening (above), and asking
+    // for it again would send the model a conversation with no user turn in
+    // it — which one provider refuses and the other answers with a guess.
+    if (regenerate && !rows.some((m: { role: string }) => m.role === "user")) {
+      return c.json({ error: "nothing to regenerate" }, 400);
     }
   } else if (!lastMessage || lastMessage.role !== "user") {
     return c.json({ error: "no user message to respond to" }, 400);
@@ -211,9 +280,10 @@ chat.post("/chat/stream", async (c) => {
   // What the retrieval is *for*, which on a continuation is not the last
   // message — that is the half-written answer. It is the question that answer
   // was already halfway through, so the second half is grounded in the same
-  // documents as the first.
-  const question =
-    continuing || regenerate
+  // documents as the first. On an opening it is the ask nobody typed.
+  const question = intro
+    ? intro.ask
+    : continuing || regenerate
       ? ([...rows].reverse().find((m: { role: string }) => m.role === "user")?.content ?? "")
       : lastMessage.content;
 
@@ -288,7 +358,7 @@ chat.post("/chat/stream", async (c) => {
       webSearchEnabled: tuning.webSearch,
       now: new Date(),
       timezone: visitorZone,
-      overrides: await promptOverrides(env),
+      overrides,
     }) + (manifest ? `\n\n${manifest}` : "");
 
   // Budget the history down to the most recent turns that fit, so long chats
@@ -328,14 +398,16 @@ chat.post("/chat/stream", async (c) => {
   // than starting one. `system` because it is Covan speaking, not anything the
   // person or a document wrote; `volatile` because it changes between turns
   // and must stay behind the cached prefix.
+  // Neither note on an opening: the conversation is empty, so both reads would
+  // find nothing, and the opening has a note of its own.
   const taskNote =
-    !continuing && tools.some((t) => t.name === "browse")
+    !continuing && !intro && tools.some((t) => t.name === "browse")
       ? await browserTaskNote(db, sessionId)
       : null;
   // The same for documents (`lib/docs/note.ts`): without it a model asked
   // "so?" after a document was filed starts writing it again.
   const documentNote =
-    !continuing && tools.some((t) => t.name === "write_document")
+    !continuing && !intro && tools.some((t) => t.name === "write_document")
       ? await documentJobNote(db, sessionId)
       : null;
   const messages: CompletionMessage[] = [
@@ -351,6 +423,15 @@ chat.post("/chat/stream", async (c) => {
     // turn that asks for the rest of it. See `CONTINUE_INSTRUCTION` for why it
     // is a user turn rather than the obvious thing.
     ...(continuing ? [{ role: "user" as const, content: CONTINUE_INSTRUCTION }] : []),
+    // On an opening there is no `latestTurn`: the conversation is empty. What
+    // the model answers is Covan's note about the person, then the one ask
+    // nobody typed — stored nowhere, see `lib/onboarding-kickoff.ts`.
+    ...(intro
+      ? [
+          { role: "system" as const, content: intro.note, volatile: true as const },
+          { role: "user" as const, content: intro.ask },
+        ]
+      : []),
   ];
 
   // What that request was made of, for `messages.prompt_parts` (0069). Every
@@ -410,9 +491,12 @@ chat.post("/chat/stream", async (c) => {
   // On the cheapest model of the same provider, not on the agent's — see
   // `titleModelFor`. A title is five words and the agent's model has nothing to
   // add to them.
-  const titling = session.title
-    ? null
-    : generateSessionTitle(env, titleModelFor(model, env), question);
+  //
+  // Nor on an opening: the only message is the one nobody typed, and a title
+  // made from it would name every first conversation the same. The person's
+  // first real message names it, as it does everywhere else.
+  const titling =
+    session.title || intro ? null : generateSessionTitle(env, titleModelFor(model, env), question);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -762,7 +846,8 @@ chat.post("/chat/stream", async (c) => {
           request: {
             model,
             messages,
-            maxTokens: maxTokensFor(mode),
+            // An opening is a greeting with a cap to match, not an answer.
+            maxTokens: intro ? KICKOFF_MAX_TOKENS : maxTokensFor(mode),
             temperature: temperatureFor(mode, agent.temperature),
             reasoningEffort: reasoningEffortFor(tuning.reasoningEffort),
             // The one caller that shows it. On a model and an effort that
@@ -771,7 +856,9 @@ chat.post("/chat/stream", async (c) => {
             showThinking: true,
             webSearch: tuning.webSearch,
           },
-          tools,
+          // An opening proposes; it does not act. "I'll show you the plan
+          // first" is kept by offering nothing to call, not by asking nicely.
+          tools: intro ? [] : tools,
           ctx: await buildToolContext({
             db,
             env,
@@ -898,7 +985,15 @@ chat.post("/chat/stream", async (c) => {
           // continuations (a half-answer has no meaningful follow-up),
           // regenerations (the question hasn't changed), and truncations
           // (the user needs "Continue" not new questions).
-          if (!continuing && !regenerate && finishReason !== "length" && !signal.aborted) {
+          // Nor on an opening, which asked nothing: the person's first real
+          // message is what the suggestions would be about.
+          if (
+            !continuing &&
+            !regenerate &&
+            !intro &&
+            finishReason !== "length" &&
+            !signal.aborted
+          ) {
             try {
               const { questions, spend: followUpSpend } = await generateFollowUps(
                 env,

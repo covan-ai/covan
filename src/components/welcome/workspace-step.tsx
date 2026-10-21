@@ -1,36 +1,51 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 
 /**
- * The signup trigger named this workspace "<Name>'s Workspace" without asking.
- * This is the asking. Pre-filled, so continuing without touching it is a valid
- * answer and costs one click.
+ * A workspace for an account that has none.
  *
- * `currentName` null means there is no workspace to rename: the account
- * signed up with an invitation waiting (0115) and did not take it, or the
- * invitation lapsed. Then this starts one, which is also where a hosted
- * account's free credits land.
+ * The signup trigger gives every account a workspace, except one that signed
+ * up with an invitation waiting (0115) — the invitation is its way in. If it
+ * declines, or the invitation lapsed, this starts one, which is also where a
+ * hosted account's free credits land.
+ *
+ * `currentName` is kept for the one other caller this used to have — renaming
+ * the guessed workspace — and is null everywhere this is shown today. The
+ * team step names a workspace that exists.
  */
 export function WorkspaceStep({
+  formId,
   currentName,
   onDone,
+  onValidityChange,
+  onBusyChange,
 }: {
+  formId: string;
   currentName: string | null;
   onDone: () => void;
+  onValidityChange?: (valid: boolean) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(currentName ?? "");
   const [saving, setSaving] = useState(false);
 
+  const valid = name.trim().length > 0;
+  useEffect(() => {
+    onValidityChange?.(valid);
+  }, [valid, onValidityChange]);
+  useEffect(() => {
+    onBusyChange?.(saving);
+  }, [saving, onBusyChange]);
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || saving) return;
 
     // Unchanged means nothing to write. Skipping the request keeps a no-op from
     // being able to fail.
@@ -63,7 +78,7 @@ export function WorkspaceStep({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form id={formId} onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-1.5">
         <Label htmlFor="workspace-name">Workspace name</Label>
         <Input
@@ -76,9 +91,6 @@ export function WorkspaceStep({
           autoFocus
         />
       </div>
-      <Button type="submit" className="w-full" disabled={saving || !name.trim()}>
-        {saving ? "Saving…" : "Continue"}
-      </Button>
     </form>
   );
 }

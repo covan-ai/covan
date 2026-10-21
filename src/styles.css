@@ -479,13 +479,92 @@
   animation: browser-breathe 2.4s ease-in-out infinite;
 }
 
+/*
+ * The looping demos on the first run's intro screens (`mini-demos.tsx`).
+ *
+ * A demo is a few layers stacked in one grid cell, each shown for a slice of
+ * one period. Opacity only, in the keyframes only, `.step-arrive`'s care: with
+ * motion switched off every layer sits in its base state, and the base state
+ * is the demo's final frame — the layers that only exist in passing carry
+ * `motion-reduce:hidden` themselves. `slot` layers show for one third and go;
+ * `hold` layers arrive and stay. No transform anywhere, so a tab in the
+ * background pays nothing and comes back mid-loop rather than mid-jump.
+ */
+@keyframes demo-slot-1 {
+  0%,
+  30% {
+    opacity: 1;
+  }
+  33%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes demo-slot-2 {
+  0%,
+  30% {
+    opacity: 0;
+  }
+  33%,
+  63% {
+    opacity: 1;
+  }
+  66%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes demo-hold-2 {
+  0%,
+  30% {
+    opacity: 0;
+  }
+  33%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes demo-hold-3 {
+  0%,
+  63% {
+    opacity: 0;
+  }
+  66%,
+  100% {
+    opacity: 1;
+  }
+}
+
+.demo-slot-1 {
+  animation: demo-slot-1 var(--demo-period, 3.6s) linear infinite;
+}
+
+.demo-slot-2 {
+  animation: demo-slot-2 var(--demo-period, 3.6s) linear infinite;
+}
+
+.demo-hold-2 {
+  animation: demo-hold-2 var(--demo-period, 3.6s) linear infinite;
+}
+
+.demo-hold-3 {
+  animation: demo-hold-3 var(--demo-period, 3.6s) linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .typing-dot,
   .stream-caret,
   .step-arrive,
   .step-running,
   .browser-live::after,
-  .stream-live > :last-child::after {
+  .stream-live > :last-child::after,
+  .demo-slot-1,
+  .demo-slot-2,
+  .demo-hold-2,
+  .demo-hold-3 {
     animation: none;
   }
 }

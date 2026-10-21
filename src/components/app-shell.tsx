@@ -58,6 +58,7 @@ import { useTheme } from "@/lib/theme";
 import { BrandMark } from "@/components/brand-mark";
 import { AgentAvatar, UserAvatar } from "@/components/avatars";
 import { SessionRow } from "@/components/session-row";
+import { SetupList } from "@/components/setup-list";
 import { ShareAgentDialog } from "@/components/share-agent-dialog";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api-client";
@@ -307,7 +308,7 @@ const ROW_IDLE = "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-si
 const ROW_ACTIVE = "bg-sidebar-accent text-sidebar-accent-foreground";
 
 /** The 12px uppercase eyebrow, the system's one uppercase role. */
-function PanelLabel({ children }: { children: ReactNode }) {
+export function PanelLabel({ children }: { children: ReactNode }) {
   return (
     <div className="px-3 pb-1 pt-4 text-xs font-semibold uppercase tracking-[0.06em] text-micro-foreground">
       {children}
@@ -374,6 +375,7 @@ function AgentPanel({ agent, onNavigate }: { agent: Agent; onNavigate: () => voi
             onClick={() => setShareOpen(true)}
             title="Share this agent"
             aria-label="Share this agent"
+            data-coach="share-agent"
             className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors duration-200 hover:bg-sidebar-accent/60 hover:text-foreground"
           >
             <Users className="h-4 w-4" />
@@ -414,6 +416,8 @@ function AgentPanel({ agent, onNavigate }: { agent: Agent; onNavigate: () => voi
           );
         })}
       </nav>
+
+      <SetupList agentId={agent.id} onNavigate={onNavigate} />
 
       <div className="flex min-h-0 flex-1 flex-col px-2">
         <div className="min-h-0 flex-1 overflow-y-auto pb-2">
@@ -575,6 +579,8 @@ function WorkspacePanel({
           );
         })}
       </nav>
+
+      <SetupList onNavigate={onNavigate} />
 
       <AgentList onNavigate={onNavigate} />
     </>

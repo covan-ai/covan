@@ -14,6 +14,7 @@ import { NOT_RUN_EXCERPT, NOT_RUN_FOR_A_QUESTION } from "../lib/harness/loop";
 import type { AgentTool, ToolContext, ToolResult } from "../lib/harness/registry";
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import { subrequestMeter } from "../lib/subrequests";
+import { KICKOFF_ASK, KICKOFF_MAX_TOKENS } from "../lib/onboarding-kickoff";
 
 /**
  * What this file is for: the citations under an answer, and what it costs to
@@ -377,11 +378,23 @@ function appWith(spec: {
   channels?: Array<Record<string, unknown>>;
   /** This conversation's `browser_tasks`, newest first, as the note reads them. */
   browserTasks?: Array<Record<string, unknown>>;
+  /**
+   * An opening turn's conversation: `question` is not put in it, so the
+   * conversation holds `history` alone — empty, for the one case the opening
+   * is allowed on.
+   */
+  kickoff?: boolean;
+  /** Who the session belongs to. Defaults to the caller. */
+  sessionOwner?: string;
+  /** The caller's `user_onboarding` row, as the opening reads it. Null is no row. */
+  onboarding?: Record<string, unknown> | null;
+  /** The caller's `profiles.name`. */
+  profileName?: string | null;
 }) {
   const documents = spec.documents ?? [];
   const rows = [
     ...(spec.history ?? []),
-    { role: "user", content: spec.question },
+    ...(spec.kickoff ? [] : [{ role: "user", content: spec.question }]),
     ...(spec.cutOffReply ? [{ role: "assistant", content: spec.cutOffReply }] : []),
   ].map((m, i) => ({
     id: `m${i}`,
@@ -422,11 +435,25 @@ function appWith(spec: {
     tables: {
       chat_sessions: {
         select: () => ({
-          data: { ...SESSION, title: spec.sessionTitle ?? null, ...(spec.sessionDial ?? {}) },
+          data: {
+            ...SESSION,
+            user_id: spec.sessionOwner ?? USER.id,
+            title: spec.sessionTitle ?? null,
+            ...(spec.sessionDial ?? {}),
+          },
           error: null,
         }),
       },
       agents: { select: () => ({ data: agent, error: null }) },
+      // What the opening turn reads (`lib/onboarding-kickoff.ts`): the first
+      // run's row and the person's name. Absent in every test but those.
+      user_onboarding: { select: () => ({ data: spec.onboarding ?? null, error: null }) },
+      profiles: {
+        select: () => ({
+          data: spec.profileName === undefined ? { name: "Ada Lovelace" } : { name: spec.profileName },
+          error: null,
+        }),
+      },
       // The route reads newest-first and reverses, so hand it back reversed.
       messages: { select: () => ({ data: [...rows].reverse(), error: null }) },
       agent_bundles: {
@@ -3216,5 +3243,178 @@ describe("the date the agent is given", () => {
         m.role === "system" && m.content.includes("Today is"),
     );
     expect(system).toBeDefined();
+  });
+});
+
+/**
+ * The turn that speaks first (`lib/onboarding-kickoff.ts`).
+ *
+ * The first run ends on an empty conversation, and this is the one request
+ * allowed to open it: the assistant greets the person with what the first run
+ * learned, from a note and an ask that are sent and never stored. Everything
+ * that is not that exact situation is refused before the stream opens, with a
+ * code the frontend reads to decide whether to say anything.
+ */
+describe("the turn that speaks first", () => {
+  const ONBOARDING = {
+    completed_at: "2026-10-21T10:00:00Z",
+    assistant_name: "Desk",
+    tools: ["gmail", "notion"],
+    purpose: "sales",
+    mode: "team",
+    agent_id: AGENT.id,
+  };
+  /** A deployment with a model to answer on. `ENV` itself names no key. */
+  const KEYED = { OPENAI_API_KEY: "sk-test" };
+  const open = (app: Hono<AppEnv>, extra: Record<string, unknown> = {}) =>
+    post(app, { sessionId: SESSION.id, kickoff: true, ...extra });
+  const opening = (spec: Partial<Parameters<typeof appWith>[0]> = {}) =>
+    appWith({ question: "", kickoff: true, onboarding: ONBOARDING, env: KEYED, ...spec });
+
+  it("refuses a conversation that has already started, and calls nothing", async () => {
+    const { app } = opening({ history: [{ role: "assistant", content: "Hi Ada." }] });
+
+    const res = await open(app);
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "kickoff_done" });
+    expect(completionCreate).not.toHaveBeenCalled();
+    expect(serviceInsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses an agent the first run did not make", async () => {
+    const { app } = opening({ onboarding: { ...ONBOARDING, agent_id: "agent-9" } });
+
+    const res = await open(app);
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "kickoff_refused" });
+    expect(completionCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a first run that is not finished", async () => {
+    const { app } = opening({ onboarding: { ...ONBOARDING, completed_at: null } });
+
+    const res = await open(app);
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "kickoff_refused" });
+  });
+
+  it("refuses somebody else's conversation before reading anything", async () => {
+    const { app, calls } = opening({ sessionOwner: "user-2" });
+
+    const res = await open(app);
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "kickoff_refused" });
+    expect(calls.some((q) => q.table === "user_onboarding")).toBe(false);
+  });
+
+  it("cannot continue or regenerate a reply", async () => {
+    const { app } = opening();
+
+    expect((await open(app, { continue: true })).status).toBe(400);
+    expect((await open(app, { regenerate: true })).status).toBe(400);
+    expect(completionCreate).not.toHaveBeenCalled();
+  });
+
+  it("says so, before the stream, when the deployment has no model to answer on", async () => {
+    const { app } = opening({ env: undefined });
+
+    const res = await open(app);
+
+    expect(res.status).toBe(503);
+    expect(JSON.parse(res.body)).toMatchObject({ code: "no_model" });
+    expect(completionCreate).not.toHaveBeenCalled();
+  });
+
+  it("tells the model who it is opening for, then asks it to, as the last turn", async () => {
+    const { app } = opening();
+    answersWith(streamOf("Hi Ada, I'm Desk."));
+
+    const res = await open(app);
+
+    expect(res.status).toBe(200);
+    const sent = sentMessages() as Array<{ role: string; content: string }>;
+    expect(sent[0].role).toBe("system");
+    const note = sent.at(-2);
+    expect(note?.role).toBe("system");
+    expect(note?.content).toContain("Their first name: Ada.");
+    expect(note?.content).toContain("Your name: Desk.");
+    expect(note?.content).toContain("mostly help with: sales.");
+    expect(note?.content).toContain("connecting Gmail");
+    expect(sent.at(-1)).toMatchObject({ role: "user", content: KICKOFF_ASK });
+    // Nothing the person wrote: the only user turn is the ask.
+    expect(sent.filter((m) => m.role === "user")).toHaveLength(1);
+  });
+
+  it("stores the greeting as a reply and stores no question", async () => {
+    const { app } = opening();
+    answersWith(streamOf("Hi Ada, I'm Desk."));
+
+    const res = await open(app);
+
+    expect(res.body).toContain('"type":"done"');
+    expect(serviceInsert).toHaveBeenCalledTimes(1);
+    expect(serviceInsert.mock.calls[0][0]).toMatchObject({
+      role: "assistant",
+      content: "Hi Ada, I'm Desk.",
+    });
+    expect(serviceInsert.mock.calls.some((c) => (c[0] as { role?: string }).role === "user")).toBe(
+      false,
+    );
+  });
+
+  it("offers no tools and caps the greeting", async () => {
+    const { app } = opening({
+      // A workspace with something to call, which the opening still may not.
+      connections: [{ id: "conn-1", provider: "composio", status: "active", toolkit: "gmail" }],
+    });
+    answersWith(streamOf("Hi."));
+
+    await open(app);
+
+    const body = completionCreate.mock.calls.find((c) => c[0].stream)![0];
+    expect(body.tools).toBeUndefined();
+    expect(body.max_completion_tokens).toBe(KICKOFF_MAX_TOKENS);
+  });
+
+  it("makes one model call: no title and no follow-up suggestions", async () => {
+    const { app } = opening();
+    answersWith(streamOf("Hi."));
+
+    const res = await open(app);
+
+    expect(completionCreate).toHaveBeenCalledTimes(1);
+    expect(completionCreate.mock.calls[0][0].stream).toBe(true);
+    expect(sessionUpdate.mock.calls.map((c) => c[0]).some((row) => "title" in row)).toBe(false);
+    expect(res.body).not.toContain('"type":"suggestions"');
+  });
+
+  it("answers the person's first real message after the greeting as any turn", async () => {
+    const { app } = appWith({
+      history: [{ role: "assistant", content: "Hi Ada, I'm Desk. Shall we connect Gmail?" }],
+      question: "Yes, let's.",
+      env: KEYED,
+    });
+    answersWith(streamOf("Great — here is the plan."));
+
+    const res = await ask(app);
+
+    expect(res.status).toBe(200);
+    const sent = sentMessages() as Array<{ role: string; content: string }>;
+    expect(sent.at(-1)).toMatchObject({ role: "user", content: "Yes, let's." });
+    expect(sent.some((m) => m.content.includes("Their first name"))).toBe(false);
+  });
+
+  it("will not regenerate a greeting nobody asked for", async () => {
+    const { app } = opening({ history: [{ role: "assistant", content: "Hi Ada." }] });
+
+    const res = await again(app);
+
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body)).toMatchObject({ error: "nothing to regenerate" });
+    expect(completionCreate).not.toHaveBeenCalled();
   });
 });

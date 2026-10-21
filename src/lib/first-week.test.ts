@@ -23,7 +23,15 @@ const step = (i: FirstWeekInput, key: string) => firstWeekSteps(i).find((s) => s
 
 describe("firstWeekSteps", () => {
   it("has nothing ticked for a workspace that has only made an agent", () => {
-    expect(firstWeekRemaining(firstWeekSteps(input()))).toBe(4);
+    expect(firstWeekRemaining(firstWeekSteps(input()))).toBe(5);
+  });
+
+  // A caller that never fetched connections leaves the count out, and the
+  // step stays open rather than ticking on a guess.
+  it("ticks the connect step on a working connection, and not on silence", () => {
+    expect(step(input(), "connect").done).toBe(false);
+    expect(step(input({ connectedCount: 0 }), "connect").done).toBe(false);
+    expect(step(input({ connectedCount: 1 }), "connect").done).toBe(true);
   });
 
   it("counts a document on any agent, not only the first", () => {
@@ -50,9 +58,15 @@ describe("firstWeekSteps", () => {
     expect(step(input({ routineCount: 1 }), "routine").done).toBe(true);
   });
 
-  it("has nothing left once all four are true", () => {
+  it("has nothing left once all five are true", () => {
     const steps = firstWeekSteps(
-      input({ agents: [agent(1)], sessions: [session(4)], memberCount: 3, routineCount: 1 }),
+      input({
+        agents: [agent(1)],
+        sessions: [session(4)],
+        memberCount: 3,
+        routineCount: 1,
+        connectedCount: 1,
+      }),
     );
     expect(firstWeekRemaining(steps)).toBe(0);
   });

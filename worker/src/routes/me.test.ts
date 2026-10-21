@@ -193,6 +193,14 @@ type OnboardingRow = {
   use_case: string | null;
   team_size: string | null;
   referral_source: string | null;
+  assistant_name?: string | null;
+  assistant_emoji?: string | null;
+  tools?: string[] | null;
+  purpose?: string | null;
+  mode?: string | null;
+  last_step?: string | null;
+  agent_id?: string | null;
+  session_id?: string | null;
 };
 
 const WORKSPACE_ID = "ws-1";
@@ -310,7 +318,21 @@ describe("GET /me onboarding state", () => {
 
     expect(onboarding).toEqual({
       completed: false,
-      answers: { role: null, useCase: null, teamSize: null, referralSource: null },
+      lastStep: null,
+      agentId: null,
+      sessionId: null,
+      answers: {
+        role: null,
+        useCase: null,
+        teamSize: null,
+        referralSource: null,
+        assistantName: null,
+        assistantEmoji: null,
+        assistantRole: null,
+        tools: null,
+        purpose: null,
+        mode: null,
+      },
     });
   });
 
@@ -342,11 +364,45 @@ describe("GET /me onboarding state", () => {
     ).request("/me");
     const onboarding = await readOnboarding(res);
 
-    expect(onboarding.answers).toEqual({
+    expect(onboarding.answers).toMatchObject({
       role: "design",
       useCase: null,
       teamSize: null,
       referralSource: null,
+    });
+  });
+
+  // What the new run (0119) leaves behind rides along too: the screen that was
+  // open, and the agent and conversation the finish made.
+  it("hands back where the new run stopped and what it made", async () => {
+    const res = await appWithDb(
+      fakeReadDb({
+        completed_at: "2026-01-01T00:00:00Z",
+        ...NO_ANSWERS,
+        assistant_name: "Desk",
+        assistant_emoji: "🧭",
+        tools: ["gmail"],
+        purpose: "sales",
+        mode: "solo",
+        last_step: "done",
+        agent_id: "agent-1",
+        session_id: "session-1",
+      }),
+    ).request("/me");
+    const onboarding = await readOnboarding(res);
+
+    expect(onboarding).toMatchObject({
+      completed: true,
+      lastStep: "done",
+      agentId: "agent-1",
+      sessionId: "session-1",
+      answers: {
+        assistantName: "Desk",
+        assistantEmoji: "🧭",
+        tools: ["gmail"],
+        purpose: "sales",
+        mode: "solo",
+      },
     });
   });
 });

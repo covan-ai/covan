@@ -232,7 +232,9 @@ function IntegrationsPage() {
             {/* First, because it is the shortest road to most of what a team
                 wants an agent to reach, and because the catalogue inside it is
                 the thing somebody came to this page to use. */}
-            <ComposioCard connections={tools.data?.connections ?? []} agents={agents} />
+            <div data-coach="integrations-catalogue">
+              <ComposioCard connections={tools.data?.connections ?? []} agents={agents} />
+            </div>
 
             {/* Second: everything somebody entered by hand. One card holding
                 rows, rather than a card per connection stacked under the one

@@ -1,43 +1,61 @@
+import {
+  INTRO,
+  SECTIONS,
+  STEPS,
+  type PersonaliseStepId,
+  type SectionId,
+} from "./onboarding-config";
+
 /**
  * Which screen the first run shows next.
  *
  * Kept free of React so the branching can be tested without rendering
- * anything — the same reason cron-to-prose.ts and schedule-form.ts exist. Every
- * question this module answers is a pure function of four facts: what has been
- * answered, whether this is a hosted install, whether the account is holding an
- * invitation, and whether an agent exists to hang documents on.
+ * anything. Every question this module answers is a pure function of what has
+ * been answered, which screen was open last, whether the account is holding an
+ * invitation, and whether it has a workspace to put an assistant in.
+ *
+ * The screens themselves come from `onboarding-config.ts`: the intro screens
+ * in their order, then the personalise steps in theirs, each with a `when`
+ * that can take it out of a particular run. This module decides where in that
+ * list a person is; it does not know what any screen contains.
  */
 
-export type OnboardingStep =
-  | "role"
-  | "use"
-  | "team"
-  | "source"
-  | "workspace"
-  | "agent"
-  | "knowledge"
-  | "invite"
-  | "invite-accept";
-
 export type OnboardingAnswers = {
-  role: string | null;
-  useCase: string | null;
-  teamSize: string | null;
-  referralSource: string | null;
+  assistantName: string | null;
+  assistantEmoji: string | null;
+  /** A ready-made role's id, `default`, or `custom`. */
+  assistantRole: string | null;
+  /** `null` until the question is reached; `[]` once it was skipped. */
+  tools: string[] | null;
+  purpose: string | null;
+  mode: "solo" | "team" | null;
 };
 
 /**
  * One or more answers being recorded. Not `Partial<OnboardingAnswers>`: that
  * would admit `null`, and clearing an answer is not something the flow does —
- * every tap sets a real id. The API refuses null too, so this keeps the two
- * ends agreeing.
+ * every tap sets a real value. The API refuses null too, so this keeps the two
+ * ends agreeing. `lastStep` rides along so one request records both the
+ * answer and the screen it led to.
  */
-export type AnswerPatch = Partial<Record<keyof OnboardingAnswers, string>>;
+export type AnswerPatch = Partial<{
+  assistantName: string;
+  assistantEmoji: string;
+  assistantRole: string;
+  tools: string[];
+  purpose: string;
+  mode: "solo" | "team";
+  lastStep: string;
+}>;
+
+export type IntroStepId = `intro:${string}`;
+
+export type OnboardingStep = IntroStepId | PersonaliseStepId | "workspace" | "invite-accept";
 
 export type FlowContext = {
   answers: OnboardingAnswers;
-  /** A self-hosted install has nowhere to send a referral answer, so it is not asked. */
-  hosted: boolean;
+  /** The screen that was open when the person last left, as the API recorded it. */
+  lastStep: string | null;
   /**
    * The signup trigger gives every new account its own workspace, invitees
    * included, so `workspaces.created_by` cannot tell them apart. A pending
@@ -45,163 +63,126 @@ export type FlowContext = {
    */
   hasIncomingInvite: boolean;
   /**
-   * Whether there is an agent to attach documents to.
-   *
-   * The knowledge step asks for a file and puts it in a bundle attached to an
-   * agent, so it is meaningless before one exists — and "I'll do this later" on
-   * the agent step is a real answer, not a detour. Read from the agents store
-   * rather than held in component state, so a reload mid-flow resumes correctly.
-   */
-  hasAgent: boolean;
-  /**
    * Whether the account has a workspace yet. Absent means yes, which is every
    * account the signup trigger made one for.
    *
    * An account that signed up with an invitation waiting has none (0115): the
    * invitation is its way in. If it declines, or the invitation lapsed before
-   * it arrived, the setup steps follow and `workspace` starts one rather than
-   * renaming one.
+   * it arrived, the setup steps follow and `workspace` starts one.
    */
   hasWorkspace?: boolean;
+  /**
+   * Finished once already. Only matters together with `hasWorkspace: false`:
+   * somebody who left their last workspace is here for a new one, not for the
+   * whole run again.
+   */
+  completed?: boolean;
 };
 
-/**
- * The three that must be answered before anything else happens. `source` is
- * deliberately not among them: it is optional, so treating it as a prerequisite
- * would strand anyone who skipped it.
- */
-const REQUIRED: ReadonlyArray<{ step: OnboardingStep; answer: keyof OnboardingAnswers }> = [
-  { step: "role", answer: "role" },
-  { step: "use", answer: "useCase" },
-  { step: "team", answer: "teamSize" },
-];
+export const EMPTY_ANSWERS: OnboardingAnswers = {
+  assistantName: null,
+  assistantEmoji: null,
+  assistantRole: null,
+  tools: null,
+  purpose: null,
+  mode: null,
+};
+
+export function isIntroStep(step: string): step is IntroStepId {
+  return step.startsWith("intro:");
+}
+
+export function introSteps(): IntroStepId[] {
+  return INTRO.map((s) => `intro:${s.id}` as const);
+}
+
+export function personaliseSteps(answers: OnboardingAnswers): PersonaliseStepId[] {
+  return STEPS.filter((s) => !s.when || s.when(answers)).map((s) => s.id);
+}
 
 /** The steps this particular first run consists of, in order. */
 export function stepsFor(ctx: FlowContext): OnboardingStep[] {
-  const survey: OnboardingStep[] = ["role", "use", "team"];
-  if (ctx.hosted) survey.push("source");
+  // Somebody who finished once and has no workspace now — they left their
+  // last one, or an invitation lapsed — is here for a workspace and nothing
+  // else. The assistant they named lives in the workspace they left.
+  if (ctx.completed && ctx.hasWorkspace === false) {
+    return ctx.hasIncomingInvite ? ["invite-accept", "workspace"] : ["workspace"];
+  }
 
-  const setup: OnboardingStep[] = ["workspace", "agent"];
-  // Only once there is somewhere to put a document.
-  if (ctx.hasAgent) setup.push("knowledge");
-  if (ctx.answers.teamSize !== "solo") setup.push("invite");
+  const intro = introSteps();
+  const setup: OnboardingStep[] = [
+    ...(ctx.hasWorkspace === false ? (["workspace"] as const) : []),
+    ...personaliseSteps(ctx.answers),
+  ];
 
   if (ctx.hasIncomingInvite) {
-    // Accepting ends the run either way. Somebody with no workspace who says
-    // "not now" still needs one, so setup follows for them; somebody who has
-    // one already is done.
+    // Accepting ends the run either way: the workspace they join has its own
+    // assistants. Somebody with no workspace who says "not now" still needs
+    // one, so setup follows for them; somebody who has one already is done.
     return ctx.hasWorkspace === false
-      ? [...survey, "invite-accept", ...setup]
-      : [...survey, "invite-accept"];
+      ? [...intro, "invite-accept", ...setup]
+      : [...intro, "invite-accept"];
   }
-  return [...survey, ...setup];
+  return [...intro, ...setup];
 }
 
 /**
- * The same run, as long as it can turn out to be. What the progress indicator
- * counts.
- *
- * `stepsFor` answers "where does this go next", and `hasAgent` belongs in that
- * answer: there is nowhere to put a document until an agent exists. It does not
- * belong in "how long is this", and using one list for both jobs is what made
- * the dots grow. Walked in a browser on 2026-08-31: the agent step read
- * **Step 6 of 7**, and creating the agent — the most work anyone does in the
- * whole flow — made it **Step 7 of 8**. The finish line moved away at the
- * moment it should have come closer.
- *
- * So the count assumes the agent will exist, because from any point at or
- * before the agent step that is the ordinary outcome. Someone who taps "I'll do
- * this later" then ends one short of the total, which is the honest shape of
- * having skipped a step and is nothing like a step appearing out of nowhere.
- *
- * `teamSize` is deliberately still allowed to shorten it. That one is a
- * question the person just answered, and a flow that gets shorter when you say
- * you are working alone is legible in a way that a step arriving after you
- * finished one is not.
+ * The steps a cold return must not skip past, whatever the URL asks for. The
+ * assistant's name is what the finish creates the agent from (0119), and a
+ * workspace is where it goes.
  */
-export function plannedStepsFor(ctx: FlowContext): OnboardingStep[] {
-  // An invitation is counted as accepted, for the same reason the agent is
-  // counted as created: it is the ordinary outcome, and a count that assumed
-  // the detour would promise an invitee five steps they will never see.
-  return stepsFor({ ...ctx, hasAgent: true, hasWorkspace: true });
+function required(ctx: FlowContext): OnboardingStep[] {
+  const steps: OnboardingStep[] = [];
+  if (ctx.hasWorkspace === false) steps.push("workspace");
+  if (!ctx.completed) steps.push("assistant");
+  return steps;
 }
 
-/**
- * Where the flow goes once the survey is behind us.
- *
- * The survey resumes on its answers. Setup has only one answer of that kind:
- * an agent either exists or it does not, and nothing else in setup leaves a
- * row behind — a workspace is created by the signup trigger whether or not
- * anybody named it, and a skipped document step is indistinguishable from an
- * unvisited one. So `hasAgent` is the whole of what a cold return can know.
- *
- * Before this asked, and returned `workspace` unconditionally: a reload with
- * no `?step=` walked somebody back through naming their workspace and creating
- * their first agent, both of which they had already done. The second one is
- * not idempotent, so they got a second agent with the same persona. Walked in
- * a browser on 2026-08-31 and it happened on the first reload.
- */
-function resumeStep(ctx: FlowContext): OnboardingStep {
-  if (ctx.hasIncomingInvite) return "invite-accept";
-  if (ctx.hasWorkspace === false || !ctx.hasAgent) return "workspace";
-
-  // `knowledge` exists exactly when an agent does — see `stepsFor` — so this
-  // is never the fallback in practice. It is written as one anyway because the
-  // alternative is asserting that here, and a wrong assertion in a resume path
-  // strands somebody on a blank screen.
-  const steps = stepsFor(ctx);
-  return steps[steps.indexOf("agent") + 1] ?? "knowledge";
+function answered(step: OnboardingStep, ctx: FlowContext): boolean {
+  if (isIntroStep(step)) {
+    // The intro is behind somebody once they have been anywhere past it:
+    // their last screen was a later one, or they have answered something,
+    // which can only have happened on a later one.
+    return (
+      (ctx.lastStep !== null && !isIntroStep(ctx.lastStep)) || ctx.answers.assistantName !== null
+    );
+  }
+  if (step === "workspace") return ctx.hasWorkspace !== false;
+  // An invitation is answered by accepting or declining it, both of which
+  // take it out of `stepsFor`; while it is in the list it is open.
+  if (step === "invite-accept") return false;
+  const config = STEPS.find((s) => s.id === step);
+  return config ? config.answered(ctx.answers) : false;
 }
 
 /**
  * The step to actually show, given whatever the URL asked for.
  *
- * An unanswered prerequisite beats any request, which is what makes a
- * hand-edited `?step=` harmless and a half-finished run resumable — one rule
- * covering both.
+ * The request wins, then the screen the person was on when they left, then the
+ * first step nothing has answered — unless that lands past a required step
+ * that is still open, in which case the required step wins. That is what
+ * makes a hand-edited `?step=` harmless without making the intro unreachable:
+ * a fresh run still starts on its first screen, and only a jump *over* the
+ * assistant's name is pulled back to it.
  *
- * A step that has already done its work beats a request too, and there is
- * exactly one of those. Every other step can be shown twice with no
- * consequence — renaming a workspace, adding another document, sending
- * invitations again — while `agent` creates something each time it is
- * submitted. The back button asks for `?step=agent` by name, so leaving it
- * requestable would have kept the duplicate a click away after the resume
- * above was fixed.
+ * `lastStep` is why a reload lands on the screen that was open rather than on
+ * the first unanswered question: the intro screens answer nothing, and without
+ * it every reload during the intro would start the intro over.
  */
 export function resolveStep(requested: string | undefined, ctx: FlowContext): OnboardingStep {
-  const missing = REQUIRED.find(({ answer }) => !ctx.answers[answer]);
-  if (missing) return missing.step;
-
   const steps = stepsFor(ctx);
-  const spent = requested === "agent" && ctx.hasAgent;
-  if (requested && !spent && (steps as string[]).includes(requested)) {
-    return requested as OnboardingStep;
-  }
+  const has = (s: string | null | undefined): s is OnboardingStep =>
+    Boolean(s) && (steps as string[]).includes(s as string);
 
-  // No usable request. Resume at setup rather than at `source`: the referral
-  // question is optional, and one that was skipped should stay skipped.
-  return resumeStep(ctx);
-}
+  const candidate: OnboardingStep = has(requested)
+    ? requested
+    : has(ctx.lastStep)
+      ? ctx.lastStep
+      : (steps.find((s) => !answered(s, ctx)) ?? steps[steps.length - 1]);
 
-/**
- * The agent the knowledge step hangs its documents on.
- *
- * "The one just created" is what this means, and the newest is how it is found
- * rather than by remembering an id in component state — state does not survive
- * the reload that `?step=knowledge` is otherwise perfectly able to resume from.
- * The two only disagree in a workspace that already had agents, and the
- * invitee branch is the only way to reach this flow in one of those, which
- * excludes the knowledge step entirely.
- *
- * Generic over the shape so this module stays free of React and of the store's
- * types, the same reason the rest of it is.
- */
-export function newestAgent<T extends { createdAt: number }>(agents: readonly T[]): T | null {
-  let newest: T | null = null;
-  for (const agent of agents) {
-    if (!newest || agent.createdAt > newest.createdAt) newest = agent;
-  }
-  return newest;
+  const open = required(ctx).find((s) => steps.includes(s) && !answered(s, ctx));
+  if (open && steps.indexOf(candidate) > steps.indexOf(open)) return open;
+  return candidate;
 }
 
 /** The step after this one, or "done" when the first run is over. */
@@ -210,4 +191,64 @@ export function nextStep(current: OnboardingStep, ctx: FlowContext): OnboardingS
   const index = steps.indexOf(current);
   if (index === -1 || index === steps.length - 1) return "done";
   return steps[index + 1];
+}
+
+/** The step before this one, or null on the first. */
+export function prevStep(current: OnboardingStep, ctx: FlowContext): OnboardingStep | null {
+  const steps = stepsFor(ctx);
+  const index = steps.indexOf(current);
+  return index > 0 ? steps[index - 1] : null;
+}
+
+/** Where "Skip intro" goes: the first screen that is not an intro screen. */
+export function firstPersonaliseStep(ctx: FlowContext): OnboardingStep | "done" {
+  return stepsFor(ctx).find((s) => !isIntroStep(s)) ?? "done";
+}
+
+/**
+ * How the run ends. A run that named an assistant ends by making it — the
+ * finish that creates the agent and the conversation it opens in. A run that
+ * did not (an invitation accepted, a workspace started by somebody who had
+ * finished before) just records that it is over.
+ */
+export function endOf(ctx: FlowContext): "finish" | "complete" {
+  return stepsFor(ctx).includes("mode") ? "finish" : "complete";
+}
+
+export function sectionOf(step: OnboardingStep): SectionId {
+  return isIntroStep(step) ? "meet" : "personalise";
+}
+
+export type DotState = "done" | "current" | "todo";
+
+export type Progress = {
+  /** Zero-based, over the whole run. For the progress bar's aria values. */
+  index: number;
+  count: number;
+  sections: { id: SectionId; label: string; state: DotState; dots: DotState[] }[];
+};
+
+/**
+ * The three labelled sections and the dots within each. "Start" is the
+ * conversation after this screen and is never current here; it is listed so
+ * the person can see there is one more thing, and that it is not a form.
+ */
+export function progressFor(step: OnboardingStep, ctx: FlowContext): Progress {
+  const steps = stepsFor(ctx);
+  const index = Math.max(0, steps.indexOf(step));
+  const stateOf = (i: number): DotState => (i < index ? "done" : i === index ? "current" : "todo");
+
+  const sections = SECTIONS.map((section) => {
+    if (section.id === "start") return { ...section, state: "todo" as const, dots: [] };
+    const own = steps.map((s, i) => ({ s, i })).filter(({ s }) => sectionOf(s) === section.id);
+    const dots = own.map(({ i }) => stateOf(i));
+    const state: DotState = dots.includes("current")
+      ? "current"
+      : dots.length > 0 && dots.every((d) => d === "done")
+        ? "done"
+        : "todo";
+    return { ...section, state, dots };
+  });
+
+  return { index, count: steps.length, sections };
 }

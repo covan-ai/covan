@@ -112,7 +112,7 @@ function Home() {
             {selected
               ? "Threads are private to you"
               : canWrite
-                ? "Keep it to yourself or share it with the team. Every thread with it stays private."
+                ? "Keep it to yourself or share it with the team. Every thread with it starts private."
                 : "Ask an admin or a member to share an agent with you."}
           </p>
         </div>
@@ -596,13 +596,17 @@ function TeamActivity({
 
   return (
     <section>
-      <SectionHeading badge="Team activity" title="Private by default." turn="Shared on purpose." />
+      <SectionHeading
+        badge="Team activity"
+        title="Threads start private."
+        turn="Brainstorms are shared."
+      />
 
       {rows.length === 0 ? (
         <EmptyState
           className="mt-10"
           title="Nothing shared yet"
-          description="Chats start private. Hit Share in a conversation's header to let the rest of the team read along."
+          description="Threads start private; brainstorms are shared with the team from the start. Hit Share in a thread's header to let everyone read along."
         />
       ) : (
         <ul className="mt-10 flex flex-col gap-2.5">

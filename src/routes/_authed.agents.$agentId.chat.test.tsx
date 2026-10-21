@@ -57,9 +57,10 @@ const session = {
   id: "session-1",
   agentId: "agent-1",
   ownerId: "user-1",
-  // Typed wide so a test about a shared thread can turn it and put it back.
+  // Typed wide so a test about a shared thread, or a brainstorm, can turn
+  // these and put them back.
   visibility: "private" as "private" | "shared",
-  kind: "chat" as const,
+  kind: "chat" as "chat" | "brainstorm",
   title: "Pricing",
   updatedAt: Date.parse("2026-09-17T10:00:00Z"),
   // The composer's dial, untouched: every one the agent's. Typed wide so a
@@ -132,7 +133,7 @@ vi.mock("@/lib/api-client", () => ({
       show: showVersion,
     },
     brainstorm: { suggest: vi.fn() },
-    ideas: { create: vi.fn() },
+    ideas: { create: vi.fn(), list: vi.fn().mockResolvedValue([]) },
     // Read only by the conversation the first run opened, for its Connect
     // card. Nothing connected, which is what a first run has.
     toolConnections: { list: () => Promise.resolve({ connections: [], tools: [] }) },
@@ -279,7 +280,7 @@ async function renderChat() {
   // the time it is on screen both queries have settled and the shortcuts that
   // turn on ownership behave the way they will in a browser.
   await screen.findByPlaceholderText(composerPlaceholder(agent.name));
-  await screen.findByRole("button", { name: "Share with your workspace" });
+  await screen.findByRole("button", { name: /Private to you|Shared with your workspace/ });
   return { ...view, client };
 }
 
@@ -2218,5 +2219,42 @@ describe("what the chips offer next", () => {
       await screen.findByRole("button", { name: "And for annual billing?" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "And per seat?" })).toBeNull();
+  });
+});
+
+describe("who can read this thread", () => {
+  // It used to be said three times — an icon in the header, a sentence under
+  // the greeting, a clause under the composer — and a tester who read
+  // "private" in one and "shared" in another could not tell which to believe.
+  it("is said once, in words, on the header control", async () => {
+    listMessages.mockResolvedValue([]);
+    await renderChat();
+
+    const control = screen.getByRole("button", { name: /Private to you/ });
+    expect(control).toHaveTextContent("Private to you");
+    expect(control).toHaveAttribute("aria-pressed", "false");
+    // Nowhere else on the screen.
+    expect(screen.getAllByText(/private to you/i)).toHaveLength(1);
+    expect(screen.queryByText(/shared with your workspace/i)).toBeNull();
+    expect(screen.getByText(/grounded in 0 team documents$/)).toBeInTheDocument();
+  });
+
+  it("says a brainstorm is the team's from the start, where the brainstorm opens", async () => {
+    session.kind = "brainstorm";
+    session.visibility = "shared";
+    listMessages.mockResolvedValue([]);
+    try {
+      await renderChat();
+
+      expect(
+        screen.getByText(/Brainstorms are shared with your team from the start/),
+      ).toBeInTheDocument();
+      const control = screen.getByRole("button", { name: /Shared with your workspace/ });
+      expect(control).toHaveTextContent("Shared with workspace");
+      expect(control).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      session.kind = "chat";
+      session.visibility = "private";
+    }
   });
 });

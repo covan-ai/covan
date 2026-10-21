@@ -137,6 +137,9 @@ sessions.post("/sessions", async (c) => {
       title: title ?? null,
       workspace_id: agent.workspace_id,
       kind: kind ?? "chat",
+      // A brainstorm is the team's from the start — its ideas are gathered
+      // from everyone — and the sidebar row and the opening screen say so. A
+      // thread is private until its owner shares it from the header.
       visibility: kind === "brainstorm" ? "shared" : "private",
       ...dialColumns(parsed.data),
     })

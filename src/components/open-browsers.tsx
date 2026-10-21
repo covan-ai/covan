@@ -18,6 +18,7 @@ import {
   type OpenConversationBrowser,
   type OpenTakeover,
 } from "@/lib/api-client";
+import { sessionLabel } from "@/lib/session-label";
 import { ApiError } from "@/lib/api-error";
 import { cn } from "@/lib/utils";
 
@@ -71,10 +72,12 @@ function lastUsed(at: string | null, now: number): string {
   return at ? `Last used ${clock(at, now)}` : "Not used yet";
 }
 
-/** The conversation's title, or a neutral line for one the person can no longer open. */
+/** The conversation's name, or a neutral line for one the person can no longer open. */
 function placeTitle(place: BrowserPlace): string {
   if (!place.conversation) return "A conversation you can no longer open";
-  return place.conversation.title || "New thread";
+  // The place carries the title and not the kind, so an untitled brainstorm
+  // reads as a thread here until `GET /browser/sessions` says which it is.
+  return sessionLabel(place.conversation);
 }
 
 /**

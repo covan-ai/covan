@@ -44,14 +44,21 @@ const agent = {
   emoji: "📈",
   model: "gpt-4.1",
   mode: "normal" as const,
-  documents: [] as { id: string; name: string; indexed: boolean; createdAt: number }[],
+  documents: [] as {
+    id: string;
+    name: string;
+    indexed: boolean;
+    createdAt: number;
+    bundleId?: string;
+  }[],
 };
 
 const session = {
   id: "session-1",
   agentId: "agent-1",
   ownerId: "user-1",
-  visibility: "private" as const,
+  // Typed wide so a test about a shared thread can turn it and put it back.
+  visibility: "private" as "private" | "shared",
   kind: "chat" as const,
   title: "Pricing",
   updatedAt: Date.parse("2026-09-17T10:00:00Z"),
@@ -69,6 +76,9 @@ const store = {
   sessionsLoaded: true,
   startSession: vi.fn(),
   canWrite: true,
+  // The folders the workspace can see, with whether each is shared. Empty
+  // unless a test is about what a shared thread can read.
+  bundles: [] as { id: string; name: string; shared?: boolean; mine?: boolean }[],
 };
 vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
 
@@ -2123,5 +2133,90 @@ describe("the conversation the first run opens", () => {
     await renderChat();
     await screen.findByText("Hi Ada. This is Desk.");
     expect(screen.queryByText("Connect Gmail")).not.toBeInTheDocument();
+  });
+});
+
+describe("what a shared thread can read", () => {
+  // The server answers a shared thread from shared folders only, and the
+  // footer used to count every document the agent had anyway. A tester read
+  // "grounded in 1 document" under an answer that could not read that one
+  // document, and concluded the product was broken.
+  it("counts only the shared folders' documents, and says why", async () => {
+    session.visibility = "shared";
+    store.bundles = [
+      { id: "b-mine", name: "My notes", shared: false, mine: true },
+      { id: "b-team", name: "Handbook" },
+    ];
+    agent.documents = [
+      { id: "d1", name: "notes.md", indexed: true, createdAt: Date.now(), bundleId: "b-mine" },
+      { id: "d2", name: "handbook.md", indexed: true, createdAt: Date.now(), bundleId: "b-team" },
+    ];
+    listMessages.mockResolvedValue([]);
+    try {
+      await renderChat();
+
+      expect(screen.getByText(/grounded in 1 team document$/)).toBeInTheDocument();
+      // Once in the empty screen, once under the composer.
+      expect(screen.getAllByText(/can't read your private folders \(1 document\)/)).toHaveLength(2);
+      // And the first starter names a file the thread can actually cite.
+      expect(
+        screen.getByRole("button", { name: "What does handbook.md say?" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "What does notes.md say?" })).toBeNull();
+    } finally {
+      session.visibility = "private";
+      store.bundles = [];
+      agent.documents = [];
+    }
+  });
+
+  it("counts everything, and says nothing, in a private thread", async () => {
+    store.bundles = [{ id: "b-mine", name: "My notes", shared: false, mine: true }];
+    agent.documents = [
+      { id: "d1", name: "notes.md", indexed: true, createdAt: Date.now(), bundleId: "b-mine" },
+    ];
+    listMessages.mockResolvedValue([]);
+    try {
+      await renderChat();
+
+      expect(screen.getByText(/grounded in 1 team document$/)).toBeInTheDocument();
+      expect(screen.queryByText(/can't read your private folders/)).toBeNull();
+    } finally {
+      store.bundles = [];
+      agent.documents = [];
+    }
+  });
+});
+
+describe("what the chips offer next", () => {
+  it("does not offer the question that was just asked", async () => {
+    // The drafter is told not to, and a tester saw it happen anyway: the chip
+    // under the answer was the question above it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          streamOf([
+            { type: "delta", text: "Forty dollars a seat." },
+            { type: "done", message: answer },
+            { type: "suggestions", questions: ["And per seat?", "And for annual billing?"] },
+          ]),
+        ),
+      ),
+    );
+    await renderChat();
+    const asked = { ...question, id: "msg-1b", content: "and per seat?" };
+    listMessages.mockResolvedValue([question, asked, answer]);
+
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "and per seat?",
+    );
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    expect(
+      await screen.findByRole("button", { name: "And for annual billing?" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "And per seat?" })).toBeNull();
   });
 });

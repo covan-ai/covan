@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -43,7 +43,14 @@ const store = {
   bundles: BUNDLES,
   // Who reads which bundle is a join over these, and the explorer does it in
   // the browser rather than asking for it per document.
-  agents: [] as { id: string; name: string; bundleIds: string[] }[],
+  agents: [] as {
+    id: string;
+    name: string;
+    bundleIds: string[];
+    emoji?: string;
+    /** Absent reads as "cannot edit", which is what every older test meant. */
+    myAccess?: "use" | "edit" | "manage";
+  }[],
   canWrite: true,
   uploadToBundle: vi.fn(),
   removeDocument: vi.fn().mockResolvedValue(undefined),
@@ -644,5 +651,147 @@ describe("a document a routine wrote", () => {
 
     const row = (await screen.findByLabelText(/open uploaded-by-hand\.md/i)) as HTMLElement;
     expect(within(row).queryByText(/written by/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("attaching the folder a file just went into", () => {
+  // The step a tester could not find: a file uploaded here went into a folder
+  // no agent read, and the page that could change that was somewhere else.
+  const file = new File(["# plan"], "plan.md", { type: "text/markdown" });
+  const uploaded = {
+    id: "doc-9",
+    name: "plan.md",
+    size: 6,
+    createdAt: Date.now(),
+    chunkCount: 0,
+    indexed: false,
+    indexStatus: "queued",
+    bundleId: "bundle-2",
+  };
+  const ada = {
+    id: "a1",
+    name: "Ada",
+    emoji: "📈",
+    bundleIds: ["bundle-1"],
+    myAccess: "edit" as const,
+  };
+  const ops = {
+    id: "a2",
+    name: "Ops bot",
+    emoji: "🧭",
+    bundleIds: ["bundle-1"],
+    myAccess: "edit" as const,
+  };
+
+  /** Presses the toast's action, the way a click on it would. */
+  const press = (options: unknown) =>
+    (options as { action: { onClick: (e: unknown) => void } }).action.onClick({});
+
+  /** Uploads one file into Old pricing, which nobody reads, and hands back the toast call. */
+  async function uploadIntoOldPricing() {
+    store.uploadToBundle.mockResolvedValue(uploaded);
+    renderExplorer();
+    await screen.findByText("zebra-notes.md");
+    listDocuments.mockResolvedValue([]);
+    await userEvent.click(screen.getByLabelText(/open old pricing/i));
+    const input = await screen.findByLabelText("Upload files into Old pricing");
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    return vi.mocked(toast.success).mock.calls.at(-1)!;
+  }
+
+  it("offers to attach it to the one agent the person can edit, from the toast", async () => {
+    store.agents = [ada];
+    store.attachBundle.mockResolvedValue(true);
+    const [message, options] = await uploadIntoOldPricing();
+
+    expect(message).toBe("Added plan.md — indexing it now");
+    expect(options).toMatchObject({ duration: 12000, action: { label: "Attach to Ada" } });
+
+    press(options);
+    expect(store.attachBundle).toHaveBeenCalledWith("a1", "bundle-2");
+    // Confirmed only once the store says it landed.
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Old pricing is now read by Ada"),
+    );
+  });
+
+  it("asks which agents when more than one could read it", async () => {
+    store.agents = [ada, ops];
+    const [, options] = await uploadIntoOldPricing();
+
+    expect(options).toMatchObject({ action: { label: "Choose agents" } });
+    act(() => press(options));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Attach Old pricing");
+    expect(
+      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ada" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ops bot" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers nothing to somebody who can edit no agent", async () => {
+    store.agents = [{ ...ada, myAccess: "use" }];
+    const call = await uploadIntoOldPricing();
+
+    expect(call).toEqual(["Added plan.md — indexing it now"]);
+  });
+
+  it("offers nothing when the folder is already read", async () => {
+    store.agents = [{ ...ada, bundleIds: ["bundle-1", "bundle-2"] }];
+    const call = await uploadIntoOldPricing();
+
+    expect(call).toEqual(["Added plan.md — indexing it now"]);
+  });
+});
+
+describe("attaching a folder from the folder itself", () => {
+  const ada = {
+    id: "a1",
+    name: "Ada",
+    emoji: "📈",
+    bundleIds: ["bundle-1"],
+    myAccess: "edit" as const,
+  };
+
+  it("attaches from the folder's menu", async () => {
+    store.agents = [ada];
+    store.attachBundle.mockResolvedValue(true);
+    renderExplorer();
+    await screen.findByText("zebra-notes.md");
+
+    await userEvent.click(screen.getByLabelText("Actions for Old pricing"));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /attach to agents/i }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ada" }),
+    );
+
+    expect(store.attachBundle).toHaveBeenCalledWith("a1", "bundle-2");
+  });
+
+  it("offers it from the strip over a folder nobody reads", async () => {
+    store.agents = [ada];
+    renderExplorer();
+    await screen.findByText("zebra-notes.md");
+    listDocuments.mockResolvedValue([]);
+    await userEvent.click(screen.getByLabelText(/open old pricing/i));
+
+    expect(await screen.findByText(/no agent reads this folder yet/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Attach it to an agent" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Attach Old pricing");
+  });
+
+  it("offers no menu item to somebody who can edit no agent", async () => {
+    store.agents = [{ ...ada, myAccess: "use" }];
+    renderExplorer();
+    await screen.findByText("zebra-notes.md");
+
+    await userEvent.click(screen.getByLabelText("Actions for Old pricing"));
+    await screen.findByRole("menuitem", { name: /rename/i });
+    expect(screen.queryByRole("menuitem", { name: /attach to agents/i })).toBeNull();
   });
 });

@@ -40,6 +40,7 @@ import { useReportWriter } from "@/lib/use-report";
 import { parseReportCommand } from "@/lib/reports";
 import { useCredits, creditsSentence } from "@/lib/credits";
 import { startersFor } from "@/lib/chat-starters";
+import { visibleDocuments } from "@/lib/visible-documents";
 import { dialLabel, modelsFor, specFor } from "@/lib/agent-meta";
 import { dateDividers } from "@/lib/message-groups";
 import { gapBefore, GAP_CLASS } from "@/lib/chat-rhythm";
@@ -183,10 +184,6 @@ function ChatTab() {
    */
   const [searchOpen, setSearchOpen] = useState(false);
 
-  // Named after a real file once one is indexed, so the first tap on a fresh
-  // agent returns an answer with a citation on it rather than a general one.
-  const starters = useMemo(() => startersFor(agent.documents), [agent.documents]);
-
   // Citations carry a document id; the age lives on the agent's document list,
   // which this screen already has. Resolved by id rather than by name on
   // purpose — two documents can share a name, and a chip that dated an answer
@@ -271,6 +268,23 @@ function ChatTab() {
   );
   const isOwner = !!active && active.ownerId === currentUserId;
   const isShared = active?.visibility === "shared";
+  // What this conversation can be grounded in. A shared thread is answered
+  // from shared folders only (the server's `sharedOnly` scope), so a document
+  // in a private folder is neither offered as a starter nor counted under the
+  // composer. A tester read "grounded in 1 document" beneath an answer that
+  // could not read that one document, and concluded the product was broken.
+  const readable = useMemo(
+    () => visibleDocuments(agent.documents, bundles ?? [], isShared),
+    [agent.documents, bundles, isShared],
+  );
+  const hiddenByPrivacy = agent.documents.length - readable.length;
+  const privateFoldersNote =
+    isShared && hiddenByPrivacy > 0
+      ? `This shared thread can't read your private folders (${hiddenByPrivacy} ${hiddenByPrivacy === 1 ? "document" : "documents"}).`
+      : null;
+  // Named after a real file once one is indexed, so the first tap on a fresh
+  // agent returns an answer with a citation on it rather than a general one.
+  const starters = useMemo(() => startersFor(readable), [readable]);
   const isBrainstorm = active?.kind === "brainstorm";
   const setVisibilityMutation = useMutation({
     mutationFn: ({ id, visibility }: { id: string; visibility: "private" | "shared" }) =>
@@ -1204,7 +1218,26 @@ function ChatTab() {
           } else if (event.type === "suggestions") {
             const qs = (event as unknown as { questions?: unknown }).questions;
             if (Array.isArray(qs)) {
-              setFollowUps(qs.filter((q): q is string => typeof q === "string"));
+              // Not one that was already asked here. The drafter is told the
+              // same, and a chip offering the question just answered is what
+              // a tester saw before it was — so the client checks too, against
+              // the cache rather than the render's `allMessages`, which this
+              // handler closed over before the question was sent.
+              const asked = new Set(
+                (
+                  queryClient.getQueryData<Array<{ role: string; content: string }>>([
+                    "messages",
+                    sessionId,
+                  ]) ?? []
+                )
+                  .filter((m) => m.role === "user")
+                  .map((m) => m.content.trim().toLowerCase()),
+              );
+              setFollowUps(
+                qs.filter(
+                  (q): q is string => typeof q === "string" && !asked.has(q.trim().toLowerCase()),
+                ),
+              );
             }
           } else if (event.type === "error") {
             terminalSeen = true;
@@ -1991,6 +2024,9 @@ function ChatTab() {
                     </Button>
                   ))}
                 </div>
+                {privateFoldersNote && (
+                  <p className="mt-3 text-meta text-muted-foreground">{privateFoldersNote}</p>
+                )}
               </div>
               <ConnectedStarters onPick={(s) => void submit(s)} />
             </div>
@@ -2530,9 +2566,12 @@ function ChatTab() {
               specFor(me?.modelSpecs, effectiveModel).reasoning,
             )}{" "}
             · {isShared ? "shared with your workspace" : "private to you"} · grounded in{" "}
-            {agent.documents.length} team {agent.documents.length === 1 ? "document" : "documents"}
+            {readable.length} team {readable.length === 1 ? "document" : "documents"}
             {credits?.level === "fine" && <> · {creditsSentence(credits)}</>}
           </p>
+          {privateFoldersNote && (
+            <p className="mt-1 text-center text-xs text-muted-foreground">{privateFoldersNote}</p>
+          )}
         </div>
       </div>
 

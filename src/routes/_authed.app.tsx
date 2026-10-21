@@ -23,6 +23,7 @@ import {
 import { useAgentsStore, type Agent, type ChatSession } from "@/lib/agents-store";
 import { sharingSummary } from "@/lib/agent-access";
 import { formatRelative } from "@/lib/relative-time";
+import { sessionLabel } from "@/lib/session-label";
 import { dayPart } from "@/lib/day-part";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -651,7 +652,7 @@ function ActivityRow({
       title={
         <>
           {s.kind === "brainstorm" && <span className="mr-1">🧠</span>}
-          {s.title || (s.kind === "brainstorm" ? "Untitled brainstorm" : "Untitled chat")}
+          {sessionLabel(s)}
         </>
       }
       meta={

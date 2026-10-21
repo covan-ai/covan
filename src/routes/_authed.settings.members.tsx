@@ -191,7 +191,7 @@ function TeamPage() {
     <>
       <SettingsPage width="list">
         <PageHeader
-          badge="Settings"
+          badge="Team"
           title="One agent."
           turn="Everyone who needs it."
           action={

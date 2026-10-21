@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Pencil, Trash2, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatSession } from "@/lib/agents-store";
+import { sessionLabel } from "@/lib/session-label";
 
 /**
  * As wide a name as the API will store. Mirrors TITLE_INPUT_MAX_CHARS in
@@ -39,7 +40,7 @@ export function SessionRow({
   // the other becomes a no-op.
   const settled = useRef(false);
 
-  const label = session.title || (session.kind === "brainstorm" ? "New brainstorm" : "New thread");
+  const label = sessionLabel(session);
 
   const startEditing = () => {
     setDraft(session.title ?? "");

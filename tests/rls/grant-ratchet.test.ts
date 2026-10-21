@@ -90,10 +90,15 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "tool_connection_grants INSERT": "agent_id,granted_by,mode,slug,tool_connection_id,workspace_id",
   "tool_connection_grants UPDATE": "agent_id,mode,slug,tool_connection_id,workspace_id",
   "tool_connections UPDATE": "allowed_methods,config,label,scope",
+  // 0119: the six columns an event is made of; id and created_at are defaults.
+  "onboarding_events INSERT": "at,client_id,elapsed_ms,event,step,user_id",
+  // 0119: the new first run's answers, the screen it was on, and what the
+  // finish made — `finish_onboarding` is security invoker, so the caller's
+  // own grant is what writes agent_id and session_id.
   "user_onboarding INSERT":
-    "completed_at,referral_source,role,team_size,updated_at,use_case,user_id",
+    "agent_id,assistant_emoji,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
   "user_onboarding UPDATE":
-    "completed_at,referral_source,role,team_size,updated_at,use_case,user_id",
+    "agent_id,assistant_emoji,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
   "workspace_members UPDATE": "role",
   "workspaces UPDATE": "default_model,gap_report_enabled,name,slug",
 };

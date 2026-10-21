@@ -134,7 +134,7 @@ export function kickoffNote(facts: KickoffFacts, rules: string = KICKOFF_RULES):
   const connectable = facts.tools.find((t) => !NOT_YET_CONNECTABLE.has(t.toLowerCase()));
   const first = connectable ? toolLabel(connectable) : null;
   const notYet = facts.tools.filter((t) => NOT_YET_CONNECTABLE.has(t.toLowerCase()));
-  const purpose = facts.purpose ? PURPOSE_WORDS[facts.purpose] ?? facts.purpose : null;
+  const purpose = facts.purpose ? (PURPOSE_WORDS[facts.purpose] ?? facts.purpose) : null;
   const lines = [
     "This is the first message of a brand-new conversation. The person has just finished " +
       "setting you up and has not written anything yet; you are opening. This is Covan's own " +

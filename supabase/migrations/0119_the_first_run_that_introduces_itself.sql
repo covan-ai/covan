@@ -89,11 +89,17 @@ create policy "onboarding_events_insert_own"
 
 -- No update and no delete: an event happened. The rows go with the account.
 
--- 0023's rule: the grant lives in the file that makes the table. People may
--- write and read their own rows (the policies above decide which); the
--- service role gets everything, which is what the hosted build's reward reads
--- the finish row with.
-grant select, insert on public.onboarding_events to authenticated;
+-- 0023's rule: the grant lives in the file that makes the table. The revoke
+-- comes first because a self-hosted stack still hands every role every verb
+-- on a new table, and an UPDATE nobody granted is still an UPDATE. People may
+-- read their own rows and write the six columns an event is made of (the
+-- policies above decide whose); the two with defaults stay the database's.
+-- The service role gets everything, which is what the hosted build's reward
+-- reads the finish row with.
+revoke all on public.onboarding_events from public, anon, authenticated;
+grant select on public.onboarding_events to authenticated;
+grant insert (user_id, client_id, step, event, at, elapsed_ms)
+  on public.onboarding_events to authenticated;
 grant all on public.onboarding_events to service_role;
 
 -- ---- 3. the finish ---------------------------------------------------------

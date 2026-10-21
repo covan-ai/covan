@@ -280,7 +280,8 @@ describe("onboarding_events are each person's own", () => {
       .from("onboarding_events")
       .insert({ user_id: grace.id, step: "tools", event: "skipped", at });
     expect(error).not.toBeNull();
-    expect(await eventsOf(grace.id)).toEqual([]);
+    // Grace's own finish above left her a row; none of hers is this one.
+    expect((await eventsOf(grace.id)).filter((e) => e.step === "tools")).toEqual([]);
   });
 
   it("shows nobody else's", async () => {

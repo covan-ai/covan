@@ -450,7 +450,8 @@ function appWith(spec: {
       user_onboarding: { select: () => ({ data: spec.onboarding ?? null, error: null }) },
       profiles: {
         select: () => ({
-          data: spec.profileName === undefined ? { name: "Ada Lovelace" } : { name: spec.profileName },
+          data:
+            spec.profileName === undefined ? { name: "Ada Lovelace" } : { name: spec.profileName },
           error: null,
         }),
       },

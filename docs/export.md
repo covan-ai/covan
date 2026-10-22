@@ -94,10 +94,12 @@ cd acme
 Or, without the script:
 
 ```sh
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v owner="'<user-id>'" -f workspace.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v owner=<user-id> -f workspace.sql
 ```
 
-`owner` is required and psql stops if it is missing. **Every person in the
+`owner` is required and psql stops if it is missing. Give the id bare:
+`workspace.sql` quotes it (`:'owner'`), and an id passed already in quotes is
+quoted twice and refused as not a uuid. **Every person in the
 original workspace becomes that one account.** Accounts cannot be carried
 between installs — there is no id to bring across — and inventing users for
 people who did not ask to be recreated would be worse than saying so plainly.

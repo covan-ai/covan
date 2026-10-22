@@ -69,8 +69,10 @@ DOCS="\${3:-}"
 
 # One transaction, so a failure leaves the database as it was. ON_ERROR_STOP is
 # what makes psql treat the first error as fatal rather than carrying on and
-# reporting success at the end.
-psql "$DB" -v ON_ERROR_STOP=1 -v owner="'$OWNER'" -f workspace.sql
+# reporting success at the end. The id goes in bare: workspace.sql writes
+# :'owner', which is psql quoting it, and a quoted value quoted again is not a
+# uuid.
+psql "$DB" -v ON_ERROR_STOP=1 -v owner="$OWNER" -f workspace.sql
 
 if [ -n "$DOCS" ]; then
   # The keys are in data/documents.json, and the files here are named

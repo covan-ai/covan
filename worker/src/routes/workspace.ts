@@ -9,7 +9,7 @@ import { removedFromWorkspaceEmail, roleChangedEmail } from "../lib/emails/membe
 import { notify } from "../lib/emails/send";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 import { canonicalTimeZone } from "../lib/profile-fields";
-import { workspaceDeletionEmail } from "../lib/emails/deletion";
+import { workspaceDeletionCancelledEmail, workspaceDeletionEmail } from "../lib/emails/deletion";
 
 const workspace = new Hono<AppEnv>();
 
@@ -215,34 +215,17 @@ workspace.post("/workspace/deletion", async (c) => {
   }
   const deletesAt = typeof data === "string" ? Date.parse(data) : null;
 
-  // Everybody is told. Read through the caller's client: an admin sees every
-  // member's row and profile, which is the list the mail goes to.
+  // Everybody is told, with who asked and the date.
   if (deletesAt && canSendEmail(c.env)) {
-    const [{ data: members }, { data: me }, { data: ws }] = await Promise.all([
-      db.from("workspace_members").select("user_id").eq("workspace_id", workspaceId),
-      db.from("profiles").select("name, email").eq("id", c.get("user").id).maybeSingle(),
-      db.from("workspaces").select("name").eq("id", workspaceId).maybeSingle(),
-    ]);
-    const ids = ((members ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
-    const { data: people } =
-      ids.length > 0 ? await db.from("profiles").select("email").in("id", ids) : { data: [] };
+    const { workspaceName, by, addresses } = await whoToTell(c, workspaceId);
     const deletesOn = new Date(deletesAt).toLocaleDateString("en-GB", {
       day: "numeric",
       month: "long",
       year: "numeric",
       timeZone: "UTC",
     });
-    for (const person of (people ?? []) as Array<{ email: string | null }>) {
-      if (!person.email) continue;
-      notify(
-        c,
-        workspaceDeletionEmail({
-          email: person.email,
-          workspaceName: (ws?.name as string | undefined) ?? "Your workspace",
-          requestedBy: (me?.name as string | null) || (me?.email as string | null) || "An admin",
-          deletesOn,
-        }),
-      );
+    for (const email of addresses) {
+      notify(c, workspaceDeletionEmail({ email, workspaceName, requestedBy: by, deletesOn }));
     }
   }
 
@@ -250,20 +233,63 @@ workspace.post("/workspace/deletion", async (c) => {
 });
 
 // DELETE /workspace/deletion — keep it after all.
+//
+// Everybody who was told the date is told it is off. Only when a deletion was
+// actually pending: a second press, or one on a workspace nobody meant to
+// delete, mails nobody.
 workspace.delete("/workspace/deletion", async (c) => {
   const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
-  const { error } = await c
-    .get("db")
-    .rpc("cancel_workspace_deletion", { p_workspace_id: workspaceId });
+  const db = c.get("db");
+  const { data: before } = await db
+    .from("workspaces")
+    .select("deletes_at")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  const { error } = await db.rpc("cancel_workspace_deletion", { p_workspace_id: workspaceId });
   if (error) {
     if (error.code === "42501") return c.json({ error: "only admins can keep a workspace" }, 403);
     if (error.code === "P0002") return c.json({ error: "not found" }, 404);
     console.error("cancel_workspace_deletion failed", error);
     return c.json({ error: "failed to cancel the deletion" }, 500);
   }
+
+  if (before?.deletes_at && canSendEmail(c.env)) {
+    const { workspaceName, by, addresses } = await whoToTell(c, workspaceId);
+    for (const email of addresses) {
+      notify(c, workspaceDeletionCancelledEmail({ email, workspaceName, cancelledBy: by }));
+    }
+  }
+
   return c.json({ ok: true });
 });
+
+/**
+ * What a notice about the workspace's end needs: its name, who acted, and
+ * every member's address. Read through the caller's client — an admin sees
+ * every member's row and profile, which is the list the mail goes to.
+ */
+async function whoToTell(
+  c: Context<AppEnv>,
+  workspaceId: string,
+): Promise<{ workspaceName: string; by: string; addresses: string[] }> {
+  const db = c.get("db");
+  const [{ data: members }, { data: me }, { data: ws }] = await Promise.all([
+    db.from("workspace_members").select("user_id").eq("workspace_id", workspaceId),
+    db.from("profiles").select("name, email").eq("id", c.get("user").id).maybeSingle(),
+    db.from("workspaces").select("name").eq("id", workspaceId).maybeSingle(),
+  ]);
+  const ids = ((members ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
+  const { data: people } =
+    ids.length > 0 ? await db.from("profiles").select("email").in("id", ids) : { data: [] };
+  return {
+    workspaceName: (ws?.name as string | undefined) ?? "Your workspace",
+    by: (me?.name as string | null) || (me?.email as string | null) || "An admin",
+    addresses: ((people ?? []) as Array<{ email: string | null }>)
+      .map((p) => p.email)
+      .filter((e): e is string => Boolean(e)),
+  };
+}
 
 // GET /workspaces — all workspaces the caller belongs to (for the switcher).
 workspace.get("/workspaces", async (c) => {

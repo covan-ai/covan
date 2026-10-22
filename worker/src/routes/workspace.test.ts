@@ -8,6 +8,7 @@ import {
   type FakeDbSpec,
   type Handler,
   type QueryContext,
+  type QueryResult,
 } from "../test-support/fake-db";
 
 /**
@@ -1039,11 +1040,75 @@ describe("POST /workspace/deletion", () => {
       403,
     );
   });
+});
 
-  it("cancels on DELETE", async () => {
-    const { app } = appWith({
-      rpc: { cancel_workspace_deletion: () => ({ data: null, error: null }) },
+describe("DELETE /workspace/deletion, and who is told", () => {
+  /** A workspace whose deletion is pending (or not), with two members. */
+  function scheduled(
+    deletesAt: string | null,
+    cancel: () => QueryResult = () => ({ data: null, error: null }),
+  ) {
+    return appWith({
+      tables: {
+        workspaces: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("deletes_at")
+              ? { data: { deletes_at: deletesAt }, error: null }
+              : { data: { name: "Acme" }, error: null },
+        },
+        workspace_members: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("user_id")
+              ? { data: [{ user_id: USER.id }, { user_id: "user-2" }], error: null }
+              : { data: { workspace_id: WORKSPACE }, error: null },
+        },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.filters.some((f) => f.kind === "in")
+              ? { data: [{ email: "mina@acme.test" }, { email: "deniz@acme.test" }], error: null }
+              : ctx.columns?.includes("email")
+                ? { data: { name: "Mina Kaya", email: "mina@acme.test" }, error: null }
+                : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+      rpc: { cancel_workspace_deletion: cancel },
     });
-    expect((await json(app, "DELETE", "/workspace/deletion")).status).toBe(200);
+  }
+
+  // Everybody was told the date; the last word they had should not be that
+  // everything goes on it.
+  it("tells every member it is off, and who called it off", async () => {
+    const { app } = scheduled("2026-11-05T12:00:00Z");
+    const sent = captureSends();
+
+    const res = await json(app, "DELETE", "/workspace/deletion", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent.map((m) => m.to)).toEqual([["mina@acme.test"], ["deniz@acme.test"]]);
+    expect(String(sent[0].subject)).toBe("Acme on Covan will not be deleted");
+    expect(String(sent[0].text)).toContain("Mina Kaya called off the deletion of Acme.");
+  });
+
+  it("mails nobody when nothing was pending", async () => {
+    const { app } = scheduled(null);
+    const sent = captureSends();
+
+    const res = await json(app, "DELETE", "/workspace/deletion", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(200);
+    expect(sent).toEqual([]);
+  });
+
+  it("mails nobody when the cancel was refused", async () => {
+    const { app } = scheduled("2026-11-05T12:00:00Z", () => ({
+      data: null,
+      error: { code: "42501", message: "only admins can keep a workspace" },
+    }));
+    const sent = captureSends();
+
+    const res = await json(app, "DELETE", "/workspace/deletion", undefined, MAIL_ENV);
+
+    expect(res.status).toBe(403);
+    expect(sent).toEqual([]);
   });
 });

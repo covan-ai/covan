@@ -1,11 +1,24 @@
-import { useState } from "react";
-import { Check, Clock, Minus, X } from "lucide-react";
-import { Chip, SectionCard } from "@/components/section-card";
+import { useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
+import { MoreHorizontal, Play } from "lucide-react";
+import { AgentMark } from "@/components/agent-mark";
+import { Avatar } from "@/components/avatar";
+import { Chip } from "@/components/chip";
+import { DataTable } from "@/components/data-table";
+import { SectionLabel } from "@/components/section";
+import { StatusDot, StatusWord } from "@/components/status-dot";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { RoutineWebhookCard } from "@/components/routines/routine-webhook-card";
 import { RoutineEventCard } from "@/components/routines/routine-event-card";
 import { RoutineOutputCard } from "@/components/routines/routine-output-card";
 import { RoutineBrowserCard } from "@/components/routines/routine-browser-card";
-import { SectionHeading } from "@/components/page-container";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -16,12 +29,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Switch } from "@/components/ui/switch";
-import { RoutineStatus } from "@/components/routines/routine-status";
 import { cronToProse } from "@/lib/cron-to-prose";
 import { formatRelative } from "@/lib/relative-time";
+import { lastActivityLabel } from "@/lib/day-groups";
 import type { Routine, RoutineRun, RunOutcome, UpdateRoutineInput } from "@/lib/routines-api";
 import type { Connection } from "@/lib/connections-api";
 
@@ -60,24 +71,13 @@ function runTriggerText(run: RoutineRun): string | null {
       return "Run now";
     case "reply":
       return run.triggerLabel ?? "A reply";
+    case "test":
+      return "A test";
     default:
       return null;
   }
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 py-2">
-      <dt className="w-28 shrink-0 text-xs text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 flex-1 text-sm">{children}</dd>
-    </div>
-  );
-}
-
-/**
- * The ways a turn ends without having finished. `answered` is the ordinary
- * case and `paused` is waiting on a person, so neither is here.
- */
 const STOPPED_SHORT: ReadonlySet<RunOutcome> = new Set([
   "cut_short",
   "budget",
@@ -87,158 +87,128 @@ const STOPPED_SHORT: ReadonlySet<RunOutcome> = new Set([
   "empty",
 ]);
 
-function RunRow({ run }: { run: RoutineRun }) {
-  const [open, setOpen] = useState(false);
-  // `ok` says the run completed, which a cut-short one did: it spent its
-  // tokens and delivered what it had. What it did not do is finish the
-  // answer, and until covan#243 the row said "Delivered" with a check mark
-  // and nothing else, so a run that stopped at 40% of the usual time with a
-  // sixth of the usual summary read as the third success in a row. The rest
-  // of the row stays — it is still true — and a neutral chip says the part
-  // that was missing. Not destructive: nothing failed (DESIGN.md).
+/** "6 min", "4 min so far", "—". */
+function durationWords(run: RoutineRun, running: boolean): string {
+  if (run.durationMs === null) return running ? "Under way" : "—";
+  const min = Math.round(run.durationMs / 60_000);
+  if (min >= 1) return `${min} min`;
+  return `${Math.max(1, Math.round(run.durationMs / 1000))} s`;
+}
+
+/**
+ * The Result column (A7): a dot and what came of it — how many new items,
+ * what the per-run cap dropped (those were marked seen and are gone, not
+ * queued), whether it was filed, and what did not get delivered.
+ */
+function RunResult({ run }: { run: RoutineRun }) {
   const stoppedShort =
     run.status === "ok" && run.outcome !== null && STOPPED_SHORT.has(run.outcome);
-  const stoppedChip = stoppedShort ? <Chip tone="neutral">Stopped before it finished</Chip> : null;
-  const icon =
-    run.status === "ok" && !stoppedShort ? (
-      <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-    ) : run.status === "failed" ? (
-      <X className="h-3.5 w-3.5 shrink-0 text-destructive" />
-    ) : run.status === "waiting" ? (
-      <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-    ) : (
-      <Minus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-    );
-
-  // `skipped` means the run completed without needing to deliver or report.
-  // It stays neutral and never reads as a failure.
-  const label =
-    run.status === "ok" ? (
-      <span className="text-sm">
-        {run.itemsNew > 0 ? (
-          <>
-            Delivered · <span className="tabular-nums">{run.itemsNew}</span> new item
-            {run.itemsNew === 1 ? "" : "s"}
-          </>
-        ) : (
-          "Delivered"
-        )}
-        {/* What the per-run cap declined. These were marked seen, so they are
-            not waiting for the next run — they were never delivered and never
-            will be. A run that shows only "10 new items" reads as complete,
-            which is exactly the impression to avoid on a busy feed. */}
-        {run.itemsOverflow > 0 && (
-          <span className="text-muted-foreground">
-            {" · "}
-            <span className="tabular-nums">{run.itemsOverflow}</span> skipped
-          </span>
-        )}
-        {/* One word, because that is the whole of what happened: the summary
-            is now also a document in a bundle. No chip and no colour — filing
-            is the ordinary outcome for a routine that files, and a badge on
-            fifty-two consecutive rows says nothing. */}
-        {run.documentId !== null && <span className="text-muted-foreground"> · Filed</span>}
-      </span>
-    ) : run.status === "failed" ? (
-      <span className="text-sm text-destructive">{run.error ?? "Failed"}</span>
-    ) : run.status === "waiting" ? (
-      // Not delivered yet and not a failure: the report is written and held
-      // until the browser task it started answers (0100).
-      <span className="text-sm text-muted-foreground">
-        Waiting on the browser · the report is sent when it answers
-      </span>
-    ) : run.nothingRelevant ? (
-      // A different answer than no action needed: this run evaluated material
-      // and judged that nothing warranted reporting.
-      <span className="text-sm text-muted-foreground">
-        Nothing to report
-        {run.itemsNew > 0 && (
-          <>
-            {" · "}
-            <span className="tabular-nums">{run.itemsNew}</span> reviewed
-          </>
-        )}
-      </span>
-    ) : (
-      <span className="text-sm text-muted-foreground">No action needed</span>
-    );
-
-  // Why it ran, beside when it ran — "why did this run at 03:12?" is the
-  // first question somebody asks of a row nobody expected.
-  const trigger = runTriggerText(run);
-  const when = (
-    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-      {trigger ? `${trigger} · ` : ""}
-      {formatRelative(run.startedAt)}
-      {run.durationMs !== null ? ` · ${(run.durationMs / 1000).toFixed(1)}s` : ""}
-    </span>
-  );
-
-  // Only ever set on a run that was supposed to file and did not, so it is
-  // never on screen for the two ordinary cases. Shown without expanding the
-  // row, because it is the only way anybody finds out that their scheduled
-  // worker has no document storage bound, or that they were demoted to viewer
-  // last month — the mail keeps arriving either way, which is exactly why
-  // nothing else would tell them.
-  //
-  // Muted rather than red. The run succeeded; what failed is the optional half
-  // of it, and colouring it as a failure would teach people to ignore the
-  // colour that means one.
-  const filingNote =
-    run.filingNote === null ? null : (
-      <p className="mt-1 pl-[1.625rem] text-xs text-muted-foreground">{run.filingNote}</p>
-    );
-
-  // Runs that sent nothing have nothing to reveal, and so do delivered runs
-  // recorded before routine_runs.summary existed — there is nothing to backfill
-  // those with, so they stay plain rows rather than expanding to an empty box.
-  if (run.summary === null) {
+  if (run.status === "failed") {
     return (
-      <li className="px-5 py-3">
-        <div className="flex items-center gap-3">
-          {icon}
-          <span className="min-w-0 flex-1 truncate">{label}</span>
-          {stoppedChip}
-          {when}
-        </div>
-        {filingNote}
-      </li>
+      <StatusWord state="failed" className="max-w-[22rem]">
+        <span className="truncate">Failed{run.error ? ` · ${run.error}` : ""}</span>
+      </StatusWord>
     );
   }
-
+  if (run.status === "waiting") {
+    // Not delivered yet and not a failure: the report is written and held
+    // until the browser task it started answers (0100).
+    return <StatusWord state="waiting">Waiting on the browser</StatusWord>;
+  }
+  if (run.status === "skipped") {
+    // "Nothing to report" is a judgement the model made, and the count is what
+    // gives anyone a way to check it; "No action needed" is that there was
+    // nothing new to read.
+    return (
+      <StatusWord state="idle">
+        {run.nothingRelevant
+          ? `Nothing to report${run.itemsNew > 0 ? ` · ${run.itemsNew} reviewed` : ""}`
+          : "No action needed"}
+      </StatusWord>
+    );
+  }
+  const parts = [
+    stoppedShort ? "Stopped before it finished" : "Done",
+    run.itemsNew > 0 ? `${run.itemsNew} new ${run.itemsNew === 1 ? "item" : "items"}` : null,
+    run.itemsOverflow > 0 ? `${run.itemsOverflow} skipped` : null,
+    run.documentId !== null ? "Filed" : null,
+  ].filter(Boolean);
   return (
-    <li className="px-5 py-3">
-      <div className="flex items-center gap-3">
-        {icon}
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          aria-expanded={open}
-          className="min-w-0 flex-1 truncate text-left hover:underline"
-        >
-          {label}
-        </button>
-        {stoppedChip}
-        {when}
-      </div>
-      {filingNote}
-      {open && (
-        <p className="mt-2 whitespace-pre-wrap border-l-2 border-border pl-3 text-sm text-muted-foreground">
-          {run.summary}
-        </p>
+    <span className="flex min-w-0 flex-col">
+      <StatusWord state="done">{parts.join(" · ")}</StatusWord>
+      {/* What did not go where it should have: a channel that refused, or a
+          filing that did not happen. Muted, because the run did deliver. */}
+      {(run.deliveryNote || run.filingNote) && (
+        <span className="truncate pl-4 text-xs text-muted-foreground">
+          {[run.deliveryNote, run.filingNote].filter(Boolean).join(" · ")}
+        </span>
       )}
-    </li>
+    </span>
   );
 }
 
+/**
+ * The run itself: its thread when it has one (0123), otherwise what it said,
+ * for runs from before run threads — the only copy if the mail never came.
+ */
+function RunOpen({ run, agentId }: { run: RoutineRun; agentId: string }) {
+  const [open, setOpen] = useState(false);
+  if (run.sessionId) {
+    return (
+      <Button asChild variant="ghost" size="sm">
+        <Link to="/agents/$agentId/chat" params={{ agentId }} search={{ s: run.sessionId }}>
+          Open
+        </Link>
+      </Button>
+    );
+  }
+  if (!run.summary) return null;
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+        Summary
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent size="lg">
+          <DialogHeader>
+            <DialogTitle>What it delivered</DialogTitle>
+          </DialogHeader>
+          <p className="m-0 max-h-[60vh] overflow-y-auto text-sm whitespace-pre-wrap">
+            {run.summary}
+          </p>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/** A routine's when, in the kv's words: "Every Monday at 09:00 · Europe/Istanbul". */
+function runsWords(routine: Routine): string {
+  if (routine.triggerKind === "event") {
+    return routine.event
+      ? `When ${routine.event.app} · ${routine.event.label}`
+      : "When something happens in an app";
+  }
+  if (routine.triggerKind === "webhook") return "When something calls its webhook";
+  return `${cronToProse(routine.scheduleCron)} · ${routine.timezone}`;
+}
+
+/**
+ * One routine (A7): a 48px bar with its name, its agent, its state and what
+ * can be done to it; then its schedule, its instructions, where it delivers
+ * and its recent runs, each under its own eyebrow.
+ */
 export function RoutineDetail({
   routine,
   runs,
+  agent,
+  createdByName,
+  runningSince,
   connections = [],
   bundles = [],
   attachedBundleIds = [],
   canWrite = true,
-  channelLabel,
+  channelLabels,
   isOwner,
   onTogglePause,
   onDelete,
@@ -247,233 +217,327 @@ export function RoutineDetail({
   onRunNow,
   running,
   busy,
-  editAction,
+  editHref,
 }: {
   routine: Routine;
   runs: RoutineRun[];
+  /** The routine's agent, for its chip. */
+  agent?: { id: string; name: string; avatar?: string | null };
+  createdByName: string | null;
+  /** When the run under way started, or null. */
+  runningSince: number | null;
   /**
    * The workspace's connections, so a `connection` routine can be named by the
-   * account it watches rather than by a uuid. Empty is fine and is what a
-   * routine of any other kind gets.
+   * account it watches rather than by a uuid.
    */
   connections?: Connection[];
-  /**
-   * The workspace's knowledge bundles, for the one control that picks one.
-   * Empty renders the card with nothing to choose, which is the honest state of
-   * a workspace that has no bundles yet.
-   */
+  /** The workspace's folders, for where a routine files its result. */
   bundles?: Array<{ id: string; name: string }>;
-  /** Which of them this routine's agent reads, so the card can say so. */
+  /** Which of them this routine's agent reads, so the filing card can say so. */
   attachedBundleIds?: string[];
   /**
    * Whether the caller may write to the workspace's knowledge. Only used to
    * stop the filing card promising something a viewer's runs will not do.
-   * Defaults to true, which is what an unknown role does everywhere else here.
    */
   canWrite?: boolean;
-  /** null when the viewer is not the owner — RLS hides other people's channels. */
-  channelLabel: string | null;
+  /**
+   * The channels it delivers to, by kind, named — null when the viewer is not
+   * the owner, whose channels RLS keeps to them.
+   */
+  channelLabels: { email: string[]; slack: string[] } | null;
   isOwner: boolean;
   onTogglePause: () => void;
   onDelete: () => void;
   onToggleShared: (shared: boolean) => void;
-  /**
-   * Any other patch this screen makes. Separate from the single-purpose
-   * callbacks above because what it carries is open-ended, and optional so a
-   * caller that renders this read-only does not have to invent one.
-   */
+  /** Any other patch this screen makes. */
   onSave?: (patch: UpdateRoutineInput) => void;
   onRunNow: () => void;
   /** A manual run is synchronous and can take a while — the LLM call is in it. */
   running: boolean;
   busy: boolean;
-  /** The edit dialog, passed in so this stays a presentational component. */
-  editAction?: React.ReactNode;
+  /** The editor, for the owner (A28). */
+  editHref?: string;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const state = runningSince
+    ? { dot: "running" as const, word: "Running" }
+    : routine.status === "paused"
+      ? { dot: "idle" as const, word: "Paused" }
+      : routine.status === "completed"
+        ? { dot: "done" as const, word: "Finished" }
+        : { dot: "done" as const, word: "Active" };
+  const outputName = bundles.find((b) => b.id === routine.outputBundleId)?.name ?? null;
+  const edit = editHref ? (
+    <Link to={editHref} className="hover:text-foreground">
+      Edit
+    </Link>
+  ) : undefined;
+
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="truncate text-2xl font-semibold leading-tight tracking-tight">
-            {routine.name}
-          </h1>
-          <RoutineStatus routine={routine} className="mt-1" />
-        </div>
+      <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-1.5 lg:px-6">
+        <h2 className="m-0 min-w-0 truncate text-lead font-semibold">{routine.name}</h2>
+        {agent && (
+          <Chip>
+            <AgentMark agent={agent} size={16} />
+            {agent.name}
+          </Chip>
+        )}
+        <Chip>
+          <StatusDot state={state.dot} />
+          {state.word}
+        </Chip>
         {isOwner && (
-          <div className="flex shrink-0 items-center gap-2">
-            {/* The one primary action here. Without it the only way to find out
-                whether a routine works is to wait out the engine's five-minute
-                tick, which makes every mistake cost a round trip to discover. */}
-            <Button size="sm" onClick={onRunNow} disabled={running || busy}>
-              {running ? "Running…" : "Run now"}
-            </Button>
-            {editAction}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {/* A completed routine has nothing to pause and nothing to resume
                 into: `ends_after_runs` ran its course, and "Resume" would read
-                as an invitation to restart a finished series — exactly what
-                0074's header argues a status distinct from `paused` is for.
-                Starting over means a new routine from the template, not this
-                button. */}
+                as an invitation to restart a finished series. */}
             {routine.status !== "completed" && (
-              <Button variant="outline" size="sm" onClick={onTogglePause} disabled={busy}>
+              <Button variant="secondary" onClick={onTogglePause} disabled={busy}>
                 {routine.status === "active" ? "Pause" : "Resume"}
               </Button>
             )}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" size="sm">
-                  Delete
+            {/* The one primary action here. Without it the only way to find
+                out whether a routine works is to wait for its schedule. */}
+            <Button onClick={onRunNow} disabled={running || busy}>
+              <Play />
+              {running ? "Running…" : "Run now"}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="secondary" size="icon" aria-label={`More for ${routine.name}`}>
+                  <MoreHorizontal />
                 </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete {routine.name}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This removes the routine and its run history. This cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction variant="danger" onClick={onDelete}>
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52">
+                {editHref && (
+                  <DropdownMenuItem asChild>
+                    <Link to={editHref}>Edit</Link>
+                  </DropdownMenuItem>
+                )}
+                {/* Never for a `workspace` routine: 0076 refuses sharing one
+                    outright, since every report it delivers is the whole
+                    workspace's gaps. */}
+                {routine.sourceKind !== "workspace" && (
+                  <DropdownMenuItem onClick={() => onToggleShared(routine.visibility !== "shared")}>
+                    {routine.visibility === "shared" ? "Make private" : "Share with team"}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-destructive"
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  Delete routine
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
       </div>
 
-      <SectionCard className="mt-8">
-        <dl className="divide-y divide-hairline">
-          <Field label="Source">{sourceLabel(routine, connections)}</Field>
-          {routine.triggerKind === "event" ? (
-            // An event routine is never due, so its cron is not a schedule —
-            // showing one would promise a run that will not happen.
-            <Field label="Starts">
-              {routine.event
-                ? `When ${routine.event.app} · ${routine.event.label}`
-                : "When something happens in an app"}
-            </Field>
-          ) : (
-            <Field label="Schedule">
-              <span className="tabular-nums">{cronToProse(routine.scheduleCron)}</span> ·{" "}
-              {routine.timezone}
-            </Field>
-          )}
-          <Field label="Delivers to">{channelLabel ?? "The owner's channel"}</Field>
-          <Field label="Next run">
-            {routine.status === "active" && routine.triggerKind === "event" ? (
-              "When the event arrives"
-            ) : routine.status === "active" && routine.nextRunAt !== null ? (
-              <span className="tabular-nums">{formatRelative(routine.nextRunAt)}</span>
-            ) : routine.status === "completed" ? (
-              "Finished"
-            ) : (
-              "Paused"
-            )}
-          </Field>
-          <Field label="Instruction">{routine.instruction}</Field>
-          {/* Owner only. RLS refuses a teammate's update, so a switch here would
-              produce an error they have no way to act on. And never for a
-              `workspace` routine, owner included: `routines_workspace_source_
-              private_check` (0076) refuses the PATCH outright — sharing would
-              put every delivered report in front of the whole workspace,
-              which is the exact population the floor above keeps it from
-              identifying anyone to. Same shape as hiding Pause/Resume on a
-              completed routine below: nothing a PATCH would refuse is offered
-              here at all. */}
-          {isOwner && routine.sourceKind !== "workspace" && (
-            <Field label="Sharing">
-              <div className="flex flex-wrap items-center gap-3">
-                <Switch
-                  id="routine-shared"
-                  aria-label="Share with the workspace"
-                  checked={routine.visibility === "shared"}
-                  onCheckedChange={onToggleShared}
-                  disabled={busy}
-                />
-                <label htmlFor="routine-shared" className="text-sm text-muted-foreground">
-                  {routine.visibility === "shared"
-                    ? "Visible to everyone who can use this agent"
-                    : "Only you"}
-                </label>
-              </div>
-            </Field>
-          )}
-        </dl>
-      </SectionCard>
+      <div className="px-4 pt-2 pb-12 lg:px-8">
+        <div className="max-w-[760px]">
+          <section className="mt-6">
+            <SectionLabel action={edit}>Schedule</SectionLabel>
+            <dl className="m-0">
+              <Kv label="Runs">{runsWords(routine)}</Kv>
+              {routine.triggerKind !== "event" && routine.triggerKind !== "webhook" && (
+                <Kv label="Cron">
+                  <Chip tone="code">{routine.scheduleCron}</Chip>
+                </Kv>
+              )}
+              <Kv label="Next run">
+                {routine.status === "active" && routine.triggerKind === "event"
+                  ? "When the event arrives"
+                  : routine.status === "active" && routine.nextRunAt !== null
+                    ? `${new Date(routine.nextRunAt).toLocaleDateString("en-GB", {
+                        weekday: "long",
+                        day: "numeric",
+                        month: "long",
+                      })} · ${formatRelative(routine.nextRunAt)}`
+                    : routine.status === "completed"
+                      ? "Finished"
+                      : "Paused"}
+              </Kv>
+              <Kv label="Created by">
+                <span className="inline-flex items-center gap-2">
+                  <Avatar name={createdByName} size={20} />
+                  {createdByName ?? "A teammate"} · {formatRelative(routine.createdAt)}
+                </span>
+              </Kv>
+              {routine.sourceKind !== "none" && (
+                <Kv label="Reads">{sourceLabel(routine, connections)}</Kv>
+              )}
+            </dl>
+          </section>
 
-      {/* A workspace routine can never be shared or filed — see the two
-          comments above and below this card for the refusal each would hit —
-          so this is the one place that says why, for whoever opens this page
-          checking exactly this feature's privacy properties. */}
-      {routine.sourceKind === "workspace" && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Never shared and never filed: sharing would show the whole workspace a report built so
-          that nobody who asked a question can be singled out, and filing would turn what the team
-          does not know into something an agent quotes back as if it did.
-        </p>
-      )}
+          <section className="mt-7">
+            <SectionLabel action={edit}>Instructions</SectionLabel>
+            <div className="rounded-lg border border-border px-3.5 py-3 text-lead leading-[1.6] whitespace-pre-wrap text-foreground">
+              {routine.instruction}
+            </div>
+          </section>
 
-      {/* Owner only, and only where there is something to show: the policy on
-          routine_triggers returns nothing to anybody else, so a teammate would
-          get an empty card and a button that 404s. */}
-      {isOwner && (routine.triggerKind === "webhook" || routine.triggerKind === "both") && (
-        <RoutineWebhookCard routineId={routine.id} />
-      )}
+          <section className="mt-7">
+            <SectionLabel>Delivers to</SectionLabel>
+            <dl className="m-0">
+              {outputName && (
+                <Kv label="Knowledge">
+                  <Chip tone="code">{outputName}</Chip>
+                </Kv>
+              )}
+              {channelLabels ? (
+                <>
+                  {channelLabels.email.length > 0 && (
+                    <Kv label="Email">{channelLabels.email.join(", ")}</Kv>
+                  )}
+                  {channelLabels.slack.length > 0 && (
+                    <Kv label="Slack">{channelLabels.slack.join(", ")}</Kv>
+                  )}
+                </>
+              ) : (
+                <Kv label="Channel">The owner&rsquo;s channel</Kv>
+              )}
+              <Kv label="Inbox">
+                {routine.deliverInbox
+                  ? "Everyone who can use the agent sees the result as a thread"
+                  : "Off"}
+              </Kv>
+            </dl>
+          </section>
 
-      {/* Owner only, for the webhook card's reason: the subscription row is
-          shown to the routine's owner alone (0109). */}
-      {isOwner && routine.triggerKind === "event" && <RoutineEventCard routine={routine} />}
-
-      {/* Owner only, for the same reason the pause and delete controls are:
-          filing is a write into the workspace's knowledge, and offering the
-          control to somebody whose PATCH will be refused produces an error
-          they cannot act on. And never for a `workspace` routine, for the
-          same reason as the Sharing field above: `routine_workspace_source_
-          is_permitted` (0075/0076) refuses any output bundle on this source
-          kind, because a coverage report filed as a document is "what the
-          team does not know" rather than knowledge, and every agent in the
-          workspace would otherwise retrieve and quote it back as if it were. */}
-      {isOwner && routine.sourceKind !== "workspace" && (
-        <RoutineOutputCard
-          routine={routine}
-          bundles={bundles}
-          attachedBundleIds={attachedBundleIds}
-          canWrite={canWrite}
-          onSave={onSave ?? (() => {})}
-          saving={busy}
-        />
-      )}
-
-      {/* Owner only, for the output card's reason: it is a PATCH somebody else
-          would have refused, and the approval it gives is the owner's to give. */}
-      {isOwner && (
-        <RoutineBrowserCard routine={routine} onSave={onSave ?? (() => {})} saving={busy} />
-      )}
-
-      <section className="mt-10">
-        <SectionHeading title="Run history" />
-        <SectionCard padded={false} className="mt-3 overflow-hidden">
-          {runs.length === 0 ? (
-            <p className="p-5 text-sm text-muted-foreground">
-              No runs yet
-              {routine.triggerKind === "event"
-                ? " — the first one starts when the event arrives."
-                : routine.nextRunAt !== null
-                  ? ` — the first one is scheduled ${formatRelative(routine.nextRunAt)}.`
-                  : "."}
+          {/* A workspace routine can never be shared or filed, so this is the
+              one place that says why, for whoever opens this page checking
+              exactly this feature's privacy properties. */}
+          {routine.sourceKind === "workspace" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Never shared and never filed: sharing would show the whole workspace a report built so
+              that nobody who asked a question can be singled out, and filing would turn what the
+              team does not know into something an agent quotes back as if it did.
             </p>
-          ) : (
-            <ul className="divide-y divide-hairline">
-              {runs.map((run) => (
-                <RunRow key={run.id} run={run} />
-              ))}
-            </ul>
           )}
-        </SectionCard>
-      </section>
+
+          {/* Owner only: the policy on routine_triggers returns nothing to
+              anybody else. */}
+          {isOwner && (routine.triggerKind === "webhook" || routine.triggerKind === "both") && (
+            <RoutineWebhookCard routineId={routine.id} />
+          )}
+          {/* Owner only: the subscription row is shown to its owner alone (0109). */}
+          {isOwner && routine.triggerKind === "event" && <RoutineEventCard routine={routine} />}
+          {/* Owner only, and never for a `workspace` routine (0075/0076
+              refuse an output folder on that source). */}
+          {isOwner && routine.sourceKind !== "workspace" && (
+            <RoutineOutputCard
+              routine={routine}
+              bundles={bundles}
+              attachedBundleIds={attachedBundleIds}
+              canWrite={canWrite}
+              onSave={onSave ?? (() => {})}
+              saving={busy}
+            />
+          )}
+          {isOwner && (
+            <RoutineBrowserCard routine={routine} onSave={onSave ?? (() => {})} saving={busy} />
+          )}
+
+          <section className="mt-7">
+            <SectionLabel>Recent runs</SectionLabel>
+            {runs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No runs yet
+                {routine.triggerKind === "event"
+                  ? " — the first one starts when the event arrives."
+                  : routine.nextRunAt !== null
+                    ? ` — the first one is scheduled ${formatRelative(routine.nextRunAt)}.`
+                    : "."}
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <DataTable
+                  label="Recent runs"
+                  rows={runs.slice(0, 20)}
+                  rowKey={(r) => r.id}
+                  columns={[
+                    {
+                      key: "started",
+                      header: "Started",
+                      cell: (r) => (
+                        <span className="tabular-nums">
+                          {lastActivityLabel(r.startedAt)}
+                          {runTriggerText(r) ? (
+                            <span className="text-muted-foreground"> · {runTriggerText(r)}</span>
+                          ) : null}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: "duration",
+                      header: "Duration",
+                      cell: (r) => (
+                        <span className="text-muted-foreground">
+                          {durationWords(
+                            r,
+                            runningSince !== null && r.startedAt >= runningSince - 1000,
+                          )}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: "cost",
+                      header: "Credits",
+                      cell: (r) => (
+                        <span className="text-muted-foreground tabular-nums">
+                          {r.cost
+                            ? r.cost.unit === "usd"
+                              ? `$${r.cost.amount.toFixed(2)}`
+                              : r.cost.amount.toLocaleString("en-US")
+                            : "—"}
+                        </span>
+                      ),
+                    },
+                    { key: "result", header: "Result", cell: (r) => <RunResult run={r} /> },
+                    {
+                      key: "open",
+                      header: <span className="sr-only">Open</span>,
+                      className: "text-right",
+                      cell: (r) => <RunOpen run={r} agentId={routine.agentId} />,
+                    },
+                  ]}
+                />
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {routine.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              It stops running. It waits 30 days in Settings › Export and deletion with its run
+              history, and comes back paused if you restore it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={onDelete}>
+              Delete routine
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
+  );
+}
+
+/** A key and its value on one 36px line (A7). */
+function Kv({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid min-h-9 grid-cols-[140px_minmax(0,1fr)] items-center gap-x-4 border-b border-hairline py-1.5 text-sm last:border-b-0">
+      <dt className="text-meta text-muted-foreground">{label}</dt>
+      <dd className="m-0 min-w-0">{children}</dd>
+    </div>
   );
 }

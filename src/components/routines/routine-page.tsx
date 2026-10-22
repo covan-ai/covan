@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { EmptyState } from "@/components/section-card";
+import { EmptyPage } from "@/components/empty-page";
 import { RoutineDetail } from "@/components/routines/routine-detail";
-import { EditRoutineDialog } from "@/components/routines/edit-routine-dialog";
 import { api, ApiError } from "@/lib/api-client";
 import type { UpdateRoutineInput } from "@/lib/routines-api";
 import {
@@ -51,21 +50,29 @@ export function RoutinePage({
 
   const routine = routines.find((r) => r.id === routineId);
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (isLoading) return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
 
   if (!routine) {
     return (
-      <EmptyState
+      <EmptyPage
         title="Routine not found"
         description="It may have been deleted, or the link points at another workspace."
-        action={notFoundAction}
+        actions={notFoundAction}
       />
     );
   }
 
   const isOwner = routine.userId === me?.user.id;
-  // Channels are RLS-scoped to their owner, so this resolves only for our own.
-  const channelLabel = channels.find((c) => c.id === routine.deliveryChannelId)?.label ?? null;
+  // Channels are RLS-scoped to their owner, so these resolve only for our own.
+  const delivering = channels.filter(
+    (c) => c.id === routine.deliveryChannelId || routine.channelIds.includes(c.id),
+  );
+  const channelLabels = isOwner
+    ? {
+        email: delivering.filter((c) => c.kind === "email").map((c) => c.label),
+        slack: delivering.filter((c) => c.kind !== "email").map((c) => c.label),
+      }
+    : null;
 
   const togglePause = async () => {
     const next = routine.status === "active" ? "paused" : "active";
@@ -130,7 +137,10 @@ export function RoutinePage({
       attachedBundleIds={agents.find((a) => a.id === routine.agentId)?.bundleIds ?? []}
       canWrite={canWrite}
       onSave={(patch) => void save(patch)}
-      channelLabel={isOwner ? channelLabel : null}
+      agent={agents.find((a) => a.id === routine.agentId)}
+      createdByName={routine.ownerName}
+      runningSince={routine.runningSince}
+      channelLabels={channelLabels}
       isOwner={isOwner}
       onTogglePause={() => void togglePause()}
       onDelete={() => void remove()}
@@ -138,16 +148,7 @@ export function RoutinePage({
       onRunNow={() => void runNow()}
       running={runRoutine.isPending}
       busy={updateRoutine.isPending || deleteRoutine.isPending}
-      editAction={
-        isOwner ? (
-          <EditRoutineDialog
-            routine={routine}
-            channels={channels}
-            onSave={(patch) => void save(patch)}
-            saving={updateRoutine.isPending}
-          />
-        ) : null
-      }
+      editHref={isOwner ? `/routines/${routine.id}/edit` : undefined}
     />
   );
 }

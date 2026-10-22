@@ -14,9 +14,10 @@ function RoutinesLayout() {
   });
   return (
     <TopBarSlotProvider>
-      <div className="flex min-h-dvh flex-col lg:flex-row">
+      {/* A window (A7): the list and the routine each scroll on their own. */}
+      <div data-fill-screen className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <RoutinesPane selectedId={selectedId} hrefFor={(r) => `/routines/${r.id}`} />
-        <div className="min-w-0 flex-1">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           <Outlet />
         </div>
       </div>

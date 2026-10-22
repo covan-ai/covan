@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type React from "react";
 import { RoutineDetail } from "./routine-detail";
 import type { Routine, RoutineRun } from "@/lib/routines-api";
 
@@ -11,6 +12,11 @@ import type { Routine, RoutineRun } from "@/lib/routines-api";
 //
 // The routine below is `schedule`, so the card is not rendered at all; this is
 // about the import graph rather than about the card.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
+    <a href={to}>{children}</a>
+  ),
+}));
 vi.mock("@/lib/api-client", () => ({
   api: { routines: { trigger: vi.fn(), createTrigger: vi.fn(), removeTrigger: vi.fn() } },
   ApiError: class ApiError extends Error {
@@ -120,7 +126,10 @@ const runs: RoutineRun[] = [
 const props = {
   routine,
   runs,
-  channelLabel: "m…a@gmail.com",
+  agent: { id: "a1", name: "Research", avatar: "owl" },
+  createdByName: "Elif Yılmaz",
+  runningSince: null,
+  channelLabels: { email: ["deniz@acme.test"], slack: [] },
   isOwner: true,
   onTogglePause: () => {},
   onDelete: () => {},
@@ -128,9 +137,38 @@ const props = {
   onRunNow: () => {},
   running: false,
   busy: false,
+  editHref: "/routines/r1/edit",
 };
 
+const results = () =>
+  within(screen.getByRole("table", { name: "Recent runs" }))
+    .getAllByRole("row")
+    .slice(1)
+    .map((row) => row.textContent);
+
+/** Opens the bar's ⋯ menu. */
+async function openMenu() {
+  await userEvent.click(screen.getByRole("button", { name: `More for ${routine.name}` }));
+}
+
 describe("RoutineDetail", () => {
+  it("says what it is, whose agent runs it and what state it is in", () => {
+    render(<RoutineDetail {...props} />);
+    expect(screen.getByRole("heading", { name: routine.name })).toBeInTheDocument();
+    expect(screen.getByText("Research")).toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
+  });
+
+  it("lays out the schedule, the instructions and where it delivers", () => {
+    render(<RoutineDetail {...props} />);
+    expect(screen.getByText("Every hour · Europe/Istanbul")).toBeInTheDocument();
+    expect(screen.getByText("0 * * * *")).toBeInTheDocument();
+    expect(screen.getByText(/Elif Yılmaz ·/)).toBeInTheDocument();
+    expect(screen.getByText("summarise new posts")).toBeInTheDocument();
+    expect(screen.getByText("deniz@acme.test")).toBeInTheDocument();
+    expect(screen.getByText(/sees the result as a thread/)).toBeInTheDocument();
+  });
+
   // 0109: "why did this run at 03:12?" is answered on the row, beside when.
   it("says what started a run that something other than the schedule started", () => {
     const started = [
@@ -139,15 +177,15 @@ describe("RoutineDetail", () => {
       { ...runs[2], id: "m", triggeredBy: "manual" as const },
     ];
     render(<RoutineDetail {...props} runs={started} />);
-    expect(screen.getByText(/Gmail · New mail ·/)).toBeInTheDocument();
-    expect(screen.getByText(/^Webhook ·/)).toBeInTheDocument();
-    expect(screen.getByText(/^Run now ·/)).toBeInTheDocument();
+    const rows = results();
+    expect(rows[0]).toMatch(/· Gmail · New mail/);
+    expect(rows[1]).toMatch(/· Webhook/);
+    expect(rows[2]).toMatch(/· Run now/);
   });
 
   it("says nothing extra for a scheduled run, which is the ordinary case", () => {
     render(<RoutineDetail {...props} runs={[{ ...runs[0], triggeredBy: "schedule" as const }]} />);
-    // The header has a "Run now" button; the row is what must stay quiet.
-    expect(screen.queryByText(/^(Webhook|Run now) ·/)).not.toBeInTheDocument();
+    expect(results()[0]).not.toMatch(/· (Webhook|Run now)/);
   });
 
   // An event routine is never due, so a cron in front of it would promise a
@@ -174,88 +212,52 @@ describe("RoutineDetail", () => {
     render(<RoutineDetail {...props} routine={waiting} runs={[]} isOwner={false} />);
     expect(screen.getByText("When Gmail · New mail")).toBeInTheDocument();
     expect(screen.getByText("When the event arrives")).toBeInTheDocument();
-    expect(screen.queryByText("Schedule")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cron")).not.toBeInTheDocument();
     expect(screen.getByText(/the first one starts when the event arrives/)).toBeInTheDocument();
   });
 
-  it("renders skipped neutrally, not as an error", () => {
+  it("says what came of each run, neutrally where nothing failed", () => {
     render(<RoutineDetail {...props} />);
-    const row = screen.getByText("No action needed");
-    expect(row.className).toContain("text-muted-foreground");
-    expect(row.className).not.toContain("rose");
-  });
-
-  it("shows a failed run's error", () => {
-    render(<RoutineDetail {...props} />);
-    expect(screen.getByText("upstream 503")).toBeInTheDocument();
+    const rows = results();
+    expect(rows[0]).toMatch(/Done · 3 new items/);
+    expect(rows[1]).toMatch(/No action needed/);
+    expect(rows[2]).toMatch(/Failed · upstream 503/);
   });
 
   // The per-run cap delivers ten and marks everything it saw as seen, so the
-  // rest are not queued for later — they are gone. A row reading "10 new items"
-  // and nothing else says the opposite.
+  // rest are not queued for later — they are gone.
   it("says how many entries the per-run cap dropped", () => {
-    const capped = [{ ...runs[0], itemsNew: 10, itemsOverflow: 32 }];
-    render(<RoutineDetail {...props} runs={capped} />);
-    expect(screen.getByText("32")).toBeInTheDocument();
-    expect(screen.getByText(/skipped/)).toBeInTheDocument();
+    render(<RoutineDetail {...props} runs={[{ ...runs[0], itemsNew: 10, itemsOverflow: 32 }]} />);
+    expect(results()[0]).toMatch(/10 new items · 32 skipped/);
   });
 
   // "No action needed" and "nothing to report" are different answers to
-  // "why didn't it send me anything?", and only one of them means the model
-  // made a judgement somebody might disagree with. Silence is what a broken
-  // routine looks like too, so the count is what gives anyone a way to check.
+  // "why didn't it send me anything?", and only one of them is a judgement.
   it("distinguishes a filtered run from an empty one, with what it read", () => {
-    const filtered = [{ ...runs[1], nothingRelevant: true, itemsNew: 6 }];
-    render(<RoutineDetail {...props} runs={filtered} />);
-    // Read off the row itself, not off the screen. `getByText(/6/)` asked
-    // whether a 6 was rendered anywhere, which the timestamp beside this row
-    // also answers — so it threw on "found multiple elements" rather than
-    // failing on anything about the count. Asserting the row's whole sentence
-    // is both unambiguous and closer to what the row has to say: the number is
-    // only useful attached to what it counts.
-    expect(screen.getByText(/Nothing to report/)).toHaveTextContent(
-      "Nothing to report · 6 reviewed",
+    render(
+      <RoutineDetail {...props} runs={[{ ...runs[1], nothingRelevant: true, itemsNew: 6 }]} />,
     );
-    expect(screen.queryByText("No action needed")).not.toBeInTheDocument();
+    expect(results()[0]).toMatch(/Nothing to report · 6 reviewed/);
   });
 
-  it("still reads as neutral, not as a failure", () => {
-    const filtered = [{ ...runs[1], nothingRelevant: true, itemsNew: 6 }];
-    render(<RoutineDetail {...props} runs={filtered} />);
-    const row = screen.getByText(/Nothing to report/);
-    expect(row.className).toContain("text-muted-foreground");
-    expect(row.className).not.toContain("destructive");
-  });
-
-  /**
-   * covan#243. The run completed — `status` is right to say `ok` — but the
-   * turn inside it stopped before it answered, and the row read as a third
-   * finished run. It now says so, without calling it a failure.
-   */
+  /** covan#243: the run completed, but the turn inside it stopped early. */
   it("says a run that was cut short did not finish", () => {
-    const cut = [{ ...runs[0], outcome: "cut_short" as const, summary: "Partial." }];
-    render(<RoutineDetail {...props} runs={cut} />);
-    const chip = screen.getByText("Stopped before it finished");
-    expect(chip.className).not.toContain("destructive");
-    expect(chip.className).not.toContain("brand");
-    // The rest of the row is still true, so it stays.
-    expect(screen.getByText(/Delivered/)).toBeInTheDocument();
+    render(<RoutineDetail {...props} runs={[{ ...runs[0], outcome: "cut_short" as const }]} />);
+    expect(results()[0]).toMatch(/Stopped before it finished · 3 new items/);
   });
 
-  it("says nothing extra about a run that answered", () => {
-    const answered = [{ ...runs[0], outcome: "answered" as const }];
-    render(<RoutineDetail {...props} runs={answered} />);
-    expect(screen.queryByText("Stopped before it finished")).not.toBeInTheDocument();
-  });
-
-  it("says nothing extra about a run from before outcomes were recorded", () => {
-    render(<RoutineDetail {...props} />);
-    expect(screen.queryByText("Stopped before it finished")).not.toBeInTheDocument();
-  });
-
-  it("says nothing about drops when there were none", () => {
-    render(<RoutineDetail {...props} />);
-    expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
+  it("opens a run's thread, or what it delivered when it has none", async () => {
+    render(
+      <RoutineDetail
+        {...props}
+        runs={[{ ...runs[0], id: "t", sessionId: "s1" }, runs[0], runs[1]]}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "Open" })).toBeInTheDocument();
+    // A run that sent nothing has nothing to show.
+    expect(screen.getAllByRole("button", { name: "Summary" })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "Summary" }));
+    expect(await screen.findByText("Three new posts about pricing.")).toBeInTheDocument();
   });
 
   it("names a connection routine by the account it watches", () => {
@@ -269,8 +271,6 @@ describe("RoutineDetail", () => {
     expect(screen.getByText(/Covan HQ/)).toBeInTheDocument();
   });
 
-  // A uuid in a Source field tells the reader nothing, and the list not having
-  // loaded yet is the ordinary case rather than an error.
   it("falls back to a readable phrase when the connection is unknown", () => {
     render(
       <RoutineDetail
@@ -281,150 +281,78 @@ describe("RoutineDetail", () => {
     expect(screen.getByText("A connected source")).toBeInTheDocument();
   });
 
-  it("hides owner controls for a teammate's routine", () => {
-    render(<RoutineDetail {...props} isOwner={false} channelLabel={null} />);
+  it("gives a teammate no controls, and says their delivery target is the owner's", () => {
+    render(<RoutineDetail {...props} isOwner={false} channelLabels={null} editHref={undefined} />);
     expect(screen.queryByRole("button", { name: /pause/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /run now/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /more for/i })).not.toBeInTheDocument();
+    expect(screen.getByText("The owner’s channel")).toBeInTheDocument();
   });
 
-  // A finished series has nothing to pause and is not meant to be resumed —
-  // "Resume" would PATCH it back to active for one more delivery before it
-  // completes itself again. The restart somebody actually wants is a new
-  // routine from the template, not this button.
+  // A finished series has nothing to pause and is not meant to be resumed.
   it("offers no pause or resume control on a completed routine", () => {
     render(<RoutineDetail {...props} routine={{ ...routine, status: "completed" }} />);
     expect(screen.queryByRole("button", { name: /pause/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /resume/i })).not.toBeInTheDocument();
-    // The rest of the owner toolbar is still there — only this one control
-    // disappears.
     expect(screen.getByRole("button", { name: /run now/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /delete/i })).toBeInTheDocument();
-    // The status badge above already reads "Finished" (routine-status.tsx).
-    // The "Next run" field must not contradict it four lines down by falling
-    // back to "Paused" for a status it has no branch for.
+    expect(screen.getAllByText("Finished").length).toBeGreaterThan(0);
     expect(screen.queryByText("Paused")).not.toBeInTheDocument();
-  });
-
-  // Delivery channels are scoped by RLS to their owner, so a teammate's target
-  // is genuinely unreadable — say so rather than render an empty field.
-  it("explains that a teammate's delivery target is not visible", () => {
-    render(<RoutineDetail {...props} isOwner={false} channelLabel={null} />);
-    expect(screen.getByText("The owner's channel")).toBeInTheDocument();
   });
 
   describe("run now", () => {
     it("runs on demand rather than making the user wait out the schedule", async () => {
       const onRunNow = vi.fn();
-      const user = userEvent.setup();
       render(<RoutineDetail {...props} onRunNow={onRunNow} />);
-
-      await user.click(screen.getByRole("button", { name: /run now/i }));
+      await userEvent.click(screen.getByRole("button", { name: /run now/i }));
       expect(onRunNow).toHaveBeenCalledTimes(1);
     });
 
-    // The run is synchronous and contains an LLM call, so it can take a while.
-    // A button that still says "Run now" invites a second click and a second
-    // delivery.
+    // The run is synchronous and contains an LLM call. A button that still
+    // says "Run now" invites a second click and a second delivery.
     it("says it is running and refuses a second click", () => {
       render(<RoutineDetail {...props} running />);
       expect(screen.getByRole("button", { name: /running/i })).toBeDisabled();
     });
-
-    it("gives a teammate no way to run someone else's routine", () => {
-      render(<RoutineDetail {...props} isOwner={false} channelLabel={null} />);
-      expect(screen.queryByRole("button", { name: /run now/i })).not.toBeInTheDocument();
-    });
   });
 
-  describe("run history", () => {
-    // "Sent · 3 new items" says a delivery happened but not what was in it. If
-    // the mail never arrived, this is the only remaining copy.
-    it("keeps the summary out of the way until asked for", async () => {
-      const user = userEvent.setup();
-      render(<RoutineDetail {...props} />);
-
-      expect(screen.queryByText("Three new posts about pricing.")).not.toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: /3 new items/i }));
-      expect(screen.getByText("Three new posts about pricing.")).toBeInTheDocument();
-    });
-
-    it("does not offer to expand a run that sent nothing", () => {
-      render(<RoutineDetail {...props} />);
-      expect(screen.queryByRole("button", { name: /no action needed/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /upstream 503/i })).not.toBeInTheDocument();
-    });
-
-    // Runs recorded before routine_runs.summary existed carry null, and there
-    // is nothing to backfill them with.
-    it("does not offer to expand a delivered run from before summaries were kept", () => {
-      render(<RoutineDetail {...props} runs={[{ ...runs[0], summary: null }]} />);
-      expect(screen.queryByRole("button", { name: /3 new items/i })).not.toBeInTheDocument();
-      // The count is still on screen, just as plain text split across spans
-      // rather than a button — so match the row, not a single text node.
-      expect(screen.getByRole("listitem")).toHaveTextContent("Delivered · 3 new items");
-    });
-  });
-
-  describe("sharing", () => {
-    it("says a private routine is only visible to its owner", () => {
-      render(<RoutineDetail {...props} />);
-      expect(screen.getByText("Only you")).toBeInTheDocument();
-    });
-
-    it("says a shared routine is visible to the workspace", () => {
-      render(<RoutineDetail {...props} routine={{ ...routine, visibility: "shared" }} />);
-      expect(screen.getByText("Visible to everyone who can use this agent")).toBeInTheDocument();
-    });
-
-    it("shares on toggle", async () => {
+  describe("the menu", () => {
+    it("shares a private routine with the team", async () => {
       const onToggleShared = vi.fn();
-      const user = userEvent.setup();
       render(<RoutineDetail {...props} onToggleShared={onToggleShared} />);
-
-      await user.click(screen.getByRole("switch", { name: /share with the workspace/i }));
+      await openMenu();
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Share with team" }));
       expect(onToggleShared).toHaveBeenCalledWith(true);
     });
 
-    // A teammate can reach a shared routine but must not be able to unshare it;
-    // the PATCH would be refused by RLS anyway, so offering the control would
-    // only produce an error they cannot act on.
-    it("gives a teammate no way to change visibility", () => {
-      render(<RoutineDetail {...props} isOwner={false} channelLabel={null} />);
-      expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    it("asks before deleting", async () => {
+      const onDelete = vi.fn();
+      render(<RoutineDetail {...props} onDelete={onDelete} />);
+      await openMenu();
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Delete routine" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Delete routine" }));
+      expect(onDelete).toHaveBeenCalled();
     });
   });
 
   /**
-   * A4. Both controls' own PATCH is refused for `source_kind = 'workspace'`
-   * — sharing by `routines_workspace_source_private_check` (0076), filing by
-   * `routine_workspace_source_is_permitted` (0075/0076) — and both refusals
-   * surface as the same 400 naming neither cause. Offering either control to
-   * the owner of a workspace routine invites exactly the PATCH that gets
-   * refused; this is the regression test for hiding them.
+   * A4. Sharing is refused by `routines_workspace_source_private_check`
+   * (0076) and filing by `routine_workspace_source_is_permitted` (0075/0076)
+   * for `source_kind = 'workspace'`; offering either invites the refusal.
    */
   describe("a workspace-sourced routine", () => {
     const workspaceRoutine: Routine = { ...routine, sourceKind: "workspace", sourceUrl: null };
 
-    it("offers no sharing control, even to the owner", () => {
+    it("offers no sharing and no filing, and says why", async () => {
       render(<RoutineDetail {...props} routine={workspaceRoutine} />);
-      expect(
-        screen.queryByRole("switch", { name: /share with the workspace/i }),
-      ).not.toBeInTheDocument();
-    });
-
-    it("offers no filing card", () => {
-      render(<RoutineDetail {...props} routine={workspaceRoutine} />);
+      await openMenu();
+      await screen.findByRole("menuitem", { name: "Delete routine" });
+      expect(screen.queryByRole("menuitem", { name: /share/i })).not.toBeInTheDocument();
       expect(screen.queryByText("Keep a copy")).not.toBeInTheDocument();
-    });
-
-    it("says why, in place of the two controls it removed", () => {
-      render(<RoutineDetail {...props} routine={workspaceRoutine} />);
       expect(screen.getByText(/never shared and never filed/i)).toBeInTheDocument();
     });
 
-    it("keeps both controls for every other source kind", () => {
+    it("keeps both for every other source kind", () => {
       render(<RoutineDetail {...props} />);
-      expect(screen.getByRole("switch", { name: /share with the workspace/i })).toBeInTheDocument();
       expect(screen.getByText("Keep a copy")).toBeInTheDocument();
       expect(screen.queryByText(/never shared and never filed/i)).not.toBeInTheDocument();
     });

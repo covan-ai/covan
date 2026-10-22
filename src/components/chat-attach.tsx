@@ -1,6 +1,6 @@
 import { useState, type RefObject } from "react";
 import { ChevronDown, FileText, X } from "lucide-react";
-import { Chip } from "@/components/section-card";
+import { Chip } from "@/components/chip";
 import { ACCEPT } from "@/lib/uploads";
 import type { ChatUploads } from "@/lib/use-chat-uploads";
 import { cn } from "@/lib/utils";
@@ -76,10 +76,10 @@ export function ChatReceipts({ uploads }: { uploads: ChatUploads }) {
           )}
           {r.state === "done" &&
             (r.indexed ? (
-              <Chip tone="on">Indexed</Chip>
+              <Chip>Indexed</Chip>
             ) : (
               <span title="No embeddings, so no passage in it can be matched in chat.">
-                <Chip tone="neutral">Not indexed</Chip>
+                <Chip>Not indexed</Chip>
               </span>
             ))}
           {r.state === "failed" && <span className="text-destructive">{r.reason}</span>}

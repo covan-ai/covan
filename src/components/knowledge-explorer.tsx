@@ -49,7 +49,7 @@ import { bundleDocumentsKey, useAgentsStore, type Agent } from "@/lib/agents-sto
 import { indexingNow } from "@/lib/index-status";
 import type { UploadPhase } from "@/lib/api-client";
 import { canEditAgent } from "@/lib/agent-access";
-import { Chip, EmptyState } from "@/components/section-card";
+import { Chip } from "@/components/chip";
 import { DocumentPreviewDialog } from "@/components/document-preview-dialog";
 import { FolderReadersDialog } from "@/components/folder-readers-dialog";
 import { TextPromptDialog } from "@/components/text-prompt-dialog";
@@ -58,7 +58,6 @@ import { StatusDot } from "@/components/status-dot";
 import { Tile } from "@/components/tile";
 import { Avatar } from "@/components/avatar";
 import { EmptyWell } from "@/components/empty-page";
-import { Chip as LabelChip } from "@/components/chip";
 import {
   Dialog,
   DialogContent,
@@ -729,7 +728,7 @@ export function KnowledgeExplorer({
               {selection.kind === "root" ? (
                 visibleFolders.length === 0 ? (
                   <div className="p-5">
-                    <EmptyState
+                    <EmptyWell
                       title={query ? "Nothing matches" : "No folders yet"}
                       description={
                         query
@@ -790,7 +789,7 @@ export function KnowledgeExplorer({
                 </div>
               ) : visible.length === 0 ? (
                 <div className="p-5">
-                  <EmptyState
+                  <EmptyWell
                     title={query || filter !== "all" ? "Nothing matches" : "Nothing here yet"}
                     description={
                       // The filter before the search, because a filter left on from
@@ -2273,7 +2272,7 @@ function DocumentRow({
           className="hidden shrink-0 sm:block"
           aria-label={`Open ${bundle.name}`}
         >
-          <LabelChip tone="code">{bundle.name}</LabelChip>
+          <Chip tone="code">{bundle.name}</Chip>
         </button>
       ) : null}
 
@@ -2301,11 +2300,11 @@ function DocumentRow({
       </span>
       <span className="hidden w-40 shrink-0 gap-1 overflow-hidden xl:flex">
         {readers.length > 0 ? (
-          readers.slice(0, 2).map((name) => <LabelChip key={name}>{name}</LabelChip>)
+          readers.slice(0, 2).map((name) => <Chip key={name}>{name}</Chip>)
         ) : (
           <span className="text-muted-foreground">—</span>
         )}
-        {readers.length > 2 ? <LabelChip>+{readers.length - 2}</LabelChip> : null}
+        {readers.length > 2 ? <Chip>+{readers.length - 2}</Chip> : null}
       </span>
 
       <DocumentActions
@@ -2771,7 +2770,7 @@ function IndexChip({ doc }: { doc: ExplorerDocument }) {
     case "queued":
       return (
         <span title="Waiting to be read and indexed.">
-          <Chip tone="neutral">Queued</Chip>
+          <Chip>Queued</Chip>
         </span>
       );
     case "indexing": {
@@ -2779,16 +2778,14 @@ function IndexChip({ doc }: { doc: ExplorerDocument }) {
       const pct = p && p.total > 0 ? Math.min(99, Math.round((p.done / p.total) * 100)) : null;
       return (
         <span title="Being indexed. Until it finishes, any passages it had before still answer.">
-          <Chip tone="neutral">{pct === null ? "Indexing…" : `Indexing ${pct}%`}</Chip>
+          <Chip>{pct === null ? "Indexing…" : `Indexing ${pct}%`}</Chip>
         </span>
       );
     }
     case "failed":
       return (
         <span title={doc.indexError ?? "Indexing failed. Reindex to try again."}>
-          <Chip tone="neutral" className="text-destructive">
-            Failed
-          </Chip>
+          <Chip className="text-destructive">Failed</Chip>
         </span>
       );
     case "partial":
@@ -2796,17 +2793,17 @@ function IndexChip({ doc }: { doc: ExplorerDocument }) {
         <span
           title={`${passages}. The document is longer than the indexing limit, so only its first part is searchable.`}
         >
-          <Chip tone="on">Partly indexed</Chip>
+          <Chip>Partly indexed</Chip>
         </span>
       );
     default:
       return doc.indexed ? (
         <span title={passages}>
-          <Chip tone="on">Indexed</Chip>
+          <Chip>Indexed</Chip>
         </span>
       ) : (
         <span title="No embeddings yet — no passage in it can be matched in chat.">
-          <Chip tone="neutral">Not indexed</Chip>
+          <Chip>Not indexed</Chip>
         </span>
       );
   }

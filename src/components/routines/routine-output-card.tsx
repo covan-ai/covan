@@ -1,6 +1,5 @@
 import { Archive } from "lucide-react";
-import { SectionCard } from "@/components/section-card";
-import { SectionHeading } from "@/components/page-container";
+import { SectionLabel } from "@/components/section";
 import {
   Select,
   SelectContent,
@@ -80,13 +79,13 @@ export function RoutineOutputCard({
   const readsItsOwnOutput = selected !== null && attachedBundleIds.includes(selected);
 
   return (
-    <section className="mt-10">
-      <SectionHeading
-        title="Keep a copy"
-        description="File each delivered summary into a bundle, so the agent can be asked about it later."
-      />
+    <section className="mt-2">
+      <SectionLabel>Keep a copy</SectionLabel>
+      <p className="mt-0 mb-3 text-meta text-muted-foreground">
+        File each delivered summary into a bundle, so the agent can be asked about it later.
+      </p>
 
-      <SectionCard className="mt-3 space-y-4">
+      <div className="space-y-4">
         <div className="space-y-2">
           <label className="text-xs text-muted-foreground" htmlFor="routine-output-bundle">
             Bundle
@@ -164,7 +163,7 @@ export function RoutineOutputCard({
             )}
           </>
         )}
-      </SectionCard>
+      </div>
     </section>
   );
 }

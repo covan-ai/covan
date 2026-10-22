@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/section-card";
+import { EmptyWell } from "@/components/empty-page";
 import { ACCEPTED_SUMMARY } from "@/lib/uploads";
 
 /**
@@ -47,10 +47,10 @@ export function FirstDocument({
   }
   if (isShared) {
     return (
-      <EmptyState
+      <EmptyWell
         title="Upload your first document"
         description={`${agentName} answers from what your team uploads. A file added in a shared thread would go to your private folder, which a shared thread can't read — so add it on the Knowledge tab.`}
-        action={
+        actions={
           <Button variant="secondary" onClick={onKnowledge}>
             Add documents on the Knowledge tab
           </Button>
@@ -59,10 +59,10 @@ export function FirstDocument({
     );
   }
   return (
-    <EmptyState
+    <EmptyWell
       title="Upload your first document"
       description={`${agentName} answers from what your team uploads. ${ACCEPTED_SUMMARY}.`}
-      action={
+      actions={
         <div className="flex flex-wrap items-center justify-center gap-2">
           {/* Secondary, not the amber fill: the one amber button on this
               screen is Send (DESIGN.md §4). */}

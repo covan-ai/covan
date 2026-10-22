@@ -1,7 +1,7 @@
 import { Link, Outlet, createFileRoute } from "@tanstack/react-router";
 import { useAgentsStore } from "@/lib/agents-store";
 import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/section-card";
+import { EmptyWell } from "@/components/empty-page";
 import { AgentTopBar } from "@/components/agent-top-bar";
 import { TopBarSlotProvider } from "@/components/top-bar";
 
@@ -24,10 +24,10 @@ function AgentLayout() {
         {/* One sentence for both, because the server gives one answer for
             both: an agent you cannot see and one that does not exist look the
             same from here, and saying which would say it exists. */}
-        <EmptyState
+        <EmptyWell
           title="Agent not found"
           description="This agent was deleted or isn't shared with you."
-          action={
+          actions={
             <Button asChild variant="outline">
               <Link to="/app">Back to home</Link>
             </Button>

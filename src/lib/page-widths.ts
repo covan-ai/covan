@@ -14,9 +14,6 @@ export const PAGE_WIDTHS = {
   // 840px of content: an agent's Configuration (A10).
   agent: "max-w-[920px]",
   reading: "max-w-[760px]",
-  // The old tiers, until `page-container.tsx` and `settings-page.tsx` go
-  // with the screens that still use them (Phase 3).
-  dashboard: "max-w-[1120px]",
 } as const;
 
 export type PageWidth = keyof typeof PAGE_WIDTHS;

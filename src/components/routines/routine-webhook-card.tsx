@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Webhook } from "lucide-react";
-import { SectionCard } from "@/components/section-card";
-import { SectionHeading } from "@/components/page-container";
+import { SectionLabel } from "@/components/section";
 import { RevealedSecret } from "@/components/revealed-secret";
 import { Button } from "@/components/ui/button";
 import {
@@ -70,13 +69,13 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
   const configured = trigger?.configured === true;
 
   return (
-    <section className="mt-10">
-      <SectionHeading
-        title="Webhook"
-        description="The URL that starts this routine. Whatever it POSTs is what the agent reads."
-      />
+    <section className="mt-2">
+      <SectionLabel>Webhook</SectionLabel>
+      <p className="mt-0 mb-3 text-meta text-muted-foreground">
+        The URL that starts this routine. Whatever it POSTs is what the agent reads.
+      </p>
 
-      <SectionCard className="mt-3 space-y-4">
+      <div className="space-y-4">
         {isLoading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : revealed ? (
@@ -162,7 +161,7 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
         </div>
 
         {(configured || revealed) && <SiriSteps />}
-      </SectionCard>
+      </div>
     </section>
   );
 }

@@ -375,6 +375,33 @@ agents.get("/agents/:id/delete-summary", async (c) => {
   });
 });
 
+// GET /agents/:id/knowledge-usage
+//
+// For each folder the agent reads, how many of its replies in the window cited
+// something in it — "9 files · used in 61 replies this month" (A32). Counted
+// by `agent_knowledge_usage` (0124) for anybody who can use the agent.
+const usageQuery = z.object({ days: z.coerce.number().int().min(1).max(365).optional() });
+
+agents.get("/agents/:id/knowledge-usage", async (c) => {
+  const parsed = usageQuery.safeParse(c.req.query());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const { data, error } = await c.get("db").rpc("agent_knowledge_usage", {
+    p_agent_id: c.req.param("id"),
+    p_days: parsed.data.days ?? 30,
+  });
+  if (error) {
+    if (error.code === "P0002") return c.json({ error: "not found" }, 404);
+    console.error("agent_knowledge_usage failed", error);
+    return c.json({ error: "failed to count what the agent read" }, 500);
+  }
+  const byBundle: Record<string, { replies: number }> = {};
+  for (const row of (data ?? []) as Array<{ bundle_id: string; replies: number }>) {
+    byBundle[row.bundle_id] = { replies: row.replies ?? 0 };
+  }
+  return c.json({ byBundle });
+});
+
 // DELETE /agents/:id
 //
 // No longer a delete. `soft_delete_agent` marks the agent and, in the same

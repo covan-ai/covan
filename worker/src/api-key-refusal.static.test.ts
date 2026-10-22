@@ -189,6 +189,8 @@ const OPEN_TO_A_KEY = new Set([
   "routes/agents.ts PATCH /agents/:id",
   "routes/agents.ts DELETE /agents/:id",
   "routes/agents.ts GET /agents/:id/delete-summary",
+  "routes/agents.ts GET /agents/:id/knowledge-usage",
+  "routes/home.ts GET /home/overview",
   "routes/inbox.ts GET /inbox",
   "routes/inbox.ts GET /inbox/counts",
   "routes/inbox.ts POST /inbox/read",

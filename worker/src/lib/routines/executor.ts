@@ -136,6 +136,12 @@ export type RoutineRow = {
   browser_site?: string | null;
   /** The owner's conversation this routine's browser runs beside, once one is open. */
   browser_conversation_id?: string | null;
+  /**
+   * Whether each run also lands in the Inbox as a thread of its own (0123).
+   * Optional for `output_bundle_id`'s reason; absent reads as on, the
+   * column's default.
+   */
+  deliver_inbox?: boolean | null;
 };
 
 export type SummariseInput = {
@@ -1419,7 +1425,7 @@ async function fileOutput(
  * and a skipped or failed run that wanted to report a spend would have to
  * become one of the spending branches first.
  */
-type RunOutcome = {
+export type RunOutcome = {
   /**
    * The id the run's row is written with, when the run chose one first —
    * the agent path does, so a browser task can name the run it answers.
@@ -1500,6 +1506,11 @@ async function finish(
   // would leave claimed_at set with next_run_at and the cursor unadvanced —
   // which for a web or none routine means re-delivering the same content on
   // every tick. Both have to be loud.
+  // The thread this run is shown in, written first so the run can name it
+  // (0123). Null when the routine does not deliver to the Inbox, or the run
+  // has nothing to show.
+  const sessionId = await writeRunThread(routine, deps, outcome, finishedAt);
+
   const { data: runRows, error: runError } = await deps.db
     .from("routine_runs")
     .insert({
@@ -1529,6 +1540,7 @@ async function finish(
       // compile instead of quietly recording an event run as scheduled.
       triggered_by: origin.triggeredBy,
       trigger_label: origin.label,
+      session_id: sessionId,
     })
     // The id is what the ledger files this run's charge against.
     .select("id");
@@ -1630,6 +1642,129 @@ async function finish(
   if (pausedByFailures) {
     await announcePause(routine, deps, String(patch.paused_reason));
   }
+}
+
+/** How many run threads a routine keeps; older ones nobody replied in go. */
+export const RUN_THREADS_KEPT = 20;
+
+/**
+ * One run as a thread in the Inbox (0123, reversing 0070 per routine).
+ *
+ * A delivered run reads as its report; a failed one says it failed and why,
+ * which is what puts it in the owner's Needs you. A skipped run delivered
+ * nothing and leaves nothing. The reply carries the model and the tokens the
+ * run spent, so the usage figures read from replies (0124) see routine work
+ * too.
+ *
+ * Best-effort: the run is already done and delivered, and a thread that
+ * cannot be written must not fail it. Old run threads are pruned to the
+ * newest `RUN_THREADS_KEPT`, never one somebody has replied in.
+ */
+export async function writeRunThread(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  outcome: RunOutcome,
+  finishedAt: Date,
+): Promise<string | null> {
+  if (routine.deliver_inbox === false) return null;
+  const content =
+    outcome.status === "ok"
+      ? outcome.summary?.trim()
+      : outcome.status === "failed"
+        ? `This run failed: ${outcome.error ?? "something went wrong"}`
+        : undefined;
+  if (!content) return null;
+
+  try {
+    const { data: session, error: sessionError } = await deps.db
+      .from("chat_sessions")
+      .insert({
+        agent_id: routine.agent_id,
+        user_id: routine.user_id,
+        workspace_id: routine.workspace_id,
+        kind: "routine",
+        routine_id: routine.id,
+        visibility: routine.visibility === "shared" ? "shared" : "private",
+        title: routine.name,
+      })
+      .select("id")
+      .single();
+    if (sessionError || !session) {
+      console.error("routine: could not open the run's thread", sessionError);
+      return null;
+    }
+    const sessionId = session.id as string;
+
+    const tokens = completionTokensOf(outcome);
+    const { error: messageError } = await deps.db.from("messages").insert({
+      session_id: sessionId,
+      role: "assistant",
+      content,
+      sender_id: null,
+      created_at: finishedAt.toISOString(),
+      model: outcome.modelCall?.model ?? tokens.model ?? null,
+      prompt_tokens: tokens.promptTokens,
+      completion_tokens: tokens.completionTokens,
+      cached_tokens: tokens.cachedTokens,
+      outcome: "answered",
+    });
+    if (messageError) console.error("routine: could not write the run's reply", messageError);
+
+    await pruneRunThreads(deps.db, routine.id);
+    return sessionId;
+  } catch (err) {
+    console.error("routine: could not write the run's thread", err);
+    return null;
+  }
+}
+
+/** The completion tokens a run spent, summed, for the reply that shows it. */
+function completionTokensOf(outcome: RunOutcome): {
+  model: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cachedTokens: number | null;
+} {
+  const spent = "spend" in outcome ? (outcome.spend ?? []) : [];
+  let model: string | null = null;
+  let prompt = 0;
+  let completion = 0;
+  let cached = 0;
+  let any = false;
+  for (const s of spent) {
+    if (s.kind !== "completion") continue;
+    any = true;
+    model = model ?? s.model;
+    prompt += s.promptTokens;
+    completion += s.completionTokens;
+    cached += s.cachedTokens ?? 0;
+  }
+  return any
+    ? { model, promptTokens: prompt, completionTokens: completion, cachedTokens: cached }
+    : { model: null, promptTokens: null, completionTokens: null, cachedTokens: null };
+}
+
+async function pruneRunThreads(db: SupabaseClient, routineId: string): Promise<void> {
+  const { data, error } = await db
+    .from("chat_sessions")
+    .select("id")
+    .eq("routine_id", routineId)
+    .eq("kind", "routine")
+    .order("created_at", { ascending: false })
+    .range(RUN_THREADS_KEPT, RUN_THREADS_KEPT + 49);
+  if (error || !data || data.length === 0) return;
+  const old = data.map((r) => r.id as string);
+  // Kept: any thread somebody wrote in, which is a conversation now.
+  const { data: replied } = await db
+    .from("messages")
+    .select("session_id")
+    .in("session_id", old)
+    .eq("role", "user");
+  const keep = new Set((replied ?? []).map((r) => r.session_id as string));
+  const gone = old.filter((id) => !keep.has(id));
+  if (gone.length === 0) return;
+  const { error: deleteError } = await db.from("chat_sessions").delete().in("id", gone);
+  if (deleteError) console.error("routine: could not prune old run threads", deleteError);
 }
 
 /**

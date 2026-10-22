@@ -416,3 +416,37 @@ describe("GET /agents/:id/delete-summary", () => {
     expect((await appWith(missing.db).request("/agents/agent-1/delete-summary")).status).toBe(404);
   });
 });
+
+describe("GET /agents/:id/knowledge-usage", () => {
+  function usageDb(answer: { data?: unknown; error?: { code: string; message: string } }) {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    return {
+      calls,
+      db: {
+        async rpc(name: string, args: Record<string, unknown>) {
+          calls.push({ name, args });
+          return { data: answer.data ?? null, error: answer.error ?? null };
+        },
+      },
+    };
+  }
+
+  it("answers the replies each folder grounded, over thirty days unless asked", async () => {
+    const { db, calls } = usageDb({
+      data: [
+        { bundle_id: "policies", replies: 61 },
+        { bundle_id: "templates", replies: 0 },
+      ],
+    });
+    const res = await appWith(db).request("/agents/agent-1/knowledge-usage");
+    expect(await res.json()).toEqual({
+      byBundle: { policies: { replies: 61 }, templates: { replies: 0 } },
+    });
+    expect(calls[0]!.args).toEqual({ p_agent_id: "agent-1", p_days: 30 });
+  });
+
+  it("answers an agent the caller cannot use as not there", async () => {
+    const { db } = usageDb({ error: { code: "P0002", message: "no" } });
+    expect((await appWith(db).request("/agents/agent-1/knowledge-usage")).status).toBe(404);
+  });
+});

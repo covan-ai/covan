@@ -198,6 +198,63 @@ export type InboxItem = {
 
 export type InboxFilter = "all" | "unread" | "needs_you" | "running" | "mine";
 
+/** One agent on Home's "Right now" table. */
+export type HomeAgent = {
+  agentId: string;
+  name: string;
+  avatar: string | null;
+  status: "running" | "needs_you" | "idle";
+  workingOn: {
+    sessionId: string | null;
+    title: string;
+    kind: "running" | "question" | "approval" | "login" | "routine_failed" | "last";
+    stepsDone?: number;
+    note?: string | null;
+    since: number;
+  } | null;
+  threadsWindow: number;
+  /** Admins only, in `spend.unit`. */
+  spendWindow?: number;
+};
+
+/** One row of Home's Recent activity. */
+export type ActivityItem = {
+  id: string;
+  action: string;
+  actor: { kind: "agent" | "person"; id: string | null; name: string; avatar?: string | null };
+  subjectType: string;
+  subjectId: string | null;
+  subjectLabel: string;
+  /** How many events the row stands for — three files added at once is one row. */
+  count: number;
+  detail: Record<string, unknown> | null;
+  createdAt: number;
+};
+
+/** Everything Home shows, in one read (`GET /home/overview`). */
+export type HomeOverview = {
+  user: { name: string | null; timezone: string | null };
+  workspace: { name: string | null };
+  isAdmin: boolean;
+  needsYou: { total: number; questions: number; approvals: number; other: number };
+  threads: { window: number; previous: number };
+  routineRuns: { total: number; done: number; failed: number };
+  /** Hosted only: what the workspace has left. */
+  credits?: { balance: number };
+  /** Admins only. Credits where the deployment can quote them, else dollars. */
+  spend?: {
+    unit: "credits" | "usd";
+    window: number;
+    previousWindow: number;
+    daily: Array<{ day: string; total: number; byAgent: Record<string, number> }>;
+    byAgent: Array<{ agentId: string; amount: number }>;
+  };
+  agents: HomeAgent[];
+  /** Admins only: threads each member started, counts only. */
+  team?: Array<{ userId: string; name: string | null; avatarUrl: string | null; threads: number }>;
+  activity: ActivityItem[];
+};
+
 export type InboxPage = {
   items: InboxItem[];
   counts: { unread: number; needsYou: number; running: number };
@@ -676,6 +733,12 @@ export const api = {
      */
     deleteSummary: (id: string): Promise<{ threads: number; routines: number; folders: number }> =>
       request("GET", `/agents/${id}/delete-summary`),
+    /** For each folder the agent reads, the replies in the window that cited it (A32). */
+    knowledgeUsage: (
+      id: string,
+      days = 30,
+    ): Promise<{ byBundle: Record<string, { replies: number }> }> =>
+      request("GET", `/agents/${id}/knowledge-usage?days=${days}`),
     /**
      * Who can reach the agent, and how far. The list is the whole list: anybody
      * left out of `shares` loses their row. 403 for anyone short of Full access.
@@ -827,6 +890,10 @@ export const api = {
   },
   favorites: {
     list: (): Promise<string[]> => request("GET", "/favorites"),
+  },
+  home: {
+    overview: (days = 7): Promise<HomeOverview> =>
+      request("GET", days === 7 ? "/home/overview" : `/home/overview?days=${days}`),
   },
   inbox: {
     list: (

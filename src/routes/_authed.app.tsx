@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { WorkspaceMember } from "@/lib/api-client";
-import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -86,7 +85,7 @@ function Home() {
   }, [openNew, navigate]);
 
   return (
-    <AppShell>
+    <>
       {/* Chat-first home: the agent introduces itself, asks what it can do,
           and the composer under it is the answer. */}
       <div className="mx-auto w-full max-w-3xl px-5 pt-[14vh]">
@@ -164,7 +163,7 @@ function Home() {
       </div>
 
       <CreateAgentDialog open={createOpen} onOpenChange={setCreateOpen} />
-    </AppShell>
+    </>
   );
 }
 

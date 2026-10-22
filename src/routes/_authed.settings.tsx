@@ -3,7 +3,6 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { api } from "@/lib/api-client";
-import { AppShell } from "@/components/app-shell";
 import { SettingsNav, SettingsTabs } from "@/components/settings/settings-nav";
 import { privacyLink, termsLink } from "@/lib/legal";
 import { LegalAnchor } from "@/components/legal-anchor";
@@ -48,7 +47,7 @@ function SettingsLayout() {
   }, [navigate]);
 
   return (
-    <AppShell>
+    <>
       <div
         className="fixed inset-0 z-50 bg-black/40 lg:p-8"
         onClick={(e) => {
@@ -101,6 +100,6 @@ function SettingsLayout() {
           </div>
         </div>
       </div>
-    </AppShell>
+    </>
   );
 }

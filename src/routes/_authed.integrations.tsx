@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Code2, Plus } from "lucide-react";
-import { AppShell } from "@/components/app-shell";
 import {
   PageContainer,
   PageHeader,
@@ -159,7 +158,7 @@ function IntegrationsPage() {
   const availableTools = tools.data?.tools ?? [];
 
   return (
-    <AppShell>
+    <>
       <PageContainer width="list">
         <PageHeader
           badge="Integrations"
@@ -318,7 +317,7 @@ function IntegrationsPage() {
       </PageContainer>
 
       <AddServiceDialog open={addingService} onOpenChange={setAddingService} />
-    </AppShell>
+    </>
   );
 }
 

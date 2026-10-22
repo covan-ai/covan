@@ -21,6 +21,10 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@/lib/api-client", () => ({ api: { me: vi.fn() } }));
+// The shell is drawn here now (DESIGN.md §6); what it draws is its own test's.
+vi.mock("@/components/app-shell", () => ({
+  AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
 
 type AuthListener = (event: string, session: unknown) => void;
 

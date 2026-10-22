@@ -8,6 +8,8 @@ import { api } from "@/lib/api-client";
 import { onboardingRedirect } from "@/lib/onboarding-gate";
 import { hasPendingGrant } from "@/lib/sensitive-url";
 import { CoachMarkLayer } from "@/components/coach-mark";
+import { AppShell } from "@/components/app-shell";
+import { shellFor } from "@/lib/shell-context";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
@@ -161,9 +163,18 @@ function AuthedLayout() {
     );
   }
 
+  const shell = shellFor(pathname);
   return (
     <>
-      <Outlet />
+      {/* The shell once, around every page that has it (DESIGN.md §6), so it
+          keeps its scroll and its open agent across navigation. */}
+      {shell.chrome === "bare" ? (
+        <Outlet />
+      ) : (
+        <AppShell agentId={shell.agentId}>
+          <Outlet />
+        </AppShell>
+      )}
       {/* Once, above every signed-in page, so the setup list's "Try" can
           point at something on whichever page it just went to. */}
       <CoachMarkLayer />

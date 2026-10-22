@@ -1977,14 +1977,15 @@ describe("a document written from the conversation", () => {
     expect(card).toHaveTextContent("Writing — 1 of 2 sections");
   });
 
-  it("opens it beside the conversation, filling in section by section", async () => {
+  it("opens it over the conversation, filling in section by section", async () => {
     listMessages.mockResolvedValue([question, answer]);
     documentJobs.mockResolvedValue([job()]);
 
     await renderChat();
     await userEvent.click(await screen.findByRole("button", { name: "Open Pricing review" }));
 
-    expect(await screen.findByRole("heading", { name: "Pricing review" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Pricing review" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Pricing review" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Where we are" })).toBeInTheDocument();
     expect(screen.getByText("Being written…")).toBeInTheDocument();
   });
@@ -2000,7 +2001,7 @@ describe("a document written from the conversation", () => {
     expect(stopDocument).toHaveBeenCalledWith("job-1");
   });
 
-  it("offers the finished document as Markdown, Word and PDF", async () => {
+  it("offers the finished document to print, or as Markdown, Word and PDF", async () => {
     listMessages.mockResolvedValue([question, answer]);
     documentJobs.mockResolvedValue([
       job({ status: "ready", written: 2, documentId: "doc-9", sections: [] }),
@@ -2009,8 +2010,10 @@ describe("a document written from the conversation", () => {
     await renderChat();
     await userEvent.click(await screen.findByRole("button", { name: "Open Pricing review" }));
 
+    expect(await screen.findByRole("button", { name: "Print" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: /Download/ }), { key: "Enter" });
     for (const name of ["Markdown", "Word", "PDF"]) {
-      expect(await screen.findByRole("button", { name })).toBeInTheDocument();
+      expect(await screen.findByRole("menuitem", { name })).toBeInTheDocument();
     }
   });
 });

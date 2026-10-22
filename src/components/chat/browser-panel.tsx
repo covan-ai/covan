@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Lock, X } from "lucide-react";
+import { ExternalLink, X } from "lucide-react";
 import {
   api,
   type ConversationBrowser,
@@ -9,7 +9,6 @@ import {
 } from "@/lib/api-client";
 import { ApiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
-import { HeaderAction } from "@/components/chat/turn-actions";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/components/status-dot";
 import { SignInCard } from "./sign-in-card";
@@ -80,7 +79,8 @@ export function BrowserPanel({
   agentId,
   canShare = false,
   onHide,
-  layout = "side",
+  layout = "float",
+  agentName,
 }: {
   sessionId: string;
   /** The conversation's agent: what a login saved from the sign-in card is saved for. */
@@ -88,8 +88,10 @@ export function BrowserPanel({
   /** Whether the person may save a login for everyone using the agent: not a viewer (R34). */
   canShare?: boolean;
   onHide: () => void;
-  /** `side` beside the chat at `lg` and up; `sheet` full-height below it. */
-  layout?: "side" | "sheet";
+  /** `float` beside the chat at `lg` and up (A13); `sheet` full-height below it. */
+  layout?: "float" | "sheet";
+  /** Who is browsing: "Finance is browsing". */
+  agentName?: string;
 }) {
   const queryClient = useQueryClient();
   const { data, dataUpdatedAt } = useConversationBrowser(sessionId);
@@ -426,170 +428,130 @@ export function BrowserPanel({
       : line.length > 0
         ? "Starting the next task…"
         : "No browser is open right now.";
+  const pill = pillOf({
+    mode,
+    ready: browserReady || !!live.url,
+    signIn: !!prompt,
+    takeOverState,
+    donePending: handBack.isPending,
+    continuable,
+    onTakeOver: () => session && takeOver.mutate(session.id),
+    onDone: () => session && handBack.mutate({ id: session.id }),
+    onClose: close,
+  });
+  const task = (data?.tasks ?? []).find(isRunning) ?? null;
+  const latest = data?.events.length ? data.events[data.events.length - 1] : null;
 
   return (
-    <div
-      className={cn(
-        "relative flex h-full flex-col bg-background",
-        layout === "side" && "border-l border-border",
-        hairline && "browser-live",
-      )}
-    >
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
-        {/* The status dot (DESIGN.md §12): running while the agent drives,
-            the ring while the person does (it is theirs now), grey otherwise. */}
-        <StatusDot
-          state={
-            mode === "agent" || mode === "cancelling"
-              ? "running"
-              : mode === "human"
-                ? "waiting"
-                : "done"
-          }
-        />
-        <span className="sr-only">{status}</span>
-        <h2 className="min-w-0 flex-1 truncate text-title font-semibold">Browser</h2>
-        <div className="flex shrink-0 items-center gap-0.5">
-          {session && (
-            <HeaderAction label="Open in new window" onClick={() => openWindow(false)}>
-              <ExternalLink className="h-4 w-4" />
-            </HeaderAction>
-          )}
-          <HeaderAction label="Close the browser" onClick={close}>
-            <X className="h-4 w-4" />
-          </HeaderAction>
-        </div>
-      </div>
-
-      {confirmingClose && session && (
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-          <span className="min-w-0 flex-1 text-sm">
-            Close the browser? Closing it saves your sign-ins to your profile.
-            {line.length === 1 && " The task waiting for it won't run."}
-            {line.length > 1 && ` The ${line.length} tasks waiting for it won't run.`}
-          </span>
-          <Button variant="ghost" size="sm" onClick={() => setConfirmingClose(false)}>
-            Keep it open
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={stop.isPending}
-            onClick={() => stop.mutate(session.id)}
-          >
-            Close it
-          </Button>
-        </div>
-      )}
-
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-        {prompt && (
-          <SignInCard
-            host={prompt.signInHost}
-            carriedSavedLogin={prompt.carriedSavedLogin}
-            savedLogin={prompt.savedLogin}
-            agentId={agentId}
-            canShare={canShare}
-            opening={takeOver.isPending}
-            onJustThisOnce={() => session && takeOver.mutate(session.id)}
-            onOpenWindow={() => openWindow(true)}
-            onSaved={(site, credentialId) => void continueWithLogin(site, credentialId)}
-          />
-        )}
-
-        <div
-          className={cn(
-            "flex w-full justify-center",
-            layout === "side" && "min-h-0 flex-1 items-center",
-          )}
-        >
-          {/*
-            The frame, letterboxed on the canvas rather than on black.
-
-            Inert, untabbable and deaf to the pointer while anybody but the
-            person has the controls — and that is a courtesy, not a lock.
-            browser-use says so outright: *"View-only embeds are a UI
-            restriction, not a server-enforced permission."* Whoever holds the
-            URL can drive the browser, which is why the URL is the thing kept
-            close (*"Treat the URL as a credential"*), and why this wrapper only
-            stops a stray click from landing in the middle of the agent's typing.
-
-            No `sandbox`: the provider's viewer needs scripts, its own origin
-            and its socket, and which tokens it needs cannot be verified without
-            a key. A sandbox that silently breaks the view is worse than none —
-            and `allow-scripts allow-same-origin`, the least it could run under,
-            takes nothing from a cross-origin frame. What would make the frame
-            dangerous is its address, so that is what is checked: `src` is only
-            ever an https URL (`safeNavigationUrl`, where it is set).
-          */}
-          <div
-            data-testid="browser-frame"
-            inert={!interactive}
-            tabIndex={interactive ? undefined : -1}
+    <BrowserFrame
+      layout={layout}
+      live={hairline}
+      dot={
+        mode === "agent" || mode === "cancelling"
+          ? "running"
+          : mode === "human"
+            ? "waiting"
+            : "done"
+      }
+      status={status}
+      title={
+        mode === "agent" || mode === "cancelling"
+          ? `${agentName ?? "The agent"} is browsing`
+          : mode === "human"
+            ? "Your hands on the browser"
+            : "Browser"
+      }
+      task={task?.task ?? null}
+      action={pill.action}
+      onOpenWindow={session ? () => openWindow(false) : undefined}
+      onClose={close}
+      footer={
+        <>
+          <span
             className={cn(
-              "aspect-video w-full overflow-hidden rounded-xl border border-border bg-background",
-              !interactive && "pointer-events-none",
+              "min-w-0 truncate",
+              mode === "agent" && latest && "font-medium text-foreground",
             )}
           >
-            {live.url ? (
-              <iframe
-                title="The agent's browser"
-                src={live.url}
-                allow="autoplay"
-                className="h-full w-full border-0"
-              />
+            {mode === "agent" && latest ? (
+              // The provider publishes no event catalogue, so a line with
+              // nothing to say shows its type rather than vanishing.
+              <span key={eventId(latest)}>{latest.text || latest.type}</span>
             ) : (
-              <div className="grid h-full place-items-center p-4 text-center text-meta text-muted-foreground">
-                {placeholder}
-              </div>
+              pill.text
             )}
-          </div>
-        </div>
-
-        <div className="flex justify-center">
-          <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-card py-1 pl-3 pr-1 text-sm">
-            <Pill
-              mode={mode}
-              ready={browserReady || !!live.url}
-              signIn={!!prompt}
-              takeOverState={takeOverState}
-              donePending={handBack.isPending}
-              continuable={continuable}
-              onTakeOver={() => session && takeOver.mutate(session.id)}
-              onDone={() => session && handBack.mutate({ id: session.id })}
-              onClose={close}
+          </span>
+          {task && <Elapsed since={task.createdAt} />}
+        </>
+      }
+      notices={
+        <>
+          {confirmingClose && session && (
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 text-sm">
+                Close the browser? Closing it saves your sign-ins to your profile.
+                {line.length === 1 && " The task waiting for it won't run."}
+                {line.length > 1 && ` The ${line.length} tasks waiting for it won't run.`}
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmingClose(false)}>
+                Keep it open
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={stop.isPending}
+                onClick={() => stop.mutate(session.id)}
+              >
+                Close it
+              </Button>
+            </div>
+          )}
+          {prompt && (
+            <SignInCard
+              host={prompt.signInHost}
+              carriedSavedLogin={prompt.carriedSavedLogin}
+              savedLogin={prompt.savedLogin}
+              agentId={agentId}
+              canShare={canShare}
+              opening={takeOver.isPending}
+              onJustThisOnce={() => session && takeOver.mutate(session.id)}
+              onOpenWindow={() => openWindow(true)}
+              onSaved={(site, credentialId) => void continueWithLogin(site, credentialId)}
             />
-          </div>
-        </div>
-
-        {/* Ruling R21: the sweep stops a browser about ten minutes after the
-            tab holding it goes quiet (this tab's poll is the heartbeat, every
-            minute or so). Said beside Done, so walking away is a choice. */}
-        {mode === "human" && (
-          <p className="text-center text-meta text-muted-foreground">
-            The browser closes about ten minutes after this tab is closed.
-          </p>
-        )}
-
-        {problem && (
-          <p role="alert" className="text-center text-meta text-destructive">
-            {problem}
-          </p>
-        )}
-
-        {/* The line (0080): what starts by itself when the browser is free,
-            next first. Remove takes one out before its turn; a task that has
-            started is the take-over's, not this list's. */}
-        {line.length > 0 && (
-          <section aria-label="Queued tasks" className="flex flex-col gap-1.5">
-            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          )}
+          {/* Ruling R21: the sweep stops a browser about ten minutes after
+              the tab holding it goes quiet (this tab's poll is the heartbeat,
+              every minute or so). Said beside Done, so walking away is a
+              choice. */}
+          {mode === "human" && (
+            <p className="text-meta text-muted-foreground">
+              The browser closes about ten minutes after this tab is closed.
+            </p>
+          )}
+          {problem && (
+            <p role="alert" className="text-meta text-destructive">
+              {problem}
+            </p>
+          )}
+        </>
+      }
+      after={
+        /* The line (0080): what starts by itself when the browser is free,
+           next first. Remove takes one out before its turn; a task that has
+           started is the take-over's, not this list's. */
+        line.length > 0 && (
+          <section
+            aria-label="Queued tasks"
+            className="flex max-h-48 flex-col gap-1.5 overflow-y-auto border-t border-hairline p-3"
+          >
+            <h3 className="text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
               Queued
             </h3>
             <ol className="flex flex-col gap-1.5">
               {line.map((task, i) => (
                 <li
                   key={task.id}
-                  className="flex items-start gap-2 rounded-[10px] border border-border bg-card px-3 py-2"
+                  className="flex items-start gap-2 rounded-lg border border-border px-3 py-2"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-xs text-muted-foreground">
@@ -609,25 +571,153 @@ export function BrowserPanel({
               ))}
             </ol>
           </section>
-        )}
+        )
+      }
+    >
+      {/*
+        Inert, untabbable and deaf to the pointer while anybody but the person
+        has the controls — and that is a courtesy, not a lock. browser-use says
+        so outright: *"View-only embeds are a UI restriction, not a
+        server-enforced permission."* Whoever holds the URL can drive the
+        browser, which is why the URL is the thing kept close (*"Treat the URL
+        as a credential"*), and why this wrapper only stops a stray click from
+        landing in the middle of the agent's typing.
 
-        {data && data.events.length > 0 && (
-          <ol className="flex flex-col gap-1 text-meta text-muted-foreground">
-            {data.events.map((e) => (
-              <li key={eventId(e)} className="flex items-start gap-2">
-                <span
-                  aria-hidden="true"
-                  className="mt-[0.5em] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/50"
-                />
-                {/* The provider publishes no event catalogue, so a line with
-                    nothing to say shows its type rather than vanishing. */}
-                <span className="min-w-0 [overflow-wrap:anywhere]">{e.text || e.type}</span>
-              </li>
-            ))}
-          </ol>
+        No `sandbox`: the provider's viewer needs scripts, its own origin and
+        its socket, and which tokens it needs cannot be verified without a key.
+        A sandbox that silently breaks the view is worse than none — and
+        `allow-scripts allow-same-origin`, the least it could run under, takes
+        nothing from a cross-origin frame. What would make the frame dangerous
+        is its address, so that is what is checked: `src` is only ever an https
+        URL (`safeNavigationUrl`, where it is set).
+      */}
+      <div
+        data-testid="browser-frame"
+        inert={!interactive}
+        tabIndex={interactive ? undefined : -1}
+        className={cn("absolute inset-0", !interactive && "pointer-events-none")}
+      >
+        {live.url ? (
+          <iframe
+            title="The agent's browser"
+            src={live.url}
+            allow="autoplay"
+            className="h-full w-full border-0 bg-background"
+          />
+        ) : (
+          <div className="grid h-full place-items-center p-4 text-center text-meta text-muted-foreground">
+            {placeholder}
+          </div>
         )}
       </div>
+    </BrowserFrame>
+  );
+}
+
+/**
+ * The browser's box (A13): a 44px bar — the dot, who has it, the task, the
+ * one thing to press, open in a window, close — the page filling the middle
+ * on the sidebar grey, and a 36px line under it saying what is happening and
+ * for how long. Beside a thread it floats: 14px corners, the one card shadow
+ * and, while the agent drives, the breathing amber edge.
+ */
+function BrowserFrame({
+  layout,
+  live,
+  dot,
+  status,
+  title,
+  task,
+  action,
+  onOpenWindow,
+  onClose,
+  notices,
+  children,
+  after,
+  footer,
+}: {
+  layout: "float" | "sheet";
+  live: boolean;
+  dot: "running" | "waiting" | "done";
+  status: string;
+  title: string;
+  task: string | null;
+  action: ReactNode;
+  onOpenWindow?: () => void;
+  onClose: () => void;
+  notices?: ReactNode;
+  children: ReactNode;
+  after?: ReactNode;
+  footer: ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "relative flex h-full min-h-0 flex-col overflow-hidden bg-background",
+        layout === "float" && "rounded-3xl border border-border shadow-card",
+        live && "browser-live",
+      )}
+    >
+      <h2 className="sr-only">Browser</h2>
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline pr-2 pl-3">
+        <StatusDot state={dot} />
+        <span className="sr-only">{status}</span>
+        <span className="shrink-0 text-meta font-medium whitespace-nowrap">{title}</span>
+        {task ? (
+          <span className="flex h-7 min-w-0 flex-1 items-center rounded-md bg-surface-muted px-2.5 text-xs text-muted-foreground">
+            <span className="truncate">{task}</span>
+          </span>
+        ) : (
+          <span className="flex-1" />
+        )}
+        {action}
+        {onOpenWindow && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Open in new window"
+            className="text-muted-foreground"
+            onClick={onOpenWindow}
+          >
+            <ExternalLink />
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Close the browser"
+          className="text-muted-foreground"
+          onClick={onClose}
+        >
+          <X />
+        </Button>
+      </div>
+      {notices && (
+        <div className="flex flex-col gap-3 border-b border-hairline p-3 empty:hidden">
+          {notices}
+        </div>
+      )}
+      <div className="relative min-h-[240px] flex-1 bg-surface-muted">{children}</div>
+      {after}
+      <div className="flex h-9 shrink-0 items-center gap-3 border-t border-hairline px-3 text-xs whitespace-nowrap text-muted-foreground">
+        {footer}
+      </div>
     </div>
+  );
+}
+
+/** "0:42": how long the task has been going, by the second. */
+function Elapsed({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+  const s = Math.max(0, Math.floor((now - since) / 1000));
+  return (
+    <span className="ml-auto text-foreground tabular-nums">
+      {Math.floor(s / 60)}:{String(s % 60).padStart(2, "0")}
+    </span>
   );
 }
 
@@ -666,7 +756,7 @@ function OwnBrowserView({
   own: OwnBrowser | null;
   onChange: (next: OwnBrowser | null) => void;
   onHide: () => void;
-  layout: "side" | "sheet";
+  layout: "float" | "sheet";
   /** A refusal the conversation's view was showing when this one took over. */
   notice: string | null;
 }) {
@@ -803,133 +893,102 @@ function OwnBrowserView({
       : "Time is up. Press Done to finish; if you don't, it closes by itself shortly and your sign-ins are still saved.";
 
   return (
-    <div
-      className={cn(
-        "relative flex h-full flex-col bg-background",
-        layout === "side" && "border-l border-border",
-      )}
-    >
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
-        <span
-          aria-hidden="true"
-          className={cn(
-            "h-2 w-2 shrink-0 rounded-full",
-            own ? "bg-brand" : "bg-muted-foreground/40",
-          )}
-        />
-        <span className="sr-only">{own ? "You are driving" : "Nobody is driving"}</span>
-        <h2 className="min-w-0 flex-1 truncate text-title font-semibold">Browser</h2>
-        <div className="flex shrink-0 items-center gap-0.5">
-          {own && (
-            <HeaderAction label="Open in new window" onClick={openWindow}>
-              <ExternalLink className="h-4 w-4" />
-            </HeaderAction>
-          )}
-          <HeaderAction label="Close the browser" onClick={close}>
-            <X className="h-4 w-4" />
-          </HeaderAction>
-        </div>
-      </div>
-
-      {confirmingClose && own && (
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-          <span className="min-w-0 flex-1 text-sm">
-            Close the browser? Closing it saves your sign-ins to your profile.
-          </span>
-          <Button variant="ghost" size="sm" onClick={() => setConfirmingClose(false)}>
-            Keep it open
+    <BrowserFrame
+      layout={layout}
+      live={false}
+      dot={own ? "waiting" : "done"}
+      status={own ? "You are driving" : "Nobody is driving"}
+      title={own ? "Your browser" : "Browser"}
+      task={null}
+      action={
+        own ? (
+          <Button size="sm" disabled={busy !== null} onClick={() => void done(false)}>
+            {busy === "closing" ? "Saving…" : "Done"}
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy !== null}
-            onClick={() => void done(true)}
-          >
-            Close it
-          </Button>
-        </div>
-      )}
-
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-        <div
-          className={cn(
-            "flex w-full justify-center",
-            layout === "side" && "min-h-0 flex-1 items-center",
-          )}
-        >
-          {own ? (
-            <div
-              data-testid="browser-frame"
-              className="aspect-video w-full overflow-hidden rounded-xl border border-border bg-background"
-            >
-              {own.liveUrl ? (
-                <iframe
-                  title="Your browser"
-                  src={own.liveUrl}
-                  allow="autoplay"
-                  className="h-full w-full border-0"
-                />
-              ) : (
-                <div className="grid h-full place-items-center p-4 text-center text-meta text-muted-foreground">
-                  The browser has no view to show yet. Open it in a new window instead.
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="grid aspect-video w-full place-items-center rounded-xl border border-border bg-background p-6 text-center">
-              <div className="flex max-w-xs flex-col items-center gap-3">
-                <p className="text-sm">
-                  Sign in to sites ahead of time, so the agent&apos;s browser finds you signed in.
-                </p>
-                <Button size="sm" disabled={busy !== null} onClick={() => void open()}>
-                  {busy === "opening" ? "Opening…" : "Open browser"}
-                </Button>
-                <p className="text-meta text-muted-foreground">
-                  It stays open for ten minutes. Press Done to save your sign-ins.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {own && (
+        ) : null
+      }
+      onOpenWindow={own ? openWindow : undefined}
+      onClose={close}
+      footer={
+        own ? (
           <>
-            <div className="flex justify-center">
-              <div className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-card py-1 pl-3 pr-1 text-sm">
-                <span>You are using the browser</span>
-                <span aria-hidden="true" className="text-muted-foreground">
-                  ·
-                </span>
-                <Button size="sm" disabled={busy !== null} onClick={() => void done(false)}>
-                  {busy === "closing" ? "Saving…" : "Done"}
-                </Button>
-              </div>
-            </div>
-            <p className="text-center font-mono text-meta tabular-nums text-muted-foreground">
-              {clock}
-            </p>
+            <span>You are using the browser</span>
+            <span className="ml-auto font-mono tabular-nums">{clock}</span>
           </>
-        )}
-
-        {note && !own && (
-          <p role="status" className="text-center text-meta text-muted-foreground">
-            {note}
-          </p>
-        )}
-
-        {/* The carried notice only until something newer has been said. */}
-        {(problem ?? (own || note ? null : notice)) && (
-          <p role="alert" className="text-center text-meta text-destructive">
-            {problem ?? notice}
-          </p>
-        )}
-      </div>
-    </div>
+        ) : (
+          <span>It stays open for ten minutes. Press Done to save your sign-ins.</span>
+        )
+      }
+      notices={
+        <>
+          {confirmingClose && own && (
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 text-sm">
+                Close the browser? Closing it saves your sign-ins to your profile.
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmingClose(false)}>
+                Keep it open
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy !== null}
+                onClick={() => void done(true)}
+              >
+                Close it
+              </Button>
+            </div>
+          )}
+          {note && !own && (
+            <p role="status" className="text-meta text-muted-foreground">
+              {note}
+            </p>
+          )}
+          {/* The carried notice only until something newer has been said. */}
+          {(problem ?? (own || note ? null : notice)) && (
+            <p role="alert" className="text-meta text-destructive">
+              {problem ?? notice}
+            </p>
+          )}
+        </>
+      }
+    >
+      {own ? (
+        <div data-testid="browser-frame" className="absolute inset-0">
+          {own.liveUrl ? (
+            <iframe
+              title="Your browser"
+              src={own.liveUrl}
+              allow="autoplay"
+              className="h-full w-full border-0 bg-background"
+            />
+          ) : (
+            <div className="grid h-full place-items-center p-4 text-center text-meta text-muted-foreground">
+              The browser has no view to show yet. Open it in a new window instead.
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="absolute inset-0 grid place-items-center p-6 text-center">
+          <div className="flex max-w-xs flex-col items-center gap-3">
+            <p className="text-sm">
+              Sign in to sites ahead of time, so the agent&apos;s browser finds you signed in.
+            </p>
+            <Button size="sm" disabled={busy !== null} onClick={() => void open()}>
+              {busy === "opening" ? "Opening…" : "Open browser"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </BrowserFrame>
   );
 }
 
-/** What the pill says, by who has the controls. Its one button is the panel's main action. */
-function Pill({
+/**
+ * Who has the controls, said in the line under the page, and the one button
+ * that changes it, in the bar over it.
+ */
+function pillOf({
   mode,
   ready,
   signIn,
@@ -950,76 +1009,64 @@ function Pill({
   onTakeOver: () => void;
   onDone: () => void;
   onClose: () => void;
-}) {
-  const lock = <Lock aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
-
+}): { text: ReactNode; action: ReactNode } {
   if (mode === "human") {
-    return (
-      <>
-        <span>You&apos;re driving</span>
-        <span aria-hidden="true" className="text-muted-foreground">
-          ·
-        </span>
-        {/* Done continues a task; with none to continue (the newest finished,
-            or is already the retry) the person's one real move is to close
-            the browser, which saves what they did in it. */}
-        {continuable ? (
-          <Button size="sm" disabled={donePending} onClick={onDone}>
-            Done
-          </Button>
-        ) : (
-          <Button size="sm" onClick={onClose}>
-            Close
-          </Button>
-        )}
-      </>
-    );
+    return {
+      text: "You're driving",
+      // Done continues a task; with none to continue (the newest finished, or
+      // is already the retry) the person's one real move is to close the
+      // browser, which saves what they did in it.
+      action: continuable ? (
+        <Button size="sm" disabled={donePending} onClick={onDone}>
+          Done
+        </Button>
+      ) : (
+        <Button size="sm" onClick={onClose}>
+          Close
+        </Button>
+      ),
+    };
   }
   if (mode === "cancelling") {
-    return takeOverState === "gave-up" ? (
-      <>
-        {lock}
-        <span>The agent has not let go yet</span>
-        <Button variant="outline" size="sm" onClick={onTakeOver}>
-          Try again
-        </Button>
-      </>
-    ) : (
-      <>
-        {lock}
-        <span>Waiting for the agent to stop…</span>
-        <Button variant="outline" size="sm" disabled>
-          Take over
-        </Button>
-      </>
-    );
+    return takeOverState === "gave-up"
+      ? {
+          text: "The agent has not let go yet",
+          action: (
+            <Button variant="secondary" size="sm" onClick={onTakeOver}>
+              Try again
+            </Button>
+          ),
+        }
+      : {
+          text: "Waiting for the agent to stop…",
+          action: (
+            <Button variant="secondary" size="sm" disabled>
+              Take over
+            </Button>
+          ),
+        };
   }
-  if (!ready && mode === "agent") {
-    return <span className="pr-2 text-muted-foreground">Starting the browser…</span>;
-  }
+  if (!ready && mode === "agent") return { text: "Starting the browser…", action: null };
   if (mode === "agent") {
-    return (
-      <>
-        {lock}
-        <span>Agent is using the browser</span>
-        <Button variant="outline" size="sm" onClick={onTakeOver}>
+    return {
+      text: "Agent is using the browser",
+      action: (
+        <Button variant="secondary" size="sm" onClick={onTakeOver}>
           Take over
         </Button>
-      </>
-    );
+      ),
+    };
   }
   // Nobody driving. `agent` with no run lands here too: saying the agent is
   // using the browser would be false, and take-over is idempotent. At a
   // sign-in wall, taking over is the whole of what to do next, so it is the
-  // primary button — the amber fill, per DESIGN.md.
-  return (
-    <>
-      <span className="text-muted-foreground">
-        {signIn ? "Waiting for you to sign in" : "The agent is not using the browser"}
-      </span>
-      <Button variant={signIn ? "default" : "outline"} size="sm" onClick={onTakeOver}>
+  // primary button.
+  return {
+    text: signIn ? "Waiting for you to sign in" : "The agent is not using the browser",
+    action: (
+      <Button variant={signIn ? "default" : "secondary"} size="sm" onClick={onTakeOver}>
         Take over
       </Button>
-    </>
-  );
+    ),
+  };
 }

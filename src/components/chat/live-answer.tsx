@@ -1,6 +1,7 @@
 import { Markdown } from "@/components/markdown";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/prompt-kit/reasoning";
 import { StepTrail, type AgentStepView } from "@/components/agent-steps";
+import { stepTime } from "@/lib/step-summary";
 import { cn } from "@/lib/utils";
 
 /**
@@ -70,6 +71,9 @@ export function LiveAnswer({
     // finished thing.
     <div className={cn("flex flex-col gap-2", className)} aria-live="off">
       <div className="min-w-0" data-turn="answer">
+        {/* What it did, above the words that came back from it (A13): the one
+            thing on this screen that says the agent left the room. */}
+        {steps.length > 0 && <StepTrail steps={steps} boxed className="mb-3" />}
         {/* What the model is working through, while it works through it.
             OPEN while it is still working through it, and folded the moment it
             stops. This was a closed `Disclosure` labelled "Thinking", which
@@ -80,22 +84,16 @@ export function LiveAnswer({
             or unfolded it by hand alone afterwards. */}
         {thinkingText && (
           <Reasoning className="mb-3" isStreaming={reasoningLive}>
-            <ReasoningTrigger className="text-xs text-muted-foreground hover:text-foreground">
+            <ReasoningTrigger className="text-meta font-medium text-muted-foreground hover:text-foreground">
               {thinkingMs === null || thinkingMs === undefined
                 ? "Thinking"
-                : `Thought for ${(thinkingMs / 1000).toFixed(1)}s`}
+                : `Thinking · ${stepTime(thinkingMs)}`}
             </ReasoningTrigger>
             <ReasoningContent className="mt-1.5">
               <Markdown content={thinkingText} className="text-xs" />
             </ReasoningContent>
           </Reasoning>
         )}
-
-        {/* Between the reasoning and the answer, which is where they happen. A
-            step line is the one thing on this screen that says the agent left
-            the room — it went and read something — and it belongs above the
-            words that came back from it. */}
-        {steps.length > 0 && <StepTrail steps={steps} className="mb-3" />}
 
         {/*
           The words so far, and the dots, as siblings rather than as two

@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
-import { Check, ChevronRight, Minus, X } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/status-dot";
-import { stepsSummary } from "@/lib/step-summary";
+import { stepTime, stepsSummary } from "@/lib/step-summary";
+import type { DotState } from "@/lib/dot-states";
 import { Tool, hasPayload, type ToolPart } from "@/components/prompt-kit/tool";
 import { cn } from "@/lib/utils";
 
@@ -72,24 +73,37 @@ const WORDS: Record<AgentStepView["status"], string> = {
 /**
  * A step's mark, in the dot language of the whole app (DESIGN.md §12): a
  * running step is the filled amber dot that breathes, one waiting on somebody
- * is the amber ring. Fill against ring is the difference, so it holds with
- * motion switched off. A finished step is a tick, a failed one a red cross.
+ * is the amber ring, a finished one the grey fill, one that was not allowed a
+ * grey ring, a failed one red. Fill against ring is the difference, so it
+ * holds with motion switched off.
  */
-function Mark({ status }: { status: AgentStepView["status"] }) {
-  if (status === "running") return <StatusDot state="running" />;
-  if (status === "ok") return <Check className="h-3 w-3 shrink-0 text-muted-foreground" />;
-  if (status === "failed") return <X className="h-3 w-3 shrink-0 text-destructive" />;
-  if (status === "refused") return <Minus className="h-3 w-3 shrink-0 text-muted-foreground" />;
-  return <StatusDot state="waiting" />;
-}
+const MARK: Record<AgentStepView["status"], DotState> = {
+  running: "running",
+  pending: "waiting",
+  ok: "done",
+  refused: "idle",
+  failed: "failed",
+};
 
-/** The row itself: a mark, what it was pointed at, and how it ended. */
+/**
+ * The row itself (A13): the dot, what it was pointed at, and how long it took
+ * — or, with no time recorded, how it ended.
+ */
 function Row({ step }: { step: AgentStepView }) {
   return (
     <>
-      <Mark status={step.status} />
-      <span className="min-w-0 truncate">{step.label || step.tool}</span>
-      <span className="shrink-0 text-muted-foreground/70">{WORDS[step.status]}</span>
+      <StatusDot state={MARK[step.status]} />
+      <span
+        className={cn(
+          "min-w-0 truncate",
+          step.status === "running" ? "font-medium text-foreground" : "text-foreground",
+        )}
+      >
+        {step.label || step.tool}
+      </span>
+      <span className="ml-auto shrink-0 pl-2 text-muted-foreground tabular-nums">
+        {typeof step.durationMs === "number" ? stepTime(step.durationMs) : WORDS[step.status]}
+      </span>
     </>
   );
 }
@@ -131,20 +145,35 @@ function toolPart(step: AgentStepView): ToolPart | null {
  * why the mark, the label and the ending word are a fragment shared between
  * them rather than two copies of a row.
  */
-export function StepTrail({ steps, className }: { steps: AgentStepView[]; className?: string }) {
+export function StepTrail({
+  steps,
+  boxed = false,
+  className,
+}: {
+  steps: AgentStepView[];
+  /** In a bordered box, as a running turn draws it (A13). */
+  boxed?: boolean;
+  className?: string;
+}) {
   if (steps.length === 0) return null;
   return (
-    <ol className={cn("flex flex-col gap-1", className)}>
+    <ol
+      className={cn(
+        "flex flex-col",
+        boxed && "rounded-xl border border-border px-2 py-1.5",
+        className,
+      )}
+    >
       {steps.map((step) => {
         const part = toolPart(step);
         return (
           <li
             key={step.index}
             className={cn(
-              "step-arrive min-w-0 text-xs leading-[1.45] text-muted-foreground",
+              "step-arrive min-w-0 px-1 text-meta",
               // The expandable row lays itself out inside the trigger, because
               // the panel below it is a sibling of the row and not of the mark.
-              !part && "flex items-center gap-2",
+              !part && "flex min-h-8 items-center gap-2.5",
             )}
           >
             {part ? <Tool part={part} trigger={<Row step={step} />} /> : <Row step={step} />}

@@ -50,6 +50,7 @@ import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
 import { TurnDial } from "@/components/chat/turn-dial";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BrowserPanel } from "@/components/chat/browser-panel";
 import { TakeoverCard } from "@/components/chat/takeover-card";
 import {
@@ -2619,24 +2620,6 @@ function ChatTab() {
         initialKind={rating?.kind ?? null}
       />
 
-      {/* Below `lg` a document is a full-height sheet too, for the browser's
-          reason below: a split at that width leaves neither side readable. */}
-      {belowLg && shownJob && active && (
-        <div
-          role="dialog"
-          aria-label="Document"
-          className="fixed inset-0 z-40 flex flex-col bg-background"
-        >
-          <DocumentPanel
-            key={shownJob.id}
-            job={shownJob}
-            onClose={() => setOpenDocument(null)}
-            onStop={(jobId) => void controlDocument(jobId, "stop")}
-            onRetry={(jobId) => void controlDocument(jobId, "retry")}
-          />
-        </div>
-      )}
-
       {/* Below `lg`, the browser is a full-height sheet over the conversation,
           opened from the header control. Inside the pane for the same reason
           the dialog above is: every layout returned below wraps this one
@@ -2653,6 +2636,7 @@ function ChatTab() {
             agentId={agentId}
             canShare={canWrite}
             layout="sheet"
+            agentName={agent.name}
             onHide={browserPanel.hide}
           />
         </div>
@@ -2661,37 +2645,28 @@ function ChatTab() {
   );
 
   /*
-   * What sits beside the conversation, if anything: a document (only ever
-   * open because somebody opened it, or just asked for it), then the browser at
-   * `lg` and up (being driven, or waiting on a sign-in, it is the thing
-   * happening right now — and closing it gives the Idea board back), then a
-   * brainstorm's Idea board.
+   * What sits beside the conversation, if anything. The browser, at `lg` and
+   * up, floats in a 580px column of its own (A13) — being driven, or waiting
+   * on a sign-in, it is the thing happening right now. Otherwise a
+   * brainstorm's Idea board. A document opens over all of it (A22).
    */
+  const browserAside =
+    browserPanel.open && active && !belowLg ? (
+      <aside aria-label="Browser" className="flex w-[580px] shrink-0 py-4 pr-5">
+        {/* Keyed by the conversation so a second chat never inherits the
+            first one's live view. */}
+        <BrowserPanel
+          key={active.id}
+          sessionId={active.id}
+          agentId={agentId}
+          agentName={agent.name}
+          canShare={canWrite}
+          onHide={browserPanel.hide}
+        />
+      </aside>
+    ) : null;
   let side: ReactNode = null;
-  const documentPanel = shownJob ? (
-    <DocumentPanel
-      key={shownJob.id}
-      job={shownJob}
-      onClose={() => setOpenDocument(null)}
-      onStop={(jobId) => void controlDocument(jobId, "stop")}
-      onRetry={(jobId) => void controlDocument(jobId, "retry")}
-    />
-  ) : null;
-  if (documentPanel && active && !belowLg) {
-    side = documentPanel;
-  } else if (browserPanel.open && active && !belowLg) {
-    // Keyed by the conversation so a second chat never inherits the first
-    // one's live view.
-    side = (
-      <BrowserPanel
-        key={active.id}
-        sessionId={active.id}
-        agentId={agentId}
-        canShare={canWrite}
-        onHide={browserPanel.hide}
-      />
-    );
-  } else if (isBrainstorm && active) {
+  if (!browserAside && isBrainstorm && active) {
     side = (
       <div className="flex h-full flex-col border-l border-border">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -2766,23 +2741,50 @@ function ChatTab() {
    * the set of panel ids, so each arrangement keeps its own sizes.
    */
   return (
-    <ResizablePanelGroup data-fill-screen className="min-h-0 flex-1">
-      <ResizablePanel id="chat" minSize="35">
-        {chatPane}
-      </ResizablePanel>
-      {side && (
-        <>
-          <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
-          <ResizablePanel id="side" defaultSize="45" minSize="25">
-            {/* Held to the screen's height, the way `chatPane` holds itself.
-                The panel group's own `height: 100%` resolves against a parent
-                with no height, so without this a side panel is as tall as
-                its content — and a long document scrolled the page instead
-                of itself. */}
-            <div className="h-full min-h-0">{side}</div>
-          </ResizablePanel>
-        </>
-      )}
-    </ResizablePanelGroup>
+    <div data-fill-screen className="flex min-h-0 flex-1">
+      <ResizablePanelGroup className="min-h-0 flex-1">
+        <ResizablePanel id="chat" minSize="35">
+          {chatPane}
+        </ResizablePanel>
+        {side && (
+          <>
+            <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
+            <ResizablePanel id="side" defaultSize="45" minSize="25">
+              <div className="h-full min-h-0">{side}</div>
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
+      {browserAside}
+      <Dialog
+        open={!!shownJob && !!active}
+        onOpenChange={(open) => {
+          if (!open) setOpenDocument(null);
+        }}
+      >
+        <DialogContent
+          hideClose
+          aria-describedby={undefined}
+          className="h-[min(820px,calc(100dvh-4.5rem))] max-w-[960px] gap-0 overflow-hidden p-0"
+        >
+          <DialogTitle className="sr-only">{shownJob?.title ?? "Document"}</DialogTitle>
+          {shownJob && (
+            <DocumentPanel
+              key={shownJob.id}
+              job={shownJob}
+              agent={agent}
+              folderName={bundles.find((b) => b.id === shownJob.bundleId)?.name ?? null}
+              onOpenInKnowledge={() => {
+                setOpenDocument(null);
+                void navigate({ to: "/knowledge" });
+              }}
+              onClose={() => setOpenDocument(null)}
+              onStop={(jobId) => void controlDocument(jobId, "stop")}
+              onRetry={(jobId) => void controlDocument(jobId, "retry")}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

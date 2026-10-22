@@ -16,7 +16,7 @@ vi.mock("@tanstack/react-router", () => ({
 // under it, the Supabase client — which refuses to be built without a URL,
 // and CI has none. Mocked at the API, which is the boundary the frame uses.
 vi.mock("@/lib/api-client", () => ({
-  api: { me: vi.fn().mockResolvedValue({ workspace: { name: "Acme" } }) },
+  api: { me: vi.fn().mockResolvedValue({ workspace: { name: "Acme" } }), feedback: {} },
 }));
 vi.mock("@/components/app-shell", () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -24,8 +24,8 @@ vi.mock("@/components/app-shell", () => ({
 
 const { Route } = await import("./_authed.settings");
 
-describe("the settings frame", () => {
-  it("renders the page it is given, the rail, and the way back to the legal documents", () => {
+describe("the settings page", () => {
+  it("renders the page it is given under the top bar, the sub-nav, and the legal documents", () => {
     const Component = (Route as unknown as { component: () => React.ReactElement }).component;
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -34,9 +34,19 @@ describe("the settings frame", () => {
     );
 
     expect(screen.getByTestId("outlet")).toBeInTheDocument();
-    const rail = screen.getByRole("navigation", { name: "Settings sections" });
-    expect(rail).toHaveTextContent("Account");
-    expect(rail).toHaveTextContent("Workspace");
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Settings pages" });
+    for (const page of [
+      "General",
+      "Members",
+      "Integrations",
+      "Profile",
+      "Security",
+      "Preferences",
+    ]) {
+      expect(nav).toHaveTextContent(page);
+    }
+    expect(screen.getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
     expect(screen.getByText("Terms")).toBeInTheDocument();
     expect(screen.getByText("Privacy Policy")).toBeInTheDocument();
   });

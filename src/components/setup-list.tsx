@@ -124,7 +124,11 @@ export function SetupList({
     }
     onNavigate();
     goTo(target.route);
-    openCoachMark(target, { returnFocusTo: anchor });
+    openCoachMark(target, {
+      returnFocusTo: anchor,
+      position: { step: rows.indexOf(row) + 1, total: rows.length },
+      onSkip: dismiss,
+    });
   };
 
   const goTo = (route: CoachTarget["route"]) => {
@@ -146,10 +150,10 @@ export function SetupList({
         return;
       }
       case "integrations":
-        if (pathname !== "/integrations") void navigate({ to: "/integrations" });
+        if (pathname !== "/settings/integrations") void navigate({ to: "/settings/integrations" });
         return;
       case "members":
-        if (pathname !== "/settings/members") void navigate({ to: "/settings/members" });
+        if (pathname !== "/team") void navigate({ to: "/team" });
         return;
       case "routines": {
         if (!targetAgentId) return;

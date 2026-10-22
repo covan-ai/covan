@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
 import { routeTree } from "./routeTree.gen";
 import { shouldRetryQuery } from "./lib/query-retry";
+import { ErrorPage, RouteErrorPage } from "./components/error-page";
 
 export const getRouter = () => {
   // The retry rule is set here rather than per query, because the queries that
@@ -16,6 +17,10 @@ export const getRouter = () => {
     context: { queryClient },
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
+    // A page that crashes or is not there is answered in place (A31), so
+    // inside the app the sidebar stays around it.
+    defaultErrorComponent: RouteErrorPage,
+    defaultNotFoundComponent: () => <ErrorPage kind="not-found" />,
   });
 
   return router;

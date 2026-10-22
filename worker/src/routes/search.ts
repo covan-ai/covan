@@ -39,7 +39,7 @@ search.get("/search/messages", async (c) => {
   // newer results come first when relevance is equal.
   const { data, error } = await db
     .from("messages")
-    .select("*, sender:profiles(id,name,avatar_url)")
+    .select("*, sender:profiles(id,name,avatar_url), session:chat_sessions(id,title,agent_id)")
     .textSearch("content", q, { type: "plain", config: "english" })
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -48,7 +48,22 @@ search.get("/search/messages", async (c) => {
     return c.json({ error: "failed to search messages" }, 500);
   }
 
-  return c.json((data ?? []).map(mapMessage));
+  // Each hit says which thread it is in, so the ⌘K palette can open it.
+  return c.json(
+    (data ?? []).map((row) => {
+      const session = (Array.isArray(row.session) ? row.session[0] : row.session) as {
+        id: string;
+        title: string | null;
+        agent_id: string;
+      } | null;
+      return {
+        ...mapMessage(row),
+        sessionId: (row.session_id as string | undefined) ?? session?.id ?? null,
+        agentId: session?.agent_id ?? null,
+        sessionTitle: session?.title ?? null,
+      };
+    }),
+  );
 });
 
 export { search };

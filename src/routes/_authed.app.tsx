@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { WorkspaceMember } from "@/lib/api-client";
-import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +27,8 @@ import { dayPart } from "@/lib/day-part";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ArrowUp, ChevronDown, Plus, Search, Star, Users } from "lucide-react";
+import { TopBar } from "@/components/top-bar";
+import { SetupList } from "@/components/setup-list";
 
 export const Route = createFileRoute("/_authed/app")({
   component: Home,
@@ -86,7 +87,13 @@ function Home() {
   }, [openNew, navigate]);
 
   return (
-    <AppShell>
+    <>
+      <TopBar title="Home" />
+      {/* The getting-started list lived in the old side panel; it stays on
+          Home until Home is rebuilt around it (A24). */}
+      <div className="mx-auto w-full max-w-3xl px-5 pt-6">
+        <SetupList onNavigate={() => {}} />
+      </div>
       {/* Chat-first home: the agent introduces itself, asks what it can do,
           and the composer under it is the answer. */}
       <div className="mx-auto w-full max-w-3xl px-5 pt-[14vh]">
@@ -164,7 +171,7 @@ function Home() {
       </div>
 
       <CreateAgentDialog open={createOpen} onOpenChange={setCreateOpen} />
-    </AppShell>
+    </>
   );
 }
 

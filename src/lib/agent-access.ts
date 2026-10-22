@@ -130,3 +130,14 @@ export const NEW_AGENT_SHARING_LABEL: Record<NewAgentSharing, string> = {
 export function newAgentSharing(choice: NewAgentSharing): AgentSharing {
   return { workspaceAccess: choice === "only" ? null : choice, shares: [] };
 }
+
+/** What the chip beside the tabs says about who else can use the agent. */
+export function sharingWords(agent: AgentSharing): string {
+  const mode = sharingMode(agent);
+  if (mode === "workspace") return "Shared with team";
+  if (mode === "people") {
+    const n = agent.shares.length;
+    return `Shared with ${n} ${n === 1 ? "person" : "people"}`;
+  }
+  return "Private";
+}

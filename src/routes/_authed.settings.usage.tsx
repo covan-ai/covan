@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { PageHeader } from "@/components/page-container";
-import { SettingsPage } from "@/components/settings/settings-page";
+import { SectionTitle } from "@/components/section";
 import { UsageSection } from "@/components/usage-section";
 import { WorkspaceUsageSection } from "@/components/workspace-usage-section";
 import { useWorkspaceRole } from "@/lib/workspace-role";
@@ -24,14 +23,17 @@ function UsageSettingsPage() {
   const { isAdmin } = useWorkspaceRole();
 
   return (
-    <SettingsPage>
-      <PageHeader badge="Settings" title="What the answers" turn="have cost." />
+    <>
+      <SectionTitle
+        title="Usage and billing"
+        lede="What the answers have cost, and what is left."
+      />
 
       <UsageSection />
 
       {/* Admin only: the functions behind it refuse anybody else anyway, so
           this is so the section is not there to be confused by. */}
       {isAdmin && <WorkspaceUsageSection />}
-    </SettingsPage>
+    </>
   );
 }

@@ -8,14 +8,15 @@ import {
   Scripts,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { ErrorPage } from "@/components/error-page";
+import { errorIdOf } from "@/lib/error-id";
 
 import appCss from "../styles.css?url";
 import fontsCss from "../fonts.css?url";
 import { AgentsProvider } from "../lib/agents-store";
 import { THEME_INIT_SCRIPT } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
-import { CommandPalette } from "@/components/command-palette";
 import { takeSensitiveParams } from "../lib/sensitive-url";
 
 // Before the router renders and before the first page view is sent: a connect
@@ -24,69 +25,31 @@ import { takeSensitiveParams } from "../lib/sensitive-url";
 takeSensitiveParams();
 
 function NotFoundComponent() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
-        <h1 className="text-7xl font-bold text-foreground">404</h1>
-        <h2 className="mt-4 text-title-lg font-semibold text-foreground">Page not found</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The page you're looking for doesn't exist or has been moved.
-        </p>
-        <div className="mt-6">
-          <Link
-            to="/"
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Go home
-          </Link>
-        </div>
-      </div>
-    </div>
-  );
+  return <ErrorPage kind="not-found" standalone />;
 }
 
 /*
- * `ErrorComponentProps` rather than a hand-written `{ error: Error }`.
- *
- * The router widened `error` to `unknown` in 1.170.38, which is the honest
- * type: what reaches an error boundary is whatever was thrown, and `throw 3`
- * is legal. The old annotation compiled only because it was narrower than the
- * truth, and this component never needed the narrowing — `error` goes to
- * `console.error`, which takes anything.
- *
- * Taking the type from the router rather than restating it means the next
- * widening is not a second version of this fix.
+ * `ErrorComponentProps` rather than a hand-written `{ error: Error }`: what
+ * reaches an error boundary is whatever was thrown. The root's is the page
+ * on its own (A31), before there is a shell to keep.
  */
 function ErrorComponent({ error, reset }: ErrorComponentProps) {
-  console.error(error);
   const router = useRouter();
-
+  const [errorId] = useState(() => {
+    const id = errorIdOf(error);
+    console.error(id, error);
+    return id;
+  });
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="max-w-md text-center">
-        <h1 className="text-title-lg font-semibold text-foreground">This page didn't load</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Something went wrong on our end. You can try refreshing or head back home.
-        </p>
-        <div className="mt-6 flex flex-wrap justify-center gap-2">
-          <button
-            onClick={() => {
-              router.invalidate();
-              reset();
-            }}
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Try again
-          </button>
-          <a
-            href="/"
-            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-          >
-            Go home
-          </a>
-        </div>
-      </div>
-    </div>
+    <ErrorPage
+      kind="error"
+      standalone
+      errorId={errorId}
+      onRetry={() => {
+        void router.invalidate();
+        reset();
+      }}
+    />
   );
 }
 
@@ -196,7 +159,6 @@ function RootComponent() {
       <AgentsProvider>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />
-        <CommandPalette />
         <Toaster />
       </AgentsProvider>
     </QueryClientProvider>

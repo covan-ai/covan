@@ -1,14 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { cn } from "./utils";
 
 describe("cn", () => {
-  it("merges class names and lets the later Tailwind class win", () => {
-    expect(cn("p-2", "p-4")).toBe("p-4");
+  it("keeps a type-ladder size beside a text colour", () => {
+    expect(cn("text-meta", "text-muted-foreground")).toBe("text-meta text-muted-foreground");
+    expect(cn("text-title-lg font-semibold", "text-foreground")).toBe(
+      "text-title-lg font-semibold text-foreground",
+    );
   });
 
-  it("drops falsy entries", () => {
-    // `false && "b"` is deliberately constant: it's the falsy input this assertion is testing.
-    // eslint-disable-next-line no-constant-binary-expression
-    expect(cn("a", false && "b", undefined, "c")).toBe("a c");
+  it("still lets a later size win over an earlier one", () => {
+    expect(cn("text-sm", "text-meta")).toBe("text-meta");
+    expect(cn("text-lead", "text-xs")).toBe("text-xs");
   });
 });

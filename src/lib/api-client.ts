@@ -354,6 +354,13 @@ export type ModelEndpoint = {
   createdAt: number;
 };
 
+/** A message a search found, and the thread it is in. */
+export type SearchHit = Message & {
+  sessionId: string | null;
+  agentId: string | null;
+  sessionTitle: string | null;
+};
+
 /** "20 October 2026 · 184 MB · requested by Mina · Download" (A27). */
 export type WorkspaceExport = {
   id: string;
@@ -1253,7 +1260,7 @@ export const api = {
      * shared into their workspace. Ordered newest first; relevance is the
      * tiebreaker within the same timestamp.
      */
-    messages: (q: string, opts?: { limit?: number }): Promise<Message[]> =>
+    messages: (q: string, opts?: { limit?: number }): Promise<SearchHit[]> =>
       request(
         "GET",
         opts?.limit

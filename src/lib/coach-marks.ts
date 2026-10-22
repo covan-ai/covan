@@ -15,6 +15,10 @@ export type CoachMarkRequest = {
   target: CoachTarget;
   /** Where focus goes back to when the mark closes. */
   returnFocusTo: HTMLElement | null;
+  /** Which step of the tour this is, for "Try · 2 of 5" (A33). */
+  position?: { step: number; total: number };
+  /** "Skip the tour": what to do besides closing. */
+  onSkip?: () => void;
   /** Counts up per request, so two "Try"s on the same target are two marks. */
   seq: number;
 };
@@ -29,10 +33,20 @@ function emit() {
 
 export function openCoachMark(
   target: CoachTarget,
-  opts: { returnFocusTo?: HTMLElement | null } = {},
+  opts: {
+    returnFocusTo?: HTMLElement | null;
+    position?: { step: number; total: number };
+    onSkip?: () => void;
+  } = {},
 ): void {
   seq += 1;
-  current = { target, returnFocusTo: opts.returnFocusTo ?? null, seq };
+  current = {
+    target,
+    returnFocusTo: opts.returnFocusTo ?? null,
+    position: opts.position,
+    onSkip: opts.onSkip,
+    seq,
+  };
   emit();
 }
 

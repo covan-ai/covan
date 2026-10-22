@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { formatFileSize } from "@/lib/file-size";
 
-import { AppShell } from "@/components/app-shell";
 import { DocsLink } from "@/components/docs-link";
 import { KnowledgeExplorer } from "@/components/knowledge-explorer";
 import { PageContainer } from "@/components/page-container";
@@ -35,7 +34,7 @@ export const Route = createFileRoute("/_authed/knowledge")({
  */
 function KnowledgePage() {
   return (
-    <AppShell>
+    <>
       <PageContainer width="dashboard" className="py-6">
         <h1 className="sr-only">Knowledge</h1>
         <KnowledgeExplorer
@@ -43,7 +42,7 @@ function KnowledgePage() {
           footer={<KnowledgeUsage />}
         />
       </PageContainer>
-    </AppShell>
+    </>
   );
 }
 

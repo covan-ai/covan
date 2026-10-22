@@ -2,7 +2,7 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useRouterState } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/section-card";
+import { Kbd } from "@/components/kbd";
 import { closeCoachMark, useCoachMark, type CoachMarkRequest } from "@/lib/coach-marks";
 import { CTA } from "@/lib/onboarding-config";
 
@@ -30,7 +30,7 @@ export function CoachMarkLayer() {
 
 /** How long to wait for the target to appear. */
 const FIND_WITHIN_MS = 2000;
-const PANEL_WIDTH = 320;
+const PANEL_WIDTH = 300;
 const GAP = 12;
 const EDGE = 12;
 /** Where the panel is assumed to need room, before it has been drawn. */
@@ -179,19 +179,36 @@ function CoachMark({ request }: { request: CoachMarkRequest }) {
         aria-labelledby={titleId}
         aria-describedby={hintId}
         style={{ ...panelStyle, width: `min(${PANEL_WIDTH}px, calc(100vw - ${EDGE * 2}px))` }}
-        className="step-arrive absolute rounded-3xl border border-border bg-popover p-4 shadow-card"
+        className="step-arrive absolute rounded-xl border border-border bg-popover p-4 shadow-card"
       >
-        <p id={titleId} className="text-title font-semibold leading-tight">
+        <p className="m-0 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
+          {request.position
+            ? `${CTA.try} · ${request.position.step} of ${request.position.total}`
+            : CTA.try}
+        </p>
+        <p id={titleId} className="mt-1 text-sm font-semibold">
           {target.title}
         </p>
-        <p id={hintId} className="mt-1.5 text-sm leading-[1.5] text-muted-foreground">
+        <p id={hintId} className="mt-1 text-meta text-muted-foreground">
           {target.hint}
         </p>
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <Chip tone="code">Esc</Chip>
+        <div className="mt-3.5 flex items-center gap-1.5">
           <Button ref={gotIt} size="sm" onClick={closeCoachMark}>
             {CTA.gotIt}
           </Button>
+          {request.onSkip && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                request.onSkip?.();
+                closeCoachMark();
+              }}
+            >
+              Skip the tour
+            </Button>
+          )}
+          <Kbd className="ml-auto">esc</Kbd>
         </div>
       </div>
     </div>

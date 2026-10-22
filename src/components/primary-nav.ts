@@ -1,43 +1,36 @@
-import { FolderOpen, LayoutGrid, Plug, Settings, Users } from "lucide-react";
+import { Folder, House, Inbox, MessageSquare, Repeat, SlidersVertical, Users } from "lucide-react";
 
 /**
- * The sidebar's pages. Its own module, with nothing but icons imported, so the
- * matching rule below can be tested without loading the app shell (which
- * builds a Supabase client at import).
+ * The workspace's pages, in the sidebar's order (DESIGN.md §6, the boards'
+ * sidebar): Home, Inbox, Threads, Knowledge, Routines, Team. Settings is the
+ * row at the foot of the sidebar, not one of these — listed with `bottom` so
+ * the label rule below still knows what to call its pages.
  */
 export const PRIMARY_NAV = [
-  { to: "/app", label: "Home", icon: LayoutGrid },
-  // Above Team because it is the workspace's files rather than a setting about
-  // them, and because it is the answer to "what have we written down?" — a
-  // question that used to be reachable only through an agent.
-  { to: "/knowledge", label: "Knowledge", icon: FolderOpen },
-  // Members is a settings page, but the people in the workspace are not a
-  // setting to the people in it, and Team is where everybody already looks.
-  { to: "/settings/members", label: "Team", icon: Users },
-  { to: "/integrations", label: "Integrations", icon: Plug },
-  // Not in the panel: the rail has the one settings control, the cog at its
-  // foot. Listed so the label rule below still knows what to call the pages.
-  { to: "/settings", label: "Settings", icon: Settings, rail: true },
+  { to: "/app", label: "Home", icon: House },
+  { to: "/inbox", label: "Inbox", icon: Inbox },
+  { to: "/threads", label: "Threads", icon: MessageSquare },
+  { to: "/knowledge", label: "Knowledge", icon: Folder },
+  { to: "/routines", label: "Routines", icon: Repeat },
+  { to: "/team", label: "Team", icon: Users },
+  { to: "/settings", label: "Settings", icon: SlidersVertical, bottom: true },
 ] as const;
 
-/** The panel's rows: everything but what the rail already carries. */
-export const PANEL_NAV = PRIMARY_NAV.filter((n) => !("rail" in n));
+/** The rows at the top of the sidebar: everything but Settings. */
+export const PAGE_NAV = PRIMARY_NAV.filter((n) => !("bottom" in n));
+
+/** Kept for the old panel until the new sidebar replaces it. */
+export const PANEL_NAV = PAGE_NAV;
 
 export type PrimaryNavItem = (typeof PRIMARY_NAV)[number];
 
-/**
- * The sidebar entry a path belongs to: the page itself or anything under it,
- * and the longest such entry when two match. `/settings/members` is under
- * both Team and Settings, and without the longest-wins rule the sidebar would
- * light both rows and the context bar would say "Settings" on the Team page.
- */
+/** The page a path belongs to: the longest `to` it is at or under. */
 export function primaryNavMatch(pathname: string): PrimaryNavItem | undefined {
   return PRIMARY_NAV.filter((n) => pathname === n.to || pathname.startsWith(`${n.to}/`)).sort(
     (a, b) => b.to.length - a.to.length,
   )[0];
 }
 
-/** Label for the context bar. Falls back to the brand on unknown paths. */
 export function pageLabel(pathname: string): string {
   return primaryNavMatch(pathname)?.label ?? "Covan";
 }

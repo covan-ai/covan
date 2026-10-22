@@ -2,6 +2,8 @@
 // their own file so api-client.ts stays a transport layer; the request
 // functions themselves live there because `request()` is module-private.
 
+import type { ReasoningEffort } from "./agent-meta";
+
 /**
  * `connection` watches a bundle a Notion or Drive connection already keeps
  * current, and reports the documents that were added or changed since the last
@@ -65,9 +67,63 @@ export type Routine = {
   status: "active" | "paused" | "completed";
   /** Set when the engine paused this itself after repeated failures. */
   pausedReason: string | null;
+  /** Who paused it by hand, and when (0123). Null for a pause the engine made. */
+  pausedBy: string | null;
+  pausedAt: number | null;
+  /** Whether each run is also a thread in the Inbox. */
+  deliverInbox: boolean;
+  /** The model and thinking it runs on; null is its agent's. */
+  model: string | null;
+  reasoningEffort: ReasoningEffort | null;
+  /**
+   * Where it delivers after `deliveryChannelId` (0130). Ids only: a colleague
+   * learns how many, and only the owner can look the channels up.
+   */
+  channelIds: string[];
   nextRunAt: number | null;
   lastRunAt: number | null;
   createdAt: number;
+};
+
+/** A row of `GET /routines`: the routine, and what the list says under its name (A7). */
+export type RoutineListItem = Routine & {
+  ownerName: string | null;
+  pausedByName: string | null;
+  lastRun: {
+    id: string;
+    status: RoutineRun["status"];
+    at: number;
+    sessionId: string | null;
+  } | null;
+  /** When the run under way started, or null. A routine has no step count. */
+  runningSince: number | null;
+};
+
+/** What a run cost, in what this deployment shows: credits, or dollars self-hosted. */
+export type RoutineCost = { amount: number; unit: "credits" | "usd" };
+
+/** The list's footer: "14 runs in the last 7 days · 13 done, 1 failed · 118 credits". */
+export type RoutineStats = {
+  days: number;
+  runs: number;
+  done: number;
+  failed: number;
+  skipped: number;
+  cost: number;
+  unit: RoutineCost["unit"];
+};
+
+/**
+ * "About 15 to 25 credits per run · 4 runs a month. Based on the Daily
+ * support digest." `low` and `high` are null when there is nothing to base
+ * them on; `runsPerMonth` when no schedule was given.
+ */
+export type RoutineEstimate = {
+  low: number | null;
+  high: number | null;
+  unit: RoutineCost["unit"];
+  runsPerMonth: number | null;
+  basedOn: { kind: "routine"; routineId: string; name: string } | { kind: "replies" } | null;
 };
 
 export type RoutineRun = {
@@ -124,10 +180,17 @@ export type RoutineRun = {
   triggeredBy: RunTrigger | null;
   /** "Gmail · New mail", for a run an event started. Null otherwise. */
   triggerLabel: string | null;
+  /** The thread this run is shown in, when it has one (0123). */
+  sessionId: string | null;
+  /** What the routine's other channels missed (0130). */
+  deliveryNote: string | null;
+  /** What it cost; null for a run that called no model. Absent from a test's answer. */
+  cost?: RoutineCost | null;
   startedAt: number;
 };
 
-export type RunTrigger = "schedule" | "manual" | "webhook" | "event" | "reply";
+/** `test` is "Run a test" (0130): a run that went only to its owner. */
+export type RunTrigger = "schedule" | "manual" | "webhook" | "event" | "reply" | "test";
 
 /**
  * Where the arrangement with the app stands. `failed` is retried on its own;
@@ -298,6 +361,10 @@ export type CreateRoutineInput = {
   outputRetention?: number;
   /** After how many delivered runs this routine ends itself, or null for never. */
   endsAfterRuns?: number | null;
+  deliverInbox?: boolean;
+  /** Null, or omitted, runs on the agent's model and thinking. */
+  model?: string | null;
+  reasoningEffort?: ReasoningEffort | null;
 };
 
 export type UpdateRoutineInput = Partial<{
@@ -317,4 +384,8 @@ export type UpdateRoutineInput = Partial<{
   browserAccess: "off" | "all" | "site";
   /** Null clears it; `site` access needs one, here or already saved. */
   browserSite: string | null;
+  deliverInbox: boolean;
+  /** Null hands the choice back to the agent. */
+  model: string | null;
+  reasoningEffort: ReasoningEffort | null;
 }>;

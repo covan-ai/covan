@@ -14,9 +14,11 @@ import {
   deliver,
   releaseItemKeys,
   type DeliveryChannel,
+  type DeliveryContext,
   type DeliveryDeps,
   type EmailThread,
 } from "./delivery";
+import { deliverToOtherChannels } from "./other-channels";
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
 import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResult } from "./filing";
 import type { CoverageRunInput, CoverageRunResult } from "./coverage-source";
@@ -142,6 +144,12 @@ export type RoutineRow = {
    * column's default.
    */
   deliver_inbox?: boolean | null;
+  /**
+   * The model and thinking this routine runs on (0123), over its agent's.
+   * Null — or absent, for a narrower projection — is the agent's own.
+   */
+  model?: string | null;
+  reasoning_effort?: string | null;
 };
 
 export type SummariseInput = {
@@ -399,6 +407,8 @@ export type ExecutorDeps = {
    * routine's page, and — once a routine can be poked from outside — an
    * incoming request. Defaults to the schedule, which is what a caller that
    * has not thought about it almost always means.
+   *
+   * `test` is "Run a test" (0130); see `isTest`.
    */
   trigger?: string;
   /** What the routine's owner may spend. Unmetered on a self-hosted install. */
@@ -548,14 +558,57 @@ export function pokeKey(trigger: IngestTrigger): string {
  * receiver is told it in `run.triggeredBy`.
  */
 export type RunOrigin = {
-  triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply";
+  triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply" | "test";
   label: string | null;
 };
 
 function originOf(deps: ExecutorDeps, trigger: IngestTrigger | undefined): RunOrigin {
   // A poke names itself, whatever the dispatcher was built as.
   if (trigger) return { triggeredBy: trigger.source, label: trigger.label ?? null };
+  if (isTest(deps)) return { triggeredBy: "test", label: null };
   return { triggeredBy: deps.trigger === "manual" ? "manual" : "schedule", label: null };
+}
+
+/**
+ * A test run (0130): "Run a test" in the routine editor, which "costs the same
+ * and goes only to you". It reads, thinks and is charged like any run, and
+ * then leaves no mark outside its own row and its owner's private thread: no
+ * channel, no filing, no browser, no claim on what it read, no cursor moved,
+ * no notice, and the schedule as it was. Every branch below that would leave
+ * one asks this first.
+ */
+function isTest(deps: ExecutorDeps): boolean {
+  return deps.trigger === "test";
+}
+
+/** A cursor that has seen nothing — unlike `null`, which is a baseline run's. */
+const NOTHING_SEEN: Cursor = { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null };
+
+/** `claimItemKeys`, except that a test claims nothing the next real run will read. */
+async function reserve(deps: ExecutorDeps, routineId: string, keys: string[]): Promise<string[]> {
+  return isTest(deps) ? keys : claimItemKeys(deps.db, routineId, keys);
+}
+
+/** `releaseItemKeys`, for keys `reserve` took. A test took none. */
+async function handBack(deps: ExecutorDeps, routineId: string, keys: string[]): Promise<void> {
+  if (!isTest(deps)) await releaseItemKeys(deps.db, routineId, keys);
+}
+
+/**
+ * Sends a run's result to its primary channel, and then to the others its
+ * owner listed (`deliverToOtherChannels`, 0130), returning what the others
+ * missed. A test sends nothing, and has no channel to send it to.
+ */
+async function deliverRun(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  primary: DeliveryChannel | null,
+  message: { subject: string; body: string },
+  context: DeliveryContext,
+): Promise<string | undefined> {
+  if (isTest(deps) || !primary) return undefined;
+  await deliver(primary, message, deps.deliveryDeps, context);
+  return deliverToOtherChannels(deps.env, deps.db, routine, message, deps.deliveryDeps, context);
 }
 
 export async function runRoutine(
@@ -651,7 +704,7 @@ export async function runRoutine(
         tokens: 0,
         error: QUOTA_SKIP_REASON,
       });
-      if (!alreadyTold) {
+      if (!alreadyTold && !isTest(deps)) {
         await announceQuotaSkip(routine, deps);
       }
       return { status: "skipped", itemsNew: 0 };
@@ -711,7 +764,7 @@ export async function runRoutine(
         : deps.trigger === "manual"
           ? [`manual:${routine.id}@${startedAt.toISOString()}`]
           : [`slot:${routine.next_run_at}`];
-      claimedKeys = await claimItemKeys(deps.db, routine.id, reportKeysToClaim);
+      claimedKeys = await reserve(deps, routine.id, reportKeysToClaim);
       if (claimedKeys.length === 0) {
         // Already handled for this slot, and found out before anything was
         // spent — nothing to meter.
@@ -740,7 +793,7 @@ export async function runRoutine(
         // Handed back before `finish`, so a release that fails lands in the
         // `catch` below — which tries again and records why — rather than
         // leaving a key held by a run that reports itself as a clean pause.
-        await releaseItemKeys(deps.db, routine.id, claimedKeys);
+        await handBack(deps, routine.id, claimedKeys);
         claimedKeys = [];
         await finish(routine, deps, startedAt, origin, {
           status: "skipped",
@@ -758,7 +811,7 @@ export async function runRoutine(
         // None of this feature's three reasons is a repeated failure, so this
         // does not read through `announcePause` — see `announceCoveragePause`
         // for why that one's wording would be false here.
-        await announceCoveragePause(routine, deps, result.reason);
+        if (!isTest(deps)) await announceCoveragePause(routine, deps, result.reason);
         return { status: "skipped", itemsNew: 0 };
       }
 
@@ -799,28 +852,36 @@ export async function runRoutine(
       // uncommented copy of the ordinary path's lookup below; see
       // `loadDeliveryChannel` for why that was a real cost and not just
       // duplication.
-      const channel = await loadDeliveryChannel(deps, routine);
+      // A test has nowhere to send, and must not ask an address to confirm.
+      const channel = isTest(deps) ? null : await loadDeliveryChannel(deps, routine);
 
-      await deliver(channel, { subject: routine.name, body: result.summary }, deps.deliveryDeps, {
-        event: EVENT_DELIVERED,
-        routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
-        run: {
-          itemsNew: 1,
-          itemsOverflow: 0,
-          triggeredBy: origin.triggeredBy,
+      const deliveryNote = await deliverRun(
+        routine,
+        deps,
+        channel,
+        { subject: routine.name, body: result.summary },
+        {
+          event: EVENT_DELIVERED,
+          routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
+          run: {
+            itemsNew: 1,
+            itemsOverflow: 0,
+            triggeredBy: origin.triggeredBy,
+          },
+          // The id its row is written with below, so an emailed report can be
+          // answered (`lib/inbound-email/`); and, for a run answering a reply,
+          // the thread that answer belongs in.
+          runId,
+          thread: trigger?.thread,
         },
-        // The id its row is written with below, so an emailed report can be
-        // answered (`lib/inbound-email/`); and, for a run answering a reply,
-        // the thread that answer belongs in.
-        runId,
-        thread: trigger?.thread,
-      });
+      );
       delivered = true;
 
       await finish(routine, deps, startedAt, origin, {
         status: "ok",
         itemsNew: 1,
         summary: result.summary,
+        deliveryNote,
         modelCall: { model: result.model, modelOutcome: "answered" },
         tokens: result.tokens,
         spend: result.spend,
@@ -853,7 +914,9 @@ export async function runRoutine(
       // to do for it.
       result = await fetchSource(
         { source_kind: routine.source_kind, source_config: routine.source_config },
-        routine.cursor,
+        // A test asks for the page whole: an ETag from the last real run
+        // would answer "unchanged", and a test has to read something.
+        isTest(deps) ? null : routine.cursor,
         deps.fetchDeps,
       );
     }
@@ -885,7 +948,10 @@ export async function runRoutine(
     const diffed = routine.source_kind === "rss" || routine.source_kind === "connection";
 
     if (result.status === "items" && diffed) {
-      const diff = diffItems(result.items, routine.cursor);
+      // A test reads the feed as if it had seen none of it — not as a first
+      // run, which reports nothing — so it has something to show even when
+      // nothing is new since the last real run.
+      const diff = diffItems(result.items, isTest(deps) ? NOTHING_SEEN : routine.cursor);
       items = diff.newItems;
       overflow = diff.overflow;
       nextCursor = { ...diff.nextCursor, etag: result.etag };
@@ -901,7 +967,7 @@ export async function runRoutine(
       // First run is silent for source-watching routines: with no cursor there
       // is nothing to compare against, so record the hash and say nothing
       // rather than summarising the whole page at the user.
-      if (routine.cursor === null) {
+      if (routine.cursor === null && !isTest(deps)) {
         await finish(routine, deps, startedAt, origin, {
           status: "skipped",
           itemsNew: 0,
@@ -965,7 +1031,7 @@ export async function runRoutine(
     }
 
     // Reserve before sending. A concurrent or retried run gets back fewer keys.
-    claimedKeys = await claimItemKeys(deps.db, routine.id, keysToClaim);
+    claimedKeys = await reserve(deps, routine.id, keysToClaim);
     if (diffed) {
       items = items.filter((i) => claimedKeys.includes(i.key));
     }
@@ -985,7 +1051,7 @@ export async function runRoutine(
     // still needs its own: it is scoped to the routine's workspace rather than
     // its owner, and matching on id alone would make any tampered row a
     // cross-tenant read there too.
-    const channel = await loadDeliveryChannel(deps, routine);
+    const channel = isTest(deps) ? null : await loadDeliveryChannel(deps, routine);
 
     const { data: agent, error: agentError } = await deps.db
       .from("agents")
@@ -1033,9 +1099,10 @@ export async function runRoutine(
 
     const summariseInput = {
       persona: agent?.persona ?? null,
-      model: agent?.model ?? null,
+      // The routine's own choice first (0123), then the agent's.
+      model: routine.model ?? agent?.model ?? null,
       temperature: agent?.temperature ?? null,
-      reasoningEffort: agent?.reasoning_effort ?? null,
+      reasoningEffort: routine.reasoning_effort ?? agent?.reasoning_effort ?? null,
       instruction: routine.instruction,
       items,
       pageText,
@@ -1175,21 +1242,27 @@ export async function runRoutine(
       return { status: "waiting", itemsNew: items.length };
     }
 
-    await deliver(channel, { subject: routine.name, body }, deps.deliveryDeps, {
-      event: EVENT_DELIVERED,
-      routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
-      // `items.length` rather than the claimed keys: what the summary is
-      // about. `overflow` is what it is missing, which is the number a
-      // receiver needs to know the digest is not the whole story.
-      run: {
-        itemsNew: items.length,
-        itemsOverflow: overflow,
-        // A poke names itself, whatever the dispatcher was built as.
-        triggeredBy: origin.triggeredBy,
+    const deliveryNote = await deliverRun(
+      routine,
+      deps,
+      channel,
+      { subject: routine.name, body },
+      {
+        event: EVENT_DELIVERED,
+        routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
+        // `items.length` rather than the claimed keys: what the summary is
+        // about. `overflow` is what it is missing, which is the number a
+        // receiver needs to know the digest is not the whole story.
+        run: {
+          itemsNew: items.length,
+          itemsOverflow: overflow,
+          // A poke names itself, whatever the dispatcher was built as.
+          triggeredBy: origin.triggeredBy,
+        },
+        runId,
+        thread: trigger?.thread,
       },
-      runId,
-      thread: trigger?.thread,
-    });
+    );
     // Past this point the message is out. Releasing the claims would let the
     // next tick re-win them and send it again — the duplicate this whole
     // claim-first ordering exists to prevent. Leaving them claimed makes the
@@ -1211,6 +1284,7 @@ export async function runRoutine(
       status: "ok",
       itemsNew: items.length,
       itemsOverflow: overflow,
+      deliveryNote,
       documentId: filing.documentId,
       filingNote: filing.note,
       modelCall: { model: summary.model, modelOutcome: summary.modelOutcome },
@@ -1253,7 +1327,7 @@ export async function runRoutine(
     let releaseError: string | null = null;
     if (!delivered && claimedKeys.length > 0) {
       try {
-        await releaseItemKeys(deps.db, routine.id, claimedKeys);
+        await handBack(deps, routine.id, claimedKeys);
       } catch (releaseErr) {
         releaseError = releaseErr instanceof Error ? releaseErr.message : String(releaseErr);
       }
@@ -1300,6 +1374,7 @@ function browserFor(
   routine: RoutineRow,
   deps: ExecutorDeps,
 ): Omit<RoutineBrowser, "started"> | undefined {
+  if (isTest(deps)) return undefined;
   const access = routine.browser_access ?? "off";
   if (access === "off" || access === null) return undefined;
   if (access === "site" && !routine.browser_site) return undefined;
@@ -1376,6 +1451,8 @@ async function fileOutput(
   runEnv: RoutineEnv,
   input: { ownerMayWrite: boolean; summary: string; at: Date },
 ): Promise<{ documentId?: string; note?: string; indexTokens: number }> {
+  // A test files nothing: its result is its owner's private thread (0130).
+  if (isTest(deps)) return { indexTokens: 0 };
   if (!routine.output_bundle_id) return { indexTokens: 0 };
   if (!deps.file) return { note: NOTE_NO_DOCUMENT_STORE, indexTokens: 0 };
   if (!input.ownerMayWrite) return { note: NOTE_VIEWER, indexTokens: 0 };
@@ -1443,6 +1520,8 @@ export type RunOutcome = {
   documentId?: string;
   /** Why it filed nothing, when it was supposed to. See `fileOutput`. */
   filingNote?: string;
+  /** What the routine's other channels missed (0130). See `deliverToOtherChannels`. */
+  deliveryNote?: string;
   /** The remote's fault, not the routine's — judged against the higher limit. */
   transient?: boolean;
   /** Pause the routine with this reason, independently of the failure count. */
@@ -1510,6 +1589,7 @@ async function finish(
   // (0123). Null when the routine does not deliver to the Inbox, or the run
   // has nothing to show.
   const sessionId = await writeRunThread(routine, deps, outcome, finishedAt);
+  const split = completionTokensOf(outcome);
 
   const { data: runRows, error: runError } = await deps.db
     .from("routine_runs")
@@ -1535,6 +1615,11 @@ async function finish(
       summary: outcome.summary ?? null,
       document_id: outcome.documentId ?? null,
       filing_note: outcome.filingNote ?? null,
+      delivery_note: outcome.deliveryNote ?? null,
+      // Priced from these apart (0130); `tokens` stays the total it always was.
+      prompt_tokens: split.promptTokens,
+      completion_tokens: split.completionTokens,
+      cached_tokens: split.cachedTokens,
       // Why this run happened at all (0109). A required argument rather than
       // something read off `deps`, so a new branch that forgets it does not
       // compile instead of quietly recording an event run as scheduled.
@@ -1566,6 +1651,10 @@ async function finish(
       console.error("failed to record routine credits", err);
     }
   }
+
+  // A test leaves the routine as it found it: no next run, no failure counted,
+  // no cursor, no series spent (0130).
+  if (isTest(deps)) return;
 
   const failures = outcome.status === "failed" ? routine.consecutive_failures + 1 : 0;
   const base = nextRunAt(routine.schedule_cron, routine.timezone, finishedAt);
@@ -1666,13 +1755,19 @@ export async function writeRunThread(
   outcome: RunOutcome,
   finishedAt: Date,
 ): Promise<string | null> {
-  if (routine.deliver_inbox === false) return null;
+  // A test's thread is the only place its result goes, so it is written
+  // whether or not the routine delivers to the Inbox — and for a skip too,
+  // which would otherwise be a button that seemed to do nothing.
+  const test = isTest(deps);
+  if (routine.deliver_inbox === false && !test) return null;
   const content =
     outcome.status === "ok"
       ? outcome.summary?.trim()
       : outcome.status === "failed"
-        ? `This run failed: ${outcome.error ?? "something went wrong"}`
-        : undefined;
+        ? `This ${test ? "test" : "run"} failed: ${outcome.error ?? "something went wrong"}`
+        : test
+          ? `This test had nothing to report${outcome.error ? `: ${outcome.error}` : "."}`
+          : undefined;
   if (!content) return null;
 
   try {
@@ -1684,8 +1779,8 @@ export async function writeRunThread(
         workspace_id: routine.workspace_id,
         kind: "routine",
         routine_id: routine.id,
-        visibility: routine.visibility === "shared" ? "shared" : "private",
-        title: routine.name,
+        visibility: !test && routine.visibility === "shared" ? "shared" : "private",
+        title: test ? `${routine.name} · test` : routine.name,
       })
       .select("id")
       .single();

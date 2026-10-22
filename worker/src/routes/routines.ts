@@ -6,7 +6,7 @@ import { serviceClient } from "../lib/supabase";
 import { callerWorkspaceId } from "../lib/workspace";
 import { mapRoutine, mapRoutineRun, mapDeliveryChannel } from "../lib/dto";
 import { parseDraft } from "../lib/routines/draft";
-import { runOneRoutine, runPokedRoutine } from "../lib/routines/dispatcher";
+import { runOneRoutine, runPokedRoutine, runTestRoutine } from "../lib/routines/dispatcher";
 import type { RoutineRow } from "../lib/routines/executor";
 import { isValidCron, nextRunAt } from "../lib/routines/schedule";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
@@ -36,7 +36,8 @@ import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { siteHostOf } from "../lib/browser/credentials";
 import { createRoutine } from "../lib/routines/create";
-import { providerFor, resolveModel } from "../lib/models";
+import { MODEL_IDS, REASONING_EFFORTS, providerFor, resolveModel } from "../lib/models";
+import { estimateCostUsd } from "../lib/pricing";
 import {
   classifyProviderError,
   explainProviderFailure,
@@ -46,7 +47,7 @@ import {
 import { complete } from "../lib/completion";
 import { deferred } from "../lib/defer";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
-import { completionSpend, spends, type Spend } from "../lib/entitlements";
+import { completionSpend, quoteOf, spends, type Spend } from "../lib/entitlements";
 import { apiKeyIdOf, refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 import { parseEventChoice, triggerLabel, type EventChoice } from "../lib/routines/events/catalog";
 import { EVENT_REGISTRY, canListenFor } from "../lib/routines/events/adapter";
@@ -459,8 +460,23 @@ const eventChoiceSchema = z.object({
  * `routine_event_subscriptions_select_own` answers it for the owner alone —
  * a colleague reading a shared routine gets `event: null`.
  */
+// It also embeds the channels after the primary (0130), by id:
+// `routine_channels_select_visible` answers whoever can see the routine, and
+// the channels themselves stay their owner's. One literal, because
+// postgrest-js types the row from the string and cannot read a concatenation.
 const ROUTINE_SELECT =
-  "*, event:routine_event_subscriptions(provider, event_type, config, status, status_detail, last_event_at, expires_at)";
+  "*, event:routine_event_subscriptions(provider, event_type, config, status, status_detail, last_event_at, expires_at), channels:routine_channels(delivery_channel_id)";
+
+/**
+ * The editor's Inbox switch, model and thinking (0123), for create and edit
+ * alike. `model` is the allowlist `routes/agents.ts` uses; null hands the
+ * choice back to the agent.
+ */
+const runChoices = {
+  deliverInbox: z.boolean().optional(),
+  model: z.enum(MODEL_IDS).nullable().optional(),
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
+};
 
 const createSchema = z
   .object({
@@ -520,6 +536,7 @@ const createSchema = z
      * omitted means it runs until somebody stops it.
      */
     endsAfterRuns: z.number().int().min(1).max(365).nullish(),
+    ...runChoices,
   })
   // Exactly one. Both is a caller that has not decided, and neither is a routine
   // the database would refuse anyway — `delivery_channel_id` is `not null`.
@@ -558,6 +575,7 @@ const updateSchema = z
      */
     browserAccess: z.enum(["off", "all", "site"]).optional(),
     browserSite: z.string().max(300).nullable().optional(),
+    ...runChoices,
   })
   .refine((v) => Object.keys(v).length > 0, { message: "no fields to update" });
 
@@ -569,15 +587,88 @@ const updateSchema = z
  * to anyone reading the row later, like it might fetch one.
  */
 routines.get("/routines", async (c) => {
-  const { data, error } = await c
-    .get("db")
+  const db = c.get("db");
+  const { data, error } = await db
     .from("routines")
     .select(ROUTINE_SELECT)
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load routines" }, 500);
-  return c.json((data ?? []).map(mapRoutine));
+  const rows = data ?? [];
+
+  // What the list says under each name (A7): who made it, who paused it, and
+  // how its last run went. Two reads for the whole list, both the caller's.
+  const ids = rows.map((r) => r.id as string);
+  const people = [
+    ...new Set(rows.flatMap((r) => [r.user_id, r.paused_by]).filter(Boolean) as string[]),
+  ];
+  const [last, profiles] = await Promise.all([
+    ids.length > 0
+      ? db.rpc("routine_last_runs", { p_routine_ids: ids })
+      : Promise.resolve({ data: [], error: null }),
+    people.length > 0
+      ? db.from("profiles").select("id, name").in("id", people)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  const lastRuns = new Map(
+    ((last.data ?? []) as LastRunRow[]).map((r) => [r.routine_id, r] as const),
+  );
+  const names = new Map(
+    ((profiles.data ?? []) as Array<{ id: string; name: string | null }>).map(
+      (p) => [p.id, p.name?.trim() || null] as const,
+    ),
+  );
+  const now = Date.now();
+
+  return c.json(
+    rows.map((row) => {
+      const run = lastRuns.get(row.id as string);
+      return {
+        ...mapRoutine(row),
+        ownerName: names.get(row.user_id as string) ?? null,
+        pausedByName: row.paused_by ? (names.get(row.paused_by as string) ?? null) : null,
+        lastRun: run
+          ? {
+              id: run.id,
+              status: run.status,
+              at: Date.parse(run.finished_at ?? run.started_at),
+              sessionId: run.session_id,
+            }
+          : null,
+        runningSince: runningSince(row, run, now),
+      };
+    }),
+  );
 });
+
+type LastRunRow = {
+  routine_id: string;
+  id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  session_id: string | null;
+};
+
+/** How long a claim may be held before it reads as a crash rather than a run. */
+const RUNNING_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * When the run under way started, or null: a claim the engine took in the
+ * last half hour (`claimed_at`, which `finish` clears), or a run that wrote
+ * its report and is waiting on the browser (0100). There is no step count for
+ * a routine — only a chat turn reports one (0122).
+ */
+export function runningSince(
+  row: { claimed_at?: string | null },
+  last: { status: string; started_at: string } | undefined,
+  now: number,
+): number | null {
+  const claimed = row.claimed_at ? Date.parse(row.claimed_at) : NaN;
+  if (Number.isFinite(claimed) && now - claimed < RUNNING_WINDOW_MS) return claimed;
+  if (last?.status === "waiting") return Date.parse(last.started_at);
+  return null;
+}
 
 routines.post("/routines", async (c) => {
   const parsed = createSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -683,6 +774,9 @@ routines.post("/routines", async (c) => {
       outputBundleId: body.outputBundleId ?? null,
       ...(body.outputRetention !== undefined ? { outputRetention: body.outputRetention } : {}),
       endsAfterRuns: body.endsAfterRuns ?? null,
+      ...(body.deliverInbox !== undefined ? { deliverInbox: body.deliverInbox } : {}),
+      model: body.model ?? null,
+      reasoningEffort: body.reasoningEffort ?? null,
     },
     ownHostsFrom(c.env),
   );
@@ -776,6 +870,9 @@ routines.patch("/routines/:id", async (c) => {
   // filing off instead of being read as "no change".
   if (body.outputBundleId !== undefined) patch.output_bundle_id = body.outputBundleId;
   if (body.outputRetention !== undefined) patch.output_retention = body.outputRetention;
+  if (body.deliverInbox !== undefined) patch.deliver_inbox = body.deliverInbox;
+  if (body.model !== undefined) patch.model = body.model;
+  if (body.reasoningEffort !== undefined) patch.reasoning_effort = body.reasoningEffort;
 
   // The browser (0100). A site that is not a host is refused rather than
   // stored: a login nothing can match is a setting that silently never works.
@@ -983,7 +1080,338 @@ routines.get("/routines/:id/runs", async (c) => {
     .limit(50);
 
   if (error) return c.json({ error: "failed to load runs" }, 500);
-  return c.json((data ?? []).map(mapRoutineRun));
+  // What each run cost (A7's Credits column), in the unit this deployment
+  // speaks: credits where it sells them, dollars where it does not.
+  const priced = priceIn(quoteOf(c.get("entitlements")));
+  return c.json(
+    (data ?? []).map((row) => ({
+      ...mapRoutineRun(row),
+      cost: row.model ? { amount: priced.amount(runCostUsd(row)), unit: priced.unit } : null,
+    })),
+  );
+});
+
+// ---- costs, tests and the list's footer (0130) ------------------------------
+
+/** The columns a run is priced from. */
+type RunCostRow = {
+  model: string | null;
+  tokens: number | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  cached_tokens?: number | null;
+};
+
+const RUN_COST_COLUMNS =
+  "routine_id, model, tokens, prompt_tokens, completion_tokens, cached_tokens";
+
+/**
+ * A run's price in dollars, from its own model unless another is named — the
+ * editor asks what the same work would cost on the model it is about to pick.
+ *
+ * A run from before 0130 kept its total alone, and is priced as if all of it
+ * was read: the cheaper side of the bill, so an old estimate errs low rather
+ * than inventing an output it cannot know.
+ */
+export function runCostUsd(row: RunCostRow, model?: string): number {
+  const m = model ?? row.model ?? "";
+  if (row.prompt_tokens == null) return estimateCostUsd(m, Number(row.tokens) || 0, 0);
+  return estimateCostUsd(
+    m,
+    Number(row.prompt_tokens) || 0,
+    Number(row.completion_tokens) || 0,
+    Number(row.cached_tokens) || 0,
+  );
+}
+
+/** Dollars into what this deployment shows: whole credits, or cents. */
+function priceIn(quote: ((usd: number) => number) | null): {
+  unit: "credits" | "usd";
+  amount: (usd: number) => number;
+} {
+  return quote
+    ? { unit: "credits", amount: (usd) => Math.round(quote(usd)) }
+    : { unit: "usd", amount: (usd) => Math.round(usd * 100) / 100 };
+}
+
+/**
+ * The quarter and three quarters of what similar runs cost — "About 15 to 25
+ * credits per run". Fewer than four runs give their lowest and highest
+ * instead, which is all a handful can honestly say.
+ */
+export function costRange(costs: number[]): { low: number; high: number } | null {
+  if (costs.length === 0) return null;
+  const sorted = [...costs].sort((a, b) => a - b);
+  if (sorted.length < 4) return { low: sorted[0]!, high: sorted[sorted.length - 1]! };
+  const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
+  return { low: at(0.25), high: at(0.75) };
+}
+
+/** How many times a schedule fires in the next thirty days, up to `cap`. */
+export function runsInThirtyDays(cron: string, timezone: string, from: Date, cap = 999): number {
+  const end = from.getTime() + 30 * 24 * 60 * 60 * 1000;
+  let at = from;
+  let count = 0;
+  while (count < cap) {
+    at = nextRunAt(cron, timezone, at);
+    if (at.getTime() > end) break;
+    count++;
+  }
+  return count;
+}
+
+/** A row of `routine_run_totals` (0130). */
+type RunTotalRow = {
+  status: string;
+  model: string | null;
+  runs: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  unsplit_tokens: number;
+};
+
+const statsQuery = z.object({ days: z.coerce.number().int().min(1).max(90).default(7) });
+
+// GET /routines/stats — the list's footer (A7): "14 runs in the last 7 days ·
+// 13 done, 1 failed · 118 credits", over the runs the caller can see.
+routines.get("/routines/stats", async (c) => {
+  const parsed = statsQuery.safeParse(c.req.query());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ error: "no active workspace" }, 400);
+
+  const { data, error } = await c.get("db").rpc("routine_run_totals", {
+    p_workspace_id: workspaceId,
+    p_days: parsed.data.days,
+  });
+  if (error) return c.json({ error: "failed to count runs" }, 500);
+
+  const priced = priceIn(quoteOf(c.get("entitlements")));
+  let runs = 0;
+  let done = 0;
+  let failed = 0;
+  let skipped = 0;
+  let usd = 0;
+  for (const row of (data ?? []) as RunTotalRow[]) {
+    const n = Number(row.runs) || 0;
+    runs += n;
+    if (row.status === "ok") done += n;
+    else if (row.status === "failed") failed += n;
+    else if (row.status === "skipped") skipped += n;
+    // Summed by model, and a price is linear in tokens, so each sum is priced
+    // as one run of its size. What was kept before 0130 as a total alone is
+    // priced as read, as `runCostUsd` prices a single old run.
+    usd += runCostUsd({
+      model: row.model,
+      tokens: null,
+      prompt_tokens: Number(row.prompt_tokens) || 0,
+      completion_tokens: row.completion_tokens,
+      cached_tokens: row.cached_tokens,
+    });
+    usd += runCostUsd({ model: row.model, tokens: Number(row.unsplit_tokens) || 0 });
+  }
+  return c.json({
+    days: parsed.data.days,
+    runs,
+    done,
+    failed,
+    skipped,
+    cost: priced.amount(usd),
+    unit: priced.unit,
+  });
+});
+
+const estimateQuery = z.object({
+  agentId: z.string().uuid(),
+  /** The routine being edited, whose own runs are the best evidence. */
+  routineId: z.string().uuid().optional(),
+  /** The model the editor has picked, to reprice the evidence at. */
+  model: z.enum(MODEL_IDS).optional(),
+  cron: z.string().max(120).optional(),
+  timezone: z.string().max(64).optional(),
+});
+
+// GET /routines/estimate — "About 15 to 25 credits per run · 4 runs a month.
+// Based on the Daily support digest, which reads the same tickets." (A28)
+//
+// Read from what the caller can see, in order: this routine's own delivered
+// runs; the agent's routine with the most of them; the agent's replies. Each
+// is real work of the same agent, priced at the model the editor has picked.
+// No evidence is an answer too — `low` and `high` come back null.
+routines.get("/routines/estimate", async (c) => {
+  const parsed = estimateQuery.safeParse(c.req.query());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const q = parsed.data;
+  const db = c.get("db");
+
+  let basedOn: { kind: "routine"; routineId: string; name: string } | { kind: "replies" } | null =
+    null;
+  let samples: RunCostRow[] = [];
+
+  const { data: siblings, error: siblingsError } = await db
+    .from("routines")
+    .select("id, name")
+    .eq("agent_id", q.agentId);
+  if (siblingsError) return c.json({ error: "failed to read routines" }, 500);
+  const routineIds = (siblings ?? []).map((r) => r.id as string);
+
+  if (routineIds.length > 0) {
+    const { data: runs, error } = await db
+      .from("routine_runs")
+      .select(RUN_COST_COLUMNS)
+      .in("routine_id", routineIds)
+      .eq("status", "ok")
+      .not("model", "is", null)
+      .order("started_at", { ascending: false })
+      .limit(100);
+    if (error) return c.json({ error: "failed to read runs" }, 500);
+    const byRoutine = new Map<string, RunCostRow[]>();
+    for (const run of (runs ?? []) as Array<RunCostRow & { routine_id: string }>) {
+      byRoutine.set(run.routine_id, [...(byRoutine.get(run.routine_id) ?? []), run]);
+    }
+    const own = q.routineId ? byRoutine.get(q.routineId) : undefined;
+    const pick = own?.length
+      ? q.routineId!
+      : [...byRoutine.entries()].sort((a, b) => b[1].length - a[1].length)[0]?.[0];
+    if (pick) {
+      samples = (byRoutine.get(pick) ?? []).slice(0, 20);
+      const name = (siblings ?? []).find((r) => r.id === pick)?.name as string | undefined;
+      basedOn = { kind: "routine", routineId: pick, name: name ?? "" };
+    }
+  }
+
+  if (samples.length === 0) {
+    const { data: replies, error } = await db
+      .from("messages")
+      .select(
+        "model, prompt_tokens, completion_tokens, cached_tokens, chat_sessions!inner(agent_id)",
+      )
+      .eq("chat_sessions.agent_id", q.agentId)
+      .eq("role", "assistant")
+      .not("prompt_tokens", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (error) return c.json({ error: "failed to read replies" }, 500);
+    samples = (replies ?? []).map((r) => ({
+      model: r.model as string | null,
+      tokens: null,
+      prompt_tokens: r.prompt_tokens as number | null,
+      completion_tokens: r.completion_tokens as number | null,
+      cached_tokens: r.cached_tokens as number | null,
+    }));
+    if (samples.length > 0) basedOn = { kind: "replies" };
+  }
+
+  const priced = priceIn(quoteOf(c.get("entitlements")));
+  const range = costRange(samples.map((s) => runCostUsd(s, q.model)));
+  // A run that costs something reads as at least one credit: "About 0 to 0"
+  // would say it is free.
+  const amount = (usd: number) =>
+    priced.unit === "credits" && usd > 0 ? Math.max(1, priced.amount(usd)) : priced.amount(usd);
+  const timezone = q.timezone ?? "UTC";
+
+  return c.json({
+    low: range ? amount(range.low) : null,
+    high: range ? amount(range.high) : null,
+    unit: priced.unit,
+    runsPerMonth:
+      q.cron && isValidCron(q.cron, timezone)
+        ? runsInThirtyDays(q.cron, timezone, new Date())
+        : null,
+    basedOn: samples.length > 0 ? basedOn : null,
+  });
+});
+
+// PUT /routines/:id/channels — where a run goes after the primary (0130).
+// The whole list, replaced: what the editor shows is what is saved.
+const channelsSchema = z.object({ channelIds: z.array(z.string().uuid()).max(10) });
+
+routines.put("/routines/:id/channels", async (c) => {
+  const parsed = channelsSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const db = c.get("db");
+  const id = c.req.param("id");
+
+  const { data: routine, error: loadError } = await db
+    .from("routines")
+    .select("id, user_id, delivery_channel_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (loadError) return c.json({ error: "failed to load routine" }, 500);
+  if (!routine) return c.json({ error: "routine not found" }, 404);
+  // The policies say the same; saying it here names the reason.
+  if (routine.user_id !== c.get("user").id) {
+    return c.json({ error: "only whoever made a routine can change where it delivers" }, 403);
+  }
+
+  // The primary is not listed twice: it is sent to first, whatever this says.
+  const wanted = [...new Set(parsed.data.channelIds)].filter(
+    (channelId) => channelId !== routine.delivery_channel_id,
+  );
+  const { data: current, error: currentError } = await db
+    .from("routine_channels")
+    .select("delivery_channel_id")
+    .eq("routine_id", id);
+  if (currentError) return c.json({ error: "failed to load the routine's channels" }, 500);
+  const have = new Set((current ?? []).map((r) => r.delivery_channel_id as string));
+  const add = wanted.filter((channelId) => !have.has(channelId));
+  const remove = [...have].filter((channelId) => !wanted.includes(channelId));
+
+  if (remove.length > 0) {
+    const { error } = await db
+      .from("routine_channels")
+      .delete()
+      .eq("routine_id", id)
+      .in("delivery_channel_id", remove);
+    if (error) return c.json({ error: "failed to update the routine's channels" }, 500);
+  }
+  if (add.length > 0) {
+    const { error } = await db
+      .from("routine_channels")
+      .insert(add.map((channelId) => ({ routine_id: id, delivery_channel_id: channelId })));
+    if (error) {
+      return insertErrorStatus(error) === 400
+        ? c.json({ error: "one of those channels is not yours, or was turned off" }, 400)
+        : c.json({ error: "failed to update the routine's channels" }, 500);
+    }
+  }
+  return c.json({ channelIds: wanted });
+});
+
+// POST /routines/:id/test — "Run a test" (A28). The same run as Run now, for
+// the same person and paid the same way, that sends nothing anywhere: the
+// result is a private thread for its owner, and nothing about the routine
+// moves (`isTest` in lib/routines/executor.ts lists what it leaves alone).
+routines.post("/routines/:id/test", async (c) => {
+  const db = c.get("db");
+  const { data: routine, error } = await db
+    .from("routines")
+    .select("*")
+    .eq("id", c.req.param("id"))
+    .maybeSingle();
+  if (error) return c.json({ error: "failed to load routine" }, 500);
+  if (!routine) return c.json({ error: "routine not found" }, 404);
+  // Run now's rule, for Run now's reason: it spends the owner's budget.
+  if (routine.user_id !== c.get("user").id) {
+    return c.json({ error: "only the owner can test this routine" }, 403);
+  }
+  const denied = await guardCredits(c, routine.workspace_id as string);
+  if (denied) return denied;
+
+  const result = await runTestRoutine(c.env, routine as RoutineRow);
+
+  // The row the test wrote, read back as its owner, so the editor can open
+  // the thread it made.
+  const { data: run } = await db
+    .from("routine_runs")
+    .select("*")
+    .eq("routine_id", routine.id)
+    .eq("triggered_by", "test")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return c.json({ ...result, run: run ? mapRoutineRun(run) : null });
 });
 
 export { routines };

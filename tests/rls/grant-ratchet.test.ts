@@ -88,6 +88,8 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
     "needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
   "profiles UPDATE": "active_workspace_id,avatar_url,bio,locale,name,timezone",
   // 0123: whether runs land in the Inbox, and the model and thinking they run on.
+  // 0130: the channels a routine delivers to after its primary.
+  "routine_channels INSERT": "delivery_channel_id,routine_id",
   "routines INSERT":
     "agent_id,delivery_channel_id,deliver_inbox,ends_after_runs,instruction,model,name,next_run_at,output_bundle_id,output_retention,reasoning_effort,schedule_cron,source_config,source_kind,timezone,trigger_kind,user_id,visibility,workspace_id",
   "routines UPDATE":

@@ -225,6 +225,8 @@ api.use("/brainstorm/ideas/suggest", rateLimit("expensive"));
 api.use("/persona/suggest", rateLimit("expensive"));
 api.use("/routines/draft", rateLimit("expensive"));
 api.use("/routines/:id/run", rateLimit("expensive"));
+// "Run a test" (0130) is a run, paid the same way.
+api.use("/routines/:id/test", rateLimit("expensive"));
 // A test event runs the routine on a sample, which is a model call like Run now.
 api.use("/routines/:id/event/test", rateLimit("expensive"));
 // The most expensive of the lot per call: a report is a document written

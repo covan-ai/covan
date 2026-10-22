@@ -1200,6 +1200,19 @@ export type RoutineDTO = {
   browserConversationId: string | null;
   status: "active" | "paused" | "completed";
   pausedReason: string | null;
+  /** Who paused it, by hand (0123) — null for a pause the engine made. */
+  pausedBy: string | null;
+  pausedAt: number | null;
+  /** Whether each run is also a thread in the Inbox (0123). */
+  deliverInbox: boolean;
+  /** The model and thinking it runs on (0123); null is its agent's. */
+  model: string | null;
+  reasoningEffort: ReasoningEffort | null;
+  /**
+   * The channels it delivers to after `deliveryChannelId` (0130). Ids only:
+   * a channel is its owner's to read, so a colleague sees how many, not where.
+   */
+  channelIds: string[];
   nextRunAt: number | null;
   lastRunAt: number | null;
   createdAt: number;
@@ -1234,6 +1247,13 @@ export function mapRoutine(row: {
   browser_conversation_id?: string | null;
   status: string;
   paused_reason: string | null;
+  paused_by?: string | null;
+  paused_at?: string | null;
+  deliver_inbox?: boolean | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  /** The `routine_channels` embed `ROUTINE_SELECT` asks for. */
+  channels?: Array<{ delivery_channel_id: string }> | null;
   next_run_at: string | null;
   last_run_at: string | null;
   created_at: string;
@@ -1277,6 +1297,16 @@ export function mapRoutine(row: {
     status:
       row.status === "paused" ? "paused" : row.status === "completed" ? "completed" : "active",
     pausedReason: row.paused_reason ?? null,
+    pausedBy: row.paused_by ?? null,
+    pausedAt: row.paused_at ? toEpochMs(row.paused_at) : null,
+    // On unless it says off: the column's default, and what a row read
+    // without it was.
+    deliverInbox: row.deliver_inbox !== false,
+    model: row.model || null,
+    reasoningEffort: (REASONING_EFFORTS as readonly string[]).includes(row.reasoning_effort ?? "")
+      ? (row.reasoning_effort as ReasoningEffort)
+      : null,
+    channelIds: (row.channels ?? []).map((c) => c.delivery_channel_id),
     nextRunAt: row.next_run_at ? toEpochMs(row.next_run_at) : null,
     lastRunAt: row.last_run_at ? toEpochMs(row.last_run_at) : null,
     createdAt: toEpochMs(row.created_at),
@@ -1338,15 +1368,20 @@ export type RoutineRunDTO = {
   model: string | null;
   /**
    * What started this run (0109): the cron, Run now, a webhook, an event, a
-   * reply. Null for runs recorded before the column existed.
+   * reply, or "Run a test" (0130). Null for runs recorded before the column
+   * existed.
    */
-  triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply" | null;
+  triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply" | "test" | null;
   /** "Gmail · New mail", for an event run. Null for the rest. */
   triggerLabel: string | null;
+  /** The thread this run is shown in (0123), when it has one. */
+  sessionId: string | null;
+  /** What the routine's other channels missed (0130). */
+  deliveryNote: string | null;
   startedAt: number;
 };
 
-const TRIGGER_SOURCES = ["schedule", "manual", "webhook", "event", "reply"] as const;
+const TRIGGER_SOURCES = ["schedule", "manual", "webhook", "event", "reply", "test"] as const;
 
 export function mapRoutineRun(row: {
   id: string;
@@ -1362,6 +1397,8 @@ export function mapRoutineRun(row: {
   model?: string | null;
   triggered_by?: string | null;
   trigger_label?: string | null;
+  session_id?: string | null;
+  delivery_note?: string | null;
   started_at: string;
 }): RoutineRunDTO {
   return {
@@ -1390,6 +1427,8 @@ export function mapRoutineRun(row: {
       ? (row.triggered_by as RoutineRunDTO["triggeredBy"])
       : null,
     triggerLabel: row.trigger_label || null,
+    sessionId: row.session_id ?? null,
+    deliveryNote: row.delivery_note || null,
     startedAt: toEpochMs(row.started_at),
   };
 }

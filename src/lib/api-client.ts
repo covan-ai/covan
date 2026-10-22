@@ -24,6 +24,9 @@ import type {
 import type {
   Routine,
   RoutineRun,
+  RoutineListItem,
+  RoutineStats,
+  RoutineEstimate,
   DeliveryChannel,
   DeliveryChannelKind,
   CreatedDeliveryChannel,
@@ -1432,7 +1435,38 @@ export const api = {
     remove: (): Promise<void> => request("DELETE", "/slack/installation"),
   },
   routines: {
-    list: (): Promise<Routine[]> => request("GET", "/routines"),
+    list: (): Promise<RoutineListItem[]> => request("GET", "/routines"),
+    /** The list's footer, over the runs the caller can see. */
+    stats: (days = 7): Promise<RoutineStats> => request("GET", `/routines/stats?days=${days}`),
+    /** What a run would cost, from the agent's own work, priced at `model` if given. */
+    estimate: (q: {
+      agentId: string;
+      routineId?: string;
+      model?: string;
+      cron?: string;
+      timezone?: string;
+    }): Promise<RoutineEstimate> => {
+      const params = new URLSearchParams({ agentId: q.agentId });
+      for (const key of ["routineId", "model", "cron", "timezone"] as const) {
+        const value = q[key];
+        if (value) params.set(key, value);
+      }
+      return request("GET", `/routines/estimate?${params}`);
+    },
+    /** Where it delivers after its primary channel; the whole list, replaced. */
+    setChannels: (id: string, channelIds: string[]): Promise<{ channelIds: string[] }> =>
+      request("PUT", `/routines/${id}/channels`, { channelIds }),
+    /**
+     * "Run a test": a run that goes only to its owner, as a private thread.
+     * Resolves when it ends, with the run it wrote.
+     */
+    test: (
+      id: string,
+    ): Promise<{
+      status: "ok" | "skipped" | "failed" | "waiting";
+      itemsNew: number;
+      run: RoutineRun | null;
+    }> => request("POST", `/routines/${id}/test`),
     /**
      * `confirmation` is there when the routine brought a new address with it
      * that is not the caller's own: it has been mailed a link, and nothing is

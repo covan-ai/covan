@@ -268,6 +268,8 @@ export const EXCLUDED: Record<string, string> = {
     "credentials. A key is not a record of what the workspace holds, it is a way to become one of its members, and an archive that carried them would be a key store that people email to each other.",
   passage_vector_changes:
     "the engine's to-do list for the passage index (0116): passage ids deleted or moved since the last tick, and nothing anybody wrote. It is emptied as it is read, and a restore has no index to tell — the passages themselves are rebuilt from the documents, as document_chunks says.",
+  routine_channels:
+    "the channels a routine delivers to after its first (0130). The archive carries a routine's primary channel, with its address withheld, and no others; a list naming channels the archive does not hold would fail its foreign keys on restore, and a restored channel has no address to send to anyway. The routine comes back paused with its primary, and its other destinations are picked again on the new install.",
   routine_deliveries:
     "not readable by a client at all, by design since 0012: it is the engine's own log of what it sent where. Nothing in it is workspace content.",
   routine_triggers:

@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { ApiError, errorMessage, isNoWorkspace } from "./api-error";
+import { ApiError, errorMessage, isNoWorkspace, requestIdOf } from "./api-error";
 import { assetSrc } from "./asset-src";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message, SessionTuning } from "./agents-store";
@@ -177,6 +177,10 @@ export type PendingInvitation = {
   inviteUrl?: string;
   /** Its link ran out, or it predates links: it needs Resend to be accepted. */
   needsResend: boolean;
+  /** Who sent it — on the pending list; null when their account is gone. */
+  invitedBy?: { id: string; name: string | null } | null;
+  /** When its link runs out, on the pending list. */
+  expiresAt?: number | null;
 };
 
 export type InvitationPreview = {
@@ -354,12 +358,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      message = errorMessage(res.status, await res.json(), res.statusText);
+      body = await res.json();
+      message = errorMessage(res.status, body, res.statusText);
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, requestIdOf(res, body));
   }
 
   if (res.status === 204) {
@@ -392,12 +398,14 @@ async function sendForm<T>(method: string, path: string, file: Blob): Promise<T>
   });
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      message = errorMessage(res.status, await res.json(), res.statusText);
+      body = await res.json();
+      message = errorMessage(res.status, body, res.statusText);
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, requestIdOf(res, body));
   }
   return (await res.json()) as T;
 }
@@ -583,6 +591,8 @@ export const api = {
     create: (input: {
       name: string;
       emoji?: string;
+      /** One of the eight marks; left out, the agent wears its monogram. */
+      avatar?: string | null;
       model?: string;
       persona?: string;
       mode?: "normal" | "brainstorm";
@@ -594,11 +604,24 @@ export const api = {
       patch: Partial<
         Pick<
           Agent,
-          "name" | "emoji" | "model" | "persona" | "mode" | "temperature" | "reasoningEffort"
+          | "name"
+          | "emoji"
+          | "avatar"
+          | "model"
+          | "persona"
+          | "mode"
+          | "temperature"
+          | "reasoningEffort"
         >
       >,
     ): Promise<Agent> => request("PATCH", `/agents/${id}`, patch),
     remove: (id: string): Promise<void> => request("DELETE", `/agents/${id}`),
+    /**
+     * What a delete takes with it, for the delete dialog's sentence (A25).
+     * 403 for anyone who could not delete it.
+     */
+    deleteSummary: (id: string): Promise<{ threads: number; routines: number; folders: number }> =>
+      request("GET", `/agents/${id}/delete-summary`),
     /**
      * Who can reach the agent, and how far. The list is the whole list: anybody
      * left out of `shares` loses their row. 403 for anyone short of Full access.

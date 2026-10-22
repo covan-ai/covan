@@ -24,6 +24,11 @@ export type Agent = {
   id: string;
   name: string;
   emoji: string;
+  /**
+   * The agent's mark (DESIGN.md §5): one of the eight names in
+   * `components/agent-mark.tsx`, or null for its monogram.
+   */
+  avatar: string | null;
   model: string;
   persona: string;
   mode: "normal" | "brainstorm";
@@ -91,6 +96,8 @@ export type Agent = {
     indexStatus?: "queued" | "indexing" | "ready" | "partial" | "failed" | null;
     indexProgress?: { done: number; total: number } | null;
     indexError?: string | null;
+    /** Who uploaded it; on a bundle's listing only, null for a synced or written file. */
+    createdBy?: { id: string; name: string | null } | null;
   }[];
   bundleIds: string[];
   createdAt: number;

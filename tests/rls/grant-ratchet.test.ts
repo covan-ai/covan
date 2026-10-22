@@ -39,9 +39,10 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // 0104: `workspace_access` is chosen when the agent is made and is INSERT
   // only. Changing it afterwards is `set_agent_sharing`'s, which checks for
   // `manage`; an UPDATE grant here would let anybody with `edit` reshare it.
+  // 0120: the agent's mark, chosen when it is made and changed in Configuration.
   "agents INSERT":
-    "created_by,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search,workspace_access,workspace_id",
-  "agents UPDATE": "emoji,mode,model,name,persona,reasoning_effort,temperature,web_search",
+    "avatar,created_by,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search,workspace_access,workspace_id",
+  "agents UPDATE": "avatar,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search",
   "api_keys INSERT": "name,prefix,token_hash,user_id,workspace_id",
   "api_keys UPDATE": "name,revoked_at",
   "capability_calls UPDATE": "status",

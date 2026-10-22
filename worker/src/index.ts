@@ -6,6 +6,7 @@ import type { AppEnv, Bindings } from "./types";
 import { authMiddleware } from "./middleware/auth";
 import { entitlementsMiddleware } from "./middleware/entitlements";
 import { rateLimit } from "./middleware/ratelimit";
+import { requestId } from "./middleware/request-id";
 import { runScheduledWork } from "./lib/background";
 import { agents } from "./routes/agents";
 import { browser } from "./routes/browser";
@@ -99,10 +100,16 @@ app.use(
     // told otherwise, and Content-Disposition is not one. The download and the
     // DOCX/PDF export name their file there, so without this every export was
     // saved as "document.docx" whatever the document was called.
-    exposeHeaders: ["Content-Disposition"],
+    //
+    // `X-Request-Id` is what the error page quotes (`middleware/request-id.ts`).
+    exposeHeaders: ["Content-Disposition", "X-Request-Id"],
     credentials: true,
   }),
 );
+
+// Before everything that can answer, so every response — a webhook's 401, the
+// limiter's 429, a route's 500 — names the request it answered.
+app.use("/*", requestId);
 
 // Ahead of the limiter, deliberately. A catalogue
 // grid asks for forty logos in one burst; counted in the `standard` bucket

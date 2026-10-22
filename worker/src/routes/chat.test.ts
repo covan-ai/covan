@@ -1181,6 +1181,41 @@ describe("the conversation's own dial (0099)", () => {
     expect(requestBody().reasoning_effort).toBe("high");
   });
 
+  it("lets one reply think harder than the conversation, for that reply only", async () => {
+    // The composer's Thinking chip (A2): "Applies to this message."
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-5-mini",
+      agentTuning: { reasoning_effort: "low" },
+      sessionDial: { reasoning_effort: "medium" },
+    });
+
+    await post(app, { sessionId: SESSION.id, reasoningEffort: "high" });
+
+    expect(requestBody().reasoning_effort).toBe("high");
+  });
+
+  it("puts one reply back on the agent's effort when it asks for null", async () => {
+    const { app } = appWith({
+      question: "Hi",
+      agentModel: "gpt-5-mini",
+      agentTuning: { reasoning_effort: "low" },
+      sessionDial: { reasoning_effort: "high" },
+    });
+
+    await post(app, { sessionId: SESSION.id, reasoningEffort: null });
+
+    expect(requestBody().reasoning_effort).toBe("low");
+  });
+
+  it("refuses an effort that is not one of the four", async () => {
+    const { app } = appWith({ question: "Hi", agentModel: "gpt-5-mini" });
+
+    const res = await post(app, { sessionId: SESSION.id, reasoningEffort: "maximum" });
+
+    expect(res.status).toBe(400);
+  });
+
   it("takes thinking off ('minimal') as a choice over the agent's effort", async () => {
     const { app } = appWith({
       question: "Hi",

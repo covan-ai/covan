@@ -94,10 +94,19 @@ describe("GET /invitations", () => {
                 created_at: CREATED_AT,
                 expires_at: future,
                 token_issued_at: CREATED_AT,
+                invited_by: "admin-1",
               },
             ],
             error: null,
           }),
+        },
+        profiles: {
+          // The caller's own row first (`getActiveWorkspaceId`), then the
+          // inviters' names, read by id.
+          select: (ctx) =>
+            ctx.filters.some((f) => f.kind === "in")
+              ? { data: [{ id: "admin-1", name: "Deniz" }], error: null }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
         },
       },
     });
@@ -112,6 +121,9 @@ describe("GET /invitations", () => {
         role: "member",
         createdAt: Date.parse(CREATED_AT),
         needsResend: false,
+        // "Invited by Deniz · Expires in 1 d" on the Invitations tab (A3).
+        invitedBy: { id: "admin-1", name: "Deniz" },
+        expiresAt: Date.parse(future),
       },
     ]);
 

@@ -471,6 +471,11 @@ export type Variables = {
   /** What this caller may spend. Unmetered unless a hosted build says otherwise. */
   entitlements: Entitlements;
   /**
+   * Which request this is, as `X-Request-Id` says it (`middleware/request-id.ts`):
+   * Cloudflare's ray where there is one, a fresh uuid on Node.
+   */
+  requestId?: string;
+  /**
    * The workspace this request's spending is charged to. Set by `guardCredits`
    * and read by `recordCredits`, so the two cannot disagree.
    */

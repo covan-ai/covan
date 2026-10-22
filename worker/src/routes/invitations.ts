@@ -38,21 +38,39 @@ invitations.get("/invitations", async (c) => {
   // scoping to workspace + pending keeps this to the admin's pending list.
   const { data, error } = await db
     .from("invitations")
-    .select("id, email, role, created_at, expires_at, token_issued_at")
+    .select("id, email, role, created_at, expires_at, token_issued_at, invited_by")
     .eq("workspace_id", workspaceId)
     .eq("status", "pending")
     .order("created_at", { ascending: false });
 
   if (error) return c.json({ error: "failed to load invitations" }, 500);
 
+  // "Invited by Deniz · 2 days ago" (A3). `invited_by` points at auth.users,
+  // which PostgREST cannot embed, so the names are a second read — of profiles
+  // the caller shares a workspace with, which the inviter always is. A name
+  // that does not come back (a deleted account) is null, never a guess.
+  const inviterIds = [
+    ...new Set((data ?? []).map((r) => r.invited_by as string | null).filter(Boolean)),
+  ] as string[];
+  const names = new Map<string, string | null>();
+  if (inviterIds.length > 0) {
+    const { data: profiles } = await db.from("profiles").select("id, name").in("id", inviterIds);
+    for (const p of profiles ?? []) names.set(p.id as string, (p.name as string | null) ?? null);
+  }
+
   const now = Date.now();
-  const result: PendingInvitationDTO[] = (data ?? []).map((r) => ({
-    id: r.id as string,
-    email: r.email as string,
-    role: r.role as string,
-    createdAt: toEpochMs(r.created_at as string),
-    needsResend: !r.token_issued_at || Date.parse(r.expires_at as string) <= now,
-  }));
+  const result: PendingInvitationDTO[] = (data ?? []).map((r) => {
+    const by = (r.invited_by as string | null) ?? null;
+    return {
+      id: r.id as string,
+      email: r.email as string,
+      role: r.role as string,
+      createdAt: toEpochMs(r.created_at as string),
+      needsResend: !r.token_issued_at || Date.parse(r.expires_at as string) <= now,
+      invitedBy: by ? { id: by, name: names.get(by) ?? null } : null,
+      expiresAt: r.expires_at ? toEpochMs(r.expires_at as string) : null,
+    };
+  });
   return c.json(result);
 });
 

@@ -10,6 +10,7 @@ import {
   availableModels,
   providerFor,
   anthropicEnabled,
+  REASONING_EFFORTS,
 } from "../lib/models";
 import { KICKOFF_ASK, KICKOFF_MAX_TOKENS, onboardingKickoff } from "../lib/onboarding-kickoff";
 import { reportProviderFailure } from "../lib/provider-error";
@@ -118,6 +119,13 @@ const streamChatSchema = z.object({
    * does for an agent carrying a model whose key has been rotated out.
    */
   model: z.string().optional(),
+  /**
+   * How hard this reply thinks, for this reply only — the composer's Thinking
+   * chip beside the Model chip, which says "Applies to this message" (A2).
+   * Absent means the conversation's own setting; null means the agent's.
+   * Ignored by a model that does not reason, as the session setting is.
+   */
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
   /**
    * Open the conversation, rather than answering a message in it.
    *
@@ -849,7 +857,11 @@ chat.post("/chat/stream", async (c) => {
             // An opening is a greeting with a cap to match, not an answer.
             maxTokens: intro ? KICKOFF_MAX_TOKENS : maxTokensFor(mode),
             temperature: temperatureFor(mode, agent.temperature),
-            reasoningEffort: reasoningEffortFor(tuning.reasoningEffort),
+            reasoningEffort: reasoningEffortFor(
+              parsed.data.reasoningEffort === undefined
+                ? tuning.reasoningEffort
+                : (parsed.data.reasoningEffort ?? agent.reasoning_effort ?? null),
+            ),
             // The one caller that shows it. On a model and an effort that
             // deliberate, the alternative is a long pause with nothing on
             // screen, which reads as a product that has stopped working.

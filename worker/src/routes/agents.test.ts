@@ -349,3 +349,70 @@ describe("PUT /agents/:id/sharing", () => {
     expect(await res.json()).toEqual({ error: "that person is not a member of this workspace" });
   });
 });
+
+describe("the agent's face (0120)", () => {
+  it("writes the mark on create and on edit, and null puts the monogram back", async () => {
+    const { db, writes } = fakeDb();
+    const app = appWith(db);
+
+    const created = await app.request("/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Support", avatar: "headset" }),
+    });
+    expect(created.status).toBe(201);
+    expect(writes[0]).toMatchObject({ name: "Support", avatar: "headset" });
+
+    expect((await patch(app, { avatar: "owl" })).status).toBe(200);
+    expect(writes[1]).toEqual({ avatar: "owl" });
+
+    expect((await patch(app, { avatar: null })).status).toBe(200);
+    expect(writes[2]).toEqual({ avatar: null });
+  });
+
+  it("refuses a mark that is not one of the eight", async () => {
+    const { db, writes } = fakeDb();
+    const res = await patch(appWith(db), { avatar: "unicorn" });
+    expect(res.status).toBe(400);
+    expect(writes).toEqual([]);
+  });
+
+  it("sends the mark back on the agent, and nothing for a name it does not know", async () => {
+    const { mapAgent } = await import("../lib/dto");
+    expect(mapAgent({ ...AGENT_ROW, avatar: "fox" }).avatar).toBe("fox");
+    expect(mapAgent({ ...AGENT_ROW, avatar: "dragon" }).avatar).toBeNull();
+    expect(mapAgent(AGENT_ROW).avatar).toBeNull();
+  });
+});
+
+describe("GET /agents/:id/delete-summary", () => {
+  function summaryDb(answer: { data?: unknown; error?: { code: string; message: string } }) {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    return {
+      calls,
+      db: {
+        rpc(name: string, args: Record<string, unknown>) {
+          calls.push({ name, args });
+          return {
+            maybeSingle: async () => ({ data: answer.data ?? null, error: answer.error ?? null }),
+          };
+        },
+      },
+    };
+  }
+
+  it("says what a delete takes with it", async () => {
+    const { db, calls } = summaryDb({ data: { threads: 19, routines: 2, folders: 3 } });
+    const res = await appWith(db).request("/agents/agent-1/delete-summary");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ threads: 19, routines: 2, folders: 3 });
+    expect(calls).toEqual([{ name: "agent_delete_summary", args: { p_agent_id: "agent-1" } }]);
+  });
+
+  it("answers somebody who could not delete it as the button would", async () => {
+    const refused = summaryDb({ error: { code: "42501", message: "no" } });
+    expect((await appWith(refused.db).request("/agents/agent-1/delete-summary")).status).toBe(403);
+    const missing = summaryDb({ error: { code: "P0002", message: "no" } });
+    expect((await appWith(missing.db).request("/agents/agent-1/delete-summary")).status).toBe(404);
+  });
+});

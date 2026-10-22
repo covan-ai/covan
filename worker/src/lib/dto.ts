@@ -82,14 +82,44 @@ export type DocumentDTO = {
   /** Passages embedded so far, and how many there will be, while it runs. */
   indexProgress?: { done: number; total: number } | null;
   indexError?: string | null;
+  /**
+   * Who uploaded it (0037), on the explorer's listing only: null for a file a
+   * source synced or a routine wrote, or whose uploader's account is gone.
+   */
+  createdBy?: { id: string; name: string | null } | null;
 };
 
 export type IndexStatus = "queued" | "indexing" | "ready" | "partial" | "failed";
+
+/**
+ * The eight marks an agent's face can be (0120, DESIGN.md §5). The same list
+ * as the column's check and as `AGENT_MARKS` in src/components/agent-mark.tsx.
+ */
+export const AVATAR_MARKS = [
+  "headset",
+  "fox",
+  "owl",
+  "bear",
+  "cat",
+  "robot",
+  "penguin",
+  "blob",
+] as const;
+
+export type AvatarMark = (typeof AVATAR_MARKS)[number];
+
+export function asAvatarMark(value: unknown): AvatarMark | null {
+  return typeof value === "string" && (AVATAR_MARKS as readonly string[]).includes(value)
+    ? (value as AvatarMark)
+    : null;
+}
 
 export type AgentDTO = {
   id: string;
   name: string;
   emoji: string | null;
+  /** The agent's mark (0120); null draws its monogram. */
+  avatar: AvatarMark | null;
   model: string | null;
   persona: string | null;
   mode: "normal" | "brainstorm";
@@ -445,6 +475,12 @@ export type PendingInvitationDTO = {
    * Accepting needs a new one: `POST /invitations/:id/resend`.
    */
   needsResend: boolean;
+  /**
+   * Who sent it and when it runs out, for the Invitations tab (A3). On the
+   * pending list only; null when the inviter's account is gone.
+   */
+  invitedBy?: { id: string; name: string | null } | null;
+  expiresAt?: number | null;
 };
 
 export type ApiKeyDTO = {
@@ -741,6 +777,7 @@ export function mapAgent(row: {
   id: string;
   name: string;
   emoji: string | null;
+  avatar?: string | null;
   model: string | null;
   persona: string | null;
   mode?: string | null;
@@ -779,6 +816,7 @@ export function mapAgent(row: {
     id: row.id,
     name: row.name,
     emoji: row.emoji,
+    avatar: asAvatarMark(row.avatar),
     model: row.model,
     persona: row.persona,
     mode: row.mode === "brainstorm" ? "brainstorm" : "normal",

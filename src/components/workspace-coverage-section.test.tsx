@@ -1,281 +1,189 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { WorkspaceCoverageSection } from "./workspace-coverage-section";
-import type { CoverageResponse } from "@/lib/api-client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type React from "react";
+import type { CoverageResponse, RevisitDocument } from "@/lib/api-client";
 
-const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
+const h = vi.hoisted(() => ({ workspace: vi.fn(), documents: vi.fn() }));
 
-const { setEnabled } = vi.hoisted(() => ({ setEnabled: vi.fn() }));
-
-vi.mock("@tanstack/react-query", () => ({
-  useQuery,
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-}));
 vi.mock("@/lib/api-client", () => ({
-  api: { coverage: { setEnabled } },
-  ApiError: class ApiError extends Error {},
+  api: { coverage: { workspace: h.workspace, documents: h.documents } },
+}));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
+    <a href={to}>{children}</a>
+  ),
+}));
+vi.mock("@/components/document-preview-dialog", () => ({
+  DocumentPreviewDialog: ({ name }: { name: string }) => <div role="dialog">{name}</div>,
 }));
 
-const HEADING = "What nothing was close to.";
+import { WorkspaceCoverageSection } from "./workspace-coverage-section";
 
-const response = (patch: Partial<CoverageResponse> = {}): CoverageResponse =>
-  ({
-    available: true,
-    days: 30,
-    totals: { answers: 100, covered: 62, fallback: 31, ungrounded: 7, unrecorded: 0 },
-    agents: [
-      {
-        agentId: "agent-1",
-        name: "Handbook",
-        emoji: "📘",
-        avatar: null,
-        answers: 60,
-        covered: 20,
-        fallback: 36,
-        ungrounded: 4,
-      },
-      {
-        agentId: "agent-2",
-        name: "GTM",
-        emoji: "📈",
-        avatar: null,
-        answers: 40,
-        covered: 34,
-        fallback: 5,
-        ungrounded: 1,
-      },
-    ],
-    ...patch,
-  }) as CoverageResponse;
+const response = (patch: Partial<CoverageResponse> = {}): CoverageResponse => ({
+  available: true,
+  days: 30,
+  totals: { answers: 100, covered: 62, fallback: 31, ungrounded: 7, unrecorded: 0 },
+  agents: [
+    {
+      agentId: "agent-2",
+      name: "Research",
+      emoji: null,
+      avatar: "owl",
+      answers: 40,
+      covered: 34,
+      fallback: 5,
+      ungrounded: 1,
+    },
+    {
+      agentId: "agent-1",
+      name: "Support",
+      emoji: null,
+      avatar: "headset",
+      answers: 60,
+      covered: 20,
+      fallback: 36,
+      ungrounded: 4,
+    },
+    {
+      agentId: "agent-3",
+      name: "Quiet",
+      emoji: null,
+      avatar: null,
+      answers: 0,
+      covered: 0,
+      fallback: 0,
+      ungrounded: 0,
+    },
+  ],
+  ...patch,
+});
 
-function renderWith(
-  data: CoverageResponse | undefined,
-  isLoading = false,
-  gapReportEnabled = false,
-) {
-  useQuery.mockReturnValue({ data, isLoading, isPending: isLoading });
-  return render(<WorkspaceCoverageSection gapReportEnabled={gapReportEnabled} />);
+const DOC: RevisitDocument = {
+  documentId: "d1",
+  name: "Refund policy v3.pdf",
+  bundleId: "b1",
+  bundleName: "Policies",
+  createdAt: Date.now() - 425 * 86_400_000,
+  uses: 61,
+  readBy: [{ agentId: "agent-1", name: "Support", avatar: "headset" }],
+};
+
+function renderSection() {
+  return render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <WorkspaceCoverageSection />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  setEnabled.mockResolvedValue({ ok: true });
+  h.workspace.mockResolvedValue(response());
+  h.documents.mockResolvedValue({ days: 30, documents: [DOC] });
 });
 
 describe("WorkspaceCoverageSection", () => {
-  it("leads with the share of answers that stood on something the team wrote", () => {
-    renderWith(response());
-
-    expect(screen.getByText("62%")).toBeInTheDocument();
-    expect(screen.getByText(/of 100 replies in the last 30 days/)).toBeInTheDocument();
+  it("draws one bar per agent asked anything, most asked first, and counts the rest", async () => {
+    renderSection();
+    const bars = await screen.findAllByRole("img");
+    expect(bars.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Support: 33% found a passage, 60% fell back to whole documents, 7% nothing close",
+      "Research: 85% found a passage, 13% fell back to whole documents, 3% nothing close",
+    ]);
+    expect(screen.getByText("60 asked · 67% not covered")).toBeInTheDocument();
+    expect(screen.getByText("40 asked · 15%")).toBeInTheDocument();
+    expect(screen.getByText(/1 agent nobody asked anything/)).toBeInTheDocument();
   });
 
-  it("names all three buckets with their counts, not just the good one", () => {
-    renderWith(response());
-
-    expect(screen.getByText("Stood on a passage")).toBeInTheDocument();
-    expect(screen.getByText("Fell back to whole documents")).toBeInTheDocument();
-    expect(screen.getByText("Nothing to stand on")).toBeInTheDocument();
-    expect(screen.getByText(/^31/)).toBeInTheDocument();
+  it("names the three buckets in a legend", async () => {
+    renderSection();
+    await screen.findAllByRole("img");
+    for (const label of ["Found a passage", "Fell back to whole documents", "Nothing close"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
   });
 
-  // 0053 orders by the misses so the agent most in need of somebody writing
-  // something down is first. The renderer keeps that order rather than
-  // imposing one of its own, which is the only reason the list is useful at a
-  // glance.
-  it("keeps the order the function returned, worst first", () => {
-    renderWith(response());
-
-    const names = screen.getAllByText(/^(Handbook|GTM)$/).map((el) => el.textContent);
-    expect(names).toEqual(["Handbook", "GTM"]);
-  });
-
-  // A third is the point past which the sentence changes from "people ask
-  // about things no handbook has" to "most of what this agent is asked is not
-  // in what it was given". Amber is the pointer at that, and is spent nowhere
-  // else on this screen.
-  it("points at the agent whose misses are worth acting on, and not at the others", () => {
-    const { container } = renderWith(response());
-
-    // Handbook: 40 of 60 missed — two thirds.
-    expect(screen.getByText("67% not covered")).toBeInTheDocument();
-    // GTM: 6 of 40 — ordinary, and left neutral.
-    expect(screen.getByText("15% not covered")).toBeInTheDocument();
-
-    // The design contract, not a detail: amber is a pointer in this system,
-    // and a pointer aimed at several rows at once is a highlight. One chip
-    // carries it, and it is the worst row.
-    const amber = container.querySelectorAll(".bg-brand");
-    expect(amber).toHaveLength(1);
-    expect(amber[0]).toHaveTextContent("67% not covered");
-  });
-
-  // Every row is above the threshold here, and exactly one is still allowed
-  // to be amber.
-  it("spends the accent once even when every agent is badly covered", () => {
-    const { container } = renderWith(
-      response({
-        agents: [
-          {
-            agentId: "a",
-            name: "One",
-            emoji: null,
-            avatar: null,
-            answers: 10,
-            covered: 1,
-            fallback: 8,
-            ungrounded: 1,
-          },
-          {
-            agentId: "b",
-            name: "Two",
-            emoji: null,
-            avatar: null,
-            answers: 10,
-            covered: 2,
-            fallback: 7,
-            ungrounded: 1,
-          },
-          {
-            agentId: "c",
-            name: "Three",
-            emoji: null,
-            avatar: null,
-            answers: 10,
-            covered: 3,
-            fallback: 6,
-            ungrounded: 1,
-          },
-        ],
-      }),
-    );
-
-    expect(container.querySelectorAll(".bg-brand")).toHaveLength(1);
-  });
-
-  // 0053 returns every agent, including the ones nobody asked anything. They
-  // are deliberately not rows — a list of zeroes buries the agents with
-  // figures — and deliberately not dropped either.
-  it("counts the agents nobody asked anything, without listing them as zeroes", () => {
-    renderWith(
-      response({
-        agents: [
-          {
-            agentId: "agent-1",
-            name: "Handbook",
-            emoji: "📘",
-            avatar: null,
-            answers: 60,
-            covered: 20,
-            fallback: 36,
-            ungrounded: 4,
-          },
-          {
-            agentId: "agent-3",
-            name: "Dormant",
-            emoji: "💤",
-            avatar: null,
-            answers: 0,
-            covered: 0,
-            fallback: 0,
-            ungrounded: 0,
-          },
-        ],
-      }),
-    );
-
-    expect(screen.queryByText("Dormant")).not.toBeInTheDocument();
-    expect(screen.getByText("1 agent nobody asked anything in this window.")).toBeInTheDocument();
-  });
-
-  it("switches the window without losing the section", async () => {
-    renderWith(response());
-
-    expect(screen.getByRole("button", { name: "30d" })).toHaveAttribute("aria-pressed", "true");
-
-    await userEvent.click(screen.getByRole("button", { name: "7d" }));
-
-    expect(screen.getByRole("button", { name: "7d" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "30d" })).toHaveAttribute("aria-pressed", "false");
-  });
-
-  // CI does not apply migrations, so there is a real window in which the API
-  // is deployed and 0053 is not. An admin should see nothing at all there.
-  it("renders nothing at all until the migration behind it exists", () => {
-    renderWith(response({ available: false }));
-
-    expect(screen.queryByText(HEADING)).not.toBeInTheDocument();
-  });
-
-  it("renders nothing while it is still loading, rather than an empty shell", () => {
-    renderWith(undefined, true);
-
-    expect(screen.queryByText(HEADING)).not.toBeInTheDocument();
-  });
-
-  it("says out loud that nothing here is per-person", () => {
-    renderWith(response());
-
-    expect(screen.getByText(/never by person/i)).toBeInTheDocument();
-  });
-
-  // The denominator excludes replies written before 0039, so a workspace whose
-  // history predates it would otherwise read its first report as a census when
-  // it is a sample.
-  it("declares the replies that predate the recording", () => {
-    renderWith(
-      response({
-        totals: { answers: 100, covered: 62, fallback: 31, ungrounded: 7, unrecorded: 240 },
-      }),
-    );
-
+  it("points at the one agent missing more than a third, with somewhere to go", async () => {
+    renderSection();
     expect(
-      screen.getByText(/240 replies in this window predate the recording/),
+      await screen.findByText(
+        /more than half of what support is asked is not in what it was given/i,
+      ),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add documents to Support" })).toHaveAttribute(
+      "href",
+      "/agents/$agentId/knowledge",
+    );
   });
 
-  it("says nothing yet rather than 0% when the window is empty", () => {
-    renderWith(
+  it("points at nobody when every agent stands on what it was given", async () => {
+    h.workspace.mockResolvedValue(
+      response({
+        agents: [
+          {
+            agentId: "agent-2",
+            name: "Research",
+            emoji: null,
+            avatar: "owl",
+            answers: 40,
+            covered: 34,
+            fallback: 5,
+            ungrounded: 1,
+          },
+        ],
+      }),
+    );
+    renderSection();
+    await screen.findAllByRole("img");
+    expect(screen.queryByText(/is not in what it was given/i)).not.toBeInTheDocument();
+  });
+
+  it("lists the documents worth revisiting and opens one", async () => {
+    const user = userEvent.setup();
+    renderSection();
+    const table = await screen.findByRole("table", { name: /documents worth revisiting/i });
+    expect(within(table).getAllByRole("row")[1]).toHaveTextContent(
+      /Refund policy v3\.pdf.*13 months.*61.*Support/,
+    );
+    await user.click(within(table).getByRole("button", { name: /open refund policy/i }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Refund policy v3.pdf");
+  });
+
+  it("asks again for one agent and another window", async () => {
+    const user = userEvent.setup();
+    renderSection();
+    await screen.findAllByRole("img");
+
+    await user.click(screen.getByRole("combobox", { name: "Window" }));
+    await user.click(await screen.findByRole("option", { name: "Last 7 days" }));
+    await waitFor(() => expect(h.workspace).toHaveBeenCalledWith(7));
+
+    await user.click(screen.getByRole("combobox", { name: "Agent" }));
+    await user.click(await screen.findByRole("option", { name: "Support" }));
+    await waitFor(() => expect(h.workspace).toHaveBeenCalledWith(7, "agent-1"));
+    await waitFor(() => expect(h.documents).toHaveBeenCalledWith(7, "agent-1"));
+  });
+
+  it("says nothing was asked rather than drawing empty bars", async () => {
+    h.workspace.mockResolvedValue(
       response({
         totals: { answers: 0, covered: 0, fallback: 0, ungrounded: 0, unrecorded: 0 },
         agents: [],
       }),
     );
-
-    expect(screen.getByText("Nothing in this window")).toBeInTheDocument();
-    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    renderSection();
+    expect(await screen.findByText(/nothing in this window/i)).toBeInTheDocument();
   });
 
-  describe("the admin switch", () => {
-    it("reflects the workspace's current setting", () => {
-      renderWith(response(), false, true);
-      expect(screen.getByRole("switch", { name: /weekly coverage report/i })).toBeChecked();
-    });
-
-    it("names the floor underneath it, derived rather than flat", () => {
-      renderWith(response());
-      expect(
-        screen.getByText(
-          /unavailable only for a workspace of exactly two.*identify the other person/i,
-        ),
-      ).toBeInTheDocument();
-    });
-
-    it("turns the report on through the workspace's own switch", async () => {
-      renderWith(response(), false, false);
-
-      await userEvent.click(screen.getByRole("switch", { name: /weekly coverage report/i }));
-
-      expect(setEnabled).toHaveBeenCalledWith(true);
-    });
-
-    // The floor sentence is informational, not a gate: a two-person workspace
-    // has to be able to flip this on and read why the routine still is not
-    // offered, rather than finding the switch disabled with no explanation.
-    it("stays on the screen regardless of member count — the floor is not enforced here", () => {
-      renderWith(response(), false, false);
-      expect(screen.getByRole("switch", { name: /weekly coverage report/i })).toBeEnabled();
-    });
+  it("shows the title alone before the migration behind it exists", async () => {
+    h.workspace.mockResolvedValue(response({ available: false }));
+    renderSection();
+    expect(screen.getByRole("heading", { name: "Coverage" })).toBeInTheDocument();
+    await waitFor(() => expect(h.workspace).toHaveBeenCalled());
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 });

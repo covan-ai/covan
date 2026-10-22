@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 
-import { documentsWorthRevisiting, countedSince } from "./stale-documents";
+import {
+  ageWords,
+  countedSince,
+  documentsWorthRevisiting,
+  missedShareWords,
+} from "./stale-documents";
 import { STALE_AFTER_DAYS } from "./relative-time";
 
 const NOW = Date.UTC(2026, 8, 1);
@@ -72,5 +77,22 @@ describe("countedSince", () => {
     // able to tell those apart: one is "no answers cite these", the other is
     // "no answer has been countable yet".
     expect(countedSince(null)).toBeNull();
+  });
+});
+
+describe("ageWords", () => {
+  const now = Date.UTC(2026, 9, 22);
+  it("counts months, then years", () => {
+    expect(ageWords(Date.UTC(2025, 7, 15), now)).toBe("14 months");
+    expect(ageWords(Date.UTC(2026, 8, 1), now)).toBe("1 month");
+    expect(ageWords(Date.UTC(2023, 9, 1), now)).toBe("3 years");
+  });
+});
+
+describe("missedShareWords", () => {
+  it("never says more than the share does", () => {
+    expect(missedShareWords(0.42)).toBe("More than a third of");
+    expect(missedShareWords(0.5)).toBe("More than half of");
+    expect(missedShareWords(0.8)).toBe("Most of");
   });
 });

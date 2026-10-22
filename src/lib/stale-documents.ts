@@ -78,3 +78,21 @@ export function countedSince(since: number | null): string | null {
 }
 
 export { STALE_AFTER_DAYS };
+
+/** "14 months", "2 years" — a document's age in the words A18 uses. */
+export function ageWords(createdAt: number, now: number = Date.now()): string {
+  const months = Math.max(0, Math.floor((now - createdAt) / (30.44 * 86_400_000)));
+  if (months < 1) return "under a month";
+  if (months < 24) return `${months} ${months === 1 ? "month" : "months"}`;
+  return `${Math.floor(months / 12)} years`;
+}
+
+/**
+ * The headline over an agent the team's questions keep missing (A18): "a
+ * third", "half", "most" — the share in words, never sharper than the count.
+ */
+export function missedShareWords(share: number): string {
+  if (share >= 0.75) return "Most of";
+  if (share >= 0.5) return "More than half of";
+  return "More than a third of";
+}

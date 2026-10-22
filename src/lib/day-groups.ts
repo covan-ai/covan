@@ -73,3 +73,15 @@ export function lastActivityLabel(at: number, now: number = Date.now()): string 
   if (/^\d{2}:\d{2}$/.test(short)) return `Today, ${short}`;
   return short;
 }
+
+/** "10:06" today, "Yesterday", then "20 Oct" — the board's clock, not "40 min ago". */
+export function clockTime(at: number, now: number = Date.now()): string {
+  const d = new Date(at);
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  if (at >= today.getTime()) {
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+  if (at >= today.getTime() - 86_400_000) return "Yesterday";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}

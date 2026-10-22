@@ -417,6 +417,48 @@ no endpoint that reads feedback back, because it is addressed to whoever runs
 the install rather than to the workspace. `path` is reduced to a path before it
 is stored, so a full URL loses its query string.
 
+## Webhooks
+
+An owner or admin can have the workspace POST its events to an address of
+theirs, in **Settings › API keys › Webhooks**. Four events exist, and an
+endpoint gets only the ones ticked:
+
+| Event              | Sent when                                                  |
+| ------------------ | ---------------------------------------------------------- |
+| `thread.finished`  | an agent finished a reply in a thread shared with everyone |
+| `agent.needs_you`  | an agent asked a question or is waiting for an approval    |
+| `routine.failed`   | a run of a shared routine failed                           |
+| `document.created` | a file was added to a folder the whole workspace can see   |
+
+Only what the whole workspace can see is sent, and a payload carries ids and
+names — a thread's title, a routine's name, a file's name — never the text of a
+message. Fetch the rest through the API with a key.
+
+```json
+{
+  "version": 1,
+  "id": "<delivery id>",
+  "event": "thread.finished",
+  "createdAt": "2026-10-22T09:41:07Z",
+  "sentAt": "2026-10-22T09:41:08Z",
+  "workspaceId": "<workspace id>",
+  "data": { "thread": { "id": "<thread id>", "title": "Refund for order 1042" } }
+}
+```
+
+The headers and the signature are the ones a routine's webhook channel sends —
+`X-Covan-Event`, `X-Covan-Delivery` (your idempotency key), `X-Covan-Timestamp`
+and `X-Covan-Signature: v1=<hex>`, an HMAC-SHA256 over `v1:<timestamp>:<raw
+body>` keyed by the endpoint's signing secret. [The routines
+page](routines.md#the-webhook-kind) has a verifier you can copy. The secret is
+shown once, when the endpoint is made; **Rotate** shows a new one once and stops
+the old one at the same moment.
+
+Any 2xx is a delivery. Anything else is tried again after 5, 15 and 40 minutes,
+then marked failed; the settings page lists the last day of deliveries with a
+**Resend** on the ones that gave up. An endpoint that is turned off records its
+events as not sent rather than queueing them.
+
 ## Keeping a key safe
 
 A key is a password that does not expire and cannot be seen twice. Treat it that

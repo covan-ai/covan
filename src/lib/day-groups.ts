@@ -1,5 +1,3 @@
-import { formatRelative } from "@/lib/relative-time";
-
 /**
  * Lists under date eyebrows (DESIGN.md §7, A4): Today, Yesterday, Earlier —
  * in the order the items came, so a list the server sorted by what needs you
@@ -67,14 +65,11 @@ export function lastActivityWords(at: number, now: number = Date.now()): string 
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-/** "12 min ago", "Today, 09:12", "Yesterday, 18:40", "12 Oct". */
+/** "12 min ago", "3 h ago", "Today, 09:12", "Yesterday", "Mon", "12 Oct" — A5's Last activity. */
 export function lastActivityLabel(at: number, now: number = Date.now()): string {
   const short = shortTime(at, now);
+  if (short === "now") return "just now";
+  if (/min$| h$/.test(short)) return `${short} ago`;
   if (/^\d{2}:\d{2}$/.test(short)) return `Today, ${short}`;
-  if (short === "Yesterday") {
-    const d = new Date(at);
-    return `Yesterday, ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  }
-  if (/min$| h$|^now$/.test(short)) return formatRelative(at, now);
   return short;
 }

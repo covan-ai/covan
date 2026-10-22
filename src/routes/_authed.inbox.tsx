@@ -88,7 +88,7 @@ function InboxPage() {
           </>
         }
       />
-      <PageBody width="list" className="lg:pt-4">
+      <PageBody width="list" className="lg:px-7 lg:pt-4">
         <div className="flex flex-wrap items-center gap-2 lg:px-3">
           <Pills
             label="Show"
@@ -108,7 +108,7 @@ function InboxPage() {
               value={agent ?? "all"}
               onValueChange={(v) => set({ agent: v === "all" ? undefined : v })}
             >
-              <SelectTrigger aria-label="Agent" className="w-auto min-w-36">
+              <SelectTrigger size="sm" aria-label="Agent" className="w-auto min-w-32">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="end">

@@ -36,3 +36,14 @@ describe("cronToProse", () => {
     expect(cronToProse(expr)).toBe(expr);
   });
 });
+
+describe("the short schedule", () => {
+  it("fits a list item, as the board writes it", async () => {
+    const { cronToShort } = await import("./cron-to-prose");
+    expect(cronToShort("0 9 * * *")).toBe("Daily 09:00");
+    expect(cronToShort("0 9 * * 1")).toBe("Mondays 09:00");
+    expect(cronToShort("30 8 * * 1-5")).toBe("Weekdays 08:30");
+    expect(cronToShort("0 9 1 * *")).toBe("1st of month");
+    expect(cronToShort("*/15 * * * *")).toBe("Every 15 minutes");
+  });
+});

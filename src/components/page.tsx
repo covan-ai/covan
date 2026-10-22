@@ -16,7 +16,7 @@ export function PageBody({
   className?: string;
 }) {
   return (
-    <div className={cn("mx-auto w-full px-4 py-6 lg:px-10 lg:py-8", PAGE_WIDTHS[width], className)}>
+    <div className={cn("w-full px-4 py-6 lg:px-10 lg:py-8", PAGE_WIDTHS[width], className)}>
       {children}
     </div>
   );

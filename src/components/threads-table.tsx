@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { lastActivityLabel } from "@/lib/day-groups";
+import { shortName } from "@/lib/monogram";
 
 const PAGE_SIZE = 25;
 
@@ -119,14 +120,14 @@ export function ThreadsTable({ agentId }: { agentId?: string }) {
       hideBelow: "lg",
       cell: (r) =>
         r.routine ? (
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex items-center gap-2 text-muted-foreground">
             <AgentMark agent={byId.get(r.agentId) ?? { name: "Routine" }} size={20} />
             Routine
           </span>
         ) : (
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex items-center gap-2 text-muted-foreground">
             <Avatar name={r.ownerName} url={r.ownerAvatarUrl} size={20} />
-            {r.isMine ? "You" : (r.ownerName ?? "A teammate")}
+            {r.isMine ? "You" : shortName(r.ownerName)}
           </span>
         ),
     },
@@ -242,7 +243,7 @@ export function ThreadsTable({ agentId }: { agentId?: string }) {
               setPage(1);
             }}
           >
-            <SelectTrigger aria-label="Agent" className="w-auto min-w-36">
+            <SelectTrigger aria-label="Agent" className="w-auto min-w-32">
               <SelectValue />
             </SelectTrigger>
             <SelectContent align="end">
@@ -256,7 +257,7 @@ export function ThreadsTable({ agentId }: { agentId?: string }) {
           </Select>
         )}
         <Select value={sort} onValueChange={(v) => setSort(v as typeof sort)}>
-          <SelectTrigger aria-label="Sort" className="w-auto min-w-36">
+          <SelectTrigger aria-label="Sort" className="w-auto min-w-32">
             <SelectValue />
           </SelectTrigger>
           <SelectContent align="end">

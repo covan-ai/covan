@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { groupByDay, shortTime } from "./day-groups";
+import { groupByDay, lastActivityLabel, shortTime } from "./day-groups";
+import { shortName } from "./monogram";
 
 const NOW = new Date(2026, 9, 22, 14, 0).getTime(); // Thursday 22 October, 14:00
 const at = (d: number, h: number, m = 0) => new Date(2026, 9, d, h, m).getTime();
@@ -20,5 +21,17 @@ describe("days on a list", () => {
     expect(shortTime(at(21, 9), NOW)).toBe("Yesterday");
     expect(shortTime(at(19, 9), NOW)).toBe("Mon");
     expect(shortTime(at(2, 9), NOW)).toBe("2 Oct");
+  });
+});
+
+describe("a table's last activity", () => {
+  it("reads like the board: minutes and hours ago, then today's time, then the day", () => {
+    expect(lastActivityLabel(NOW - 12 * 60 * 1000, NOW)).toBe("12 min ago");
+    expect(lastActivityLabel(NOW - 60 * 60 * 1000, NOW)).toBe("1 h ago");
+    expect(lastActivityLabel(at(22, 9, 12), NOW)).toBe("Today, 09:12");
+    expect(lastActivityLabel(at(21, 9), NOW)).toBe("Yesterday");
+    expect(lastActivityLabel(at(19, 9), NOW)).toBe("Mon");
+    expect(shortName("Can Bora")).toBe("Can B.");
+    expect(shortName("Mina")).toBe("Mina");
   });
 });

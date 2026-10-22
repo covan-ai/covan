@@ -18,3 +18,11 @@ export function monogram(label: string, size = 24): string {
     ? (words[0]!.charAt(0) + words[1]!.charAt(0)).toUpperCase()
     : words[0]!.charAt(0).toUpperCase();
 }
+
+/** "Can Bora" -> "Can B.": a teammate's name where a column is narrow (A5). */
+export function shortName(name: string | null | undefined): string {
+  const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "A teammate";
+  if (parts.length === 1) return parts[0]!;
+  return `${parts[0]} ${parts[parts.length - 1]!.charAt(0).toUpperCase()}.`;
+}

@@ -73,3 +73,24 @@ export function cronToProse(expr: string): string {
 
   return expr;
 }
+
+/**
+ * The schedule as briefly as a list item can carry it (A7's pane): "Daily
+ * 09:00", "Mondays 09:00", "Weekdays 08:30", "1st of month". Anything else is
+ * `cronToProse`'s sentence.
+ */
+export function cronToShort(expr: string): string {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return cronToProse(expr);
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+  const at = timeOfDay(minute!, hour!);
+  if (month !== "*" || !at) return cronToProse(expr);
+  if (dayOfMonth === "*" && dayOfWeek === "*") return `Daily ${at}`;
+  if (dayOfMonth === "*" && dayOfWeek === "1-5") return `Weekdays ${at}`;
+  if (dayOfMonth === "*" && /^[0-6]$/.test(dayOfWeek!)) return `${DAYS[Number(dayOfWeek)]} ${at}`;
+  if (dayOfWeek === "*" && /^\d{1,2}$/.test(dayOfMonth!)) {
+    const d = Number(dayOfMonth);
+    if (d >= 1 && d <= 31) return `${ordinal(d)} of month`;
+  }
+  return cronToProse(expr);
+}

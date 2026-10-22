@@ -5,7 +5,7 @@ import { Plus } from "lucide-react";
 import { api } from "@/lib/api-client";
 import type { RoutineListItem } from "@/lib/routines-api";
 import { useAgentsStore } from "@/lib/agents-store";
-import { cronToProse } from "@/lib/cron-to-prose";
+import { cronToShort } from "@/lib/cron-to-prose";
 import { routineDot, routineLine, statsLine } from "@/lib/routine-state";
 import { AgentMark } from "@/components/agent-mark";
 import { StatusDot } from "@/components/status-dot";
@@ -111,7 +111,7 @@ export function RoutinesPane({
                     <span className="font-medium text-foreground">{agent?.name ?? "Agent"}</span>
                     <span className="ml-auto truncate whitespace-nowrap">
                       {r.triggerKind === "schedule" || r.triggerKind === "both"
-                        ? cronToProse(r.scheduleCron)
+                        ? cronToShort(r.scheduleCron)
                         : r.triggerKind === "event"
                           ? "On an app event"
                           : "On a webhook"}

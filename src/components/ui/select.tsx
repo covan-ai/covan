@@ -12,14 +12,16 @@ const SelectGroup = SelectPrimitive.Group;
 
 const SelectValue = SelectPrimitive.Value;
 
+/** `sm` is the 28px filter beside pills (A4, A5); `default` the 32px form control. */
 const SelectTrigger = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger> & { size?: "default" | "sm" }
+>(({ className, children, size = "default", ...props }, ref) => (
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-8 w-full items-center justify-between gap-1.5 whitespace-nowrap rounded-md border border-input bg-card pr-2 pl-2.5 text-sm font-medium ring-offset-background cursor-pointer data-[placeholder]:text-micro-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
+      size === "sm" ? "h-7 pr-1.5 pl-2.5 text-meta" : "h-8 pr-2 pl-2.5 text-sm",
+      "flex w-full items-center justify-between gap-1.5 whitespace-nowrap rounded-md border border-input bg-card font-medium ring-offset-background cursor-pointer data-[placeholder]:text-micro-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1",
       className,
     )}
     {...props}

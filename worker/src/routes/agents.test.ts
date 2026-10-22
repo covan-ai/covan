@@ -41,6 +41,8 @@ function fakeDb(
     updated?: unknown[];
     /** What `set_agent_sharing` answers. */
     sharingError?: { code: string; message: string } | null;
+    /** What an insert answers instead of the row; 42501 is RLS refusing it. */
+    insertError?: { code: string; message: string };
   } = {},
 ) {
   const writes: Record<string, unknown>[] = [];
@@ -75,6 +77,10 @@ function fakeDb(
           resolve({ data: opts.updated ?? [{ id: AGENT_ROW.id }], error: null }),
         insert(row: Record<string, unknown>) {
           writes.push(row);
+          if (opts.insertError) {
+            const refused = { data: null, error: opts.insertError };
+            return { select: () => ({ single: async () => refused }) };
+          }
           return chain;
         },
       };
@@ -208,6 +214,22 @@ describe("PATCH /agents/:id", () => {
 });
 
 describe("POST /agents", () => {
+  // A viewer, whose role may not create agents: RLS refuses the row.
+  it("answers 403, not 500, when the database refuses the agent", async () => {
+    const { db } = fakeDb({
+      insertError: { code: "42501", message: "new row violates row-level security policy" },
+    });
+
+    const res = await appWith(db).request("/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "GTM" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "your role cannot create agents in this workspace" });
+  });
+
   it("creates an agent on Auto when nothing was asked for", async () => {
     const { db, writes } = fakeDb();
 

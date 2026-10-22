@@ -29,6 +29,7 @@ import { fetchSource } from "../lib/routines/source";
 import { ownHostsFrom } from "../lib/routines/url-guard";
 import { kickIndexJob } from "../lib/indexing/host";
 import { callDeletionFn } from "../lib/deletion";
+import { refusedByPolicy } from "../lib/refused";
 
 const bundles = new Hono<AppEnv>();
 
@@ -466,6 +467,9 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
       } catch (e) {
         console.error("r2 rollback failed", e);
       }
+    }
+    if (refusedByPolicy(error)) {
+      return c.json({ error: "you cannot add documents to this folder" }, 403);
     }
     console.error("failed to insert document row", error);
     return c.json({ error: "failed to save document" }, 500);

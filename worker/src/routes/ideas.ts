@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapIdea } from "../lib/dto";
+import { refusedByPolicy } from "../lib/refused";
 
 const ideas = new Hono<AppEnv>();
 
@@ -94,6 +95,9 @@ ideas.post("/sessions/:id/ideas", async (c) => {
     .select("*")
     .single();
 
+  if (refusedByPolicy(error)) {
+    return c.json({ error: "you cannot add ideas to this brainstorm" }, 403);
+  }
   if (error || !data) {
     return c.json({ error: "failed to create idea" }, 500);
   }

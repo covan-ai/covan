@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { chunked, readAllPages } from "./batch";
+import { storedKeysOf } from "./document-text";
 
 /**
  * Calling the soft-delete and restore functions, and turning their refusals
@@ -79,3 +81,50 @@ export function isRestorable(kind: string): kind is Restorable {
 
 /** How long a deleted thing waits before the sweeper takes it for real. */
 export const RETENTION_DAYS = 30;
+
+/**
+ * Every stored object about to lose the row that names it: the documents of
+ * these workspaces, for closing an account (`routes/account.ts`) and for a
+ * workspace whose notice ran out (`lib/purge.ts`).
+ *
+ * Best-effort on the read as well as the write: a workspace whose bundles or
+ * documents cannot be listed still gets deleted, because refusing to close an
+ * account over a storage bookkeeping problem would be the worse failure. What
+ * it costs is bytes nobody can reach, and the log line says which.
+ */
+export async function storedKeysForWorkspaces(
+  admin: SupabaseClient,
+  workspaceIds: string[],
+): Promise<string[]> {
+  if (workspaceIds.length === 0) return [];
+
+  const { data: bundles, error: bundlesError } = await admin
+    .from("knowledge_bundles")
+    .select("id")
+    .in("workspace_id", workspaceIds);
+
+  if (bundlesError) {
+    console.error("workspace deletion: could not list bundles to clean up", bundlesError);
+    return [];
+  }
+
+  const bundleIds = (bundles ?? []).map((b) => b.id as string);
+  if (bundleIds.length === 0) return [];
+
+  // In hundreds and page by page (`lib/batch.ts`): one list of every bundle
+  // was a URL the gateway refused past a couple of hundred, and one read of
+  // every document stopped at a thousand without saying so. Either way the
+  // files of an account with that much in it outlived the account.
+  const keys: string[] = [];
+  for (const ids of chunked(bundleIds)) {
+    const docs = await readAllPages<{ r2_key: string | null }>((from, to) =>
+      admin.from("documents").select("r2_key").in("bundle_id", ids).order("id").range(from, to),
+    );
+    if (docs === null) {
+      console.error("workspace deletion: could not list documents to clean up");
+      continue;
+    }
+    for (const d of docs) if (d.r2_key) keys.push(...storedKeysOf(d.r2_key));
+  }
+  return keys;
+}

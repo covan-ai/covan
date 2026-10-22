@@ -2,7 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Bindings } from "../types";
 import { serviceClient } from "./supabase";
 import { getDocStore, type DocStore } from "./docstore";
-import { RETENTION_DAYS } from "./deletion";
+import { RETENTION_DAYS, storedKeysForWorkspaces } from "./deletion";
+import { connectedAccountsIn, revokeConnectedAccounts } from "./composio/revoke";
+import { releaseSubscription } from "./routines/events/lifecycle";
+import { workspaceIconKeyFromUrl } from "./avatars";
 import { chunked, readAllPages } from "./batch";
 import { sidecarKey } from "./document-text";
 
@@ -208,6 +211,7 @@ export async function runPurge(env: Bindings): Promise<PurgeResult> {
   const db = serviceClient(env);
   const horizon = defaultHorizon();
   const result = await purgeExpired({ db, store, horizon });
+  await purgeScheduledWorkspaces(env, db, store);
   await sweepDeletedThreadsAndRoutines(db, horizon);
   await sweepStaleTurns(db);
   return result;
@@ -246,4 +250,69 @@ export async function sweepStaleTurns(
   const before = new Date(now.getTime() - 30 * 60_000).toISOString();
   const { error } = await db.from("active_turns").delete().lt("updated_at", before);
   if (error) console.error("purge: failed to sweep stale turns", error);
+}
+
+/**
+ * Workspaces whose fourteen days' notice has run out (0127).
+ *
+ * The same order closing an account keeps (`routes/account.ts`): what lives
+ * outside the database is handed back first — Composio grants revoked, event
+ * subscriptions released — because the rows are the only record of them;
+ * then the row goes, and its cascade takes everything in it; then the stored
+ * files, once nothing names them. Each workspace on its own, so one that fails
+ * waits for the next tick without holding up the rest. Best-effort at every
+ * third party, for the account's reason: refusing to finish a deletion
+ * somebody asked for over a provider's 500 is the worse outcome.
+ */
+export async function purgeScheduledWorkspaces(
+  env: Bindings,
+  db: ReturnType<typeof serviceClient>,
+  store: DocStore | null,
+  now: Date = new Date(),
+): Promise<number> {
+  const { data, error } = await db
+    .from("workspaces")
+    .select("id, icon_url")
+    .lte("deletes_at", now.toISOString());
+  if (error) {
+    console.error("purge: failed to list workspaces due for deletion", error);
+    return 0;
+  }
+
+  let deleted = 0;
+  for (const ws of (data ?? []) as Array<{ id: string; icon_url: string | null }>) {
+    const keys = await storedKeysForWorkspaces(db, [ws.id]);
+    const icon = workspaceIconKeyFromUrl(ws.icon_url, ws.id);
+    if (icon) keys.push(icon);
+
+    await revokeConnectedAccounts(env, await connectedAccountsIn(db, [ws.id]));
+    const { data: listening } = await db
+      .from("routines")
+      .select("id")
+      .eq("workspace_id", ws.id)
+      .eq("trigger_kind", "event");
+    for (const r of (listening ?? []) as Array<{ id: string }>) {
+      await releaseSubscription(env, r.id).catch((err: unknown) =>
+        console.error("purge: could not release an event subscription", r.id, err),
+      );
+    }
+
+    const { error: deleteError } = await db.from("workspaces").delete().eq("id", ws.id);
+    if (deleteError) {
+      console.error("purge: failed to delete a workspace due for deletion", ws.id, deleteError);
+      continue;
+    }
+    deleted += 1;
+
+    if (store) {
+      for (const key of keys) {
+        await store
+          .delete(key)
+          .catch((e: unknown) =>
+            console.error("purge: stored object left behind by a deleted workspace", key, e),
+          );
+      }
+    }
+  }
+  return deleted;
 }

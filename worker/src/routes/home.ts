@@ -5,7 +5,8 @@ import { callerWorkspaceId } from "../lib/workspace";
 import { asAvatarMark, toEpochMs, type AvatarMark } from "../lib/dto";
 import { estimateCostUsd } from "../lib/pricing";
 import { quoteOf } from "../lib/entitlements";
-import { mapInboxRow, type InboxItemDTO } from "./inbox";
+import { mapInboxRow, touchPresence, type InboxItemDTO } from "./inbox";
+import { deferred } from "../lib/defer";
 
 /**
  * Home (the Main board, A19, A24, A33): one read for the whole screen.
@@ -300,6 +301,9 @@ home.get("/home/overview", async (c) => {
 
   const db = c.get("db");
   const user = c.get("user");
+  // Home and the Inbox are what "last active" means (0128): stamped after the
+  // answer, never in front of it.
+  deferred(c, touchPresence(db, workspaceId));
   const [
     profile,
     workspace,

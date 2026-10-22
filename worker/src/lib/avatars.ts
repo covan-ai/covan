@@ -141,3 +141,27 @@ export function contentTypeForAvatarFile(file: string): AvatarType | null {
   const ext = file.slice(file.lastIndexOf(".") + 1);
   return TYPE_FOR_EXTENSION[ext] ?? null;
 }
+
+/**
+ * A workspace's icon (0127): the same image rules as a profile photo, under a
+ * prefix of its own and keyed by the workspace rather than a person.
+ */
+export function workspaceIconKey(workspaceId: string, type: AvatarType): string {
+  const random = crypto.getRandomValues(new Uint8Array(16));
+  const hex = Array.from(random, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `workspace-icons/${workspaceId}/${hex}.${EXTENSION[type]}`;
+}
+
+/** The store key behind a workspace's `icon_url`, held to that workspace. */
+export function workspaceIconKeyFromUrl(
+  url: string | null | undefined,
+  workspaceId: string,
+): string | null {
+  if (!url) return null;
+  const match = /^\/workspace-icons\/([^/]+)\/([^/]+)$/.exec(url);
+  if (!match) return null;
+  const [, id, file] = match;
+  if (!USER_ID_RE.test(id) || !FILE_RE.test(file)) return null;
+  if (id !== workspaceId) return null;
+  return `workspace-icons/${id}/${file}`;
+}

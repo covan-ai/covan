@@ -584,6 +584,13 @@ export type MeDTO = {
     defaultModel: string | null;
     /** Whether this workspace has turned the coverage gap report on. */
     gapReportEnabled: boolean;
+    /** The icon an admin uploaded (0127), or null for the letter tile. */
+    iconUrl: string | null;
+    /** The zone routines run in by default and the summary is sent by. */
+    timezone: string | null;
+    weeklyUsageEmail: boolean;
+    /** When a requested deletion takes the workspace, or null. */
+    deletesAt: number | null;
   };
   members: Array<{
     id: string;

@@ -113,6 +113,8 @@ describe("PATCH /workspace", () => {
       name: "Acme",
       slug: "acme",
       defaultModel: "gpt-4o",
+      timezone: null,
+      weeklyUsageEmail: false,
     });
 
     // camelCase in, snake_case out — and scoped to the caller's own workspace.
@@ -886,5 +888,162 @@ describe("GET /workspace/members/:userId/key-count", () => {
     });
 
     expect((await json(app, "GET", "/workspace/members/user-2/key-count")).status).toBe(500);
+  });
+});
+
+describe("the workspace's own settings (0127)", () => {
+  it("takes a time zone by its canonical name and refuses one that does not exist", async () => {
+    const { app, callsTo } = appWith({
+      tables: {
+        workspaces: {
+          update: (ctx: QueryContext) => ({
+            data: [
+              {
+                id: WORKSPACE,
+                name: "Acme",
+                slug: "acme",
+                default_model: null,
+                timezone: ctx.values?.timezone ?? null,
+                weekly_usage_email: ctx.values?.weekly_usage_email ?? false,
+              },
+            ],
+            error: null,
+          }),
+        },
+      },
+    });
+
+    const ok = await json(app, "PATCH", "/workspace", {
+      timezone: "europe/istanbul",
+      weeklyUsageEmail: true,
+    });
+    expect(ok.status).toBe(200);
+    expect(callsTo("workspaces")[0]!.values).toEqual({
+      timezone: "Europe/Istanbul",
+      weekly_usage_email: true,
+    });
+    expect(await ok.json()).toMatchObject({ timezone: "Europe/Istanbul", weeklyUsageEmail: true });
+
+    const bad = await json(app, "PATCH", "/workspace", { timezone: "Mars/Olympus" });
+    expect(bad.status).toBe(400);
+  });
+});
+
+describe("GET /workspace/members", () => {
+  it("lists everybody with their agents, last visit and which of them made the workspace", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_members: {
+          select: (ctx: QueryContext) =>
+            ctx.columns?.includes("last_seen_at")
+              ? {
+                  data: [
+                    {
+                      user_id: "deniz",
+                      role: "admin",
+                      last_seen_at: "2026-10-22T10:00:00Z",
+                      created_at: "2026-09-01T00:00:00Z",
+                    },
+                    {
+                      user_id: USER.id,
+                      role: "admin",
+                      last_seen_at: null,
+                      created_at: "2026-08-01T00:00:00Z",
+                    },
+                  ],
+                  error: null,
+                }
+              : { data: { workspace_id: WORKSPACE }, error: null },
+        },
+        workspaces: { select: () => ({ data: { created_by: USER.id }, error: null }) },
+        profiles: {
+          select: (ctx: QueryContext) =>
+            ctx.filters.some((f) => f.kind === "in")
+              ? {
+                  data: [
+                    { id: USER.id, name: "Mina Kaya", email: "mina@acme.test", avatar_url: null },
+                    {
+                      id: "deniz",
+                      name: "Deniz Arslan",
+                      email: "deniz@acme.test",
+                      avatar_url: null,
+                    },
+                  ],
+                  error: null,
+                }
+              : { data: { active_workspace_id: WORKSPACE }, error: null },
+        },
+      },
+      rpc: {
+        member_agent_counts: () => ({
+          data: [
+            { user_id: USER.id, agents: 4 },
+            { user_id: "deniz", agents: 2 },
+          ],
+          error: null,
+        }),
+      },
+    });
+
+    const res = await json(app, "GET", "/workspace/members");
+    const body = (await res.json()) as Array<Record<string, unknown>>;
+    expect(body.map((m) => [m.name, m.isOwner, m.agents])).toEqual([
+      ["Mina Kaya", true, 4],
+      ["Deniz Arslan", false, 2],
+    ]);
+    expect(body[1]!.lastSeenAt).toBe(Date.parse("2026-10-22T10:00:00Z"));
+  });
+});
+
+describe("POST /workspace/deletion", () => {
+  it("asks the database with the name typed, and answers when it will go", async () => {
+    const asked: Array<Record<string, unknown>> = [];
+    const { app } = appWith({
+      rpc: {
+        request_workspace_deletion: (args) => {
+          asked.push(args);
+          return { data: "2026-11-05T12:00:00Z", error: null };
+        },
+      },
+    });
+    const res = await json(app, "POST", "/workspace/deletion", { name: "Acme" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deletesAt: Date.parse("2026-11-05T12:00:00Z") });
+    expect(asked).toEqual([{ p_workspace_id: WORKSPACE, p_name: "Acme" }]);
+  });
+
+  it("says why when the name is wrong, and refuses a member and a key", async () => {
+    const wrong = appWith({
+      rpc: {
+        request_workspace_deletion: () => ({
+          data: null,
+          error: { code: "22023", message: "type the workspace's name exactly to delete it" },
+        }),
+      },
+    });
+    const res = await json(wrong.app, "POST", "/workspace/deletion", { name: "acme" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "type the workspace's name exactly to delete it" });
+
+    const member = appWith({
+      rpc: {
+        request_workspace_deletion: () => ({ data: null, error: { code: "42501", message: "no" } }),
+      },
+    });
+    expect((await json(member.app, "POST", "/workspace/deletion", { name: "Acme" })).status).toBe(
+      403,
+    );
+
+    const keyed = appWith({ apiKeyId: "key-1" });
+    expect((await json(keyed.app, "POST", "/workspace/deletion", { name: "Acme" })).status).toBe(
+      403,
+    );
+  });
+
+  it("cancels on DELETE", async () => {
+    const { app } = appWith({
+      rpc: { cancel_workspace_deletion: () => ({ data: null, error: null }) },
+    });
+    expect((await json(app, "DELETE", "/workspace/deletion")).status).toBe(200);
   });
 });

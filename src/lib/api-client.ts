@@ -56,6 +56,13 @@ export type Workspace = {
    * the engine would refuse.
    */
   gapReportEnabled?: boolean;
+  /** An uploaded icon (0127), or absent/null for the letter tile. */
+  iconUrl?: string | null;
+  /** The zone routines run in by default and the weekly summary is sent by. */
+  timezone?: string | null;
+  weeklyUsageEmail?: boolean;
+  /** When a requested deletion takes the workspace (epoch ms), or null. */
+  deletesAt?: number | null;
 };
 
 export type WorkspaceMember = {
@@ -1139,7 +1146,16 @@ export const api = {
       name?: string;
       slug?: string;
       defaultModel?: string | null;
+      timezone?: string | null;
+      weeklyUsageEmail?: boolean;
     }): Promise<Workspace> => request("PATCH", "/workspace", patch),
+    /** PNG, JPEG or WebP, at most 2 MB. Admins only. */
+    setIcon: (file: Blob): Promise<{ iconUrl: string }> => sendForm("PUT", "/workspace/icon", file),
+    removeIcon: (): Promise<{ iconUrl: null }> => request("DELETE", "/workspace/icon"),
+    /** Fourteen days' notice; every member is told. The name must match exactly. */
+    requestDeletion: (name: string): Promise<{ deletesAt: number | null }> =>
+      request("POST", "/workspace/deletion", { name }),
+    cancelDeletion: (): Promise<{ ok: true }> => request("DELETE", "/workspace/deletion"),
     setActive: (workspaceId: string): Promise<{ ok: true }> =>
       request("POST", "/workspace/active", { workspaceId }),
     /**
@@ -1181,6 +1197,8 @@ export const api = {
       URL.revokeObjectURL(url);
     },
     members: {
+      /** Everybody in the workspace, for the Team table (A3). */
+      list: (): Promise<TeamMember[]> => request("GET", "/workspace/members"),
       updateRole: (userId: string, role: WorkspaceRole): Promise<{ ok: true }> =>
         request("PATCH", `/workspace/members/${userId}`, { role }),
       remove: (userId: string): Promise<{ ok: true }> =>
@@ -1630,6 +1648,13 @@ export const api = {
      * when it arrives.
      */
     close: (): Promise<{ ok: true }> => request("DELETE", "/account"),
+    /** Where this account is signed in. */
+    sessions: (): Promise<AccountSession[]> => request("GET", "/account/sessions"),
+    /** Signs another browser out; refuses the one asking. */
+    revokeSession: (id: string): Promise<{ ok: true }> =>
+      request("DELETE", `/account/sessions/${id}`),
+    /** The providers this account signs in with. */
+    identities: (): Promise<AccountIdentity[]> => request("GET", "/account/identities"),
   },
   notifications: {
     get: (): Promise<NotificationPreferences> => request("GET", "/notification-preferences"),
@@ -1773,6 +1798,43 @@ export type EventPage = {
 export type NotificationPreferences = {
   routinePaused: boolean;
   quotaExhausted: boolean;
+  /** 0128: "Email me when" — an agent needs me and I have been away an hour. */
+  needsMeAway: boolean;
+  routineFailed: boolean;
+  /** The Monday-morning summary; off until somebody turns it on. */
+  weeklySummary: boolean;
+};
+
+/** One member as the Team table shows them (A3). */
+export type TeamMember = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  role: WorkspaceRole;
+  /** How many agents they can use. */
+  agents: number;
+  lastSeenAt: number | null;
+  joinedAt: number | null;
+  /** Made the workspace. A label, not a role. */
+  isOwner: boolean;
+};
+
+/** A browser this account is signed in on (A16 › Security). */
+export type AccountSession = {
+  id: string;
+  device: string;
+  browser: string;
+  current: boolean;
+  createdAt: number;
+  lastSeenAt: number | null;
+};
+
+export type AccountIdentity = {
+  provider: string;
+  email: string | null;
+  connectedAt: number;
+  lastSignInAt: number | null;
 };
 
 export type AgentUsage = {

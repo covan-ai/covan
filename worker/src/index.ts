@@ -53,6 +53,7 @@ import { notionEvents } from "./routes/notion-events";
 import { emailInbound } from "./routes/email-inbound";
 import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
+import { workspaceIcons, workspaceIconsPublic } from "./routes/workspace-icons";
 import { routineHooks } from "./routes/routine-hooks";
 import { addressConfirmationsPublic } from "./routes/address-confirmations";
 import { turns } from "./routes/turns";
@@ -262,6 +263,7 @@ api.route("/", reports);
 api.route("/", documentJobs);
 api.route("/", me);
 api.route("/", avatars);
+api.route("/", workspaceIcons);
 api.route("/", workspace);
 api.route("/", support);
 api.route("/", invitations);
@@ -297,6 +299,8 @@ app.route("/", connectionsPublic);
 // a member list is small and paid once: responses are `immutable`, so a
 // browser asks for each photo a single time.
 app.route("/", avatarsPublic);
+// A workspace's icon, for the same reason and behind the same limiter.
+app.route("/", workspaceIconsPublic);
 
 // Unauthenticated for the reason the invite page is public: the person saying
 // yes to routine results at their address may have no Covan account. The

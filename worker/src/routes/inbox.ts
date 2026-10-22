@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { callerWorkspaceId } from "../lib/workspace";
 import { toEpochMs } from "../lib/dto";
+import { deferred } from "../lib/defer";
 
 /**
  * The Inbox (A4, A20): every thread the caller can see, newest activity first,
@@ -195,6 +196,15 @@ async function readCounts(
   return sumCounts((data ?? []) as Parameters<typeof sumCounts>[0]);
 }
 
+/** "Last active" in the Team table and the away-for-an-hour reminder (0128). */
+export async function touchPresence(
+  db: AppEnv["Variables"]["db"],
+  workspaceId: string,
+): Promise<void> {
+  const { error } = await db.rpc("touch_presence", { p_workspace_id: workspaceId });
+  if (error) console.error("touch_presence failed", error);
+}
+
 // GET /inbox
 inbox.get("/inbox", async (c) => {
   const parsed = listQuery.safeParse(c.req.query());
@@ -204,6 +214,7 @@ inbox.get("/inbox", async (c) => {
   if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
 
   const db = c.get("db");
+  deferred(c, touchPresence(db, workspaceId));
   const limit = parsed.data.limit ?? 50;
   const [rows, counts] = await Promise.all([
     db.rpc("inbox_rows", {

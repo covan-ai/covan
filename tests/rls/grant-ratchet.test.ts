@@ -78,10 +78,11 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // 0094 onwards: each table the columns the API writes with a caller's client.
   "messages INSERT": "content,role,sender_id,session_id",
   "messages UPDATE": "content",
+  // 0128: the three "Email me when" switches.
   "notification_preferences INSERT":
-    "quota_exhausted,quota_warned_for,routine_paused,updated_at,user_id",
+    "needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
   "notification_preferences UPDATE":
-    "quota_exhausted,quota_warned_for,routine_paused,updated_at,user_id",
+    "needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
   "profiles UPDATE": "active_workspace_id,avatar_url,bio,locale,name,timezone",
   // 0123: whether runs land in the Inbox, and the model and thinking they run on.
   "routines INSERT":
@@ -105,7 +106,9 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "user_onboarding UPDATE":
     "agent_id,assistant_emoji,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
   "workspace_members UPDATE": "role",
-  "workspaces UPDATE": "default_model,gap_report_enabled,name,slug",
+  // 0127: the icon, the clock and the weekly summary; never the deletion columns.
+  "workspaces UPDATE":
+    "default_model,gap_report_enabled,icon_url,name,slug,timezone,weekly_usage_email",
 };
 
 afterAll(async () => {

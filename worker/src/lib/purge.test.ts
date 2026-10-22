@@ -290,3 +290,40 @@ describe("threads and routines deleted on their own (0125)", () => {
     expect(deleted).toEqual([{ table: "chat_sessions", ids: ["s1", "s2"] }]);
   });
 });
+
+describe("a workspace whose notice ran out (0127)", () => {
+  it("hands back what lives elsewhere, deletes the row, then the files", async () => {
+    const { purgeScheduledWorkspaces } = await import("./purge");
+    const order: string[] = [];
+    const WS = "1c7f4d2e-3b5e-4f90-8a2c-4d6e8f0a2b3c";
+    const icon = `/workspace-icons/${WS}/${"c".repeat(32)}.png`;
+    const db = {
+      from(table: string) {
+        const chain: Record<string, unknown> = {
+          select: () => chain,
+          lte: async () => ({ data: [{ id: WS, icon_url: icon }], error: null }),
+          in: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          range: async () => ({ data: [], error: null }),
+          then: (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null }),
+          delete: () => ({
+            eq: async () => {
+              order.push(`delete ${table}`);
+              return { error: null };
+            },
+          }),
+        };
+        return chain;
+      },
+    };
+    const store = {
+      delete: vi.fn(async (key: string) => {
+        order.push(`store ${key}`);
+      }),
+    };
+    const gone = await purgeScheduledWorkspaces({} as never, db as never, store as never);
+    expect(gone).toBe(1);
+    expect(order).toEqual(["delete workspaces", `store ${icon.slice(1)}`]);
+  });
+});

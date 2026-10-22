@@ -9,8 +9,8 @@ import { releaseHeldConnections } from "../lib/connections/release";
 import { deleteProfile } from "../lib/browser/profiles";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
 import { avatarKeyFromUrl } from "../lib/avatars";
-import { chunked, readAllPages } from "../lib/batch";
-import { storedKeysOf } from "../lib/document-text";
+import { storedKeysForWorkspaces } from "../lib/deletion";
+import { describeUserAgent } from "../lib/user-agent";
 
 /**
  * Closing an account.
@@ -95,50 +95,75 @@ export function planWorkspaces(rows: PlanRow[]): { blocked: string[]; deletable:
   return { blocked, deletable };
 }
 
-/**
- * Every stored object about to lose the row that names it.
- *
- * Best-effort on the read as well as the write: a workspace whose bundles or
- * documents cannot be listed still gets deleted, because refusing to close an
- * account over a storage bookkeeping problem would be the worse failure. What
- * it costs is bytes nobody can reach, and the log line says which.
- */
-async function collectDocumentKeys(
-  admin: ReturnType<typeof serviceClient>,
-  workspaceIds: string[],
-): Promise<string[]> {
-  if (workspaceIds.length === 0) return [];
-
-  const { data: bundles, error: bundlesError } = await admin
-    .from("knowledge_bundles")
-    .select("id")
-    .in("workspace_id", workspaceIds);
-
-  if (bundlesError) {
-    console.error("account deletion: could not list bundles to clean up", bundlesError);
-    return [];
+// GET /account/sessions — where this account is signed in (A16 › Security).
+//
+// From GoTrue's own table, through `my_sessions` (0128), which answers for the
+// caller alone. Device and browser from the User-Agent; no address, no place.
+account.get("/account/sessions", async (c) => {
+  const { data, error } = await c.get("db").rpc("my_sessions");
+  if (error) {
+    console.error("my_sessions failed", error);
+    return c.json({ error: "failed to load your sessions" }, 500);
   }
+  return c.json(
+    (
+      (data ?? []) as Array<{
+        id: string;
+        user_agent: string | null;
+        created_at: string;
+        last_seen_at: string | null;
+        current: boolean;
+      }>
+    ).map((s) => ({
+      id: s.id,
+      ...describeUserAgent(s.user_agent),
+      current: s.current === true,
+      createdAt: Date.parse(s.created_at),
+      lastSeenAt: s.last_seen_at ? Date.parse(s.last_seen_at) : null,
+    })),
+  );
+});
 
-  const bundleIds = (bundles ?? []).map((b) => b.id as string);
-  if (bundleIds.length === 0) return [];
-
-  // In hundreds and page by page (`lib/batch.ts`): one list of every bundle
-  // was a URL the gateway refused past a couple of hundred, and one read of
-  // every document stopped at a thousand without saying so. Either way the
-  // files of an account with that much in it outlived the account.
-  const keys: string[] = [];
-  for (const ids of chunked(bundleIds)) {
-    const docs = await readAllPages<{ r2_key: string | null }>((from, to) =>
-      admin.from("documents").select("r2_key").in("bundle_id", ids).order("id").range(from, to),
-    );
-    if (docs === null) {
-      console.error("account deletion: could not list documents to clean up");
-      continue;
-    }
-    for (const d of docs) if (d.r2_key) keys.push(...storedKeysOf(d.r2_key));
+// DELETE /account/sessions/:id — sign one of them out. Not this one: that is
+// the account menu's Sign out, which also clears this browser.
+account.delete("/account/sessions/:id", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "sign a session out");
+  if (refusal) return c.json(refusal, 403);
+  const { data, error } = await c.get("db").rpc("revoke_my_session", {
+    p_session_id: c.req.param("id"),
+  });
+  if (error) {
+    if (error.code === "22023") return c.json({ error: error.message }, 400);
+    console.error("revoke_my_session failed", error);
+    return c.json({ error: "failed to sign that session out" }, 500);
   }
-  return keys;
-}
+  if (data !== true) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true });
+});
+
+// GET /account/identities — the providers this account signs in with.
+account.get("/account/identities", async (c) => {
+  const { data, error } = await c.get("db").rpc("my_identities");
+  if (error) {
+    console.error("my_identities failed", error);
+    return c.json({ error: "failed to load how you sign in" }, 500);
+  }
+  return c.json(
+    (
+      (data ?? []) as Array<{
+        provider: string;
+        email: string | null;
+        created_at: string;
+        last_sign_in_at: string | null;
+      }>
+    ).map((i) => ({
+      provider: i.provider,
+      email: i.email,
+      connectedAt: Date.parse(i.created_at),
+      lastSignInAt: i.last_sign_in_at ? Date.parse(i.last_sign_in_at) : null,
+    })),
+  );
+});
 
 // DELETE /account — close your own account, and nothing else's.
 account.delete("/account", async (c) => {
@@ -187,7 +212,7 @@ account.delete("/account", async (c) => {
   // Read while the rows still exist, and thrown away if anything below refuses.
   // Two hops rather than a join, because the cascade is two hops: a document
   // names a bundle and a bundle names the workspace.
-  const keys = await collectDocumentKeys(admin, deletable);
+  const keys = await storedKeysForWorkspaces(admin, deletable);
 
   // The one stored object that does belong to a person: an uploaded photo
   // (`routes/avatars.ts`). The profile row goes with `auth.users` below, and

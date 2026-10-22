@@ -69,8 +69,18 @@ export const EXPORTED: TableSpec[] = [
     table: "workspaces",
     scope: { kind: "workspace", column: "id" },
     order: "created_at",
-    columns: "id,name,slug,created_by,created_at,default_model",
+    columns: "id,name,slug,created_by,created_at,default_model,timezone,weekly_usage_email",
     withheld: {
+      icon_url:
+        "a path to an image this deployment stores (0127), keyed by the workspace's id. The archive carries rows, not the store's objects, and a restored workspace has a new id the path would not match; it comes back with its letter tile and an admin uploads the icon again.",
+      weekly_usage_sent_for:
+        "the engine's note of which Monday it last mailed the summary for. A restore that carried it would skip the first summary the new install owes.",
+      deletion_requested_at:
+        "a pending deletion is a decision about this install's copy (0127). An archive taken during the notice must not restore a workspace that deletes itself a fortnight later.",
+      deletion_requested_by:
+        "who asked for a pending deletion; deletion_requested_at's reason applies, and the person may not exist in the new install.",
+      deletes_at:
+        "when a pending deletion takes the workspace; deletion_requested_at's reason applies, since a restored copy must not delete itself.",
       gap_report_enabled:
         "a consent control, and its other half cannot travel. 0076's report is off until a workspace turns it on, and the member opt-outs that make turning it on acceptable are in coverage_opt_outs, which is excluded below because its SELECT policy is self-only even for admins. Exporting the switch without them would bring a workspace back with the report on and every opt-out gone. Left out, a restored workspace starts with the switch at its default of false and somebody has to choose again, which is what the column's default exists to guarantee.",
     },

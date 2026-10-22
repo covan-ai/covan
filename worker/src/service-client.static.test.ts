@@ -363,6 +363,10 @@ const RECEIVES_THE_SERVICE_CLIENT = new Map([
     "parks and resumes a turn: paused_turns has no client write grant, and every row is keyed to a message and session the route resolved through the caller's own client",
   ],
   [
+    "lib/deletion.ts",
+    "lists the stored files of workspaces that are about to be deleted — the caller's own when they close their account (routes/account.ts, which has already decided which workspaces are theirs alone to delete) and those whose fourteen days' notice ran out (lib/purge.ts, on the cron with no caller). It reads knowledge_bundles and documents keyed to those workspace ids, writes nothing, and returns storage keys",
+  ],
+  [
     "lib/active-turns.ts",
     "says a turn is running where the rest of the workspace can see it (0122): active_turns has no client write grant, for paused_turns' reason, and every write is keyed to the one session the route already resolved through the caller's own client — upserted when the turn starts, moved along by its own steps, deleted when it ends",
   ],

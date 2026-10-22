@@ -77,7 +77,9 @@ me.get("/me", async (c) => {
 
   const { data: workspace, error: workspaceError } = await db
     .from("workspaces")
-    .select("id,name,slug,default_model,gap_report_enabled")
+    .select(
+      "id,name,slug,default_model,gap_report_enabled,icon_url,timezone,weekly_usage_email,deletes_at",
+    )
     .eq("id", workspaceId)
     .single();
 
@@ -182,6 +184,10 @@ me.get("/me", async (c) => {
       slug: workspace.slug as string,
       defaultModel: (workspace.default_model as string | null) ?? null,
       gapReportEnabled: workspace.gap_report_enabled === true,
+      iconUrl: (workspace.icon_url as string | null) ?? null,
+      timezone: (workspace.timezone as string | null) ?? null,
+      weeklyUsageEmail: workspace.weekly_usage_email === true,
+      deletesAt: workspace.deletes_at ? Date.parse(workspace.deletes_at as string) : null,
     },
     members,
     models,

@@ -91,6 +91,10 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "removes somebody from the workspace, taking their access, their keys and their seat with it — not undone by revoking anything",
   "routes/workspace.ts DELETE /workspace/members/me":
     "takes the owner out of the workspace, which a revoked key cannot give back",
+  "routes/workspace.ts POST /workspace/deletion":
+    "schedules the end of a workspace a fortnight out, which outlives any revocation of the key that asked for it",
+  "routes/account.ts DELETE /account/sessions/:id":
+    "signs one of the owner's own browsers out; a key that could do it could lock the owner out of every session but the leaked one",
   "routes/workspace.ts POST /workspaces":
     "creates a workspace, somewhere new for the owner's data to go that the key's own workspace lock does not reach",
   "routes/workspace.ts POST /workspace/active":
@@ -191,6 +195,12 @@ const OPEN_TO_A_KEY = new Set([
   "routes/agents.ts GET /agents/:id/delete-summary",
   "routes/agents.ts GET /agents/:id/knowledge-usage",
   "routes/home.ts GET /home/overview",
+  "routes/account.ts GET /account/sessions",
+  "routes/account.ts GET /account/identities",
+  "routes/workspace-icons.ts PUT /workspace/icon",
+  "routes/workspace-icons.ts DELETE /workspace/icon",
+  "routes/workspace.ts GET /workspace/members",
+  "routes/workspace.ts DELETE /workspace/deletion",
   "routes/inbox.ts GET /inbox",
   "routes/inbox.ts GET /inbox/counts",
   "routes/inbox.ts POST /inbox/read",
@@ -327,6 +337,8 @@ const OUTSIDE_THE_SESSION: Record<string, string> = {
   connectionsPublic: "the OAuth provider's redirect back, which carries no bearer token",
   slackPublic: "Slack's own redirect and event deliveries, verified by signature",
   avatarsPublic: "an <img> fetching a profile photo, whose unguessable URL is the capability",
+  workspaceIconsPublic:
+    "an <img> fetching a workspace's icon, whose unguessable URL is the capability",
   composioPublic: "a logo proxy for <img> tags, serving nothing about anybody",
   routineHooks: "a third-party sender holding an ingest token, which is the credential",
   composioEvents: "Composio's trigger deliveries, verified by the webhook signature",

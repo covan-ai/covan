@@ -10,36 +10,49 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 let me: Me;
+let hosted: boolean | undefined;
 vi.mock("@/lib/api-client", () => ({ api: { me: () => Promise.resolve(me) } }));
-vi.mock("@/components/usage-section", () => ({ UsageSection: stub("yours") }));
+vi.mock("@/lib/credits", () => ({ useIsHosted: () => hosted }));
+vi.mock("@/components/usage-section", () => ({ UsageSection: stub("balance") }));
+vi.mock("@/components/credit-ledger", () => ({ CreditLedger: stub("ledger") }));
 vi.mock("@/components/workspace-usage-section", () => ({
-  WorkspaceUsageSection: stub("workspace"),
+  WorkspaceUsageSection: stub("by-agent"),
 }));
 
 const { Route } = await import("./_authed.settings.usage");
 
 beforeEach(() => {
   me = meFixture();
+  hosted = true;
 });
 
 describe("/settings/usage", () => {
-  it("shows an admin their own figures and then the workspace's", async () => {
+  it("shows an admin on the hosted service the balance, then the ledger", async () => {
     renderRoute(Route);
-    const workspace = await screen.findByTestId("workspace");
-    const yours = screen.getByTestId("yours");
+    const ledger = await screen.findByTestId("ledger");
     expect(
-      yours.compareDocumentPosition(workspace) & Node.DOCUMENT_POSITION_FOLLOWING,
+      screen.getByTestId("balance").compareDocumentPosition(ledger) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    expect(screen.getByText(/credits are the only unit/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("by-agent")).not.toBeInTheDocument();
   });
 
-  it("shows anybody else only their own", async () => {
+  it("shows a member the balance and not the ledger", async () => {
     me = meFixture({ role: "member" });
     renderRoute(Route);
-    expect(screen.getByTestId("yours")).toBeInTheDocument();
-    // Settle the query before asserting an absence, or this passes on the
-    // loading render alone.
-    await screen.findByText(/cost/);
+    expect(screen.getByTestId("balance")).toBeInTheDocument();
+    // Settle `me` before asserting an absence, or this passes on the loading
+    // render alone (which treats everyone as an admin until it knows).
     await new Promise((r) => setTimeout(r, 0));
-    expect(screen.queryByTestId("workspace")).not.toBeInTheDocument();
+    await vi.waitFor(() => expect(screen.queryByTestId("ledger")).not.toBeInTheDocument());
+  });
+
+  it("shows an install that charges nobody one table by agent and no credits", () => {
+    hosted = false;
+    renderRoute(Route);
+    expect(screen.getByTestId("by-agent")).toBeInTheDocument();
+    expect(screen.queryByTestId("balance")).not.toBeInTheDocument();
+    expect(screen.getByText(/nothing here is billed/i)).toBeInTheDocument();
   });
 });

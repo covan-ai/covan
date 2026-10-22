@@ -85,3 +85,9 @@ export function clockTime(at: number, now: number = Date.now()): string {
   if (at >= today.getTime() - 86_400_000) return "Yesterday";
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
+
+/** "Today, 10:04", "Yesterday", "20 Oct" — the ledger's When (A15). */
+export function ledgerWhen(at: number, now: number = Date.now()): string {
+  const clock = clockTime(at, now);
+  return /^\d{2}:\d{2}$/.test(clock) ? `Today, ${clock}` : clock;
+}

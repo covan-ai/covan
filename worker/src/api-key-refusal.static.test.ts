@@ -141,6 +141,8 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "re-scopes a stored service credential, changing what agents may do with it from now on",
   "routes/tool-connections.ts DELETE /tool-connections/:id":
     "removes a service credential somebody's agents depend on",
+  "routes/billing.ts PATCH /billing/settings":
+    "turns on buying credits with the workspace's saved card, which keeps charging after the key is revoked",
   "routes/model-endpoints.ts POST /model-endpoints":
     "stores a credential and an address every later reply on that model is sent to, after the key is revoked",
   "routes/model-endpoints.ts DELETE /model-endpoints/:id":
@@ -202,6 +204,9 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
  * what lets it survive the rule.
  */
 const OPEN_TO_A_KEY = new Set([
+  "routes/billing.ts GET /billing/settings",
+  "routes/billing.ts GET /billing/invoices",
+  "routes/billing.ts GET /billing/invoices/:id/pdf",
   "routes/agents.ts GET /agents",
   "routes/agents.ts POST /agents",
   "routes/agents.ts PATCH /agents/:id",
@@ -352,6 +357,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/turns.ts POST /sessions/:id/turn/stop",
   "routes/usage.ts GET /usage",
   "routes/usage.ts GET /usage/credits/ledger",
+  "routes/usage.ts GET /usage/credits/month",
   "routes/usage.ts GET /usage/workspace",
   "routes/workspace.ts PATCH /workspace",
   "routes/workspace.ts GET /workspaces",

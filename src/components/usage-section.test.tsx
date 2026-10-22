@@ -1,162 +1,171 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
-import { UsageSection } from "./usage-section";
-import type { CreditSnapshot, UsageResponse } from "@/lib/api-client";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { BillingSettings, UsageMonthByAgent } from "@/lib/api-client";
+import type { CreditsView } from "@/lib/credits";
 
-const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
+const h = vi.hoisted(() => ({
+  credits: null as CreditsView | null,
+  usageMonth: vi.fn(),
+  settings: vi.fn(),
+  updateSettings: vi.fn(),
+  invoices: vi.fn(),
+  invoicePdfUrl: vi.fn(),
+}));
 
-vi.mock("@tanstack/react-query", () => ({ useQuery }));
-vi.mock("@/lib/api-client", () => ({ api: { usage: vi.fn() } }));
-
-// `CreditsWall` reads `["me"]` and its form writes through `useMutation` — none
-// of which this file's blanket `useQuery` mock can support. Its own contract is
-// in `credits-wall.test.tsx`; this file only needs to know whether
-// `UsageSection` decided to render it.
+vi.mock("@/lib/api-client", () => ({
+  api: {
+    usageMonth: h.usageMonth,
+    billing: {
+      settings: h.settings,
+      updateSettings: h.updateSettings,
+      invoices: h.invoices,
+      invoicePdfUrl: h.invoicePdfUrl,
+    },
+  },
+  ApiError: class ApiError extends Error {},
+}));
+vi.mock("@/lib/credits", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/credits")>()),
+  useCredits: () => h.credits,
+}));
+// Its own contract is in `credits-wall.test.tsx`; here only whether it is drawn.
 vi.mock("@/components/credits-wall", () => ({
   CreditsWall: () => <div data-testid="credits-wall" />,
 }));
 
-const TOTALS = {
-  messageCount: 10,
-  promptTokens: 30_000,
-  completionTokens: 7_000,
-  cachedTokens: 0,
-  cacheWriteTokens: 0,
-  measuredPromptTokens: 0,
-  totalTokens: 37_000,
-  estCostUsd: 0.2,
+import { UsageSection } from "./usage-section";
+
+const credits = (over: Partial<CreditsView> = {}): CreditsView => ({
+  balance: 1240,
+  granted: 2200,
+  ratio: 0.56,
+  perReply: 2,
+  repliesLeft: 620,
+  repliesSeen: 40,
+  repliesKnown: true,
+  level: "fine",
+  ...over,
+});
+
+const MONTH: UsageMonthByAgent = {
+  available: true,
+  since: "2026-10-01",
+  unit: "credits",
+  spent: 760,
+  byAgent: [
+    { agentId: "a1", name: "Support", avatar: "headset", amount: 310 },
+    { agentId: "a2", name: "Research", avatar: "owl", amount: 240 },
+  ],
 };
 
-function usage(credits: CreditSnapshot): UsageResponse {
-  return { agents: [], totals: TOTALS, credits };
+const SETTINGS: BillingSettings = {
+  autoTopUp: { available: false, enabled: false, below: 200, amount: 10_000 },
+  lowBalance: { enabled: true, below: 200 },
+  card: { brand: "visa", last4: "4242" },
+};
+
+function renderSection(isAdmin = true) {
+  return render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <UsageSection isAdmin={isAdmin} />
+    </QueryClientProvider>,
+  );
 }
 
-const metered = (balance: number, over: Partial<Extract<CreditSnapshot, { metered: true }>> = {}) =>
-  usage({
-    metered: true,
-    balance,
-    granted: 500,
-    spent: 500 - balance,
-    unlimited: false,
-    replies: 20,
-    ...over,
+beforeEach(() => {
+  vi.clearAllMocks();
+  h.credits = credits();
+  h.usageMonth.mockResolvedValue(MONTH);
+  h.settings.mockResolvedValue({ available: true, ...SETTINGS });
+  h.invoices.mockResolvedValue({
+    available: true,
+    invoices: [
+      { id: "inv-1", at: "2026-10-20T09:00:00Z", credits: 10_000, total: "$25.00", status: "paid" },
+    ],
   });
-
-function renderWith(data: UsageResponse) {
-  useQuery.mockImplementation(() => ({ data, isLoading: false, isPending: false }));
-  render(<UsageSection />);
-}
-
-beforeEach(() => vi.clearAllMocks());
+});
 
 describe("UsageSection", () => {
-  it("shows the workspace's balance against what it was given", () => {
-    renderWith(metered(412.7));
+  it("shows what is left and what this month has used", async () => {
+    renderSection();
+    expect(screen.getByText("1,240")).toBeInTheDocument();
+    expect(await screen.findByText("760 used this month")).toBeInTheDocument();
+    expect(screen.getByText(/about 620 replies left/i)).toBeInTheDocument();
+  });
 
-    expect(screen.getByText("Workspace credits")).toBeInTheDocument();
-    expect(screen.getByText(/412 of 500/)).toBeInTheDocument();
-    expect(screen.getByText(/replies left/)).toBeInTheDocument();
-    // What a credit is, said on the screen that shows them — and never as a
-    // dollar rate, which is the hosted build's to set and change.
+  it("never mentions a reset, because credits do not reset", async () => {
+    renderSection();
+    await screen.findByText("760 used this month");
+    expect(screen.queryByText(/reset/i)).not.toBeInTheDocument();
+  });
+
+  it("lists this month by agent and the invoices for an admin", async () => {
+    renderSection();
     expect(
-      screen.getByText(/Credits are what every piece of work here is charged in/),
-    ).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/quarter of a cent|is a cent|\$/);
+      await screen.findByRole("list", { name: /credits this month by agent/i }),
+    ).toHaveTextContent(/Support.*310.*Research.*240/);
+    expect(await screen.findByText("October 2026")).toBeInTheDocument();
+    expect(screen.getByText("10,000 credits · $25.00")).toBeInTheDocument();
   });
 
-  it("holds the replies estimate back until the workspace has sent about ten", () => {
-    renderWith(metered(412.7, { replies: 3, spent: 6 }));
-
-    expect(screen.getByText(/412 of 500/)).toBeInTheDocument();
-    expect(screen.queryByText(/replies left/)).toBeNull();
-    expect(screen.getByText(/appears once this workspace has sent about ten/)).toBeInTheDocument();
+  it("asks nothing a member may not read, and lets them see but not change the switches", async () => {
+    renderSection(false);
+    await screen.findByText(/card ending 4242/i);
+    expect(h.usageMonth).not.toHaveBeenCalled();
+    expect(h.invoices).not.toHaveBeenCalled();
+    expect(screen.getByRole("switch", { name: /low balance warning/i })).toBeDisabled();
+    // Without the month, the bar is what is used of everything ever added.
+    expect(screen.getByText("960 used of 2,200 added")).toBeInTheDocument();
   });
 
-  it("shows the replies estimate however few replies it has seen once the balance is low", () => {
-    renderWith(metered(30, { replies: 3, spent: 470 }));
-
-    expect(screen.getByText(/replies left/)).toBeInTheDocument();
+  it("shows auto top-up as coming soon until the provider can charge a saved card", async () => {
+    renderSection();
+    expect(await screen.findByText("Coming soon")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /auto top-up/i })).toBeDisabled();
   });
 
-  it("prices each agent in credits on the hosted service, never in dollars", () => {
-    const data = metered(412.7);
-    data.agents = [
-      {
-        agentId: "a1",
-        name: "GTM Agent",
-        emoji: "📈",
-        model: "gpt-4.1",
-        messageCount: 4,
-        promptTokens: 1000,
-        completionTokens: 200,
-        cachedTokens: 0,
-        cacheWriteTokens: 0,
-        measuredPromptTokens: 0,
-        totalTokens: 1200,
-        estCostUsd: 0.2,
-        estCredits: 240,
-      },
-    ];
-    renderWith(data);
-
-    expect(screen.getByText("240 credits")).toBeInTheDocument();
-    expect(screen.queryByText("$0.20")).toBeNull();
+  it("saves the low-balance switch", async () => {
+    const user = userEvent.setup();
+    h.updateSettings.mockResolvedValue({
+      available: true,
+      ...SETTINGS,
+      lowBalance: { enabled: false, below: 200 },
+    });
+    renderSection();
+    await user.click(await screen.findByRole("switch", { name: /low balance warning/i }));
+    await waitFor(() =>
+      expect(h.updateSettings).toHaveBeenCalledWith({ lowBalance: { enabled: false } }),
+    );
   });
 
-  it("keeps dollars on an install that has no credits", () => {
-    const data = usage({ metered: false });
-    data.agents = [
-      {
-        agentId: "a1",
-        name: "GTM Agent",
-        emoji: "📈",
-        model: "gpt-4.1",
-        messageCount: 4,
-        promptTokens: 1000,
-        completionTokens: 200,
-        cachedTokens: 0,
-        cacheWriteTokens: 0,
-        measuredPromptTokens: 0,
-        totalTokens: 1200,
-        estCostUsd: 0.2,
-      },
-    ];
-    renderWith(data);
-
-    expect(screen.getByText("$0.20")).toBeInTheDocument();
-    expect(screen.queryByText("Workspace credits")).toBeNull();
+  it("leaves the paying rows out where the deployment sells no credits", async () => {
+    h.settings.mockResolvedValue({ available: false });
+    h.invoices.mockResolvedValue({ available: false });
+    renderSection();
+    await screen.findByText("760 used this month");
+    expect(screen.queryByText(/auto top-up/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Invoices")).not.toBeInTheDocument();
   });
 
   it("offers the way out only once the credits are actually spent", () => {
-    renderWith(metered(0));
-
-    expect(screen.getByText(/Out of credits/)).toBeInTheDocument();
+    h.credits = credits({ balance: 0, level: "spent", repliesLeft: 0 });
+    renderSection();
     expect(screen.getByTestId("credits-wall")).toBeInTheDocument();
+    expect(screen.getByText(/out of credits/i)).toBeInTheDocument();
   });
 
   it("does not send somebody away while there are credits left", () => {
-    renderWith(metered(120));
-
-    expect(screen.queryByTestId("credits-wall")).not.toBeInTheDocument();
-  });
-
-  it("never mentions a reset, because credits do not reset", () => {
-    renderWith(metered(10));
-
-    expect(screen.queryByText(/resets/)).not.toBeInTheDocument();
-  });
-
-  it("shows no credits at all on an install that does not meter", () => {
-    renderWith(usage({ metered: false }));
-
-    expect(screen.queryByText("Workspace credits")).not.toBeInTheDocument();
+    renderSection();
     expect(screen.queryByTestId("credits-wall")).not.toBeInTheDocument();
   });
 
   it("shows no balance for a house workspace", () => {
-    renderWith(metered(0, { unlimited: true }));
-
-    expect(screen.queryByText("Workspace credits")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("credits-wall")).not.toBeInTheDocument();
+    h.credits = null;
+    renderSection();
+    expect(screen.queryByText(/credits left/i)).not.toBeInTheDocument();
   });
 });

@@ -226,6 +226,9 @@ async function creditsOf(
 /** How many ledger rows one request may ask for. */
 const LEDGER_MAX = 100;
 
+/** How many rows "Export CSV" carries — a year of a busy workspace. */
+const LEDGER_CSV_MAX = 5000;
+
 /** The hosted ledger's unit: a credit is a million of them. */
 const MICRO = 1_000_000;
 
@@ -237,50 +240,314 @@ type LedgerRow = {
   purpose: string | null;
   delta_micro: number | string;
   balance_after: number | string;
+  note: string | null;
+  session_id: string | null;
+  routine_run_id: string | null;
 };
+
+export type LedgerEntryDTO = {
+  id: number;
+  at: string;
+  kind: string;
+  model: string | null;
+  purpose: string | null;
+  credits: number;
+  balanceAfter: number;
+  note: string | null;
+  sessionId: string | null;
+  /** Absent when the thread is somebody's private one, or gone. */
+  sessionTitle?: string;
+  routineId?: string;
+  routineName?: string;
+  agentId?: string;
+  agentName?: string;
+  agentAvatar?: string | null;
+  /** Who started the thread a charge belongs to; a routine's charges say "routine". */
+  by?: { kind: "person"; name: string } | { kind: "routine" };
+};
+
+const LEDGER_COLUMNS =
+  "id, created_at, kind, model, purpose, delta_micro, balance_after, note, session_id, routine_run_id";
+
+/**
+ * What each row was for, read through the caller's own client: the thread's
+ * title and owner, the routine's name, the agent. A private thread of somebody
+ * else's stays unnamed — the policy that hides it from the admin hides it here
+ * too, and the row keeps its amount.
+ */
+async function describeLedger(
+  db: AppEnv["Variables"]["db"],
+  rows: LedgerRow[],
+): Promise<LedgerEntryDTO[]> {
+  const ids = (pick: (r: LedgerRow) => string | null) => [
+    ...new Set(rows.map(pick).filter((v): v is string => !!v)),
+  ];
+  const sessionIds = ids((r) => r.session_id);
+  const runIds = ids((r) => r.routine_run_id);
+
+  const [sessions, runs] = await Promise.all([
+    sessionIds.length
+      ? db
+          .from("chat_sessions")
+          .select("id, title, agent_id, user_id, routine_id")
+          .in("id", sessionIds)
+      : { data: [] },
+    runIds.length
+      ? db.from("routine_runs").select("id, routine_id").in("id", runIds)
+      : { data: [] },
+  ]);
+  type S = {
+    id: string;
+    title: string | null;
+    agent_id: string;
+    user_id: string;
+    routine_id: string | null;
+  };
+  const sessionById = new Map(((sessions.data ?? []) as S[]).map((s) => [s.id, s]));
+  const runRoutine = new Map(
+    ((runs.data ?? []) as Array<{ id: string; routine_id: string }>).map((r) => [
+      r.id,
+      r.routine_id,
+    ]),
+  );
+
+  const routineIds = [
+    ...new Set([
+      ...runRoutine.values(),
+      ...[...sessionById.values()].map((s) => s.routine_id).filter((v): v is string => !!v),
+    ]),
+  ];
+  const routines = routineIds.length
+    ? await db.from("routines").select("id, name, agent_id").in("id", routineIds)
+    : { data: [] };
+  const routineById = new Map(
+    ((routines.data ?? []) as Array<{ id: string; name: string; agent_id: string }>).map((r) => [
+      r.id,
+      r,
+    ]),
+  );
+
+  const agentIds = [
+    ...new Set([
+      ...[...sessionById.values()].map((s) => s.agent_id),
+      ...[...routineById.values()].map((r) => r.agent_id),
+    ]),
+  ];
+  const ownerIds = [...new Set([...sessionById.values()].map((s) => s.user_id))];
+  const [agents, people] = await Promise.all([
+    agentIds.length
+      ? db.from("agents").select("id, name, avatar").in("id", agentIds)
+      : { data: [] },
+    ownerIds.length ? db.from("profiles").select("id, name").in("id", ownerIds) : { data: [] },
+  ]);
+  const agentById = new Map(
+    ((agents.data ?? []) as Array<{ id: string; name: string; avatar: string | null }>).map((a) => [
+      a.id,
+      a,
+    ]),
+  );
+  const nameById = new Map(
+    ((people.data ?? []) as Array<{ id: string; name: string | null }>).map((p) => [p.id, p.name]),
+  );
+
+  return rows.map((r) => {
+    const session = r.session_id ? sessionById.get(r.session_id) : undefined;
+    const routineId =
+      (r.routine_run_id ? runRoutine.get(r.routine_run_id) : undefined) ??
+      session?.routine_id ??
+      undefined;
+    const routine = routineId ? routineById.get(routineId) : undefined;
+    const agentId = session?.agent_id ?? routine?.agent_id;
+    const agent = agentId ? agentById.get(agentId) : undefined;
+    const entry: LedgerEntryDTO = {
+      id: r.id,
+      at: r.created_at,
+      kind: r.kind,
+      model: r.model,
+      purpose: r.purpose,
+      credits: Number(r.delta_micro) / MICRO,
+      balanceAfter: Number(r.balance_after) / MICRO,
+      note: r.note,
+      sessionId: r.session_id,
+    };
+    if (session && !routine) entry.sessionTitle = session.title ?? "Untitled thread";
+    if (routine) {
+      entry.routineId = routine.id;
+      entry.routineName = routine.name;
+      entry.by = { kind: "routine" };
+    } else if (session) {
+      const name = nameById.get(session.user_id);
+      if (name) entry.by = { kind: "person", name };
+    }
+    if (agent) {
+      entry.agentId = agent.id;
+      entry.agentName = agent.name;
+      entry.agentAvatar = agent.avatar;
+    }
+    return entry;
+  });
+}
+
+/** One CSV cell, quoted when it has to be, and never read as a formula. */
+function csvCell(v: string | number): string {
+  let s = String(v);
+  if (/^[=+\-@\t\r]/.test(s) && typeof v === "string") s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
+}
+
+export function ledgerCsv(entries: LedgerEntryDTO[]): string {
+  const head = [
+    "When",
+    "Kind",
+    "Purpose",
+    "Entry",
+    "Agent",
+    "By",
+    "Model",
+    "Credits",
+    "Balance after",
+  ];
+  const lines = entries.map((e) =>
+    [
+      e.at,
+      e.kind,
+      e.purpose ?? "",
+      e.routineName ?? e.sessionTitle ?? e.note ?? "",
+      e.agentName ?? "",
+      e.by?.kind === "routine" ? "Routine" : e.by?.kind === "person" ? e.by.name : "",
+      e.model ?? "",
+      Math.round(e.credits * 100) / 100,
+      Math.round(e.balanceAfter * 100) / 100,
+    ]
+      .map(csvCell)
+      .join(","),
+  );
+  return [head.join(","), ...lines].join("\r\n") + "\r\n";
+}
 
 // GET /usage/credits/ledger — the active workspace's recent charges and grants.
 //
 // Only the hosted build keeps a ledger; everywhere else this answers an empty
 // list rather than probing for a table that was never created. Read through
-// the caller's own client, so the policy decides who may see it — admins only —
-// and the columns are named, because the person who caused a charge is
-// withheld from every reader: a workspace's figures are never reported per
-// person (see 0032).
+// the caller's own client, so the policy decides who may see it — admins only.
+// `user_id` stays withheld by its column grant; "By" is the owner of the
+// thread a charge belongs to, which the admin's own policies decide whether
+// they may know. `before` pages by id; `format=csv` is "Export CSV".
 usage.get("/usage/credits/ledger", async (c) => {
   const db = c.get("db");
+  const csv = c.req.query("format") === "csv";
 
   const workspaceId = await callerWorkspaceId(c);
-  if (!workspaceId) return c.json({ entries: [] });
+  if (!workspaceId) return c.json({ entries: [], hasMore: false });
 
   const credits = await creditsOf(c.get("entitlements"), workspaceId);
-  if (!credits.metered) return c.json({ entries: [] });
+  if (!credits.metered) {
+    if (csv) return c.json({ error: "this deployment keeps no ledger" }, 404);
+    return c.json({ entries: [], hasMore: false });
+  }
 
   const asked = Number(c.req.query("limit"));
-  const limit = Number.isFinite(asked) && asked > 0 ? Math.min(Math.floor(asked), LEDGER_MAX) : 50;
+  const max = csv ? LEDGER_CSV_MAX : LEDGER_MAX;
+  const limit =
+    Number.isFinite(asked) && asked > 0 ? Math.min(Math.floor(asked), max) : csv ? max : 50;
+  const before = Number(c.req.query("before"));
 
-  const { data, error } = await db
-    .from("credit_ledger")
-    .select("id, created_at, kind, model, purpose, delta_micro, balance_after")
-    .eq("workspace_id", workspaceId)
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(limit);
+  let q = db.from("credit_ledger").select(LEDGER_COLUMNS).eq("workspace_id", workspaceId);
+  if (Number.isFinite(before) && before > 0) q = q.lt("id", before);
+  const { data, error } = await q.order("id", { ascending: false }).limit(limit + 1);
   if (error) {
     console.error("credit ledger read failed", error);
     return c.json({ error: "failed to load the ledger" }, 500);
   }
 
-  const entries = ((data ?? []) as LedgerRow[]).map((r) => ({
-    id: r.id,
-    at: r.created_at,
-    kind: r.kind,
-    model: r.model,
-    purpose: r.purpose,
-    credits: Number(r.delta_micro) / MICRO,
-    balanceAfter: Number(r.balance_after) / MICRO,
-  }));
-  return c.json({ entries });
+  const rows = (data ?? []) as LedgerRow[];
+  const entries = await describeLedger(db, rows.slice(0, limit));
+  if (csv) {
+    return c.body(ledgerCsv(entries), 200, {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="covan-credits-${new Date().toISOString().slice(0, 10)}.csv"`,
+    });
+  }
+  return c.json({ entries, hasMore: rows.length > limit });
+});
+
+type SpendRow = {
+  day: string;
+  agent_id: string;
+  model: string | null;
+  prompt_tokens: number | string;
+  completion_tokens: number | string;
+  cached_tokens: number | string;
+  cache_write_tokens: number | string;
+};
+
+/** The first of this month, UTC, and how many days of it there have been. */
+export function monthSoFar(now: Date = new Date()): { since: string; days: number } {
+  return {
+    since: `${now.toISOString().slice(0, 8)}01`,
+    days: now.getUTCDate(),
+  };
+}
+
+// GET /usage/credits/month — "This month by agent" (A15) and "N used this
+// month": every reply and routine run since the first, priced from what the
+// models were paid and quoted in credits where the deployment sells them.
+// Admins only, like the spend on Home (0124); a member's 403 hides the section.
+usage.get("/usage/credits/month", async (c) => {
+  const db = c.get("db");
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
+
+  const { since, days } = monthSoFar();
+  const [spend, agents] = await Promise.all([
+    db.rpc("workspace_spend_daily", { p_workspace_id: workspaceId, p_days: days }),
+    db.from("agents").select("id, name, avatar").eq("workspace_id", workspaceId),
+  ]);
+  if (spend.error) {
+    if (isNotAdmin(spend.error)) return c.json({ error: "admins only" }, 403);
+    if (isMissingFunction(spend.error)) return c.json({ available: false });
+    console.error("workspace_spend_daily failed", spend.error);
+    return c.json({ error: "failed to load this month" }, 500);
+  }
+
+  const quote = quoteOf(c.get("entitlements"));
+  const usdByAgent = new Map<string, number>();
+  for (const r of (spend.data ?? []) as SpendRow[]) {
+    if (String(r.day).slice(0, 10) < since) continue;
+    const usd = estimateCostUsd(
+      r.model ?? "",
+      Number(r.prompt_tokens) || 0,
+      Number(r.completion_tokens) || 0,
+      Number(r.cached_tokens) || 0,
+      Number(r.cache_write_tokens) || 0,
+    );
+    usdByAgent.set(r.agent_id, (usdByAgent.get(r.agent_id) ?? 0) + usd);
+  }
+  const amount = (usd: number) => (quote ? Math.round(quote(usd)) : Math.round(usd * 100) / 100);
+  const named = new Map(
+    ((agents.data ?? []) as Array<{ id: string; name: string; avatar: string | null }>).map((a) => [
+      a.id,
+      a,
+    ]),
+  );
+  let total = 0;
+  for (const usd of usdByAgent.values()) total += usd;
+
+  return c.json({
+    available: true,
+    since,
+    unit: quote ? ("credits" as const) : ("usd" as const),
+    spent: amount(total),
+    byAgent: [...usdByAgent.entries()]
+      .map(([agentId, usd]) => ({
+        agentId,
+        name: named.get(agentId)?.name ?? "A deleted agent",
+        avatar: named.get(agentId)?.avatar ?? null,
+        amount: amount(usd),
+      }))
+      .filter((a) => a.amount > 0)
+      .sort((a, b) => b.amount - a.amount),
+  });
 });
 
 /**

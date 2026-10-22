@@ -5,6 +5,10 @@ import type React from "react";
 
 const navigate = vi.fn();
 
+// The getting-started list is tested where it lives (`setup-list.tsx`).
+vi.mock("@/components/setup-list", () => ({
+  SetupList: () => <section aria-label="Getting started" />,
+}));
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: { component: () => React.ReactElement }) => ({
     ...options,
@@ -119,15 +123,14 @@ describe("the home composer, with no agents in the workspace", () => {
   });
 });
 
-// The setup checklist used to sit under the composer. It lives in the sidebar
-// now (`setup-list.tsx`, tested there), where it is reachable from every page
-// rather than from this one.
-describe("the home page without the checklist", () => {
-  it("draws no setup card under the composer", async () => {
+// The setup checklist sat in the old side panel; until Home is rebuilt (A24)
+// it is drawn on Home itself.
+describe("the getting-started list", () => {
+  it("is on Home, above the composer, now that the old side panel is gone", async () => {
     store.agents = [{ ...agentNamed("GTM"), documents: [] }];
     await renderHome(true);
 
-    expect(screen.queryByText(/getting set up/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Getting started" })).toBeInTheDocument();
   });
 });
 

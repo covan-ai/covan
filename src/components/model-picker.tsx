@@ -343,7 +343,7 @@ function AddEndpointDialog({
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="Optional"
             />
-            <p className="m-0 text-xs text-muted-foreground">
+            <p className="m-0 text-meta text-muted-foreground">
               Sealed on the server and never shown again.
             </p>
           </div>

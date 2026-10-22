@@ -40,7 +40,7 @@ export function EventPicker({
     // Not an error: the catalogue is what this deployment can listen for, and
     // a self-hosted one may have set up none of it.
     return (
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         This workspace cannot listen for app events yet. Connect an app from Integrations, or start
         the routine on a schedule or a webhook instead.
       </p>
@@ -100,14 +100,14 @@ export function EventPicker({
               ))}
             </SelectContent>
           </Select>
-          <p className="text-xs text-muted-foreground">{entry.description}</p>
+          <p className="text-meta text-muted-foreground">{entry.description}</p>
         </div>
       )}
 
       {entry && !entry.connected && (
         // The one thing standing between this choice and a routine that
         // works, said where the choice is made.
-        <p className="text-xs text-muted-foreground">
+        <p className="text-meta text-muted-foreground">
           {entry.app} is not connected yet.{" "}
           <Link
             to="/settings/integrations"
@@ -163,7 +163,7 @@ function FieldInput({
   onChange: (value: unknown) => void;
 }) {
   const label = field.optional ? `${field.label} (optional)` : field.label;
-  const help = field.help ? <p className="text-xs text-muted-foreground">{field.help}</p> : null;
+  const help = field.help ? <p className="text-meta text-muted-foreground">{field.help}</p> : null;
 
   if (field.kind === "boolean") {
     return (

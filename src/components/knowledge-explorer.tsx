@@ -1077,7 +1077,7 @@ function SelectionBar({
       {bundles.length > 0 ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button type="button" variant="outline" size="sm">
+            <Button type="button" variant="secondary" size="sm">
               <Folder className="mr-2 h-4 w-4" />
               Move to
             </Button>
@@ -1091,7 +1091,7 @@ function SelectionBar({
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
-      <Button type="button" variant="outline" size="sm" onClick={onDelete}>
+      <Button type="button" variant="secondary" size="sm" onClick={onDelete}>
         <Trash2 className="mr-2 h-4 w-4" />
         Delete
       </Button>
@@ -1587,7 +1587,7 @@ function NewFolderForm({ onCreated }: { onCreated: (id: string) => void }) {
         />
         <Button
           type="button"
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={create}
           disabled={creating || !name.trim()}

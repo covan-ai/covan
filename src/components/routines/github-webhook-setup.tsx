@@ -30,10 +30,10 @@ export function GitHubWebhookSetup({
   const { data, isPending, isError } = useRoutineEventSetup(routineId, true);
   const [showSecret, setShowSecret] = useState(false);
 
-  if (isPending) return <p className="text-xs text-muted-foreground">Loading the webhook…</p>;
+  if (isPending) return <p className="text-meta text-muted-foreground">Loading the webhook…</p>;
   if (isError) {
     return (
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         Couldn't load the webhook. Reload to try again.
       </p>
     );
@@ -57,20 +57,20 @@ export function GitHubWebhookSetup({
         </li>
       </ol>
       <div className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">Payload URL</p>
+        <p className="text-meta text-muted-foreground">Payload URL</p>
         <RevealedSecret value={data.url} label="Copy payload URL" />
       </div>
       <div className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">Secret</p>
+        <p className="text-meta text-muted-foreground">Secret</p>
         {showSecret ? (
           <RevealedSecret value={data.secret} label="Copy secret" />
         ) : (
-          <Button variant="outline" size="sm" onClick={() => setShowSecret(true)}>
+          <Button variant="secondary" size="sm" onClick={() => setShowSecret(true)}>
             Show secret
           </Button>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         The same webhook can be added to more than one repository. Choosing a different event later
         makes a new URL and secret.
       </p>

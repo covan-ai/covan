@@ -108,7 +108,7 @@ export function AddServiceDialog({
               onChange={(e) => setLabel(e.target.value)}
               placeholder="Covan Supabase"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               What the agent calls it. Anything you would say out loud.
             </p>
           </div>
@@ -137,7 +137,7 @@ export function AddServiceDialog({
               transport === "sql" ? "https://xyz.supabase.co/rest/v1" : "https://api.example.com/v1"
             }
           />
-          <p className="text-xs leading-[1.45] text-muted-foreground">
+          <p className="text-meta leading-[1.45] text-muted-foreground">
             Every request stays inside this address. The agent names a path, never a URL, so it
             cannot reach anywhere else.
             {transport === "sql"
@@ -150,7 +150,7 @@ export function AddServiceDialog({
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="tc-rpc">Read-only function</Label>
             <Input id="tc-rpc" value={rpc} onChange={(e) => setRpc(e.target.value)} />
-            <p className="text-xs leading-[1.45] text-muted-foreground">
+            <p className="text-meta leading-[1.45] text-muted-foreground">
               The function the agent's SQL runs inside. It is what makes the connection read-only —
               the method is a POST either way, and the function is what refuses a write. The SQL to
               install it is in the integrations guide.
@@ -182,7 +182,7 @@ export function AddServiceDialog({
                 );
               })}
             </div>
-            <p className="text-xs leading-[1.45] text-muted-foreground">
+            <p className="text-meta leading-[1.45] text-muted-foreground">
               This is your decision, not the agent's — it cannot widen the list. Leaving it at GET
               means nothing it does here can change anything.
             </p>
@@ -221,7 +221,7 @@ export function AddServiceDialog({
           >
             Another header
           </button>
-          <p className="text-xs leading-[1.45] text-muted-foreground">
+          <p className="text-meta leading-[1.45] text-muted-foreground">
             Encrypted before it reaches the database and never sent back to this screen. A token
             that needs the word "Bearer" in front of it is stored with the word in front of it.
             Supabase wants two: <span className="font-mono text-xs">Authorization</span> with{" "}

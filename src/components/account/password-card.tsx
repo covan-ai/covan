@@ -120,7 +120,7 @@ export function PasswordCard() {
                 </button>
               </div>
               {tooShort ? (
-                <p className="text-xs text-destructive">At least {PASSWORD_MIN} characters.</p>
+                <p className="text-meta text-destructive">At least {PASSWORD_MIN} characters.</p>
               ) : null}
             </div>
 
@@ -136,7 +136,9 @@ export function PasswordCard() {
                   setError(null);
                 }}
               />
-              {mismatch ? <p className="text-xs text-destructive">The two do not match.</p> : null}
+              {mismatch ? (
+                <p className="text-meta text-destructive">The two do not match.</p>
+              ) : null}
             </div>
 
             {needsCode ? (
@@ -153,13 +155,13 @@ export function PasswordCard() {
                   }}
                   className="tracking-widest"
                 />
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   You last signed in a while ago, so we emailed you a code to make sure it is you.
                 </p>
               </div>
             ) : null}
 
-            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+            {error ? <p className="text-meta text-destructive">{error}</p> : null}
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setOpen(false)}>

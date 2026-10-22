@@ -51,7 +51,7 @@ export function OutOfCreditsNote({
             : "This workspace is out of credits, so this message has no reply yet."}
         </span>
         {onRetry && (
-          <Button variant="outline" size="sm" onClick={onRetry} disabled={!canRetry}>
+          <Button variant="secondary" size="sm" onClick={onRetry} disabled={!canRetry}>
             <RefreshCw className="h-3.5 w-3.5" /> Try again
           </Button>
         )}

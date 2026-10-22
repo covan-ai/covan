@@ -411,7 +411,7 @@ export function RoutineDetail({
               one place that says why, for whoever opens this page checking
               exactly this feature's privacy properties. */}
           {routine.sourceKind === "workspace" && (
-            <p className="mt-3 text-xs text-muted-foreground">
+            <p className="mt-3 text-meta text-muted-foreground">
               Never shared and never filed: sharing would show the whole workspace a report built so
               that nobody who asked a question can be singled out, and filing would turn what the
               team does not know into something an agent quotes back as if it did.

@@ -152,7 +152,7 @@ export function RoutineBrowserCard({
               )}
             </p>
 
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               The report waits until the browser has answered, and is sent once with its answers in
               it.
               {routine.browserConversationId && (
@@ -211,7 +211,7 @@ function SiteField({
           }}
           disabled={saving}
         />
-        <Button variant="outline" onClick={onSave} disabled={!canSave || saving}>
+        <Button variant="secondary" onClick={onSave} disabled={!canSave || saving}>
           Save
         </Button>
       </div>

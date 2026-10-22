@@ -146,7 +146,7 @@ export function ConnectionRow({
   const reconnectButton = (
     <Button
       size="sm"
-      variant={action === "newGrant" ? "default" : "outline"}
+      variant={action === "newGrant" ? "default" : "secondary"}
       disabled={reconnect.isPending}
       onClick={() =>
         reconnect.mutate(connection.id, {

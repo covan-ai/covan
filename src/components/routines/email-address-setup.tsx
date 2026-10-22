@@ -19,10 +19,10 @@ export function EmailAddressSetup({
 }) {
   const { data, isPending, isError } = useRoutineEventSetup(routineId, true);
 
-  if (isPending) return <p className="text-xs text-muted-foreground">Loading the address…</p>;
+  if (isPending) return <p className="text-meta text-muted-foreground">Loading the address…</p>;
   if (isError) {
     return (
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         Couldn't load the address. Reload to try again.
       </p>
     );
@@ -33,7 +33,7 @@ export function EmailAddressSetup({
     <div className="space-y-3 rounded-lg border border-hairline p-4">
       <p className="text-sm">This routine's address</p>
       <RevealedSecret value={data.address} label="Copy address" />
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         {senders
           ? `Mail from ${senders} starts it. Anything else is ignored.`
           : "Mail from the members of this workspace starts it. Anything else is ignored."}{" "}

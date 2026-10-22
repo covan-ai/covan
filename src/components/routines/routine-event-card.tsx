@@ -142,9 +142,9 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
                 </Chip>
               </div>
               {event.statusDetail && (
-                <p className="text-xs text-muted-foreground">{event.statusDetail}</p>
+                <p className="text-meta text-muted-foreground">{event.statusDetail}</p>
               )}
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 {event.lastEventAt === null
                   ? "Nothing has arrived yet."
                   : `Last event ${formatRelative(event.lastEventAt)}.`}
@@ -164,14 +164,14 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
             )}
             <div className="flex flex-wrap gap-2">
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 onClick={() => void test()}
                 disabled={testEvent.isPending}
               >
                 {testEvent.isPending ? "Running…" : "Send a test event"}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
                 {event.status === "expired" || event.status === "failed" ? "Reconnect" : "Change"}
               </Button>
               <AlertDialog>

@@ -271,7 +271,7 @@ function CreateKeyDialog({
               if (e.key === "Enter") void submit();
             }}
           />
-          <p className="text-xs text-muted-foreground">Only for you to recognise it later.</p>
+          <p className="text-meta text-muted-foreground">Only for you to recognise it later.</p>
         </DialogBody>
         <DialogFooter>
           <Button variant="secondary" onClick={() => close(false)}>

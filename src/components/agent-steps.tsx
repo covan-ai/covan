@@ -441,7 +441,7 @@ export function ConfirmCard({
            they had. It is on every connected-app card — `runToolProposal` returns a
            standing action for every well-formed run_tool proposal — so a person
            reading it is reading it at the moment they are deciding. #201. */
-          <p className="text-xs leading-[1.45] text-muted-foreground">
+          <p className="text-meta leading-[1.45] text-muted-foreground">
             Approving covers this service for the rest of this conversation, except for anything
             that changes data there — that asks again each time. The third option applies to this
             operation on this agent until somebody removes it, on the Integrations page.

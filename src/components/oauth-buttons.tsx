@@ -140,7 +140,7 @@ export function OAuthButtons({
       </div>
 
       {consent ? (
-        <p className="mt-3 mb-0 text-xs leading-[1.5] text-muted-foreground">
+        <p className="mt-3 mb-0 text-meta leading-[1.5] text-muted-foreground">
           Continuing with {providers.map((p) => PROVIDER[p].label).join(" or ")} agrees to the{" "}
           <LegalAnchor link={termsLink()} newTab>
             Terms

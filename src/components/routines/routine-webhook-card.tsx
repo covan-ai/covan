@@ -81,7 +81,7 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
         ) : revealed ? (
           <div className="space-y-3">
             <RevealedSecret value={revealed} label="Copy webhook URL" />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               This is the only time it is shown. Covan stores a hash of it, so nobody — including us
               — can show it again. Anyone who has this URL can start this routine, which spends your
               workspace's credits, so treat it the way you would a password. Lost it? Make a new one
@@ -94,7 +94,7 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
               <Webhook className="h-4 w-4 shrink-0 text-muted-foreground" />
               This routine has a webhook URL.
             </p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               {trigger.lastUsedAt === null
                 ? "Nothing has used it yet."
                 : `Last used ${formatWhen(trigger.lastUsedAt)}.`}{" "}
@@ -112,7 +112,7 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
             <>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm" disabled={create.isPending}>
+                  <Button variant="secondary" size="sm" disabled={create.isPending}>
                     Replace the URL
                   </Button>
                 </AlertDialogTrigger>
@@ -196,7 +196,7 @@ function SiriSteps() {
         </li>
         <li>Name the shortcut. Saying “Hey Siri” and its name runs it.</li>
       </ol>
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="mt-2 text-meta text-muted-foreground">
         Siri reads the routine's answer if it is ready within about 25 seconds. If not, it says the
         routine is still working, and the answer arrives where this routine delivers. To keep the
         token out of the URL, replace the token at its end with <code className="font-mono">-</code>{" "}

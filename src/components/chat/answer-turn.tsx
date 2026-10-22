@@ -159,7 +159,7 @@ export const AnswerTurn = memo(function AnswerTurn({
           <div className="mt-3 flex items-center gap-2">
             <span className="text-xs text-muted-foreground">This answer hit its length limit.</span>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               onClick={() => onContinue(message.id)}
               disabled={busy}
@@ -191,7 +191,7 @@ export const AnswerTurn = memo(function AnswerTurn({
                     : "This turn used every tool call it is allowed."}
             </span>
             {stoppedShort !== "credits" && (
-              <Button variant="outline" size="sm" onClick={onKeepGoing} disabled={busy}>
+              <Button variant="secondary" size="sm" onClick={onKeepGoing} disabled={busy}>
                 Keep going
               </Button>
             )}
@@ -203,7 +203,7 @@ export const AnswerTurn = memo(function AnswerTurn({
             mid-sentence otherwise reads, after a reload, as one that
             finished. No button — the person who stopped it can ask again. */}
         {message.outcome === "stopped" && !truncated && !stoppedShort && (
-          <p className="mt-3 text-xs text-muted-foreground">You stopped this answer.</p>
+          <p className="mt-3 text-meta text-muted-foreground">You stopped this answer.</p>
         )}
 
         {message.promptTokens != null && message.completionTokens != null && (

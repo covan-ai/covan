@@ -57,7 +57,7 @@ function SettingsLayout() {
                 had an account they had no way back to what they had agreed
                 to. Settings is where a reader looks. New tab: nobody should
                 lose a workspace to read a policy. */}
-            <p className="mt-16 border-t border-hairline pt-6 text-xs text-muted-foreground">
+            <p className="mt-16 border-t border-hairline pt-6 text-meta text-muted-foreground">
               <LegalAnchor link={termsLink()} newTab>
                 Terms
               </LegalAnchor>

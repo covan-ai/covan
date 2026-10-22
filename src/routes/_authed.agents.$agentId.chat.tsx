@@ -2053,7 +2053,7 @@ function ChatTab() {
               {hasEarlier && (
                 <div className="mb-11 flex justify-center">
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={() => void loadEarlier()}
                     disabled={loadingEarlier}
@@ -2256,7 +2256,7 @@ function ChatTab() {
                     <span className="min-w-0 flex-1">{failed.message}</span>
                     {isOwner && failed.retryable !== false && (
                       <Button
-                        variant="outline"
+                        variant="secondary"
                         size="sm"
                         onClick={() => void streamReply(failed.sessionId)}
                       >
@@ -2276,7 +2276,11 @@ function ChatTab() {
                   <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
                   <span className="min-w-0 flex-1">This question didn't get an answer.</span>
                   {isOwner && active && (
-                    <Button variant="outline" size="sm" onClick={() => void streamReply(active.id)}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void streamReply(active.id)}
+                    >
                       <RefreshCw className="h-3.5 w-3.5" /> Try again
                     </Button>
                   )}
@@ -2296,7 +2300,7 @@ function ChatTab() {
                     steps={kept.steps}
                     streaming={false}
                   />
-                  <p className="mt-3 text-xs text-muted-foreground">You stopped this answer.</p>
+                  <p className="mt-3 text-meta text-muted-foreground">You stopped this answer.</p>
                 </div>
               )}
             </div>
@@ -2371,7 +2375,7 @@ function ChatTab() {
             is no end to go back to. */}
         {adrift && !isEmpty && (
           <Button
-            variant="outline"
+            variant="secondary"
             size="icon"
             onClick={jumpToEnd}
             aria-label="Jump to the latest message"
@@ -2386,7 +2390,7 @@ function ChatTab() {
               {followUps.map((q) => (
                 <Button
                   key={q}
-                  variant="outline"
+                  variant="secondary"
                   size="sm"
                   onClick={() => void submit(q)}
                   className="bg-popover text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -2582,7 +2586,7 @@ function ChatTab() {
             </p>
           )}
           {privateFoldersNote && (
-            <p className="mt-1 text-center text-xs text-muted-foreground">{privateFoldersNote}</p>
+            <p className="mt-1 text-center text-meta text-muted-foreground">{privateFoldersNote}</p>
           )}
         </div>
       </div>
@@ -2658,7 +2662,7 @@ function ChatTab() {
           {/* Secondary on purpose: the composer's send is this view's one
               primary action (DESIGN.md §2). */}
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => suggestMutation.mutate(active.id)}
             disabled={suggestMutation.isPending}
@@ -2683,7 +2687,7 @@ function ChatTab() {
                     {s.detail && <div className="text-xs text-muted-foreground">{s.detail}</div>}
                   </div>
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={() =>
                       addIdeaMutation.mutate({

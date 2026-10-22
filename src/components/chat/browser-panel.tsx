@@ -554,7 +554,7 @@ export function BrowserPanel({
                   className="flex items-start gap-2 rounded-lg border border-border px-3 py-2"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-meta text-muted-foreground">
                       {PLACES[i] ?? `Number ${i + 1} in line`}
                     </p>
                     <p className="line-clamp-2 text-sm [overflow-wrap:anywhere]">{task.task}</p>

@@ -73,14 +73,14 @@ export function EmailCard({ email }: { email: string | null | undefined }) {
             {sending ? "Sending…" : "Change address"}
           </Button>
         </div>
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        {error ? <p className="text-meta text-destructive">{error}</p> : null}
         {sentTo ? (
-          <p className="text-xs text-muted-foreground" role="status">
+          <p className="text-meta text-muted-foreground" role="status">
             We sent a link to {email ?? "your current address"} and to {sentTo}. Click both; the
             change happens after the second.
           </p>
         ) : (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             We send a link to both addresses, and nothing changes until both are clicked.
           </p>
         )}

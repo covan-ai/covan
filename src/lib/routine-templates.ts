@@ -10,8 +10,8 @@ import type { CreatableSourceKind } from "./routines-api";
  * imagine it first".
  *
  * So these are routines to pick rather than invent, and the shape is the shape
- * `PERSONA_TEMPLATES` (agent-meta.ts) and `KNOWLEDGE_TEMPLATES`
- * (knowledge-templates.ts) already use: a plain exported constant, picked by
+ * `KNOWLEDGE_TEMPLATES`
+ * (knowledge-templates.ts) already uses: a plain exported constant, picked by
  * id, with no React and no network in sight.
  *
  * Three decisions worth not re-deriving:
@@ -36,7 +36,6 @@ export type RoutineTemplate = {
   label: string;
   /** One line under the label. What arrives, not how it works. */
   blurb: string;
-  emoji: string;
 
   /** Exactly the fields step 2 holds. */
   draft: {
@@ -100,7 +99,6 @@ export const ROUTINE_TEMPLATES: RoutineTemplate[] = [
     id: "first-week",
     label: "Somebody's first week",
     blurb: "One note each morning for a week, from what the team has written down.",
-    emoji: "🧭",
     draft: {
       name: "First week",
       sourceKind: "none",
@@ -132,7 +130,6 @@ Write it as a short note to one new person: what it is, why it matters here, and
     id: "gap-report",
     label: "What nobody wrote down",
     blurb: "Weekly: the topics your team asked about that no document covered.",
-    emoji: "📊",
     draft: {
       name: "Coverage gaps",
       sourceKind: "workspace",

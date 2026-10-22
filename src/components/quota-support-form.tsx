@@ -28,7 +28,7 @@ export function QuotaSupportForm() {
 
   if (send.isSuccess) {
     return (
-      <p className="text-xs text-muted-foreground">Sent — we will read it and get back to you.</p>
+      <p className="text-meta text-muted-foreground">Sent — we will read it and get back to you.</p>
     );
   }
 
@@ -46,7 +46,7 @@ export function QuotaSupportForm() {
         // `--destructive`, not the amber accent: DESIGN.md reserves amber for a
         // pointer and keeps this one token for "an engine-level failure", which
         // is exactly what a send that did not arrive is.
-        <p className="text-xs text-destructive">
+        <p className="text-meta text-destructive">
           {send.error instanceof Error ? send.error.message : "Couldn't send that message"} — or
           email efe@covan.app directly.
         </p>

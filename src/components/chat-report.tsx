@@ -55,7 +55,7 @@ export function ReportDialog({ reports, canWrite }: { reports: ReportWriter; can
           {/* Said before the wait rather than after it: where it lands and how
               long it takes are both easier to accept as a description than as
               a surprise. */}
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             Written section by section from this thread and what the agent reads, then filed in its
             reports folder. You can close the tab while it is written.
           </p>

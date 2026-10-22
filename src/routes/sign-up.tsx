@@ -220,7 +220,7 @@ function SignUp() {
       {/* Where these point is configurable, because an operator running Covan
           for other people needs their own documents and a self-hoster does
           not. See `src/lib/legal.ts`. */}
-      <p className="mt-4 mb-0 text-xs leading-[1.5] text-muted-foreground">
+      <p className="mt-4 mb-0 text-meta leading-[1.5] text-muted-foreground">
         By continuing you agree to the{" "}
         <LegalAnchor link={termsLink()} newTab>
           Terms

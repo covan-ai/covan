@@ -156,7 +156,7 @@ export function RoutineOutputCard({
             </p>
 
             {readsItsOwnOutput && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 This bundle is also attached to this routine's agent, so later runs will read what
                 earlier ones wrote.
               </p>

@@ -258,7 +258,7 @@ function Invite() {
         </>
       )}
 
-      <p className="mt-4 mb-0 text-xs leading-[1.5] text-muted-foreground">
+      <p className="mt-4 mb-0 text-meta leading-[1.5] text-muted-foreground">
         {expiry ? `The invitation expires ${expiry}. ` : ""}Not expecting this? You can ignore it;
         nothing happens until you accept.
       </p>

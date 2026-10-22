@@ -28,9 +28,6 @@ const buttonVariants = cva(
         // Red text on a white button: a destructive action is never a red fill.
         danger: "border border-input bg-card text-destructive hover:bg-surface-muted",
         secondary: "border border-input bg-card text-foreground hover:bg-surface-muted",
-        // The same white bordered button, under its old name until every
-        // caller says `secondary` (Phase 3's polish step).
-        outline: "border border-input bg-card text-foreground hover:bg-surface-muted",
         ghost: "text-muted-foreground hover:bg-surface hover:text-foreground",
         link: "h-auto px-0 text-foreground underline-offset-4 hover:underline",
       },

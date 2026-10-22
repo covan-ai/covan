@@ -247,7 +247,7 @@ export function DeliveryChannelsCard() {
           {revealed ? (
             <div className="space-y-4">
               <RevealedSecret value={revealed} label="Copy signing secret" />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 This is the only time it is shown. Give it to whatever receives the webhook: every
                 delivery carries an <code className="font-mono">X-Covan-Signature</code> header
                 computed with it, and a receiver that does not check the signature will accept a
@@ -282,7 +282,7 @@ export function DeliveryChannelsCard() {
                   </SelectContent>
                 </Select>
                 {kind === "webhook" && (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-meta text-muted-foreground">
                     A signed POST to any endpoint you run.
                   </p>
                 )}

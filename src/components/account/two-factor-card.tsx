@@ -66,7 +66,7 @@ export function TwoFactorCard() {
       help="A code from your authenticator app at every sign-in, after your password."
     >
       {isError ? (
-        <p className="pt-1.5 text-xs text-destructive">Couldn't load your authenticators.</p>
+        <p className="pt-1.5 text-meta text-destructive">Couldn't load your authenticators.</p>
       ) : on ? (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-3 pt-1">
@@ -82,7 +82,7 @@ export function TwoFactorCard() {
               </li>
             ))}
           </ul>
-          <p className="m-0 text-xs text-muted-foreground">
+          <p className="m-0 text-meta text-muted-foreground">
             There are no backup codes: a second device is the way back in if you lose this one. API
             keys you made keep working.
           </p>
@@ -244,7 +244,7 @@ function AddAuthenticatorDialog({
               className="mx-auto h-44 w-44 rounded-lg bg-white p-2"
             />
             <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 Can't scan it? Enter this key instead:
               </p>
               <p className="break-all font-mono text-xs">{enrollment.secret}</p>
@@ -264,7 +264,7 @@ function AddAuthenticatorDialog({
                 }}
                 className="tracking-widest"
               />
-              {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              {error ? <p className="text-meta text-destructive">{error}</p> : null}
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={busy || digits.length < 6}>
@@ -292,10 +292,10 @@ function AddAuthenticatorDialog({
                   setError(null);
                 }}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 So you can tell your devices apart later.
               </p>
-              {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              {error ? <p className="text-meta text-destructive">{error}</p> : null}
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={busy || !name.trim()}>

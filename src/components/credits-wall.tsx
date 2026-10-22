@@ -29,7 +29,7 @@ export function CreditsWall() {
   return (
     <div className="mt-3 flex flex-col gap-4 border-t border-hairline pt-3">
       <div className="flex flex-col gap-2">
-        <p className="text-xs text-muted-foreground">
+        <p className="text-meta text-muted-foreground">
           {isAdmin
             ? "Top-ups are handled by hand for now — tell us how many credits you need."
             : "Ask us for more credits, or ask an admin of this workspace to."}
@@ -37,7 +37,7 @@ export function CreditsWall() {
         <QuotaSupportForm />
       </div>
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         Covan's full source is published, and an install running on your own provider keys has no
         credits at all — everything here works the same way.{" "}
         <DocsLink page="self-hosting" className="text-xs">

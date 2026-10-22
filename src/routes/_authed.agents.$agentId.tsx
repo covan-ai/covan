@@ -28,7 +28,7 @@ function AgentLayout() {
           title="Agent not found"
           description="This agent was deleted or isn't shared with you."
           actions={
-            <Button asChild variant="outline">
+            <Button asChild variant="secondary">
               <Link to="/app">Back to home</Link>
             </Button>
           }

@@ -126,10 +126,12 @@ are letters on a tile, not text.
 - **`AgentMark`** (`components/agent-mark.tsx`) is the agent's face: one of
   eight brush-drawn marks (headset, fox, owl, bear, cat, robot, penguin, blob)
   in the ink colour on a white tile with a 1px border. The mark fills 72% of
-  the tile at every size. Sizes and radii: 16 (4) chip · 24 (6) sidebar and
-  tables · 36 (8) headers, pickers in dialogs · 40 (10) inbox rows · 64 (12)
-  the welcome picker. No mark picked, or an unknown one: the two-letter
-  monogram on the same tile. Never an empty box, never a colour, never emoji.
+  the tile at every size. Sizes and radii: 16 (4) chip · 20 (4) table owner ·
+  24 (6) sidebar and tables · 36 (8) Configuration · 40 (10) inbox rows and the
+  create dialog's picker · 56 (12) the welcome picker. The chosen mark in a
+  picker has a 2px ink outline. No mark picked, or an unknown one: the
+  two-letter monogram ("SU") on the grey tile. Never an empty box, never a
+  colour, never emoji.
 - **`Avatar`** (`components/avatar.tsx`) is a person: round, initials on the
   `avatar` grey, or their photo. 20 in charts and tables, 24 in rows, 32–40 in
   headers, 64 on the profile page. `AvatarStack` overlaps them by 6px.

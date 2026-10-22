@@ -35,3 +35,22 @@ export function BrandMark({ className }: { className?: string }) {
     </div>
   );
 }
+
+/**
+ * The lockup the pages outside the shell wear: a 28px ink tile with a "C" and
+ * the word "Covan" beside it (DESIGN.md §5). The auth pages, the welcome flow
+ * and the legal pages; never the sidebar, which shows the workspace's tile.
+ */
+export function BrandLockup({ className }: { className?: string }) {
+  return (
+    <span className={cn("flex items-center gap-2.5 text-lead font-semibold", className)}>
+      <span
+        aria-hidden
+        className="grid h-7 w-7 place-items-center rounded-md bg-primary text-meta text-primary-foreground"
+      >
+        C
+      </span>
+      Covan
+    </span>
+  );
+}

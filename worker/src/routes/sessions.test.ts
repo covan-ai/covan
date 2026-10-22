@@ -766,3 +766,59 @@ describe("POST /sessions/:id/browser-tasks/continue", () => {
     expect(res.status).toBe(500);
   });
 });
+
+describe("GET /sessions — the dot beside each thread (0122)", () => {
+  function listing(states: { data: unknown; error: unknown }) {
+    const asked: Array<Record<string, unknown>> = [];
+    const { app } = appWith({
+      tables: {
+        profiles: {
+          select: () => ({ data: { active_workspace_id: "ws-1" }, error: null }),
+        },
+        workspace_members: {
+          select: () => ({ data: { workspace_id: "ws-1" }, error: null }),
+        },
+        chat_sessions: {
+          select: () => ({
+            data: [
+              { ...SESSION_ROW, messages: [{ count: 2 }] },
+              { ...SESSION_ROW, id: "session-2", messages: [{ count: 5 }] },
+            ],
+            error: null,
+          }),
+        },
+      },
+      rpc: {
+        session_states: (args) => {
+          asked.push(args);
+          return states as never;
+        },
+      },
+    });
+    return { app, asked };
+  }
+
+  it("says which thread waits on you, which is running, and how much is unread", async () => {
+    const { app, asked } = listing({
+      data: [
+        { session_id: "session-1", state: "needs_you", unread: 1 },
+        { session_id: "session-2", state: "running", unread: 0 },
+      ],
+      error: null,
+    });
+    const res = await app.request("/sessions");
+    const body = (await res.json()) as Array<{ id: string; state?: string; unread?: number }>;
+    expect(body.map((s) => [s.id, s.state, s.unread])).toEqual([
+      ["session-1", "needs_you", 1],
+      ["session-2", "running", 0],
+    ]);
+    expect(asked).toEqual([{ p_workspace_id: "ws-1", p_session_ids: ["session-1", "session-2"] }]);
+  });
+
+  it("still lists the threads when the dots cannot be read", async () => {
+    const { app } = listing({ data: null, error: { message: "timeout" } });
+    const body = (await (await app.request("/sessions")).json()) as Array<{ state?: string }>;
+    expect(body).toHaveLength(2);
+    expect(body[0]!.state).toBeUndefined();
+  });
+});

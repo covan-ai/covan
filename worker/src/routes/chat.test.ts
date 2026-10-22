@@ -2054,9 +2054,9 @@ describe("a reply that used a tool", () => {
     const offered = (completionCreate.mock.calls.find((c) => c[0].stream)?.[0].tools ?? []).map(
       (t: { function: { name: string } }) => t.function.name,
     );
-    // No connected service and no delivery channel, so only the tool that
-    // needs neither.
-    expect(offered).toEqual(["search_documents"]);
+    // No connected service and no delivery channel, so only the tools that
+    // need neither: the knowledge search, and asking the person.
+    expect(offered).toEqual(["search_documents", "ask_person"]);
   });
 
   it("offers the connection tools once the workspace has a connection", async () => {
@@ -3452,5 +3452,69 @@ describe("the turn that speaks first", () => {
     expect(res.status).toBe(400);
     expect(JSON.parse(res.body)).toMatchObject({ error: "nothing to regenerate" });
     expect(completionCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("a reply that asks the person (0122)", () => {
+  function asksThePerson(args: Record<string, unknown>, said: string) {
+    let pass = 0;
+    return async (body: { stream?: boolean }) => {
+      if (!body.stream) return titleOf("A question");
+      pass++;
+      if (pass > 1) return streamOf("");
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { choices: [{ delta: { content: said } }] };
+          yield {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "call_ask",
+                      function: { name: "ask_person", arguments: JSON.stringify(args) },
+                    },
+                  ],
+                },
+              },
+            ],
+          };
+          yield { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+          yield {
+            choices: [],
+            usage: { prompt_tokens: 100, completion_tokens: 20, prompt_tokens_details: {} },
+          };
+        },
+      };
+    };
+  }
+
+  it("writes the question and its answers onto the reply, for the ask card", async () => {
+    const { app } = appWith({ question: "Can we refund EU orders after 30 days?" });
+    completionCreate.mockImplementation(
+      asksThePerson(
+        {
+          question: "Should I draft the reply to the customer, or is the summary enough?",
+          replies: ["Draft the reply", "Summary is enough"],
+        },
+        "Yes, with one condition.",
+      ),
+    );
+
+    await ask(app);
+
+    const row = serviceInsert.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(row.content).toContain("Yes, with one condition.");
+    expect(row.ask).toEqual({
+      question: "Should I draft the reply to the customer, or is the summary enough?",
+      replies: ["Draft the reply", "Summary is enough"],
+    });
+  });
+
+  it("asks nothing on a reply that did not", async () => {
+    const { app } = appWith({ question: "Hi" });
+    await ask(app);
+    expect(serviceInsert.mock.calls.at(-1)?.[0].ask).toBeNull();
   });
 });

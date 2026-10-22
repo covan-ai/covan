@@ -87,6 +87,9 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
     "agent_id,delivery_channel_id,ends_after_runs,instruction,name,next_run_at,output_bundle_id,output_retention,schedule_cron,source_config,source_kind,timezone,trigger_kind,user_id,visibility,workspace_id",
   "routines UPDATE":
     "browser_access,browser_site,consecutive_failures,delivery_channel_id,instruction,name,next_run_at,output_bundle_id,output_retention,paused_reason,schedule_cron,status,timezone,trigger_kind,updated_at,visibility",
+  // 0121: when the caller last read a thread, upserted on (session_id, user_id).
+  "session_reads INSERT": "last_read_at,session_id,user_id,workspace_id",
+  "session_reads UPDATE": "last_read_at,session_id,user_id,workspace_id",
   "slack_installations UPDATE": "agent_id",
   "tool_connection_grants INSERT": "agent_id,granted_by,mode,slug,tool_connection_id,workspace_id",
   "tool_connection_grants UPDATE": "agent_id,mode,slug,tool_connection_id,workspace_id",

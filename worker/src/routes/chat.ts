@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
+import { trackTurn } from "../lib/active-turns";
+import { askOf } from "../lib/harness/tools/ask-person";
 import {
   resolveModel,
   modelSpec,
@@ -721,6 +723,9 @@ chat.post("/chat/stream", async (c) => {
                 ...usageColumns(addUsage(usageOfRow(before), delta)),
                 model,
                 outcome: opts.outcome,
+                // A continuation that ends on a question asks it; one that
+                // does not leaves whatever the first half asked.
+                ...(askOf(steps) ? { ask: askOf(steps) } : {}),
               })
               .eq("id", before.id)
               .select("*")
@@ -735,6 +740,9 @@ chat.post("/chat/stream", async (c) => {
                 sources: sources.length > 0 ? sources : null,
                 grounding,
                 ...usageColumns(delta),
+                // What the reply asks the person, when it ended on
+                // `ask_person` (0122): drawn as the ask card under it.
+                ask: askOf(steps),
                 // Insert only. A continuation's row already describes the
                 // request that produced its first half, which is the rule
                 // `sources` and `grounding` follow a few lines up.
@@ -842,7 +850,16 @@ chat.post("/chat/stream", async (c) => {
         if (error) console.error("failed to correct the reply's outcome", error);
       };
 
+      // The sidebar, the Inbox and Home show the turn while it runs (0122).
+      const tracker = trackTurn(service, {
+        sessionId,
+        workspaceId: session.workspace_id as string,
+        agentId: session.agent_id as string,
+        userId: c.get("user").id,
+      });
+
       try {
+        await tracker.start();
         // `runAgentTurn` rather than `streamCompletion` directly, which is the
         // one structural change on this path: the model may now ask for a
         // tool, and the loop that runs it and asks again lives in
@@ -899,6 +916,7 @@ chat.post("/chat/stream", async (c) => {
           send,
           spend,
           mayContinue: hold.mayContinue,
+          onStepEvent: (event) => tracker.step(event),
         });
 
         steps = turn.steps;
@@ -1124,6 +1142,8 @@ chat.post("/chat/stream", async (c) => {
           retryable: failed.retryable,
         });
         controller.close();
+      } finally {
+        await tracker.end();
       }
     },
   });
@@ -1408,7 +1428,16 @@ chat.post("/chat/confirm/:id", async (c) => {
         return data ?? null;
       };
 
+      // Running again, now that somebody answered (0122).
+      const tracker = trackTurn(service, {
+        sessionId: pause.sessionId,
+        workspaceId: pause.workspaceId,
+        agentId: pause.agentId,
+        userId: pause.userId,
+      });
+
       try {
+        await tracker.start();
         const tool = approve ? toolByName(pause.toolCall.name) : null;
         const started = Date.now();
         const parsedArgs = parseArguments(pause.toolCall.arguments);
@@ -1685,6 +1714,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           send,
           spend,
           mayContinue: hold.mayContinue,
+          onStepEvent: (event) => tracker.step(event),
         });
 
         await recordSpend();
@@ -1718,6 +1748,16 @@ chat.post("/chat/confirm/:id", async (c) => {
         }
 
         await writeSteps(service, inserted.id, turn.steps);
+        // A resumed turn can end on a question too (0122).
+        const question = askOf(turn.steps);
+        if (question) {
+          const { error: askError } = await service
+            .from("messages")
+            .update({ ask: question })
+            .eq("id", inserted.id);
+          if (askError) console.error("failed to record what the reply asks", askError);
+          inserted.ask = question;
+        }
         await service
           .from("chat_sessions")
           .update({ updated_at: new Date().toISOString() })
@@ -1814,6 +1854,8 @@ chat.post("/chat/confirm/:id", async (c) => {
           retryable: failed.retryable,
         });
         controller.close();
+      } finally {
+        await tracker.end();
       }
     },
   });

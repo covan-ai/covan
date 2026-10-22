@@ -246,6 +246,10 @@ export const EXPORTED: TableSpec[] = [
  * wanted the thing that is missing.
  */
 export const EXCLUDED: Record<string, string> = {
+  session_reads:
+    "when each person last opened each thread (0121): a per-person reading position, not workspace content. A restore starts everybody with nothing unread, which is the honest state of a fresh install.",
+  active_turns:
+    "a turn in progress right now (0122), deleted when it ends. An export is a still picture of finished work; a running turn in it would be a dot that never stops breathing.",
   document_chunks:
     "derived, and enormous. Every chunk carries a 1536-dimension vector, so a workspace with ten thousand of them is tens of megabytes of numbers that say nothing a human can read. The documents themselves are in this archive; running POST /admin/backfill-embeddings after a restore rebuilds the chunks from them — with whatever embedding model the new install is configured for, which is more useful than replaying the old one's.",
   api_keys:

@@ -419,6 +419,11 @@ export type MessageDTO = {
    */
   outcome?: string;
   /**
+   * What the reply asks the person (0122): a question and up to three answers
+   * to press. Present only on a reply that ended on `ask_person`.
+   */
+  ask?: { question: string; replies: string[] };
+  /**
    * What the reply did before it wrote, when it did anything.
    *
    * Absent on every reply that ran no tool, which is most of them and all of
@@ -427,6 +432,13 @@ export type MessageDTO = {
    */
   steps?: MessageStepDTO[];
 };
+
+/** The dot beside a thread (0122): waiting on you, running, or neither. */
+export type SessionState = "needs_you" | "running" | "done";
+
+export function asSessionState(value: unknown): SessionState {
+  return value === "needs_you" || value === "running" ? value : "done";
+}
 
 export type ChatSessionDTO = {
   id: string;
@@ -447,6 +459,9 @@ export type ChatSessionDTO = {
   reasoningEffort: ReasoningEffort | null;
   webSearch: boolean | null;
   mode: "normal" | "brainstorm" | null;
+  /** On `GET /sessions` only: the thread's dot, and how many messages are unread. */
+  state?: SessionState;
+  unread?: number;
 };
 
 export type WorkspaceSummaryDTO = { id: string; name: string; slug: string; role: string };
@@ -878,6 +893,7 @@ export function mapMessage(row: {
   reasoning_tokens?: number | null;
   model?: string | null;
   outcome?: string | null;
+  ask?: unknown;
   /** The embedded `message_steps` rows, when the caller asked for them. */
   message_steps?: unknown;
 }): MessageDTO {
@@ -904,7 +920,18 @@ export function mapMessage(row: {
     ...(row.model ? { model: row.model } : {}),
     ...(row.outcome ? { outcome: row.outcome } : {}),
     ...(steps.length > 0 ? { steps } : {}),
+    ...askField(row.ask),
   };
+}
+
+/** `messages.ask` as the DTO carries it, or nothing when it is absent or misshapen. */
+function askField(value: unknown): { ask?: { question: string; replies: string[] } } {
+  const a = value as { question?: unknown; replies?: unknown } | null | undefined;
+  if (!a || typeof a.question !== "string") return {};
+  const replies = Array.isArray(a.replies)
+    ? a.replies.filter((r): r is string => typeof r === "string")
+    : [];
+  return { ask: { question: a.question, replies } };
 }
 
 /**

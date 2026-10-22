@@ -158,6 +158,60 @@ export type OnboardingEvent = {
 
 export type WorkspaceSummary = { id: string; name: string; slug: string; role: string };
 
+/** What a thread in the Inbox wants from the caller (A4). */
+export type InboxNeedsYou = {
+  kind: "approval" | "question" | "login" | "routine_failed";
+  pausedTurnId?: string;
+  summary: string;
+  replies?: string[];
+  since: number;
+};
+
+/** One thread in the Inbox, as `GET /inbox` shapes it. */
+export type InboxItem = {
+  sessionId: string;
+  agentId: string;
+  title: string | null;
+  kind: string;
+  visibility: "private" | "shared";
+  ownerId: string | null;
+  ownerName: string | null;
+  /** The owner's name when the thread is somebody else's, shared with you. */
+  sharedBy: string | null;
+  preview: {
+    role: "user" | "assistant";
+    senderName: string | null;
+    text: string;
+    at: number;
+  } | null;
+  unread: boolean;
+  unreadCount: number;
+  needsYou: InboxNeedsYou | null;
+  running: {
+    stepsDone: number;
+    lastTool: string | null;
+    note: string | null;
+    since: number;
+  } | null;
+  lastActivityAt: number;
+};
+
+export type InboxFilter = "all" | "unread" | "needs_you" | "running" | "mine";
+
+export type InboxPage = {
+  items: InboxItem[];
+  counts: { unread: number; needsYou: number; running: number };
+  perAgentUnread: Record<string, number>;
+  hasMore: boolean;
+};
+
+export type InboxCounts = {
+  unread: number;
+  needsYou: number;
+  running: number;
+  byAgent: Record<string, { unread: number; needsYou: number; running: number }>;
+};
+
 export type PendingInvitation = {
   id: string;
   email: string;
@@ -773,6 +827,28 @@ export const api = {
   },
   favorites: {
     list: (): Promise<string[]> => request("GET", "/favorites"),
+  },
+  inbox: {
+    list: (
+      opts: {
+        filter?: InboxFilter;
+        agentId?: string;
+        before?: number;
+        limit?: number;
+      } = {},
+    ): Promise<InboxPage> => {
+      const q = new URLSearchParams();
+      if (opts.filter && opts.filter !== "all") q.set("filter", opts.filter);
+      if (opts.agentId) q.set("agent", opts.agentId);
+      if (opts.before) q.set("before", String(opts.before));
+      if (opts.limit) q.set("limit", String(opts.limit));
+      const qs = q.toString();
+      return request("GET", qs ? `/inbox?${qs}` : "/inbox");
+    },
+    counts: (): Promise<InboxCounts> => request("GET", "/inbox/counts"),
+    markRead: (sessionId: string): Promise<{ ok: true }> =>
+      request("POST", "/inbox/read", { sessionId }),
+    markAllRead: (): Promise<{ ok: true; marked: number }> => request("POST", "/inbox/read-all"),
   },
   sessions: {
     list: (): Promise<ChatSession[]> => request("GET", "/sessions"),

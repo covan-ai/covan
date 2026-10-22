@@ -363,6 +363,10 @@ const RECEIVES_THE_SERVICE_CLIENT = new Map([
     "parks and resumes a turn: paused_turns has no client write grant, and every row is keyed to a message and session the route resolved through the caller's own client",
   ],
   [
+    "lib/active-turns.ts",
+    "says a turn is running where the rest of the workspace can see it (0122): active_turns has no client write grant, for paused_turns' reason, and every write is keyed to the one session the route already resolved through the caller's own client — upserted when the turn starts, moved along by its own steps, deleted when it ends",
+  ],
+  [
     "routes/chat-turn.ts",
     "salvages a reply after a failure: writes the assistant message 0009 forbids the caller to write, into the session the route already resolved",
   ],

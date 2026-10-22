@@ -5,7 +5,14 @@ import { savedLogin, tasksThatCarriedALogin } from "../lib/browser/credentials";
 import { pollConversationBrowser } from "../lib/browser/live";
 import { NOT_STARTED } from "../lib/browser/queue";
 import { deferred } from "../lib/defer";
-import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
+import {
+  asSessionState,
+  BROWSER_TASK_COLUMNS,
+  mapBrowserTask,
+  mapChatSession,
+  mapMessage,
+  type SessionState,
+} from "../lib/dto";
 import { availableModels, REASONING_EFFORTS, type ModelEnv } from "../lib/models";
 import { callerWorkspaceId } from "../lib/workspace";
 
@@ -98,7 +105,30 @@ sessions.get("/sessions", async (c) => {
     return c.json({ error: "failed to load sessions" }, 500);
   }
 
-  return c.json((data ?? []).map((row) => mapChatSession(row, [])));
+  // The dot beside each thread in the sidebar (0122): waiting on you, running,
+  // or done. Best-effort — a list without dots is still the list.
+  const rows = data ?? [];
+  const states = new Map<string, { state: SessionState; unread: number }>();
+  if (rows.length > 0) {
+    const { data: found, error: stateError } = await db.rpc("session_states", {
+      p_workspace_id: workspaceId,
+      p_session_ids: rows.map((r) => r.id as string),
+    });
+    if (stateError) console.error("session_states failed", stateError);
+    for (const s of (found ?? []) as Array<{ session_id: string; state: string; unread: number }>) {
+      states.set(s.session_id, { state: asSessionState(s.state), unread: s.unread ?? 0 });
+    }
+  }
+
+  return c.json(
+    rows.map((row) => {
+      const known = states.get(row.id as string);
+      return {
+        ...mapChatSession(row, []),
+        ...(known ? { state: known.state, unread: known.unread } : {}),
+      };
+    }),
+  );
 });
 
 // POST /sessions

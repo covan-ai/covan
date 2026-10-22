@@ -205,5 +205,23 @@ export async function runPurge(env: Bindings): Promise<PurgeResult> {
     console.error("purge: no document store configured; rows only", e);
   }
 
-  return purgeExpired({ db: serviceClient(env), store, horizon: defaultHorizon() });
+  const db = serviceClient(env);
+  const result = await purgeExpired({ db, store, horizon: defaultHorizon() });
+  await sweepStaleTurns(db);
+  return result;
+}
+
+/**
+ * A turn that died without saying so leaves its `active_turns` row behind
+ * (0122). Every reader already ignores a row thirty minutes quiet; this takes
+ * them away so the table holds only what is running. Best-effort, like the
+ * rest of the sweep.
+ */
+export async function sweepStaleTurns(
+  db: ReturnType<typeof serviceClient>,
+  now: Date = new Date(),
+): Promise<void> {
+  const before = new Date(now.getTime() - 30 * 60_000).toISOString();
+  const { error } = await db.from("active_turns").delete().lt("updated_at", before);
+  if (error) console.error("purge: failed to sweep stale turns", error);
 }

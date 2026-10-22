@@ -1,12 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowLeft, CheckCircle2, Eye, EyeOff, Lock } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase/client";
 import { readSession } from "@/lib/supabase/session";
+import { passwordStrength } from "@/lib/password-strength";
 
 export const Route = createFileRoute("/reset-password")({
   component: ResetPassword,
@@ -40,6 +41,8 @@ function ResetPassword() {
   const [attempt, setAttempt] = useState(0);
   /** True while the link could be neither confirmed nor ruled out. */
   const [unreachable, setUnreachable] = useState(false);
+  const [email, setEmail] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
 
   useEffect(() => {
     // An expired or already-used link. There is no token to wait for, so
@@ -75,6 +78,7 @@ function ResetPassword() {
       if (!active) return;
       if (answer.kind === "session") {
         setUnreachable(false);
+        setEmail(answer.session.user?.email ?? null);
         setStatus("ready");
         return;
       }
@@ -138,28 +142,12 @@ function ResetPassword() {
   if (status === "done") {
     return (
       <AuthLayout
-        title="Password updated"
-        subtitle="Your password has been changed."
-        footer={
-          <Link
-            to="/sign-in"
-            className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
-          </Link>
-        }
+        title="Password saved"
+        subtitle="Every session was signed out, this one too. Sign in with the new password."
       >
-        <div className="flex flex-col items-center gap-3 py-2 text-center">
-          <span className="grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
-            <CheckCircle2 className="h-5 w-5" />
-          </span>
-          <p className="text-sm text-muted-foreground">
-            You can now sign in with your new password.
-          </p>
-          <Button asChild size="sm" className="mt-1">
-            <Link to="/sign-in">Sign in</Link>
-          </Button>
-        </div>
+        <Button asChild size="lg" className="w-full">
+          <Link to="/sign-in">Sign in</Link>
+        </Button>
       </AuthLayout>
     );
   }
@@ -167,70 +155,65 @@ function ResetPassword() {
   if (status === "invalid") {
     return (
       <AuthLayout
-        title="Link expired"
-        subtitle="This password reset link is invalid or has expired."
-        footer={
-          <Link
-            to="/sign-in"
-            className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
-          </Link>
-        }
+        title="This link no longer works"
+        subtitle="A reset link works for one hour and once."
       >
-        <div className="flex flex-col items-center gap-3 py-2 text-center">
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <p className="text-sm text-muted-foreground">
-            Reset links expire after 15 minutes. Request a new one to continue.
-          </p>
-          <Button asChild size="sm" className="mt-1">
-            <Link to="/forgot-password">Request a new link</Link>
-          </Button>
-        </div>
+        {error && <p className="mt-0 mb-3 text-sm text-destructive">{error}</p>}
+        <Button asChild size="lg" className="w-full">
+          <Link to="/forgot-password">Send a new link</Link>
+        </Button>
+        <Button asChild variant="ghost" size="lg" className="mt-2 w-full">
+          <Link to="/sign-in">Back to sign in</Link>
+        </Button>
       </AuthLayout>
     );
   }
 
   if (status === "checking") {
     return (
-      <AuthLayout title="Reset your password" subtitle="Verifying your reset link…">
-        <div className="flex min-h-24 items-center justify-center text-sm text-muted-foreground">
+      <AuthLayout title="Opening your reset link" subtitle="One moment.">
+        <div className="flex min-h-16 items-center justify-center text-sm text-muted-foreground">
           Loading…
         </div>
       </AuthLayout>
     );
   }
 
+  const strength = passwordStrength(password, MIN_PASSWORD);
+
   return (
     <AuthLayout
-      title="Set a new password"
-      subtitle="Choose a strong password for your account."
-      footer={
-        <Link
-          to="/sign-in"
-          className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
-        </Link>
+      title="Choose a new password"
+      subtitle={
+        <>
+          {email ? (
+            <>
+              For <span className="font-medium text-foreground">{email}</span>.{" "}
+            </>
+          ) : null}
+          Every session is signed out when you save, this one too.
+        </>
       }
     >
       {/* method="post" for the reason spelled out in sign-in.tsx: submitted before
           hydration, a form with no method is a GET and puts what was typed in
           the URL. */}
-      <form method="post" onSubmit={handleSubmit} className="space-y-4">
+      <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-3.5">
         <div className="space-y-1.5">
-          <Label htmlFor="password">New password</Label>
+          <Label htmlFor="password" className="text-meta">
+            New password
+          </Label>
           <div className="relative">
-            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="password"
               name="password"
               type={showPassword ? "text" : "password"}
-              placeholder="••••••••"
               required
-              minLength={8}
+              minLength={MIN_PASSWORD}
               autoComplete="new-password"
-              className="px-9"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="h-9 pr-9"
             />
             <button
               type="button"
@@ -241,31 +224,40 @@ function ResetPassword() {
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
+          <div className="mt-2 flex gap-1" aria-hidden>
+            {[1, 2, 3, 4].map((i) => (
+              <i
+                key={i}
+                className={`block h-1 flex-1 rounded-full ${i <= strength.segments ? "bg-foreground" : "bg-border"}`}
+              />
+            ))}
+          </div>
+          <p className="m-0 text-meta text-muted-foreground">{strength.words}</p>
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="confirmPassword">Confirm new password</Label>
-          <div className="relative">
-            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="confirmPassword"
-              name="confirmPassword"
-              type={showPassword ? "text" : "password"}
-              placeholder="••••••••"
-              required
-              minLength={8}
-              autoComplete="new-password"
-              className="pl-9"
-            />
-          </div>
+          <Label htmlFor="confirmPassword" className="text-meta">
+            Again, to be sure
+          </Label>
+          <Input
+            id="confirmPassword"
+            name="confirmPassword"
+            type={showPassword ? "text" : "password"}
+            required
+            minLength={MIN_PASSWORD}
+            autoComplete="new-password"
+            className="h-9"
+          />
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="m-0 text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" className="w-full" disabled={submitting}>
-          {submitting ? "Updating…" : "Update password"}
+        <Button type="submit" size="lg" className="mt-1 w-full" disabled={submitting}>
+          {submitting ? "Saving…" : "Save the password"}
         </Button>
       </form>
     </AuthLayout>
   );
 }
+
+const MIN_PASSWORD = 12;

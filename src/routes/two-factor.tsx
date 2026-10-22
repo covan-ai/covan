@@ -1,10 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { KeyRound } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
+import { CodeInput } from "@/components/code-input";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase/client";
 import { giveSecondFactor } from "@/lib/supabase/mfa";
 import { readSession } from "@/lib/supabase/session";
@@ -40,6 +38,9 @@ function TwoFactor() {
   const [ready, setReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [email, setEmail] = useState<string | null>(null);
+  const [lostPhone, setLostPhone] = useState(false);
 
   // Arriving without a half-finished session is arriving by mistake: with no
   // session there is nothing to finish, and a whole one has nothing left to do.
@@ -53,6 +54,7 @@ function TwoFactor() {
       } else if (answer.kind === "session") {
         navigate({ to: next ?? "/app", replace: true });
       } else {
+        if (answer.kind === "second-factor") setEmail(answer.session.user?.email ?? null);
         setReady(true);
       }
     });
@@ -85,49 +87,50 @@ function TwoFactor() {
   return (
     <AuthLayout
       title="Enter your code"
-      subtitle="Open your authenticator app and type the six-digit code it shows for Covan."
+      subtitle="From your authenticator app. It changes every 30 seconds."
       footer={
-        <button
-          type="button"
-          onClick={() => void signInElsewhere()}
-          className="font-medium text-foreground hover:underline"
-        >
-          Sign in with a different account
-        </button>
+        <>
+          {email ? `Signing in as ${email} · ` : null}
+          <button
+            type="button"
+            onClick={() => void signInElsewhere()}
+            className="font-medium text-foreground hover:underline"
+          >
+            {email ? "Not you?" : "Sign in with a different account"}
+          </button>
+        </>
       }
     >
       {/* `method="post"` for the reason sign-in.tsx gives. */}
-      <form method="post" onSubmit={handleSubmit} className="space-y-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="code">Authentication code</Label>
-          <div className="relative">
-            <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="code"
-              name="code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              pattern="[0-9 ]{6,7}"
-              maxLength={7}
-              placeholder="123 456"
-              required
-              autoFocus
-              disabled={!ready}
-              className="pl-9 tracking-widest"
-            />
-          </div>
-        </div>
+      <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <CodeInput name="code" value={code} onChange={setCode} disabled={!ready} />
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="m-0 text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" className="w-full" disabled={!ready || submitting}>
-          {submitting ? "Checking…" : "Continue"}
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          disabled={!ready || submitting || code.length < 6}
+        >
+          {submitting ? "Checking…" : "Verify"}
         </Button>
 
-        <p className="text-xs text-muted-foreground">
-          Lost your authenticator? Whoever runs this Covan can remove it, and you can then sign in
-          with your password alone.
-        </p>
+        <div className="text-right">
+          <button
+            type="button"
+            onClick={() => setLostPhone((v) => !v)}
+            className="text-meta text-muted-foreground hover:text-foreground"
+          >
+            Lost your phone?
+          </button>
+        </div>
+        {lostPhone ? (
+          <p className="m-0 text-meta text-muted-foreground">
+            Whoever runs this Covan can remove your authenticator, and you can then sign in with
+            your password alone.
+          </p>
+        ) : null}
       </form>
     </AuthLayout>
   );

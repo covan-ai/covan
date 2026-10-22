@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { MailCheck } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
@@ -76,7 +75,7 @@ function ConfirmAddress() {
             : "Open the button in the email again."
         }
       >
-        <p className="py-2 text-center text-sm text-muted-foreground">
+        <p className="m-0 text-sm text-muted-foreground">
           Nothing will be sent to this address unless it is confirmed. If you expected these
           messages, ask whoever set them up to send a new link.
         </p>
@@ -87,7 +86,7 @@ function ConfirmAddress() {
   if (status === "confirmed") {
     return (
       <AuthLayout title="Address confirmed" subtitle="Routine results can now be sent here.">
-        <p className="py-2 text-center text-sm text-muted-foreground">
+        <p className="m-0 text-sm text-muted-foreground">
           You can close this page. To stop them later, reply to the person who set them up, or ask
           them to remove this address.
         </p>
@@ -100,15 +99,17 @@ function ConfirmAddress() {
       title="Confirm this address"
       subtitle="Somebody using Covan asked to send routine results here."
     >
-      <div className="flex flex-col items-center gap-3 py-2 text-center">
-        <span className="grid h-11 w-11 place-items-center rounded-md bg-primary/10 text-primary">
-          <MailCheck className="h-5 w-5" />
-        </span>
-        <p className="text-sm text-muted-foreground">
+      <div className="flex flex-col gap-3">
+        <p className="m-0 text-sm text-muted-foreground">
           If that was you, or you expect them, confirm below. If not, close this page — nothing is
           sent here unless you do.
         </p>
-        <Button size="sm" onClick={() => void confirm()} disabled={status === "confirming"}>
+        <Button
+          size="lg"
+          className="w-full"
+          onClick={() => void confirm()}
+          disabled={status === "confirming"}
+        >
           {status === "confirming" ? "Confirming…" : "Confirm this address"}
         </Button>
       </div>

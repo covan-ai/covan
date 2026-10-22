@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
-import { stashedInviteToken } from "@/lib/invite-stash";
+import { stashedInviteLink, stashedInviteToken } from "@/lib/invite-stash";
 
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
@@ -13,14 +15,31 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const getSession = vi.fn();
+const signOut = vi.fn(async () => ({}));
 vi.mock("@/lib/supabase/client", () => ({
-  supabase: { auth: { getSession: () => getSession() } },
+  supabase: { auth: { getSession: () => getSession(), signOut: () => signOut() } },
+}));
+vi.mock("@/lib/legal", () => ({
+  termsLink: () => ({ href: "/terms", external: false }),
+  privacyLink: () => ({ href: "/privacy", external: false }),
+  statusLink: () => null,
 }));
 
-// Nothing on this page may accept. Mocked so a call would be visible.
+// Nothing on this page may accept an emailed invitation. Mocked so a call
+// would be visible.
 const accept = vi.fn();
 const preview = vi.fn();
-vi.mock("@/lib/api-client", () => ({ api: { invitations: { accept, preview } } }));
+const linkPreview = vi.fn();
+const linkAccept = vi.fn();
+const complete = vi.fn(async () => ({ completed: true }));
+vi.mock("@/lib/api-client", () => ({
+  api: {
+    invitations: { accept, preview },
+    inviteLinks: { preview: linkPreview, accept: linkAccept },
+    onboarding: { complete: () => complete() },
+  },
+  ApiError: class ApiError extends Error {},
+}));
 
 /**
  * Where an invitation email's button lands (migration 0090). The token in the
@@ -31,7 +50,11 @@ async function renderInvite(url: string) {
   window.history.replaceState(null, "", url);
   const { Route } = await import("./invite");
   const Component = (Route as unknown as { component: () => React.ReactElement }).component;
-  render(<Component />);
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <Component />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -92,8 +115,8 @@ describe("the invitation landing page", () => {
 
     await renderInvite("/invite#id=inv-1&token=tok-abc");
 
-    expect(await screen.findByText("Join Acme")).toBeInTheDocument();
-    expect(screen.getByText("Ada invited you as member.")).toBeInTheDocument();
+    expect(await screen.findByText("Ada invited you to Acme")).toBeInTheDocument();
+    expect(screen.getByText(/you can use every shared agent/i)).toBeInTheDocument();
     expect(screen.getByText("bob@acme.com")).toBeInTheDocument();
     expect(preview).toHaveBeenCalledWith("inv-1", "tok-abc");
     expect(accept).not.toHaveBeenCalled();
@@ -121,5 +144,52 @@ describe("the invitation landing page", () => {
 
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     expect(preview).not.toHaveBeenCalled();
+  });
+
+  it("keeps a workspace's link in this browser for somebody signed out", async () => {
+    linkPreview.mockResolvedValue({
+      workspaceName: "Acme",
+      inviterName: "Ada",
+      role: "member",
+      memberCount: 6,
+      agentCount: 4,
+      expiresAt: Date.now() + 5 * 86_400_000,
+      open: true,
+    });
+    await renderInvite("/invite#link=lnk-1");
+
+    expect(await screen.findByText("Ada invited you to Acme")).toBeInTheDocument();
+    expect(screen.getByText("6 members · 4 agents")).toBeInTheDocument();
+    expect(screen.getByText(/expires in 5 days/)).toBeInTheDocument();
+    expect(stashedInviteLink()).toBe("lnk-1");
+    expect(window.location.href).not.toContain("lnk-1");
+    expect(linkAccept).not.toHaveBeenCalled();
+  });
+
+  it("joins with a link only when somebody signed in presses Accept", async () => {
+    getSession.mockResolvedValue({
+      data: { session: { user: { id: "u1", email: "mina@acme.test", user_metadata: {} } } },
+    });
+    linkPreview.mockResolvedValue({
+      workspaceName: "Acme",
+      inviterName: "Ada",
+      role: "member",
+      memberCount: 6,
+      agentCount: 4,
+      expiresAt: Date.now() + 5 * 86_400_000,
+      open: true,
+    });
+    linkAccept.mockResolvedValue({ workspaceId: "w1" });
+    await renderInvite("/invite#link=lnk-1");
+
+    const button = await screen.findByRole("button", { name: "Accept and join Acme" });
+    expect(screen.getByText("signed in")).toBeInTheDocument();
+    expect(linkAccept).not.toHaveBeenCalled();
+    await userEvent.click(button);
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/app", replace: true }));
+    expect(linkAccept).toHaveBeenCalledWith("lnk-1");
+    expect(complete).toHaveBeenCalled();
+    expect(stashedInviteLink()).toBeNull();
   });
 });

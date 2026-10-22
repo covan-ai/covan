@@ -36,7 +36,7 @@ describe("the reset-password link check", () => {
 
     await renderReset();
 
-    expect(await screen.findByText("Set a new password")).toBeInTheDocument();
+    expect(await screen.findByText("Choose a new password")).toBeInTheDocument();
   });
 
   // A reset link proves the mailbox, not the authenticator: GoTrue will not
@@ -59,7 +59,7 @@ describe("the reset-password link check", () => {
 
     await renderReset();
 
-    expect(await screen.findByText("Link expired")).toBeInTheDocument();
+    expect(await screen.findByText("This link no longer works")).toBeInTheDocument();
   });
 
   /**
@@ -74,8 +74,8 @@ describe("the reset-password link check", () => {
     await renderReset();
 
     expect(
-      await screen.findByText("Set a new password", undefined, { timeout: 6000 }),
+      await screen.findByText("Choose a new password", undefined, { timeout: 6000 }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Link expired")).not.toBeInTheDocument();
+    expect(screen.queryByText("This link no longer works")).not.toBeInTheDocument();
   }, 10000);
 });

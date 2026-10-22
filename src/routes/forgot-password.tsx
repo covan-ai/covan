@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { ArrowLeft, Mail, MailCheck } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +17,10 @@ function ForgotPassword() {
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const email = String(new FormData(e.currentTarget).get("email") ?? "");
+    await send(String(new FormData(e.currentTarget).get("email") ?? ""));
+  }
+
+  async function send(email: string) {
     setError(null);
     setSubmitting(true);
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -37,29 +39,31 @@ function ForgotPassword() {
   if (sentTo) {
     return (
       <AuthLayout
-        title="Check your inbox"
-        subtitle="We sent a reset link if an account exists for that email."
-        footer={
-          <Link
-            to="/sign-in"
-            className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
-          </Link>
+        title="Check your email"
+        subtitle={
+          <>
+            If <span className="font-medium text-foreground">{sentTo}</span> has an account, a link
+            is on its way. It works for one hour and once.
+          </>
         }
       >
-        <div className="flex flex-col items-center gap-3 py-2 text-center">
-          <span className="grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
-            <MailCheck className="h-5 w-5" />
-          </span>
-          <p className="text-sm text-muted-foreground">
-            A password reset link was sent to <span className="text-foreground">{sentTo}</span>. It
-            expires in 15 minutes.
-          </p>
-          <Button type="button" variant="ghost" size="sm" onClick={() => setSentTo(null)}>
-            Use a different email
-          </Button>
-        </div>
+        <p className="mt-0 mb-3.5 text-meta leading-[1.5] text-muted-foreground">
+          Nothing arrived? Look in spam, or try again in a minute. We say the same thing whether or
+          not the address exists.
+        </p>
+        <Button
+          type="button"
+          variant="secondary"
+          size="lg"
+          className="w-full"
+          disabled={submitting}
+          onClick={() => void send(sentTo)}
+        >
+          {submitting ? "Sending…" : "Send it again"}
+        </Button>
+        <Button asChild variant="ghost" size="lg" className="mt-2 w-full">
+          <Link to="/sign-in">Back to sign in</Link>
+        </Button>
       </AuthLayout>
     );
   }
@@ -67,40 +71,34 @@ function ForgotPassword() {
   return (
     <AuthLayout
       title="Reset your password"
-      subtitle="Enter your work email and we'll send you a reset link."
-      footer={
-        <Link
-          to="/sign-in"
-          className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
-        </Link>
-      }
+      subtitle="Tell us the address and we send a link that works for one hour."
     >
       {/* method="post" for the reason spelled out in sign-in.tsx: submitted before
           hydration, a form with no method is a GET and puts what was typed in
           the URL. */}
-      <form method="post" onSubmit={handleSubmit} className="space-y-4">
+      <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-3.5">
         <div className="space-y-1.5">
-          <Label htmlFor="email">Work email</Label>
-          <div className="relative">
-            <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              placeholder="you@company.com"
-              required
-              autoComplete="email"
-              className="pl-9"
-            />
-          </div>
+          <Label htmlFor="email" className="text-meta">
+            Email
+          </Label>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="you@company.com"
+            required
+            autoComplete="email"
+            className="h-9"
+          />
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="m-0 text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" className="w-full" disabled={submitting}>
-          {submitting ? "Sending…" : "Send reset link"}
+        <Button type="submit" size="lg" className="w-full" disabled={submitting}>
+          {submitting ? "Sending…" : "Send the link"}
+        </Button>
+        <Button asChild variant="ghost" size="lg" className="w-full">
+          <Link to="/sign-in">Back to sign in</Link>
         </Button>
       </form>
     </AuthLayout>

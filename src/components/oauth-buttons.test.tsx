@@ -73,7 +73,7 @@ describe("the Google and GitHub buttons", () => {
 
     expect(await screen.findByText(/continuing with google or github agrees to/i)).toBeVisible();
     expect(screen.getByText("Terms")).toBeVisible();
-    expect(screen.getByText("Privacy Policy")).toBeVisible();
+    expect(screen.getByText("Privacy policy")).toBeVisible();
   });
 
   it("hand back an error raised before leaving", async () => {

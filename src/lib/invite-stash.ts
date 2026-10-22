@@ -71,3 +71,44 @@ export function inviteFromFragment(hash: string): { id: string; token: string } 
   const token = params.get("token");
   return id && token ? { id, token } : null;
 }
+
+const LINK_KEY = "covan.invite-link";
+
+/**
+ * A workspace's shareable link (`/invite#link=<token>`, 0129). Kept like an
+ * email invitation's token — in this browser, for the eight days a link can
+ * live — so somebody who opens it signed out finds it waiting once they are in.
+ */
+export function inviteLinkFromFragment(hash: string): string | null {
+  const token = new URLSearchParams(hash.replace(/^#/, "")).get("link");
+  return token && token.length <= 200 ? token : null;
+}
+
+export function stashInviteLink(token: string, now = Date.now()): void {
+  try {
+    localStorage.setItem(LINK_KEY, JSON.stringify({ token, at: now }));
+  } catch {
+    // A browser that will not store it loses the convenience, not the link.
+  }
+}
+
+export function stashedInviteLink(now = Date.now()): string | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LINK_KEY) ?? "null") as {
+      token?: unknown;
+      at?: unknown;
+    } | null;
+    if (!parsed || typeof parsed.token !== "string" || typeof parsed.at !== "number") return null;
+    return now - parsed.at < LIFETIME_MS ? parsed.token : null;
+  } catch {
+    return null;
+  }
+}
+
+export function forgetInviteLink(): void {
+  try {
+    localStorage.removeItem(LINK_KEY);
+  } catch {
+    // Nothing to forget in a browser that never stored it.
+  }
+}

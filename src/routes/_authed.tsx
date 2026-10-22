@@ -7,6 +7,7 @@ import { readSession } from "@/lib/supabase/session";
 import { api } from "@/lib/api-client";
 import { onboardingRedirect } from "@/lib/onboarding-gate";
 import { hasPendingGrant } from "@/lib/sensitive-url";
+import { stashedInviteLink } from "@/lib/invite-stash";
 import { CoachMarkLayer } from "@/components/coach-mark";
 import { AppShell } from "@/components/app-shell";
 import { shellFor } from "@/lib/shell-context";
@@ -120,6 +121,14 @@ function AuthedLayout() {
       void navigate({ to: redirect, replace: true });
     }
   }, [redirect, navigate]);
+
+  // A workspace's link opened while signed out waits in this browser
+  // (`invite-stash.ts`); signed in now, it is answered before anything else —
+  // before the first run, which would otherwise set up a workspace of their
+  // own when they came to join somebody's.
+  useEffect(() => {
+    if (session && stashedInviteLink()) void navigate({ to: "/invite", replace: true });
+  }, [session, navigate]);
 
   // A connect flow that came back before its starter was signed in left its
   // grant in this tab (`lib/sensitive-url.ts`). Signed in now, they are taken

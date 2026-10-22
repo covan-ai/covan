@@ -44,3 +44,13 @@ export function termsLink(): LegalLink {
 export function privacyLink(): LegalLink {
   return resolveLegalLink(import.meta.env.VITE_PRIVACY_URL, "/privacy");
 }
+
+/**
+ * The status page, when a deployment has one (`VITE_STATUS_URL`). Null
+ * otherwise: an install with no status page has no link to show, and a link
+ * to nothing would be worse than none.
+ */
+export function statusLink(): LegalLink | null {
+  const url = configured(import.meta.env.VITE_STATUS_URL);
+  return url ? { href: url, external: true } : null;
+}

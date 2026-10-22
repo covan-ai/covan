@@ -1,9 +1,10 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { ArrowUp, ChevronDown, Plus, X } from "lucide-react";
+import { ArrowUp, ChevronDown, X } from "lucide-react";
 import { AgentMark } from "@/components/agent-mark";
 import { Chip } from "@/components/chip";
+import { ComposerAddMenu } from "@/components/chat/composer-add-menu";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -117,15 +118,8 @@ export function AskBar({
           autoComplete="off"
           className="h-8 min-w-0 flex-1 border-0 bg-transparent text-lead outline-none placeholder:text-muted-foreground"
         />
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Attach a file"
-          className="text-muted-foreground"
-          onClick={() => fileRef.current?.click()}
-        >
-          <Plus />
-        </Button>
+        {/* The composer's "+", with Attach alone (A2). */}
+        <ComposerAddMenu onAttach={() => fileRef.current?.click()} />
         <Button size="icon" aria-label="Send" disabled={!canSend} onClick={() => void launch()}>
           <ArrowUp />
         </Button>

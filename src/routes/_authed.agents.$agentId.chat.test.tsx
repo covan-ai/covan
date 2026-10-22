@@ -24,7 +24,7 @@ import type React from "react";
  * "Reply to" once there is something in it, and a test should not care which.
  */
 function composerPlaceholder(name: string): RegExp {
-  return new RegExp(`^(Message|Reply to) ${name}$`);
+  return new RegExp(`^(Ask|Reply to) ${name}…$`);
 }
 
 const navigate = vi.fn();
@@ -179,8 +179,8 @@ vi.mock("@/lib/use-report", () => ({
   }),
 }));
 
-vi.mock("@/components/chat-attach", () => ({ ChatAttach: () => null, ChatReceipts: () => null }));
-vi.mock("@/components/chat-report", () => ({ ChatReport: () => null }));
+vi.mock("@/components/chat-attach", () => ({ AttachInput: () => null, ChatReceipts: () => null }));
+vi.mock("@/components/chat-report", () => ({ ReportDialog: () => null }));
 vi.mock("@/components/chat-mic", () => ({ ChatMic: () => null }));
 vi.mock("@/components/feedback-dialog", () => ({ FeedbackDialog: () => null }));
 vi.mock("@/components/idea-board", () => ({ IdeaBoard: () => null }));
@@ -1877,10 +1877,7 @@ describe("the browser beside the conversation", () => {
 
 // The whole screen and then a Radix menu on top of it: slow on a loaded
 // laptop, not stuck, so the same leash as the heaviest case above.
-describe("the dial beside the question", { timeout: 20_000 }, () => {
-  // Put back before each case rather than only in a `finally`, which a timed
-  // out test never reaches — and a dial left turned would fail every test
-  // after it for a reason none of them is about.
+describe("the Model and Thinking chips", { timeout: 20_000 }, () => {
   beforeEach(() => {
     Object.assign(session, { model: null, reasoningEffort: null, webSearch: null, mode: null });
   });
@@ -1893,52 +1890,60 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
     },
   };
 
-  it("shows what this conversation is answered with, and says the same under the composer", async () => {
+  it("show what the next message is answered with, by the tier's word", async () => {
     meReply = opusThinks;
     Object.assign(session, { model: "claude-opus-5", reasoningEffort: "high" });
     try {
       await renderChat();
-
-      // By its tier's word, on the chip and under the composer alike.
       expect(await screen.findByLabelText("Model: Best")).toBeInTheDocument();
-      expect(await screen.findByLabelText("Thinking: Extended")).toBeInTheDocument();
-      expect(screen.getByLabelText("Web search: Off")).toBeInTheDocument();
-      expect(screen.getByText(/GTM Agent · Best · Extended ·/)).toBeInTheDocument();
+      expect(await screen.findByLabelText("Thinking: Extended")).toHaveTextContent(
+        "Thinking · Extended",
+      );
+      // Web and Mode are the agent's, in Configuration.
+      expect(screen.queryByLabelText(/^Web search/)).toBeNull();
+      expect(screen.queryByLabelText(/^Mode:/)).toBeNull();
     } finally {
       Object.assign(session, { model: null, reasoningEffort: null });
     }
   });
 
-  it("asks the server to change the conversation, not the agent", async () => {
-    tuneSession.mockResolvedValue({ ...session, model: "claude-opus-5" });
+  it("send the choice with the next message only, and change neither the thread nor the agent", async () => {
+    meReply = opusThinks;
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(streamOf([{ type: "delta", text: "Forty." }, { type: "done" }])),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     await renderChat();
 
     fireEvent.keyDown(screen.getByLabelText("Model: gpt-4.1"), { key: "Enter" });
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /Best/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Best/ }));
+    expect(await screen.findByLabelText("Model: Best")).toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(tuneSession).toHaveBeenCalledWith("session-1", { model: "claude-opus-5" }),
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "and per seat?",
     );
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = JSON.parse(
+      String((fetchMock.mock.calls[0] as unknown[] as [string, RequestInit])[1].body),
+    );
+    expect(body).toMatchObject({ sessionId: "session-1", model: "claude-opus-5" });
+    expect(tuneSession).not.toHaveBeenCalled();
+    // Forgotten once sent: the next message is the thread's own again.
+    expect(await screen.findByLabelText("Model: gpt-4.1")).toBeInTheDocument();
   });
 
-  it("leaves a conversation somebody else started as a reading of it", async () => {
-    session.ownerId = "someone-else";
-    try {
-      render(
-        <QueryClientProvider
-          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-        >
-          <ChatTab />
-        </QueryClientProvider>,
-      );
-      const model = await screen.findByLabelText("Model: gpt-4.1");
-      expect(model).toHaveAttribute("aria-disabled", "true");
-      fireEvent.keyDown(model, { key: "Enter" });
-      expect(screen.queryByRole("menu")).toBeNull();
-      expect(tuneSession).not.toHaveBeenCalled();
-    } finally {
-      session.ownerId = "user-1";
-    }
+  it("wait while a reply is running", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(openStream())),
+    );
+    turnStatus.mockResolvedValue({ turn: { running: true, mine: true, startedAt: 0 } });
+    await renderChat();
+    await screen.findByLabelText("Stop generating");
+    expect(screen.getByLabelText("Model: gpt-4.1")).toBeDisabled();
   });
 });
 
@@ -2172,7 +2177,9 @@ describe("what a shared thread can read", () => {
     try {
       await renderChat();
 
-      expect(screen.getByText(/grounded in 1 team document$/)).toBeInTheDocument();
+      expect(screen.getByText(/Started by you/).parentElement).toHaveTextContent(
+        /grounded in 1 document$/,
+      );
       // Once in the empty screen, once under the composer.
       expect(screen.getAllByText(/can't read your private folders \(1 document\)/)).toHaveLength(2);
       // And the first starter names a file the thread can actually cite.
@@ -2196,7 +2203,9 @@ describe("what a shared thread can read", () => {
     try {
       await renderChat();
 
-      expect(screen.getByText(/grounded in 1 team document$/)).toBeInTheDocument();
+      expect(screen.getByText(/Started by you/).parentElement).toHaveTextContent(
+        /grounded in 1 document$/,
+      );
       expect(screen.queryByText(/can't read your private folders/)).toBeNull();
     } finally {
       store.bundles = [];

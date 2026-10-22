@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Loader2, Mic } from "lucide-react";
 import type { Dictation } from "@/lib/use-dictation";
+import { StatusDot } from "@/components/status-dot";
 
 /** Seconds as a clock, so two minutes reads as a length rather than a number. */
 function clock(seconds: number): string {
@@ -34,8 +35,7 @@ export function ChatMic({ dictation }: { dictation: Dictation }) {
   if (!supported) return null;
 
   // While recording the control stops being an icon and becomes the recording:
-  // an amber square and the count against the two-minute ceiling. One square,
-  // 8px, well inside the amber budget the send button already spends from.
+  // the running dot and the count against the two-minute ceiling.
   if (state === "recording") {
     return (
       <button
@@ -43,9 +43,9 @@ export function ChatMic({ dictation }: { dictation: Dictation }) {
         onClick={stop}
         aria-label="Stop recording"
         title="Escape discards the recording"
-        className="flex h-8 items-center gap-1.5 rounded-full bg-muted px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+        className="flex h-8 items-center gap-1.5 rounded-md bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover"
       >
-        <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />
+        <StatusDot state="running" />
         <span className="tabular-nums">{clock(seconds)}</span>
       </button>
     );
@@ -59,13 +59,9 @@ export function ChatMic({ dictation }: { dictation: Dictation }) {
       onClick={() => void start()}
       disabled={transcribing}
       aria-label={transcribing ? "Transcribing your recording" : "Dictate a message"}
-      className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:hover:bg-transparent"
+      className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:hover:bg-transparent"
     >
-      {transcribing ? (
-        <Loader2 className="h-[18px] w-[18px] animate-spin" />
-      ) : (
-        <Mic className="h-[18px] w-[18px]" />
-      )}
+      {transcribing ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
     </button>
   );
 }

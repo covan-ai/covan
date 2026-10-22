@@ -2,12 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import {
-  useAgentsStore,
-  type ChatSession,
-  type Message,
-  type SessionTuning,
-} from "@/lib/agents-store";
+import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
 import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
 import { ACCEPTED_SUMMARY } from "@/lib/uploads";
 import { supabase } from "@/lib/supabase/client";
@@ -26,8 +21,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { ChatAttach, ChatReceipts } from "@/components/chat-attach";
-import { ChatReport } from "@/components/chat-report";
+import { AttachInput, ChatReceipts } from "@/components/chat-attach";
+import { ReportDialog } from "@/components/chat-report";
 import { ChatMic } from "@/components/chat-mic";
 import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
@@ -41,14 +36,17 @@ import { visibleDocuments } from "@/lib/visible-documents";
 import { sessionLabel } from "@/lib/session-label";
 import { lastActivityLabel } from "@/lib/day-groups";
 import { SectionLabel } from "@/components/section";
-import { dialLabel, modelsFor, replyPricesOf, specFor } from "@/lib/agent-meta";
+import { modelsFor, replyPricesOf, specFor, type ReasoningEffort } from "@/lib/agent-meta";
 import { dateDividers } from "@/lib/message-groups";
 import { gapBefore, GAP_CLASS } from "@/lib/chat-rhythm";
 import { DateDivider } from "@/components/chat/date-divider";
 import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
-import { TurnDial } from "@/components/chat/turn-dial";
+import { ModelChip } from "@/components/chat/model-chip";
+import { ThinkingChip } from "@/components/chat/thinking-chip";
+import { ComposerAddMenu } from "@/components/chat/composer-add-menu";
+import { Chip } from "@/components/chip";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BrowserPanel } from "@/components/chat/browser-panel";
@@ -310,47 +308,18 @@ function ChatTab() {
       api.sessions.setVisibility(id, visibility),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
-  // The dial in the composer. Optimistic, like a rename: the chip is the thing
-  // somebody just pressed, and a chip that keeps its old value for a round trip
-  // reads as the press not having taken. A refusal puts the list back as it
-  // was and says so; either way the list is re-read, so what the screen shows
-  // is what the server stored.
-  const tuneMutation = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: SessionTuning }) =>
-      api.sessions.tune(id, patch),
-    onMutate: async ({ id, patch }) => {
-      await queryClient.cancelQueries({ queryKey: ["sessions"] });
-      const previous = queryClient.getQueryData<ChatSession[]>(["sessions"]);
-      queryClient.setQueryData<ChatSession[]>(["sessions"], (old) =>
-        old?.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-      );
-      return { previous };
-    },
-    onError: (_error, _vars, context) => {
-      if (context?.previous) queryClient.setQueryData(["sessions"], context.previous);
-      toast.error("Couldn't change that.");
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
-  });
-  // Stable, so the memoised dial is not redrawn by every streamed token.
+  // The composer's Model and Thinking chips (A2): what the NEXT message is
+  // answered with, sent with it and forgotten after — "Applies to this
+  // message". Unset, the conversation's own setting stands, else the agent's.
   const dialModels = useMemo(() => modelsFor(me?.models, agent.model), [me?.models, agent.model]);
-  // Per-reply prices in the unit this deployment answers in, for the dial and
-  // the retry menu. Stable for the same reason as the list above.
+  // Per-reply prices in the unit this deployment answers in, for the chips and
+  // the retry menu.
   const prices = useMemo(() => replyPricesOf(me), [me]);
-  // The write in flight, if one is. `submit` waits on it before it asks for a
-  // reply: a chip changes the moment it is pressed, and a question sent in the
-  // same second would otherwise be answered on the setting the chip no longer
-  // shows. Settled either way — a refused turn of the dial is a toast, not a
-  // reason to hold the question.
-  const tuneInFlight = useRef<Promise<unknown> | null>(null);
-  const onTune = useStableCallback((patch: SessionTuning) => {
-    if (!active) return;
-    const write = tuneMutation.mutateAsync({ id: active.id, patch }).catch(() => undefined);
-    tuneInFlight.current = write;
-    void write.finally(() => {
-      if (tuneInFlight.current === write) tuneInFlight.current = null;
-    });
-  });
+  const [next, setNext] = useState<{ model?: string; effort?: ReasoningEffort | null }>({});
+  const nextModel = next.model ?? effectiveModel;
+  const baseEffort = active?.reasoningEffort ?? agent.reasoningEffort;
+  const nextEffort = next.effort !== undefined ? next.effort : baseEffort;
+  const nextReasons = specFor(me?.modelSpecs, nextModel).reasoning;
 
   // Candidate ideas carry a local id rather than being keyed by their title.
   // The extractor is a language model reading a conversation, and it will
@@ -867,6 +836,8 @@ function ChatTab() {
       continuing?: string;
       regenerate?: boolean;
       model?: string;
+      /** This message's thinking, from the composer's chip; absent is the conversation's. */
+      reasoningEffort?: ReasoningEffort | null;
       /**
        * Answering a question the agent asked, rather than asking one.
        *
@@ -979,6 +950,9 @@ function ChatTab() {
                       ...(opts.continuing ? { continue: true } : {}),
                       ...(opts.regenerate ? { regenerate: true } : {}),
                       ...(opts.model ? { model: opts.model } : {}),
+                      ...(opts.reasoningEffort !== undefined
+                        ? { reasoningEffort: opts.reasoningEffort }
+                        : {}),
                       ...(opts.kickoff ? { kickoff: true } : {}),
                     },
               ),
@@ -1442,9 +1416,13 @@ function ChatTab() {
         return;
       }
       invalidateMessages(sessionId);
-      // See `tuneInFlight`: the dial's write lands before the reply is asked for.
-      if (tuneInFlight.current) await tuneInFlight.current;
-      await streamReply(sessionId);
+      // The chips' choice goes with this message and no further.
+      const chosen = next;
+      setNext({});
+      await streamReply(sessionId, {
+        ...(chosen.model ? { model: chosen.model } : {}),
+        ...(chosen.effort !== undefined ? { reasoningEffort: chosen.effort } : {}),
+      });
     } finally {
       sending.current = false;
     }
@@ -2403,16 +2381,6 @@ function ChatTab() {
           </Button>
         )}
         <div className="mx-auto max-w-3xl">
-          {credits && (credits.level !== "fine" || outOfCredits) && (
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />
-              <span>
-                {outOfCredits
-                  ? "This workspace is out of credits. Replies start again as soon as an admin adds more."
-                  : creditsSentence(credits)}
-              </span>
-            </div>
-          )}
           {followUps.length > 0 && !busy && (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {followUps.map((q) => (
@@ -2449,7 +2417,7 @@ function ChatTab() {
             onValueChange={setInput}
             // What `max-h-44` meant: eleven rem, then scroll.
             maxHeight={176}
-            className="border-border p-0 transition-colors duration-200"
+            className="p-0 shadow-xs transition-colors duration-200"
             // Where the setup list's "Ask your first question" points.
             data-coach="composer"
           >
@@ -2512,55 +2480,75 @@ function ChatTab() {
               }}
               // "Reply" once there is something to reply to. The first
               // message in a thread is not a reply to anything.
-              placeholder={messages.length > 0 ? `Reply to ${agent.name}` : `Message ${agent.name}`}
-              className="min-h-[52px] overflow-y-auto px-5 pb-1 pt-4 text-base"
+              placeholder={messages.length > 0 ? `Reply to ${agent.name}…` : `Ask ${agent.name}…`}
+              className="min-h-[52px] overflow-y-auto px-3.5 pt-3.5 pb-1 text-lead"
             />
-            <PromptInputActions className="justify-between px-3 pb-3">
-              <div className="flex min-w-0 items-center gap-1">
-                <ChatAttach uploads={uploads} canWrite={canUpload} inputRef={fileInputRef} />
-                <ChatReport reports={reports} canWrite={canWrite} />
-                <ChatMic dictation={dictation} />
-              </div>
-              {/* The dial sits with Send rather than with the attachments:
-                  what the reply will be made of is a fact about the send, and
-                  the left of the row is for what goes INTO the message. */}
-              <div className="flex min-w-0 items-center gap-1.5">
-                {active && (
-                  <TurnDial
-                    session={active}
-                    agent={agent}
-                    models={dialModels}
-                    prices={prices}
-                    modelSpecs={me?.modelSpecs}
-                    canTune={isOwner}
-                    busy={busy}
+            <PromptInputActions className="gap-0.5 px-2 pt-1 pb-2">
+              {/* Left, what goes INTO the message; right, what it is answered
+                  with and the send (A2). */}
+              <ComposerAddMenu
+                onAttach={canUpload ? () => fileInputRef.current?.click() : undefined}
+                onUpload={
+                  canUpload
+                    ? () => void navigate({ to: "/agents/$agentId/knowledge", params: { agentId } })
+                    : undefined
+                }
+                onReport={canWrite ? () => reports.setDialogOpen(true) : undefined}
+                onDictate={
+                  isMobile && dictation.supported ? () => void dictation.start() : undefined
+                }
+              />
+              {(!isMobile || dictation.state !== "idle") && <ChatMic dictation={dictation} />}
+              <div className="ml-auto flex min-w-0 items-center gap-0.5">
+                {isBrainstorm && <Chip className="mr-1">Brainstorm</Chip>}
+                <ModelChip
+                  value={nextModel}
+                  agentModel={agent.model}
+                  models={dialModels}
+                  prices={prices}
+                  disabled={busy}
+                  compact={isMobile}
+                  onChange={(model) =>
+                    setNext((n) => ({ ...n, model: model === effectiveModel ? undefined : model }))
+                  }
+                />
+                {nextReasons && (
+                  <ThinkingChip
+                    value={nextEffort}
+                    agentEffort={agent.reasoningEffort}
+                    disabled={busy}
                     compact={isMobile}
-                    onChange={onTune}
+                    onChange={(effort) =>
+                      setNext((n) => ({
+                        ...n,
+                        effort: effort === baseEffort ? undefined : effort,
+                      }))
+                    }
                   />
                 )}
                 {/* Stop belongs to the conversation that is actually streaming.
-                  There is one stream at a time, so opening a second
-                  conversation while a reply runs used to show a Stop button
-                  over a composer with nothing to stop — and pressing it cut
-                  off the answer in the tab you had just left. */}
+                    There is one stream at a time, so opening a second
+                    conversation while a reply runs used to show a Stop button
+                    over a composer with nothing to stop — and pressing it cut
+                    off the answer in the tab you had just left. Escape stops
+                    it too. */}
                 {replyingIn === active?.id ? (
-                  <PromptInputAction tooltip="Stop generating">
-                    <Button
-                      size="icon"
-                      onClick={stop}
-                      aria-label="Stop generating"
-                      className="shrink-0"
-                    >
-                      <Square className="h-3.5 w-3.5 fill-current" />
-                    </Button>
-                  </PromptInputAction>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={stop}
+                    aria-label="Stop generating"
+                    className="ml-1 shrink-0"
+                  >
+                    <StatusDot state="running" className="size-1.5" />
+                    Stop
+                  </Button>
                 ) : (
-                  /* A real tooltip rather than `title`, which never appears on a
-                   touch screen — and this is the one control on the row whose
-                   `title` was carrying something a reader needs ("waiting for
-                   the current reply to finish", on a button that looks broken
-                   until you know that). The three to the left of it are their
-                   own components and keep their own `aria-label`s. */
+                  /* A real tooltip rather than `title`, which never appears on
+                     a touch screen — and this is the one control on the row
+                     whose `title` was carrying something a reader needs
+                     ("waiting for the current reply to finish", on a button
+                     that looks broken until you know that). */
                   <PromptInputAction
                     tooltip={
                       busy
@@ -2575,30 +2563,24 @@ function ChatTab() {
                       onClick={send}
                       disabled={!input.trim() || busy || outOfCredits}
                       aria-label="Send message"
-                      className="shrink-0 rounded-full"
+                      className="ml-1 shrink-0"
                     >
-                      <ArrowUp className="h-4 w-4" />
+                      <ArrowUp />
                     </Button>
                   </PromptInputAction>
                 )}
               </div>
             </PromptInputActions>
           </PromptInput>
-          {/* What the header used to say twice over, said once, here, where
-              it is read before you type rather than every time you look up. */}
-          <p className="mt-2 flex flex-wrap items-center justify-center gap-x-1.5 text-xs text-muted-foreground">
-            {/* The model in force, not the agent's, or this sentence would
-                contradict the chip a few pixels above it. Who can read the
-                thread is not repeated here: the header says it, once. */}
-            {agent.name} ·{" "}
-            {dialLabel(
-              effectiveModel,
-              active?.reasoningEffort ?? agent.reasoningEffort,
-              specFor(me?.modelSpecs, effectiveModel).reasoning,
-            )}{" "}
-            · grounded in {readable.length} team {readable.length === 1 ? "document" : "documents"}
-            {credits?.level === "fine" && <> · {creditsSentence(credits)}</>}
-          </p>
+          <AttachInput uploads={uploads} canWrite={canUpload} inputRef={fileInputRef} />
+          <ReportDialog reports={reports} canWrite={canWrite} />
+          {/* Not on a phone, where Enter is the newline and the send button is
+              under the thumb. */}
+          {!isMobile && (
+            <p className="mt-2 text-center text-xs text-micro-foreground">
+              Enter to send · Shift + Enter for a new line
+            </p>
+          )}
           {privateFoldersNote && (
             <p className="mt-1 text-center text-xs text-muted-foreground">{privateFoldersNote}</p>
           )}

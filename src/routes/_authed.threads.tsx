@@ -13,10 +13,11 @@ export const Route = createFileRoute("/_authed/threads")({
 
 /** Every thread you can see (A5). */
 function ThreadsPage() {
-  // The totals ride on any page of the table; this asks for the smallest.
+  // The totals ride on any page of the table; this asks for the smallest the
+  // API serves (`GET /sessions/table` refuses a page under five).
   const { data } = useQuery({
     queryKey: ["sessions", "table", "totals"],
-    queryFn: () => api.sessions.table({ pageSize: 1 }),
+    queryFn: () => api.sessions.table({ pageSize: 5 }),
   });
   const meta = data
     ? `${data.thisWeek.toLocaleString("en-US")} this week · ${data.allTime.toLocaleString("en-US")} all time`

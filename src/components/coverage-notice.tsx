@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api-client";
 import { useCoverageNoticeDismissed } from "@/lib/coverage-notice";
-import { SectionCard } from "@/components/section-card";
+import { Banner } from "@/components/banner";
+import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -79,29 +80,39 @@ export function CoverageNotice({
   if (!isError && (!data || data.excluded)) return null;
 
   return (
-    <SectionCard className="mt-8">
-      <p className="text-sm leading-[1.45]">
-        <span className="font-medium text-foreground">Your admin turned on a coverage report.</span>{" "}
-        Once a week it shows which topics the team asked about that no document covered — clustered
-        topics only, from at least three different people, or every topic if you&rsquo;re the only
-        member here. It never shows names and never shows anybody&rsquo;s question. You can leave
-        your questions out, now or later in Settings.
-      </p>
+    <Banner
+      kind="notice"
+      label="Coverage report"
+      leading={<StatusDot state="waiting" />}
+      actions={
+        <>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={exclude}
+            disabled={excluding}
+          >
+            {excluding ? "Excluding…" : "Exclude my questions"}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={dismiss}>
+            Keep me in
+          </Button>
+        </>
+      }
+    >
+      <span className="font-medium text-foreground">Your admin turned on a coverage report.</span>{" "}
+      Once a week it shows which topics the team asked about that no document covered — clustered
+      topics only, from at least three different people, or every topic if you&rsquo;re the only
+      member here. It never shows names and never shows anybody&rsquo;s question. You can leave your
+      questions out, now or later in Settings.
       {isError && (
-        <p className="mt-2 text-xs text-muted-foreground">
+        <>
+          {" "}
           We couldn&rsquo;t check whether you&rsquo;ve already left them out. If you have, choosing
           again changes nothing.
-        </p>
+        </>
       )}
-
-      <div className="mt-4 flex items-center gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={exclude} disabled={excluding}>
-          {excluding ? "Excluding…" : "Exclude my questions"}
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={dismiss}>
-          Keep me in
-        </Button>
-      </div>
-    </SectionCard>
+    </Banner>
   );
 }

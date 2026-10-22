@@ -39,7 +39,7 @@ vi.mock("@/lib/coach-marks", () => ({
   openCoachMark: (...args: unknown[]) => openCoachMark(...args),
 }));
 
-import { SetupList } from "./setup-list";
+import { FirstSteps, GettingStarted } from "./getting-started";
 
 function me(over: Record<string, unknown> = {}) {
   return {
@@ -72,12 +72,12 @@ beforeEach(() => {
   queries.slack = { installation: null };
 });
 
-describe("SetupList", () => {
+describe("GettingStarted", () => {
   it("lists the five steps with the first tool named, and counts what is done", () => {
     store.sessions = [{ id: "s1", messageCount: 2 }];
-    render(<SetupList onNavigate={vi.fn()} />);
+    render(<GettingStarted />);
 
-    expect(screen.getByText("Setup · 1 of 5")).toBeInTheDocument();
+    expect(screen.getByText("Getting started · 1 of 5")).toBeInTheDocument();
     expect(screen.getByText("Ask your first question")).toBeInTheDocument();
     expect(screen.getByText("Connect Gmail")).toBeInTheDocument();
     expect(screen.getByText("Add a document")).toBeInTheDocument();
@@ -96,19 +96,19 @@ describe("SetupList", () => {
         answers: { tools: [], mode: "solo" },
       },
     });
-    render(<SetupList onNavigate={vi.fn()} />);
+    render(<GettingStarted />);
     expect(screen.getByText("Share the assistant")).toBeInTheDocument();
     expect(screen.getByText("Connect an app")).toBeInTheDocument();
   });
 
   it("stays away from a viewer, from a workspace with no agents, and once everything is done", () => {
     store.canWrite = false;
-    const { rerender, container } = render(<SetupList onNavigate={vi.fn()} />);
+    const { rerender, container } = render(<GettingStarted />);
     expect(container).toBeEmptyDOMElement();
 
     store.canWrite = true;
     store.agents = [];
-    rerender(<SetupList onNavigate={vi.fn()} />);
+    rerender(<GettingStarted />);
     expect(container).toBeEmptyDOMElement();
 
     store.agents = [{ id: "agent-1", documents: [{}] }];
@@ -120,55 +120,46 @@ describe("SetupList", () => {
         { transport: "composio", status: "active", toolkitSlug: "gmail", label: "", logoPath: "" },
       ],
     };
-    rerender(<SetupList onNavigate={vi.fn()} />);
+    rerender(<GettingStarted />);
     expect(container).toBeEmptyDOMElement();
   });
 
-  // Their own workspace ids: both flags are remembered in this tab past the
-  // storage clear (private mode is survivable that way), and a shared id
-  // would carry one test's answer into the next.
+  // Its own workspace id: the flag is remembered in this tab past the storage
+  // clear (private mode is survivable that way), and a shared id would carry
+  // one test's answer into the next.
   it("can be put down for the workspace", async () => {
     queries.me = me({ workspace: { id: "w-down", name: "Acme" } });
-    render(<SetupList onNavigate={vi.fn()} />);
+    render(<GettingStarted />);
     await userEvent.click(screen.getByRole("button", { name: /hide this list/i }));
     expect(localStorage.getItem("covan:first-week-dismissed:w-down")).toBe("1");
   });
 
-  it("folds and remembers it", async () => {
-    queries.me = me({ workspace: { id: "w-fold", name: "Acme" } });
-    render(<SetupList onNavigate={vi.fn()} />);
-    await userEvent.click(screen.getByRole("button", { name: /setup · 0 of 5/i }));
-    expect(localStorage.getItem("covan:setup-open:w-fold")).toBe("0");
-  });
-
   it("promises credits for the rewarded step only on a hosted install", () => {
-    const { rerender } = render(<SetupList onNavigate={vi.fn()} />);
-    expect(screen.queryByText("Earns credits")).not.toBeInTheDocument();
+    const { rerender } = render(<GettingStarted />);
+    expect(screen.queryByText("earns 200 credits")).not.toBeInTheDocument();
 
     hosted = true;
-    rerender(<SetupList onNavigate={vi.fn()} />);
-    expect(screen.getByText("Earns credits")).toBeInTheDocument();
+    rerender(<GettingStarted />);
+    expect(screen.getByText("earns 200 credits")).toBeInTheDocument();
   });
 
   it("goes to the page and points at the control on Try", async () => {
-    const onNavigate = vi.fn();
-    render(<SetupList onNavigate={onNavigate} />);
+    render(<GettingStarted />);
 
     await userEvent.click(screen.getByRole("button", { name: /try: schedule a routine/i }));
 
-    expect(onNavigate).toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith(
       expect.objectContaining({ to: "/agents/$agentId/routines", params: { agentId: "agent-1" } }),
     );
     expect(openCoachMark).toHaveBeenCalledWith(
       expect.objectContaining({ id: "new-routine" }),
-      expect.anything(),
+      expect.objectContaining({ position: { step: 5, total: 5 } }),
     );
   });
 
   it("does not navigate when already on the page", async () => {
     pathname = "/settings/integrations";
-    render(<SetupList onNavigate={vi.fn()} />);
+    render(<GettingStarted />);
 
     await userEvent.click(screen.getByRole("button", { name: /try: connect gmail/i }));
 
@@ -177,5 +168,27 @@ describe("SetupList", () => {
       expect.objectContaining({ id: "integrations-catalogue" }),
       expect.anything(),
     );
+  });
+});
+
+describe("FirstSteps (A24)", () => {
+  it("shows the workspace as done and the team as done once somebody joined", () => {
+    const { rerender } = render(<FirstSteps memberCount={1} />);
+    const items = () => screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(items()).toEqual([
+      "Create the workspace (done)",
+      "Create an agent",
+      "Add the first documents to Knowledge",
+      "Invite the team",
+    ]);
+
+    hosted = true;
+    rerender(<FirstSteps memberCount={2} />);
+    expect(items()).toEqual([
+      "Create the workspace (done)",
+      "Create an agent",
+      "Add the first documents to Knowledgeearns 200 credits",
+      "Invite the team (done)",
+    ]);
   });
 });

@@ -173,6 +173,27 @@ describe("the first run", () => {
     });
   });
 
+  it("starts the first agent on the Standard tier where the install serves it", async () => {
+    search = { step: "assistant" };
+    h.me.mockResolvedValue({
+      ...meWith({ ...EMPTY, lastStep: "assistant" }),
+      models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"],
+    });
+    h.finish.mockResolvedValue({ completed: true, agentId: "a9", sessionId: "s9", created: true });
+    await renderWelcome();
+
+    expect(await screen.findByText("Step 2 of 3")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name"), "Support");
+    await userEvent.click(screen.getByRole("button", { name: "Create Support" }));
+
+    await waitFor(() =>
+      expect(h.finish).toHaveBeenCalledWith({
+        persona: expect.any(String),
+        model: "claude-sonnet-5",
+      }),
+    );
+  });
+
   it("asks what the new agent should know, and opens it", async () => {
     search = { step: "first-docs", agent: "a9", s: "s9" };
     h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));

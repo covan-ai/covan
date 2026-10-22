@@ -15,6 +15,7 @@ import {
   type OnboardingStep,
 } from "@/lib/onboarding-flow";
 import { CTA } from "@/lib/onboarding-config";
+import { startingModelFor } from "@/lib/agent-meta";
 import { flushEvents, installUnloadFlush, trackStep } from "@/lib/analytics";
 import { markKickoff } from "@/lib/chat-kickoff";
 import { useIsHosted } from "@/lib/credits";
@@ -195,7 +196,14 @@ function Welcome() {
     });
     await Promise.allSettled(pending.current);
     try {
-      const done = await api.onboarding.finish({ persona: a.persona });
+      // The first agent starts where any new agent does rather than on no
+      // model at all — when this install serves that model; otherwise the
+      // server's default answers it, as before.
+      const model = startingModelFor(me?.models, me?.workspace.defaultModel);
+      const done = await api.onboarding.finish({
+        persona: a.persona,
+        ...(me?.models?.includes(model) ? { model } : {}),
+      });
       markKickoff(done.sessionId);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["me"] }),

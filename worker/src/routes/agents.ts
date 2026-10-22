@@ -4,7 +4,13 @@ import type { AppEnv } from "../types";
 import { AGENT_ACCESS, AVATAR_MARKS, mapAgent } from "../lib/dto";
 import { callerWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
-import { REASONING_EFFORTS, MODEL_IDS, ENDPOINT_MODEL_PATTERN } from "../lib/models";
+import {
+  REASONING_EFFORTS,
+  MODEL_IDS,
+  ENDPOINT_MODEL_PATTERN,
+  resolveModel,
+  type ModelEnv,
+} from "../lib/models";
 import { endpointIsVisible } from "../lib/model-endpoints";
 
 const agents = new Hono<AppEnv>();
@@ -137,6 +143,20 @@ function agentColumns(body: z.infer<typeof updateAgentSchema>): Record<string, u
   return patch;
 }
 
+/**
+ * An agent as the screens show it. One with no model of its own is answered
+ * by the deployment's default (`resolveModel(null)`), so that is the model it
+ * is shown with: the composer labels and prices by it and offers thinking
+ * when it reasons. Only what is shown changes; the row keeps its null until
+ * somebody picks.
+ */
+function shownAgent(env: ModelEnv) {
+  return (row: Parameters<typeof mapAgent>[0]) => {
+    const agent = mapAgent(row);
+    return agent.model ? agent : { ...agent, model: resolveModel(null, env) };
+  };
+}
+
 // GET /agents
 agents.get("/agents", async (c) => {
   const db = c.get("db");
@@ -156,7 +176,7 @@ agents.get("/agents", async (c) => {
     return c.json({ error: "failed to load agents" }, 500);
   }
 
-  return c.json((data ?? []).map(mapAgent));
+  return c.json((data ?? []).map(shownAgent(c.env)));
 });
 
 // POST /agents
@@ -255,7 +275,7 @@ agents.post("/agents", async (c) => {
     return c.json({ error: "failed to load agent" }, 500);
   }
 
-  return c.json(mapAgent(created), 201);
+  return c.json(shownAgent(c.env)(created), 201);
 });
 
 // PATCH /agents/:id
@@ -297,7 +317,7 @@ agents.patch("/agents/:id", async (c) => {
     return c.json({ error: "you can use this agent but not change it" }, 403);
   }
 
-  return c.json(mapAgent(data));
+  return c.json(shownAgent(c.env)(data));
 });
 
 // PUT /agents/:id/sharing
@@ -324,7 +344,7 @@ agents.put("/agents/:id/sharing", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  return c.json(mapAgent(data));
+  return c.json(shownAgent(c.env)(data));
 });
 
 /**

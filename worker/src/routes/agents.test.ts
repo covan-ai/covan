@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import type { AppEnv } from "../types";
 import { agents } from "./agents";
+import { DEFAULT_MODEL } from "../lib/models";
 
 /**
  * The agents route, tested where it stopped being a pass-through.
@@ -41,6 +42,8 @@ function fakeDb(
     updated?: unknown[];
     /** What `set_agent_sharing` answers. */
     sharingError?: { code: string; message: string } | null;
+    /** The agent as the database has it. */
+    row?: typeof AGENT_ROW | (Omit<typeof AGENT_ROW, "model"> & { model: string | null });
   } = {},
 ) {
   const writes: Record<string, unknown>[] = [];
@@ -64,8 +67,8 @@ function fakeDb(
         select: () => chain,
         eq: () => chain,
         order: () => chain,
-        maybeSingle: async () => ({ data: AGENT_ROW, error: null }),
-        single: async () => ({ data: AGENT_ROW, error: null }),
+        maybeSingle: async () => ({ data: opts.row ?? AGENT_ROW, error: null }),
+        single: async () => ({ data: opts.row ?? AGENT_ROW, error: null }),
         update(patch: Record<string, unknown>) {
           writes.push(patch);
           return chain;
@@ -204,6 +207,29 @@ describe("PATCH /agents/:id", () => {
     const body = (await res.json()) as Record<string, unknown>;
 
     expect(body).toMatchObject({ temperature: null, reasoningEffort: null });
+  });
+});
+
+describe("an agent with no model of its own", () => {
+  // The welcome's first agent was made with none for as long as the welcome
+  // passed none. The deployment's default answers it, so the screens are
+  // given that — a composer with no model to name shows an empty chip.
+  it("is shown with the model that answers it", async () => {
+    const { db } = fakeDb({ row: { ...AGENT_ROW, model: null } });
+
+    const res = await patch(appWith(db), { name: "Growth" });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(body.model).toBe(DEFAULT_MODEL);
+  });
+
+  it("keeps a model somebody picked", async () => {
+    const { db } = fakeDb();
+
+    const res = await patch(appWith(db), { name: "Growth" });
+    const body = (await res.json()) as Record<string, unknown>;
+
+    expect(body.model).toBe("gpt-4o");
   });
 });
 

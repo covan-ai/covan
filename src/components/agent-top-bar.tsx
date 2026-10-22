@@ -1,6 +1,6 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal, Share } from "lucide-react";
 import { toast } from "sonner";
 import { TopBar } from "@/components/top-bar";
 import { Tabs } from "@/components/tabs";
@@ -83,12 +83,12 @@ export function AgentTopBar({ agent }: { agent: Agent }) {
                 onClick={() => setShareOpen(true)}
                 data-coach="share-agent"
               >
-                Share
+                <Share /> Share
               </Button>
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label={`More for ${agent.name}`}>
+                <Button variant="secondary" size="icon" aria-label={`More for ${agent.name}`}>
                   <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupByDay, lastActivityLabel, shortTime } from "./day-groups";
+import { clockTime, groupByDay, lastActivityLabel, ledgerWhen, shortTime } from "./day-groups";
 import { shortName } from "./monogram";
 
 const NOW = new Date(2026, 9, 22, 14, 0).getTime(); // Thursday 22 October, 14:00
@@ -33,5 +33,23 @@ describe("a table's last activity", () => {
     expect(lastActivityLabel(at(19, 9), NOW)).toBe("Mon");
     expect(shortName("Can Bora")).toBe("Can B.");
     expect(shortName("Mina")).toBe("Mina");
+  });
+});
+
+describe("clockTime", () => {
+  const now = new Date(2026, 9, 22, 11, 30).getTime();
+  it("is the clock today, Yesterday, then the date", () => {
+    expect(clockTime(new Date(2026, 9, 22, 10, 6).getTime(), now)).toBe("10:06");
+    expect(clockTime(new Date(2026, 9, 21, 23, 59).getTime(), now)).toBe("Yesterday");
+    expect(clockTime(new Date(2026, 9, 20, 9, 0).getTime(), now)).toBe("20 Oct");
+  });
+});
+
+describe("ledgerWhen", () => {
+  const now = new Date(2026, 9, 22, 11, 30).getTime();
+  it("says Today with the clock, then Yesterday, then the date", () => {
+    expect(ledgerWhen(new Date(2026, 9, 22, 10, 4).getTime(), now)).toBe("Today, 10:04");
+    expect(ledgerWhen(new Date(2026, 9, 21, 9, 0).getTime(), now)).toBe("Yesterday");
+    expect(ledgerWhen(new Date(2026, 9, 13, 9, 0).getTime(), now)).toBe("13 Oct");
   });
 });

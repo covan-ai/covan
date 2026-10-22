@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Zap } from "lucide-react";
 import { toast } from "sonner";
-import { Chip, SectionCard } from "@/components/section-card";
-import { SectionHeading } from "@/components/page-container";
+import { Chip } from "@/components/chip";
+import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -103,13 +103,14 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
   };
 
   return (
-    <section className="mt-10">
-      <SectionHeading
-        title="Starts when"
-        description="Something happening in an app starts this routine, and the agent reads a short account of it."
-      />
+    <section className="mt-2">
+      <SectionLabel>Starts when</SectionLabel>
+      <p className="mt-0 mb-3 text-meta text-muted-foreground">
+        Something happening in an app starts this routine, and the agent reads a short account of
+        it.
+      </p>
 
-      <SectionCard className="mt-3 space-y-4">
+      <div className="space-y-4">
         {editing ? (
           <>
             <EventPicker catalog={catalog} value={choice} onChange={setChoice} />
@@ -136,14 +137,14 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
                 <span className="text-sm">
                   {event.app} · {event.label}
                 </span>
-                <Chip tone={event.status === "active" ? "on" : "neutral"}>
+                <Chip tone={event.status === "active" ? "ink" : "neutral"}>
                   {STATUS_WORD[event.status]}
                 </Chip>
               </div>
               {event.statusDetail && (
-                <p className="text-xs text-muted-foreground">{event.statusDetail}</p>
+                <p className="text-meta text-muted-foreground">{event.statusDetail}</p>
               )}
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 {event.lastEventAt === null
                   ? "Nothing has arrived yet."
                   : `Last event ${formatRelative(event.lastEventAt)}.`}
@@ -163,14 +164,14 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
             )}
             <div className="flex flex-wrap gap-2">
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 onClick={() => void test()}
                 disabled={testEvent.isPending}
               >
                 {testEvent.isPending ? "Running…" : "Send a test event"}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+              <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
                 {event.status === "expired" || event.status === "failed" ? "Reconnect" : "Change"}
               </Button>
               <AlertDialog>
@@ -198,7 +199,7 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
             </div>
           </>
         ) : null}
-      </SectionCard>
+      </div>
     </section>
   );
 }

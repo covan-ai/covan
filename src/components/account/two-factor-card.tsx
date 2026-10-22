@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import type { Factor } from "@supabase/supabase-js";
-import { SectionCard, DataRow } from "@/components/section-card";
+import { Field } from "@/components/field";
+import { Chip } from "@/components/chip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,49 +58,42 @@ export function TwoFactorCard() {
   const devices = factors ?? [];
   const on = devices.length > 0;
 
+  // A16: "Two-factor authentication" — On, and the devices that give codes,
+  // or Turn on.
   return (
-    <SectionCard className="mt-6 space-y-5">
-      <div className="space-y-1">
-        <div className="text-title font-medium">Two-step sign-in</div>
-        <p className="text-meta text-muted-foreground">
-          {on
-            ? "On. Signing in asks for a code from one of these after your password."
-            : "Ask for a code from an authenticator app — 1Password, Google Authenticator, Authy — after your password."}
-        </p>
-      </div>
-
+    <Field
+      label="Two-factor authentication"
+      help="A code from your authenticator app at every sign-in, after your password."
+    >
       {isError ? (
-        <p className="text-xs text-destructive">Couldn't load your authenticators.</p>
-      ) : null}
-
-      {on ? (
-        <>
-          <ul className="divide-y divide-hairline rounded-lg border border-hairline">
+        <p className="pt-1.5 text-meta text-destructive">Couldn't load your authenticators.</p>
+      ) : on ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-3 pt-1">
+            <Chip tone="ink">On</Chip>
+            <Button variant="ghost" size="sm" onClick={() => setAdding(true)} disabled={isPending}>
+              Add another device
+            </Button>
+          </div>
+          <ul className="m-0 max-w-[560px] list-none p-0">
             {devices.map((factor) => (
-              <li key={factor.id}>
+              <li key={factor.id} className="border-b border-hairline last:border-b-0">
                 <AuthenticatorRow factor={factor} last={devices.length === 1} />
               </li>
             ))}
           </ul>
-          <p className="text-xs text-muted-foreground">
+          <p className="m-0 text-meta text-muted-foreground">
             There are no backup codes: a second device is the way back in if you lose this one. API
             keys you made keep working.
           </p>
-        </>
-      ) : null}
-
-      <div className="flex justify-end border-t border-hairline pt-4">
-        <Button
-          variant={on ? "outline" : "default"}
-          onClick={() => setAdding(true)}
-          disabled={isPending || isError}
-        >
-          {on ? "Add another device" : "Set up"}
+        </div>
+      ) : (
+        <Button variant="secondary" onClick={() => setAdding(true)} disabled={isPending}>
+          Turn on
         </Button>
-      </div>
-
+      )}
       <AddAuthenticatorDialog open={adding} onOpenChange={setAdding} first={!on} />
-    </SectionCard>
+    </Field>
   );
 }
 
@@ -121,15 +115,16 @@ function AuthenticatorRow({ factor, last }: { factor: Factor; last: boolean }) {
   };
 
   return (
-    <DataRow
-      icon={
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline bg-surface">
-          <Smartphone className="h-4 w-4 text-muted-foreground" />
+    <div className="flex min-h-11 items-center gap-3 text-sm">
+      <Smartphone className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate">
+        <span className="font-medium">{name}</span>
+        <span className="text-meta text-muted-foreground">
+          {" "}
+          · added {formatRelative(Date.parse(factor.created_at))}
         </span>
-      }
-      title={name}
-      meta={`added ${formatRelative(Date.parse(factor.created_at))}`}
-      trailing={
+      </span>
+      {
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant="ghost" size="sm" disabled={removing} className="shrink-0">
@@ -154,7 +149,7 @@ function AuthenticatorRow({ factor, last }: { factor: Factor; last: boolean }) {
           </AlertDialogContent>
         </AlertDialog>
       }
-    />
+    </div>
   );
 }
 
@@ -249,7 +244,7 @@ function AddAuthenticatorDialog({
               className="mx-auto h-44 w-44 rounded-lg bg-white p-2"
             />
             <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 Can't scan it? Enter this key instead:
               </p>
               <p className="break-all font-mono text-xs">{enrollment.secret}</p>
@@ -269,7 +264,7 @@ function AddAuthenticatorDialog({
                 }}
                 className="tracking-widest"
               />
-              {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              {error ? <p className="text-meta text-destructive">{error}</p> : null}
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={busy || digits.length < 6}>
@@ -297,10 +292,10 @@ function AddAuthenticatorDialog({
                   setError(null);
                 }}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 So you can tell your devices apart later.
               </p>
-              {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              {error ? <p className="text-meta text-destructive">{error}</p> : null}
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={busy || !name.trim()}>

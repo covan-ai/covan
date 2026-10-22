@@ -1,26 +1,22 @@
 import { describe, it, expect } from "vitest";
 import {
-  INTRO,
-  ROLES,
+  JOBS,
   SETUP,
-  STEPS,
   TOOLS,
-  PURPOSES,
   composioLogoPath,
   defaultAssistantName,
   firstConnectableTool,
+  personaFor,
   searchTools,
-  templateFor,
   toolById,
 } from "./onboarding-config";
-import { EMOJIS, PERSONA_TEMPLATES } from "./agent-meta";
 import { firstWeekSteps } from "./first-week";
 
 /**
  * The config is data, and data drifts. These pin the shapes the screens and
- * the worker rely on: ids that are unique and storable, a headline with one
- * brand word, a persona template behind every role and purpose, and a setup
- * entry for every step the done-state knows about.
+ * the worker rely on: ids that are unique and storable, a persona written
+ * from the jobs picked, and a setup entry for every step the done-state knows
+ * about.
  */
 
 describe("the tool catalogue", () => {
@@ -75,38 +71,24 @@ describe("firstConnectableTool", () => {
 });
 
 describe("the words", () => {
-  it("colours exactly one phrase of every intro headline", () => {
-    for (const screen of INTRO) {
-      expect(screen.headline.brand.trim().length).toBeGreaterThan(0);
-    }
+  it("offers jobs with ids the API will store", () => {
+    for (const job of JOBS) expect(job.id).toMatch(/^[a-z][a-z0-9_-]{0,39}$/);
+    expect(new Set(JOBS.map((j) => j.id)).size).toBe(JOBS.length);
   });
 
-  it("offers roles whose emoji the pickers can show", () => {
-    for (const role of ROLES) expect(EMOJIS).toContain(role.emoji);
-  });
-
-  it("has a persona template behind every role and purpose", () => {
-    const ids = PERSONA_TEMPLATES.map((t) => t.id);
-    for (const role of ROLES) expect(ids).toContain(role.templateId);
-    for (const purpose of PURPOSES) expect(ids).toContain(purpose.templateId);
-  });
-
-  it("starts from the role's template first, then the purpose's, then the general one", () => {
-    expect(templateFor({ assistantRole: "quill", purpose: "sales" }).id).toBe("writer");
-    expect(templateFor({ assistantRole: "custom", purpose: "sales" }).id).toBe("sales");
-    expect(templateFor({ assistantRole: null, purpose: null }).id).toBe("tutor");
+  it("writes the persona from the workspace and the jobs picked, in one paragraph", () => {
+    expect(personaFor({ workspaceName: "Acme", jobs: ["answer-questions", "draft-replies"] })).toBe(
+      "You work for Acme. You answer customer questions using the documents in Knowledge and draft replies for the team to check and send. Be brief and warm, quote the document that applies, and ask a person when a case is unclear rather than guessing.",
+    );
+    expect(personaFor({ workspaceName: null, jobs: [] })).toMatch(
+      /^You work for the team\. You help the team with whatever it asks/,
+    );
   });
 
   it("names the assistant after the person, or after nobody", () => {
     expect(defaultAssistantName("Ada")).toBe("Ada's assistant");
     expect(defaultAssistantName("  ")).toBe("Your assistant");
     expect(defaultAssistantName(null)).toBe("Your assistant");
-  });
-
-  it("asks the team step only of a team", () => {
-    const team = STEPS.find((s) => s.id === "team")!;
-    expect(team.when?.({ mode: "team" } as never)).toBe(true);
-    expect(team.when?.({ mode: "solo" } as never)).toBe(false);
   });
 });
 

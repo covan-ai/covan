@@ -60,13 +60,14 @@ export function TopBar({
           <span className="hidden truncate text-meta text-muted-foreground lg:inline">{meta}</span>
         )}
         {tabs && <div className="hidden self-stretch lg:flex">{tabs}</div>}
-        <div className="ml-auto hidden items-center gap-2 lg:flex">
+        <div className="ml-auto flex items-center gap-2">
+          {/* A child route's own actions — Save on Configuration, the
+              thread's search — are its only controls, so they show at every
+              width; the bar's own actions give way to `phoneActions`. */}
           {slot && <TopBarSlot />}
-          {actions}
+          <div className="hidden items-center gap-2 lg:flex empty:hidden">{actions}</div>
+          {phoneActions && <div className="flex items-center gap-1 lg:hidden">{phoneActions}</div>}
         </div>
-        {phoneActions && (
-          <div className="ml-auto flex items-center gap-1 lg:hidden">{phoneActions}</div>
-        )}
       </div>
       {tabs && (
         <div className="flex h-11 overflow-x-auto border-t border-hairline px-2 lg:hidden">

@@ -13,10 +13,10 @@ import { useRoutineEventSetup } from "@/hooks/use-routines";
 export function TelegramBotSetup({ routineId }: { routineId: string }) {
   const { data, isPending, isError } = useRoutineEventSetup(routineId, true);
 
-  if (isPending) return <p className="text-xs text-muted-foreground">Loading the bot…</p>;
+  if (isPending) return <p className="text-meta text-muted-foreground">Loading the bot…</p>;
   if (isError) {
     return (
-      <p className="text-xs text-muted-foreground">Couldn't load the bot. Reload to try again.</p>
+      <p className="text-meta text-muted-foreground">Couldn't load the bot. Reload to try again.</p>
     );
   }
   if (data.kind !== "telegram") return null;
@@ -33,7 +33,7 @@ export function TelegramBotSetup({ routineId }: { routineId: string }) {
         <li>Messages in a paired chat start the routine, and its answer comes back there.</li>
       </ol>
       <RevealedSecret value={data.link} label="Copy pairing link" />
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         {data.chats.length === 0
           ? "No chat is paired yet, so nothing can start this routine from Telegram."
           : `Paired: ${data.chats.join(", ")}.`}

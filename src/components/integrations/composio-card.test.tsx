@@ -1,19 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ToolConnection, ToolConnectionGrant } from "@/lib/connections-api";
-import { ComposioCard } from "./composio-card";
+import { ConnectedApps } from "./composio-card";
 
 /**
- * What this workspace has connected, and what may be done about it.
- *
- * The catalogue itself moved out to `app-catalogue.test.tsx` when it stopped
- * being a text field inside this card, and it is stubbed here: a test that
- * renders both is a test that fails for two reasons. What is left is the part
- * that was always this card's — a deployment without the key says which
- * variable would turn the feature on rather than hiding it, a viewer is shown
- * what exists without being offered a control that would answer 403, and a
- * standing permission is listed with a way to take it back.
+ * What this workspace has connected, and what may be done about it: a row
+ * each in Connected (A8), and Manage for the rest. A viewer is shown what
+ * exists without being offered a control that would answer 403, and a
+ * standing permission is listed with a way to take it back. The catalogue
+ * and its unconfigured state are `app-catalogue.test.tsx`'s.
  */
 const { connect, removeConnection, revokeGrant, updateConnection } = vi.hoisted(() => ({
   connect: { mutate: vi.fn(), isPending: false },
@@ -25,11 +21,7 @@ const { connect, removeConnection, revokeGrant, updateConnection } = vi.hoisted(
 const AGENTS = [{ id: "agent-1", name: "Sales" }];
 let grants: ToolConnectionGrant[] = [];
 
-let configured = true;
 let role = "admin";
-
-/** What the card is handed, so a test can assert on the dedupe it computes. */
-let offeredTo: Set<string> | null = null;
 
 // Mocked whole rather than partially, for the reason connection-card.test.tsx
 // gives: the real module constructs a Supabase client at import time, which
@@ -38,15 +30,6 @@ vi.mock("@/lib/api-client", () => ({
   api: { me: vi.fn() },
   assetSrc: (path: string) => (path ? `https://api.test${path}` : ""),
   ApiError: class ApiError extends Error {},
-}));
-
-// Stubbed rather than rendered: it has its own file, and it would otherwise
-// pull three more hooks into every test here.
-vi.mock("@/components/integrations/app-catalogue", () => ({
-  AppCatalogue: ({ connected }: { connected: Set<string> }) => {
-    offeredTo = connected;
-    return <div data-testid="catalogue" />;
-  },
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -67,10 +50,6 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 vi.mock("@/hooks/use-connections", () => ({
   useComposioGrants: () => ({ data: { grants } }),
   useRemoveComposioGrant: () => revokeGrant,
-  useComposioToolkits: () => ({
-    data: { pages: [{ configured, toolkits: [], nextCursor: "" }] },
-    isPending: false,
-  }),
   useConnectComposio: () => connect,
   useComposioStatus: () => ({ data: undefined }),
   useRemoveToolConnection: () => removeConnection,
@@ -98,34 +77,47 @@ function app(over: Partial<ToolConnection> = {}): ToolConnection {
 }
 
 beforeEach(() => {
-  configured = true;
   role = "admin";
   grants = [];
-  offeredTo = null;
   connect.mutate.mockClear();
   removeConnection.mutate.mockClear();
   revokeGrant.mutate.mockClear();
 });
 
-describe("ComposioCard", () => {
-  it("names the variable rather than hiding the feature", async () => {
-    configured = false;
-    render(<ComposioCard connections={[]} agents={AGENTS} />);
-    expect(screen.getByText(/COMPOSIO_API_KEY/)).toBeInTheDocument();
-    expect(screen.getByText("Not configured")).toBeInTheDocument();
-    expect(screen.queryByTestId("catalogue")).not.toBeInTheDocument();
+function renderApps(connections: ToolConnection[]) {
+  return render(
+    <ul>
+      <ConnectedApps connections={connections} agents={AGENTS} />
+    </ul>,
+  );
+}
+
+async function manage(connections: ToolConnection[]) {
+  renderApps(connections);
+  await userEvent.click(screen.getByRole("button", { name: "Manage" }));
+  return within(screen.getByRole("dialog"));
+}
+
+const STANDING: ToolConnectionGrant = {
+  agentId: "agent-1",
+  connectionId: "conn-1",
+  slug: "GMAIL_SEND_EMAIL",
+  mode: "always",
+  grantedBy: "user-1",
+  grantedAt: 1,
+};
+
+describe("ConnectedApps", () => {
+  it("lists only the connected apps, whose they are and how they are doing", () => {
+    renderApps([app(), app({ id: "svc", transport: "http", label: "Orders API" })]);
+    expect(screen.getByText("Ana's Gmail")).toBeInTheDocument();
+    expect(screen.getByText("gmail · only you")).toBeInTheDocument();
+    expect(screen.getByText("Working")).toBeInTheDocument();
+    expect(screen.queryByText("Orders API")).not.toBeInTheDocument();
   });
 
-  it("tells the catalogue what is already connected, so it is not offered twice", async () => {
-    // Offering Gmail again would fail on the unique label, with a message
-    // about a name rather than about what happened.
-    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
-    expect(screen.getByTestId("catalogue")).toBeInTheDocument();
-    expect([...(offeredTo ?? [])]).toEqual(["gmail"]);
-  });
-
-  it("shows the application's own mark, fetched through this API and not Composio", async () => {
-    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
+  it("shows the application's own mark, fetched through this API and not Composio", () => {
+    renderApps([app()]);
     const logo = screen.getByRole("presentation", { hidden: true });
     expect(logo).toHaveAttribute(
       "src",
@@ -134,62 +126,31 @@ describe("ComposioCard", () => {
     expect(logo).toHaveAttribute("loading", "lazy");
   });
 
-  it("says a half-finished connection is not finished", async () => {
-    render(
-      <ComposioCard
-        connections={[app({ status: "pending", createdAt: Date.now() })]}
-        agents={AGENTS}
-      />,
-    );
+  it("says a half-finished connection is not finished", () => {
+    renderApps([app({ status: "pending", createdAt: Date.now() })]);
     expect(screen.getByText("Finishing…")).toBeInTheDocument();
   });
 
   // covan#258: Composio said active on a key the provider refuses. Said on
-  // the card, to whoever typed it.
+  // the row, and in the provider's words under Manage.
   it("says a refused key was refused, in the provider's words, and what to do", async () => {
-    render(
-      <ComposioCard
-        connections={[
-          app({
-            status: "active",
-            verifyError: "PostHog refused this credential: Personal API key is invalid.",
-          }),
-        ]}
-        agents={AGENTS}
-      />,
-    );
+    const dialog = await manage([
+      app({
+        status: "active",
+        verifyError: "PostHog refused this credential: Personal API key is invalid.",
+      }),
+    ]);
     expect(screen.getByText("Key refused")).toBeInTheDocument();
     expect(
-      screen.getByText(/Personal API key is invalid\. Remove it and connect again/),
+      dialog.getByText(/Personal API key is invalid\. Remove it and connect again/),
     ).toBeInTheDocument();
   });
 
-  // A sign-in window closed halfway leaves the row pending for good, and the
-  // card used to call that "1 connected" and "Finishing…" indefinitely.
-  it("does not count an unfinished sign-in as connected", async () => {
-    render(
-      <ComposioCard
-        connections={[
-          app({ id: "a", status: "active" }),
-          app({ id: "b", toolkitSlug: "slack", status: "pending", createdAt: Date.now() }),
-        ]}
-        agents={AGENTS}
-      />,
-    );
-    expect(screen.getByText("1 connected")).toBeInTheDocument();
-  });
-
   it("stops saying Finishing about a sign-in abandoned long ago, and says what to do", async () => {
-    render(
-      <ComposioCard
-        connections={[app({ status: "pending", createdAt: Date.now() - 60 * 60_000 })]}
-        agents={AGENTS}
-      />,
-    );
+    const dialog = await manage([app({ status: "pending", createdAt: Date.now() - 60 * 60_000 })]);
     expect(screen.queryByText("Finishing…")).not.toBeInTheDocument();
     expect(screen.getByText("Not finished")).toBeInTheDocument();
-    expect(screen.getByText(/was not finished, so agents cannot use it/)).toBeInTheDocument();
-    expect(screen.queryByText(/connected$/)).not.toBeInTheDocument();
+    expect(dialog.getByText(/was not finished, so agents cannot use it/)).toBeInTheDocument();
   });
 
   /**
@@ -199,14 +160,9 @@ describe("ComposioCard", () => {
    */
   it("says how many operations are hidden, why, and when they are tried again", async () => {
     const until = Date.parse("2026-11-07T22:51:56Z");
-    render(
-      <ComposioCard
-        connections={[app({ unavailable: { count: 1, hiddenUntil: until } })]}
-        agents={AGENTS}
-      />,
-    );
-    expect(screen.getByText("1 operation hidden")).toBeInTheDocument();
-    expect(screen.getByText(/refused an operation when an agent tried it/)).toHaveTextContent(
+    const dialog = await manage([app({ unavailable: { count: 1, hiddenUntil: until } })]);
+    expect(screen.getByText(/1 operation hidden/)).toBeInTheDocument();
+    expect(dialog.getByText(/refused an operation when an agent tried it/)).toHaveTextContent(
       `Tried again from ${new Date(until).toLocaleDateString("en", {
         day: "numeric",
         month: "long",
@@ -216,28 +172,26 @@ describe("ComposioCard", () => {
   });
 
   it("says nothing about hidden operations when there are none", async () => {
-    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
+    const dialog = await manage([app()]);
     expect(screen.queryByText(/hidden/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/refused/)).not.toBeInTheDocument();
+    expect(dialog.queryByText(/refused/)).not.toBeInTheDocument();
   });
 
   it("shows a viewer what is connected without offering a control that would 403", async () => {
     role = "viewer";
-    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
-    expect(screen.getByText("Ana's Gmail")).toBeInTheDocument();
-    expect(screen.queryByTestId("catalogue")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /remove/i })).not.toBeInTheDocument();
+    const dialog = await manage([app()]);
+    expect(dialog.getByRole("heading", { name: "Ana's Gmail" })).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: /remove/i })).not.toBeInTheDocument();
   });
 
   it("confirms in place before revoking", async () => {
-    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
-    await userEvent.click(screen.getByRole("button", { name: /remove/i }));
+    const dialog = await manage([app()]);
+    await userEvent.click(dialog.getByRole("button", { name: /remove ana's gmail/i }));
     // Nothing has happened yet — the first press asks. Removing revokes the
-    // grant at Composio before the row goes, which is why it is not a bare
-    // delete anywhere in the product.
+    // grant at Composio before the row goes.
     expect(removeConnection.mutate).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await userEvent.click(dialog.getByRole("button", { name: "Remove" }));
     expect(removeConnection.mutate).toHaveBeenCalledWith("conn-1", expect.anything());
   });
 
@@ -248,53 +202,26 @@ describe("ComposioCard", () => {
    * what the asking is — so it is the only kind that has to be listed.
    */
   it("names each standing permission and whose it is", async () => {
-    grants = [
-      {
-        agentId: "agent-1",
-        connectionId: "conn-1",
-        slug: "GMAIL_SEND_EMAIL",
-        mode: "always",
-        grantedBy: "user-1",
-        grantedAt: 1,
-      },
-    ];
-    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
-    expect(screen.getByText("GMAIL_SEND_EMAIL")).toBeInTheDocument();
-    expect(screen.getByText(/Sales runs this without asking/)).toBeInTheDocument();
+    grants = [STANDING];
+    const dialog = await manage([app()]);
+    expect(screen.getByText(/1 operation runs without asking/)).toBeInTheDocument();
+    expect(dialog.getByText("GMAIL_SEND_EMAIL")).toBeInTheDocument();
+    expect(dialog.getByText(/Sales runs this without asking/)).toBeInTheDocument();
   });
 
   it("does not list an ask grant, because asking is what no row already means", async () => {
-    grants = [
-      {
-        agentId: "agent-1",
-        connectionId: "conn-1",
-        slug: "GMAIL_FETCH_EMAILS",
-        mode: "ask",
-        grantedBy: "user-1",
-        grantedAt: 1,
-      },
-    ];
-    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
-    expect(screen.queryByText("GMAIL_FETCH_EMAILS")).not.toBeInTheDocument();
+    grants = [{ ...STANDING, slug: "GMAIL_FETCH_EMAILS", mode: "ask" }];
+    const dialog = await manage([app()]);
+    expect(dialog.queryByText("GMAIL_FETCH_EMAILS")).not.toBeInTheDocument();
   });
 
   it("takes a standing permission back in one press, with nothing to confirm", async () => {
-    // No confirmation step, unlike disconnecting the app: removing a
-    // permission cannot be the unsafe direction, and asking "are you sure?"
-    // before making something safer teaches people to click through the
-    // question that matters.
-    grants = [
-      {
-        agentId: "agent-1",
-        connectionId: "conn-1",
-        slug: "GMAIL_SEND_EMAIL",
-        mode: "always",
-        grantedBy: "user-1",
-        grantedAt: 1,
-      },
-    ];
-    render(<ComposioCard connections={[app()]} agents={AGENTS} />);
-    await userEvent.click(screen.getByRole("button", { name: "Ask first" }));
+    // Removing a permission cannot be the unsafe direction, and asking "are
+    // you sure?" before making something safer teaches people to click
+    // through the question that matters.
+    grants = [STANDING];
+    const dialog = await manage([app()]);
+    await userEvent.click(dialog.getByRole("button", { name: "Ask first" }));
     expect(revokeGrant.mutate).toHaveBeenCalledWith(
       { agentId: "agent-1", connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL" },
       expect.anything(),
@@ -304,20 +231,18 @@ describe("ComposioCard", () => {
   // 0098: personal unless shared, and only the person who connected it can
   // share it or take it back.
   it("says whose a connected app is, and offers sharing only to whoever connected it", async () => {
-    render(<ComposioCard connections={[app({ scope: "owner", mine: true })]} agents={AGENTS} />);
-    expect(screen.getByText("Only you")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Share" }));
+    const dialog = await manage([app({ scope: "owner", mine: true })]);
+    expect(dialog.getByText("Only you")).toBeInTheDocument();
+    await userEvent.click(dialog.getByRole("button", { name: "Share" }));
     expect(updateConnection.mutate).toHaveBeenCalledWith(
       { id: expect.any(String), patch: { shared: true } },
       expect.anything(),
     );
   });
 
-  it("shows a colleague's shared app as shared, with no switch", () => {
-    render(
-      <ComposioCard connections={[app({ scope: "workspace", mine: false })]} agents={AGENTS} />,
-    );
-    expect(screen.getByText("Shared")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /share/i })).toBeNull();
+  it("shows a colleague's shared app as shared, with no switch", async () => {
+    const dialog = await manage([app({ scope: "workspace", mine: false })]);
+    expect(dialog.getByText("Shared")).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: /^share/i })).toBeNull();
   });
 });

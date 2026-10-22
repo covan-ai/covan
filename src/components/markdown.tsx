@@ -329,12 +329,18 @@ const ALIGN_CLASS: Record<Align, string> = {
  */
 function Table({ header, aligns, rows }: { header: string[]; aligns: Align[]; rows: string[][] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
+    <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-border bg-muted/50">
+          <tr className="border-b border-border">
             {header.map((cell, i) => (
-              <th key={i} className={cn("px-3 py-2 font-medium", ALIGN_CLASS[aligns[i] ?? "left"])}>
+              <th
+                key={i}
+                className={cn(
+                  "px-2.5 py-2 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase",
+                  ALIGN_CLASS[aligns[i] ?? "left"],
+                )}
+              >
                 {parseInline(cell)}
               </th>
             ))}
@@ -342,12 +348,12 @@ function Table({ header, aligns, rows }: { header: string[]; aligns: Align[]; ro
         </thead>
         <tbody>
           {rows.map((row, r) => (
-            <tr key={r} className="border-b border-border last:border-0">
+            <tr key={r} className="border-b border-hairline last:border-0">
               {/* Indexed against the header rather than the row, so a short
                   row — which is what a table looks like while it streams —
                   keeps its columns under the right headings. */}
               {header.map((_, c) => (
-                <td key={c} className={cn("px-3 py-2", ALIGN_CLASS[aligns[c] ?? "left"])}>
+                <td key={c} className={cn("px-2.5 py-2", ALIGN_CLASS[aligns[c] ?? "left"])}>
                   {parseInline(row[c] ?? "")}
                 </td>
               ))}

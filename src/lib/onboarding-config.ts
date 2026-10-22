@@ -1,57 +1,6 @@
-import type { LucideIcon } from "lucide-react";
-import { BookOpen, Briefcase, ClipboardList, Megaphone, User, Users } from "lucide-react";
 import type { ProviderId } from "./connections-api";
-import { EMOJIS, PERSONA_TEMPLATES, type PersonaTemplate } from "./agent-meta";
 import type { FirstWeekStep } from "./first-week";
-import type { OnboardingAnswers } from "./onboarding-flow";
 
-/**
- * Everything the first run says, in the order it says it.
- *
- * One file on purpose: the screens, their copy, the options on each, the three
- * ready-made assistants, the tool catalogue and the setup list after it are all
- * here, so a change of wording or order is an edit to this file and nothing
- * else. The components under `components/welcome/` draw what they are handed;
- * the flow engine (`onboarding-flow.ts`) walks `STEPS` and knows nothing about
- * what a step contains.
- *
- * The ids here are the ids the API stores (`worker/src/lib/onboarding.ts`
- * validates `purpose`, `mode` and the shape of a tool slug), so a rename on
- * one side alone turns every answer into a 400.
- */
-
-export type SectionId = "meet" | "personalise" | "start";
-
-/** Which of the four looping demos an intro screen shows (`mini-demos.tsx`). */
-export type DemoKind = "documents" | "apps" | "schedule" | "team";
-
-export type IntroScreen = {
-  id: string;
-  /**
-   * The headline, in three pieces so exactly one phrase can carry the brand
-   * colour. `before` and `after` may be empty; `brand` never is.
-   */
-  headline: { before: string; brand: string; after: string };
-  /** One muted line under it: what it means, or why it can be trusted. */
-  line: string;
-  demo: DemoKind;
-};
-
-export type Emoji = (typeof EMOJIS)[number];
-
-/**
- * A ready-made assistant: a name, a face and the persona template behind it.
- * Picking one fills the name and emoji; the person can still edit both.
- */
-export type RoleSuggestion = {
-  id: string;
-  name: string;
-  emoji: Emoji;
-  line: string;
-  templateId: string;
-};
-
-/** Where a tool's mark comes from: fetched through our logo proxy, or drawn by us. */
 export type ToolLogo =
   | { kind: "composio"; slug: string }
   | { kind: "provider"; provider: ProviderId }
@@ -85,35 +34,6 @@ export type ToolEntry = {
   connectedSlug: string;
 };
 
-export type PurposeId = "sales" | "operations" | "marketing" | "personal";
-
-export type PurposeOption = {
-  id: PurposeId;
-  label: string;
-  line: string;
-  templateId: string;
-  icon: LucideIcon;
-};
-
-export type ModeId = "solo" | "team";
-
-export type ModeOption = { id: ModeId; label: string; line: string; icon: LucideIcon };
-
-export type PersonaliseStepId = "assistant" | "tools" | "purpose" | "mode" | "team";
-
-export type PersonaliseStep = {
-  id: PersonaliseStepId;
-  title: string;
-  subtitle?: string;
-  /** The label of the skip link. Absent means the step cannot be skipped. */
-  skip?: string;
-  /** When the step is part of the run at all. Absent means always. */
-  when?: (answers: OnboardingAnswers) => boolean;
-  /** Whether a cold return can consider this step dealt with. */
-  answered: (answers: OnboardingAnswers) => boolean;
-};
-
-/** The things on the page a coach mark can point at (`data-coach="…"`). */
 export type CoachTargetId =
   | "composer"
   | "attach"
@@ -131,7 +51,7 @@ export type CoachTarget = { id: CoachTargetId; title: string; hint: string; rout
 export type SetupContext = {
   /** The first tool the person named that can be connected, by name. */
   toolName: string | null;
-  mode: ModeId | null;
+  mode: "solo" | "team" | null;
 };
 
 export type SetupStepConfig = {
@@ -147,72 +67,6 @@ export type SetupStepConfig = {
 };
 
 // ---- the words ----------------------------------------------------------------
-
-export const SECTIONS: { id: SectionId; label: string }[] = [
-  { id: "meet", label: "Meet" },
-  { id: "personalise", label: "Personalise" },
-  { id: "start", label: "Start" },
-];
-
-export const INTRO: IntroScreen[] = [
-  {
-    id: "documents",
-    headline: { before: "Answers from", brand: "your own", after: "documents" },
-    line: "Every reply names the file it came from.",
-    demo: "documents",
-  },
-  {
-    id: "apps",
-    headline: { before: "Works", brand: "inside", after: "the apps you already use" },
-    line: "Reads and acts in the tools you connect, and only with your say-so.",
-    demo: "apps",
-  },
-  {
-    id: "schedule",
-    headline: { before: "Runs", brand: "while", after: "you're not looking" },
-    line: "Give it a routine and it reports back.",
-    demo: "schedule",
-  },
-  {
-    id: "team",
-    headline: { before: "One assistant,", brand: "private", after: "to each of you" },
-    line: "Everyone trains it together. Every conversation stays yours.",
-    demo: "team",
-  },
-];
-
-export const ROLES: RoleSuggestion[] = [
-  {
-    id: "desk",
-    name: "Desk",
-    emoji: "🧭",
-    line: "Keeps the team's answers in one place.",
-    templateId: "tutor",
-  },
-  {
-    id: "scout",
-    name: "Scout",
-    emoji: "📊",
-    line: "Finds and summarises what's out there.",
-    templateId: "analyst",
-  },
-  {
-    id: "quill",
-    name: "Quill",
-    emoji: "✍️",
-    line: "Drafts in your voice.",
-    templateId: "writer",
-  },
-];
-
-/** The role id stored when the person typed a name of their own. */
-export const CUSTOM_ROLE = "custom";
-
-/** The role id stored when the person kept the default, "<Name>'s assistant". */
-export const DEFAULT_ROLE = "default";
-
-/** The emoji a fresh assistant starts with, before anyone picks one. */
-export const DEFAULT_EMOJI: Emoji = "🧭";
 
 const composio = (
   slug: string,
@@ -297,95 +151,78 @@ export const TOOLS: ToolEntry[] = [
   },
 ];
 
-export const PURPOSES: PurposeOption[] = [
-  {
-    id: "sales",
-    label: "Sales",
-    line: "Leads, follow-ups, proposals.",
-    templateId: "sales",
-    icon: Briefcase,
-  },
-  {
-    id: "operations",
-    label: "Operations",
-    line: "Processes, handoffs, the questions that repeat.",
-    templateId: "operations",
-    icon: ClipboardList,
-  },
-  {
-    id: "marketing",
-    label: "Marketing",
-    line: "Positioning, content, launches.",
-    templateId: "gtm",
-    icon: Megaphone,
-  },
-  {
-    id: "personal",
-    label: "My own work",
-    line: "Notes, research, writing.",
-    templateId: "tutor",
-    icon: BookOpen,
-  },
-];
-
-export const MODES: ModeOption[] = [
-  {
-    id: "solo",
-    label: "Just me",
-    line: "The assistant and its conversations are yours alone.",
-    icon: User,
-  },
-  {
-    id: "team",
-    label: "My team",
-    line: "Teammates can use and train it. Every conversation stays private.",
-    icon: Users,
-  },
-];
-
-export const STEPS: PersonaliseStep[] = [
-  {
-    id: "assistant",
-    title: "Name your assistant",
-    subtitle: "You can change this any time.",
-    answered: (a) => a.assistantName !== null,
-  },
-  {
-    id: "tools",
-    title: "Which tools do you use?",
-    subtitle: "Nothing connects yet. This tells your assistant where to start.",
-    skip: "Skip for now",
-    answered: (a) => a.tools !== null,
-  },
-  {
-    id: "purpose",
-    title: "What will it mostly do?",
-    answered: (a) => a.purpose !== null,
-  },
-  {
-    id: "mode",
-    title: "Just you, or the team?",
-    answered: (a) => a.mode !== null,
-  },
-  {
-    id: "team",
-    title: "Set up the team",
-    subtitle: "One assistant for everyone: shared knowledge, private conversations.",
-    when: (a) => a.mode === "team",
-    answered: () => false,
-  },
-];
-
 export const CTA = {
   continue: "Continue",
   skip: "Skip for now",
-  skipIntro: "Skip intro",
   back: "Back",
-  finish: "Meet my assistant",
   finishing: "Setting up…",
   gotIt: "Got it",
   try: "Try",
 } as const;
+
+/**
+ * "What should it do?" (A14): the jobs a first agent is set up for, as chips.
+ * Each carries the sentence it adds to the persona, so the persona under the
+ * chips is written from the choices and reads like one paragraph.
+ */
+export const JOBS = [
+  {
+    id: "answer-questions",
+    label: "Answer customer questions",
+    sentence: "answer customer questions using the documents in Knowledge",
+  },
+  {
+    id: "draft-replies",
+    label: "Draft replies",
+    sentence: "draft replies for the team to check and send",
+  },
+  {
+    id: "summarise",
+    label: "Summarise documents",
+    sentence: "summarise long documents into what matters",
+  },
+  {
+    id: "watch-mailbox",
+    label: "Watch a mailbox",
+    sentence: "keep an eye on a shared mailbox and say what needs a person",
+  },
+  {
+    id: "research",
+    label: "Research the web",
+    sentence: "research questions on the web and say where each fact came from",
+  },
+  {
+    id: "reconcile",
+    label: "Reconcile numbers",
+    sentence: "check figures against each other and point out what does not add up",
+  },
+] as const;
+
+export type JobId = (typeof JOBS)[number]["id"];
+
+/**
+ * The persona a first agent starts from, written from its name, the
+ * workspace and the jobs picked: who it works for, what it does, how it
+ * speaks and when it asks. Editable on the same screen, and later in
+ * Configuration.
+ */
+export function personaFor(input: {
+  workspaceName: string | null;
+  jobs: readonly string[];
+}): string {
+  const team = input.workspaceName?.trim() || "the team";
+  const sentences = JOBS.filter((j) => input.jobs.includes(j.id)).map((j) => j.sentence);
+  const what =
+    sentences.length === 0
+      ? `help ${team} with whatever it asks, using the documents in Knowledge`
+      : sentences.length === 1
+        ? sentences[0]
+        : `${sentences.slice(0, -1).join(", ")} and ${sentences.at(-1)}`;
+  return (
+    `You work for ${team}. You ${what}. ` +
+    "Be brief and warm, quote the document that applies, and ask a person when a case is unclear rather than guessing."
+  );
+}
 
 /**
  * The setup list beside the first conversation. Each entry is joined by `key`
@@ -508,28 +345,6 @@ export function firstConnectableTool(
     return tool;
   }
   return null;
-}
-
-function templateById(id: string | null | undefined): PersonaTemplate | undefined {
-  return id ? PERSONA_TEMPLATES.find((t) => t.id === id) : undefined;
-}
-
-/**
- * The persona the assistant starts from: the ready-made role's if one was
- * picked, else the purpose's, else the most general template there is.
- */
-export function templateFor(answers: {
-  purpose: string | null;
-  assistantRole: string | null;
-}): PersonaTemplate {
-  const role = ROLES.find((r) => r.id === answers.assistantRole);
-  const purpose = PURPOSES.find((p) => p.id === answers.purpose);
-  return (
-    templateById(role?.templateId) ??
-    templateById(purpose?.templateId) ??
-    templateById("tutor") ??
-    PERSONA_TEMPLATES[0]
-  );
 }
 
 /** "Ada's assistant", or "Your assistant" when the profile has no name. */

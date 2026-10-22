@@ -9,7 +9,16 @@ import type {
 } from "@/lib/connections-api";
 import type { Bundle } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
-import { Chip, SectionCard } from "@/components/section-card";
+import { Chip } from "@/components/chip";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -26,8 +35,23 @@ import {
   useSyncConnection,
   useUpdateConnection,
 } from "@/hooks/use-connections";
+import { syncedWords } from "@/lib/day-groups";
 import { DriveFolderDialog } from "./drive-folder-dialog";
 import { PROVIDER_MARK } from "./brand-marks";
+import { AppLogo } from "./app-logo";
+import { IntegrationCard, IntegrationRow } from "./integration-row";
+
+/** What each source is called, beside the account it reads. */
+const PROVIDER_LABEL: Record<ProviderId, string> = {
+  notion: "Notion",
+  google_drive: "Google Drive",
+};
+
+/** "every 30 minutes", "daily" — the interval as part of a sentence. */
+function intervalWords(minutes: number): string {
+  const found = INTERVALS.find((i) => i.minutes === minutes);
+  return found ? found.label.toLowerCase() : `every ${minutes} minutes`;
+}
 
 /**
  * How often a source is re-read. Hours rather than a cron expression: a routine
@@ -77,8 +101,21 @@ function pauseAction(
   }
 }
 
-export function ConnectionCard({ connection }: { connection: Connection }) {
+/**
+ * A connected source as a row (A8): what it reads, into which folder, how
+ * often and for whom, how its last sync went, and Manage. A Drive connection
+ * still waiting for its folder offers that instead, since it is the next step.
+ */
+export function ConnectionRow({
+  connection,
+  connectedBy,
+}: {
+  connection: Connection;
+  /** The grant holder's name, when they are still a member. */
+  connectedBy?: string | null;
+}) {
   const [pickingFolder, setPickingFolder] = useState(false);
+  const [managing, setManaging] = useState(false);
   const update = useUpdateConnection();
   const sync = useSyncConnection();
   const disconnect = useDisconnect();
@@ -109,7 +146,7 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
   const reconnectButton = (
     <Button
       size="sm"
-      variant={action === "newGrant" ? "default" : "outline"}
+      variant={action === "newGrant" ? "default" : "secondary"}
       disabled={reconnect.isPending}
       onClick={() =>
         reconnect.mutate(connection.id, {
@@ -122,155 +159,182 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
     </Button>
   );
 
+  const status = connection.needsFolder
+    ? { state: "waiting" as const, text: "Needs a folder" }
+    : paused
+      ? { state: "idle" as const, text: "Paused" }
+      : connection.lastSyncAt
+        ? { state: "done" as const, text: syncedWords(connection.lastSyncAt) }
+        : { state: "idle" as const, text: "Not synced yet" };
+  const description = [
+    connection.accountLabel + (connection.folderName ? ` · ${connection.folderName}` : ""),
+    `${connection.documentCount} ${connection.documentCount === 1 ? "file" : "files"} in ${connection.bundleName ?? "a folder"}`,
+    intervalWords(connection.syncIntervalMinutes),
+    connectedBy ? `connected by ${connectedBy}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <SectionCard className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3.5">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-            <Mark className="h-[22px] w-[22px]" />
-          </span>
-          <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="text-base font-medium leading-tight [overflow-wrap:anywhere]">
-              {connection.accountLabel}
-              {connection.folderName ? ` · ${connection.folderName}` : ""}
-            </span>
-            <span className="text-meta leading-tight text-muted-foreground">
-              {connection.bundleName ?? "a bundle"} · {connection.documentCount}{" "}
-              {connection.documentCount === 1 ? "document" : "documents"}
-              {connection.lastSyncAt ? ` · synced ${formatRelative(connection.lastSyncAt)}` : ""}
-            </span>
-          </span>
-        </div>
-        {/* Neutral grey = off or pending, amber = working. There is no third
-            state and no red — a paused connection is not an error, it is a
-            connection that is not running. */}
-        <Chip tone={paused ? "neutral" : "on"}>
-          {connection.needsFolder ? "Needs a folder" : paused ? "Paused" : "Active"}
-        </Chip>
-      </div>
-
-      {connection.pausedReason ? (
-        <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground">
-          {connection.pausedReason}
-        </p>
-      ) : lastRunNote ? (
-        <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground [overflow-wrap:anywhere]">
-          Last sync {formatRelative(lastRunNote.startedAt)}: {lastRunNote.error}
-        </p>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-2">
-        {connection.needsFolder ? (
-          <Button size="sm" onClick={() => setPickingFolder(true)}>
-            Choose a folder
-          </Button>
-        ) : action === "newGrant" ? (
-          // Resume is not offered at all. It would start a sync against a token
-          // the provider has already refused, fail on the first call, and pause
-          // the connection again with the message that is already on screen.
-          reconnectButton
-        ) : action === "operator" ? (
-          // Nothing to press. The deployment stopped offering this provider,
-          // which is a configuration somebody else holds — the sentence above
-          // says which variables, and a button here would only fail.
-          <span className="text-meta text-muted-foreground">
-            An operator has to set this up again before it can resume.
-          </span>
-        ) : action === "decide" ? (
-          <>
-            <Button
-              size="sm"
-              disabled={update.isPending}
-              onClick={() => update.mutate({ id: connection.id, patch: { status: "active" } })}
-            >
-              Remove them and resume
+    <>
+      <IntegrationRow
+        logo={<AppLogo mark={Mark} name={PROVIDER_LABEL[connection.provider]} size={36} />}
+        name={PROVIDER_LABEL[connection.provider]}
+        description={description}
+        status={status}
+        action={
+          connection.needsFolder ? (
+            <Button size="sm" onClick={() => setPickingFolder(true)}>
+              Choose a folder
             </Button>
-            {/* The other answer to the same question, and the more likely right
+          ) : (
+            <Button size="sm" variant="secondary" onClick={() => setManaging(true)}>
+              Manage
+            </Button>
+          )
+        }
+      />
+
+      <Dialog open={managing} onOpenChange={setManaging}>
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>
+              {PROVIDER_LABEL[connection.provider]} · {connection.accountLabel}
+            </DialogTitle>
+          </DialogHeader>
+          <DialogBody className="flex flex-col gap-4">
+            <p className="m-0 text-sm text-muted-foreground">
+              {connection.documentCount} {connection.documentCount === 1 ? "document" : "documents"}{" "}
+              in {connection.bundleName ?? "a folder"}
+              {connection.lastSyncAt ? ` · synced ${formatRelative(connection.lastSyncAt)}` : ""}
+            </p>
+            {connection.pausedReason ? (
+              <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground">
+                {connection.pausedReason}
+              </p>
+            ) : lastRunNote ? (
+              <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground [overflow-wrap:anywhere]">
+                Last sync {formatRelative(lastRunNote.startedAt)}: {lastRunNote.error}
+              </p>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-2">
+              {connection.needsFolder ? (
+                <Button size="sm" onClick={() => setPickingFolder(true)}>
+                  Choose a folder
+                </Button>
+              ) : action === "newGrant" ? (
+                // Resume is not offered at all. It would start a sync against a token
+                // the provider has already refused, fail on the first call, and pause
+                // the connection again with the message that is already on screen.
+                reconnectButton
+              ) : action === "operator" ? (
+                // Nothing to press. The deployment stopped offering this provider,
+                // which is a configuration somebody else holds — the sentence above
+                // says which variables, and a button here would only fail.
+                <span className="text-meta text-muted-foreground">
+                  An operator has to set this up again before it can resume.
+                </span>
+              ) : action === "decide" ? (
+                <>
+                  <Button
+                    size="sm"
+                    disabled={update.isPending}
+                    onClick={() =>
+                      update.mutate({ id: connection.id, patch: { status: "active" } })
+                    }
+                  >
+                    Remove them and resume
+                  </Button>
+                  {/* The other answer to the same question, and the more likely right
                 one: the documents are still there, this grant just cannot see
                 them. */}
-            {reconnectButton}
-          </>
-        ) : (
-          <>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={paused || sync.isPending}
-              onClick={syncNow}
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${sync.isPending ? "animate-spin" : ""}`} />
-              {sync.isPending ? "Syncing…" : "Sync now"}
-            </Button>
+                  {reconnectButton}
+                </>
+              ) : (
+                <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={paused || sync.isPending}
+                    onClick={syncNow}
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${sync.isPending ? "animate-spin" : ""}`} />
+                    {sync.isPending ? "Syncing…" : "Sync now"}
+                  </Button>
 
-            <Select
-              value={String(connection.syncIntervalMinutes)}
-              onValueChange={(value) =>
-                update.mutate({
-                  id: connection.id,
-                  patch: { syncIntervalMinutes: Number(value) },
-                })
-              }
-            >
-              <SelectTrigger className="h-8 w-[150px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {INTERVALS.map((option) => (
-                  <SelectItem key={option.minutes} value={String(option.minutes)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  <Select
+                    value={String(connection.syncIntervalMinutes)}
+                    onValueChange={(value) =>
+                      update.mutate({
+                        id: connection.id,
+                        patch: { syncIntervalMinutes: Number(value) },
+                      })
+                    }
+                  >
+                    <SelectTrigger className="h-8 w-[150px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {INTERVALS.map((option) => (
+                        <SelectItem key={option.minutes} value={String(option.minutes)}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
 
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() =>
-                update.mutate({
-                  id: connection.id,
-                  patch: { status: paused ? "active" : "paused" },
-                })
-              }
-            >
-              {paused ? "Resume" : "Pause"}
-            </Button>
-            {/* Offered on a working connection too, quietly. Replacing a grant
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      update.mutate({
+                        id: connection.id,
+                        patch: { status: paused ? "active" : "paused" },
+                      })
+                    }
+                  >
+                    {paused ? "Resume" : "Pause"}
+                  </Button>
+                  {/* Offered on a working connection too, quietly. Replacing a grant
                 is the answer to "this is syncing as the wrong person" as well
                 as to "this has stopped", and the old route to it was to
                 disconnect and start again — which left the documents orphaned
                 until the next sync adopted them back. */}
-            {!paused && reconnectButton}
-          </>
-        )}
+                  {!paused && reconnectButton}
+                </>
+              )}
 
-        {/* Keeping the documents is the default, and the schema agrees:
+              {/* Keeping the documents is the default, and the schema agrees:
             `documents.connection_id` is `on delete set null`. Disconnecting a
             source is not a request to unlearn what it taught. */}
-        <Button
-          size="sm"
-          variant="ghost"
-          className="ml-auto text-muted-foreground"
-          disabled={disconnect.isPending}
-          onClick={() => {
-            const alsoDelete = window.confirm(
-              `Disconnect ${connection.accountLabel}?\n\n` +
-                `OK — also delete the ${connection.documentCount} documents it imported.\n` +
-                `Cancel — keep them in the bundle and just stop syncing.`,
-            );
-            disconnect.mutate(
-              { id: connection.id, documents: alsoDelete ? "delete" : "keep" },
-              {
-                onSuccess: () => toast.success("Disconnected."),
-                onError: (err) =>
-                  toast.error(err instanceof Error ? err.message : "Could not disconnect"),
-              },
-            );
-          }}
-        >
-          Disconnect
-        </Button>
-      </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto text-muted-foreground"
+                disabled={disconnect.isPending}
+                onClick={() => {
+                  const alsoDelete = window.confirm(
+                    `Disconnect ${connection.accountLabel}?\n\n` +
+                      `OK — also delete the ${connection.documentCount} documents it imported.\n` +
+                      `Cancel — keep them in the bundle and just stop syncing.`,
+                  );
+                  disconnect.mutate(
+                    { id: connection.id, documents: alsoDelete ? "delete" : "keep" },
+                    {
+                      onSuccess: () => toast.success("Disconnected."),
+                      onError: (err) =>
+                        toast.error(err instanceof Error ? err.message : "Could not disconnect"),
+                    },
+                  );
+                }}
+              >
+                Disconnect
+              </Button>
+            </div>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
 
       <DriveFolderDialog
         connectionId={connection.id}
@@ -299,7 +363,7 @@ export function ConnectionCard({ connection }: { connection: Connection }) {
           )
         }
       />
-    </SectionCard>
+    </>
   );
 }
 
@@ -336,19 +400,21 @@ const PROVIDER_BLURB: Record<ProviderId, string> = {
 };
 
 /**
- * A source that could be connected.
+ * A source that could be connected, in the Available grid (A8). Connect asks
+ * which folder it keeps in step, then hands the browser to the provider.
  *
  * An unconfigured provider is shown rather than hidden, saying which variables
  * would turn it on. Hiding it leaves a self-hoster reading documentation for a
  * feature their own build appears not to have.
  */
-export function ConnectSourceCard({
+export function SourceCard({
   provider,
   bundles,
 }: {
   provider: ProviderAvailability;
   bundles: Bundle[];
 }) {
+  const [open, setOpen] = useState(false);
   const [bundleId, setBundleId] = useState<string>("");
   const start = useStartConnection();
   const Mark = PROVIDER_MARK[provider.id];
@@ -357,64 +423,93 @@ export function ConnectSourceCard({
   const soon = !provider.configured && SOON.has(provider.id);
 
   return (
-    <SectionCard className={`flex flex-col gap-4 ${provider.configured ? "" : "opacity-70"}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3.5">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-            <Mark className="h-[22px] w-[22px]" />
-          </span>
-          <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="text-title font-semibold leading-tight">{provider.label}</span>
-            <span className="text-meta leading-tight text-muted-foreground">
-              {PROVIDER_BLURB[provider.id]}
-            </span>
-          </span>
-        </div>
-        {/* Neutral, because grey is this page's word for off, pending and not
-            yet built alike. Amber would claim it does something. */}
-        {soon ? <Chip tone="neutral">Coming soon</Chip> : null}
-      </div>
+    <>
+      <IntegrationCard
+        logo={<AppLogo mark={Mark} name={provider.label} size={28} />}
+        name={provider.label}
+        note={
+          soon ? (
+            <Chip size="sm">Coming soon</Chip>
+          ) : !provider.configured ? (
+            <Chip size="sm">Not configured</Chip>
+          ) : null
+        }
+        description={
+          provider.configured || soon ? (
+            PROVIDER_BLURB[provider.id]
+          ) : (
+            <>
+              Not configured on this deployment. An operator sets{" "}
+              <span className="font-mono text-xs">{PROVIDER_ENV[provider.id]}</span> to turn it on.
+            </>
+          )
+        }
+        action={
+          provider.configured ? (
+            <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+              Connect
+            </Button>
+          ) : undefined
+        }
+      />
 
-      {provider.configured ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={bundleId} onValueChange={setBundleId}>
-            <SelectTrigger className="h-9 w-[220px] text-sm">
-              <SelectValue placeholder="Into which bundle?" />
-            </SelectTrigger>
-            <SelectContent>
-              {bundles.map((bundle) => (
-                <SelectItem key={bundle.id} value={bundle.id}>
-                  {bundle.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            disabled={!bundleId || start.isPending}
-            onClick={() =>
-              start.mutate(
-                { provider: provider.id, bundleId },
-                {
-                  onError: (err) =>
-                    toast.error(err instanceof Error ? err.message : "Could not start that"),
-                },
-              )
-            }
-          >
-            {start.isPending ? "Opening…" : "Connect"}
-          </Button>
-        </div>
-      ) : soon ? (
-        <p className="text-meta leading-[1.45] text-muted-foreground">Coming soon.</p>
-      ) : (
-        <p className="text-meta leading-[1.45] text-muted-foreground">
-          Not configured on this deployment. An operator sets{" "}
-          <span className="rounded-sm bg-surface px-1.5 py-0.5 font-mono text-xs">
-            {PROVIDER_ENV[provider.id]}
-          </span>{" "}
-          to turn it on.
-        </p>
-      )}
-    </SectionCard>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) setBundleId("");
+        }}
+      >
+        <DialogContent size="sm">
+          <DialogHeader>
+            <DialogTitle>Connect {provider.label}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="flex flex-col gap-3">
+            <p className="m-0 text-sm text-muted-foreground">{PROVIDER_BLURB[provider.id]}</p>
+            {bundles.length === 0 ? (
+              <p className="m-0 text-sm text-muted-foreground">
+                A connection keeps a folder in Knowledge current, so there has to be one to keep.
+                Make one in Knowledge first.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <Label>Into which folder</Label>
+                <Select value={bundleId} onValueChange={setBundleId}>
+                  <SelectTrigger aria-label="Into which folder">
+                    <SelectValue placeholder="Choose a folder" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {bundles.map((bundle) => (
+                      <SelectItem key={bundle.id} value={bundle.id}>
+                        {bundle.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!bundleId || start.isPending}
+              onClick={() =>
+                start.mutate(
+                  { provider: provider.id, bundleId },
+                  {
+                    onError: (err) =>
+                      toast.error(err instanceof Error ? err.message : "Could not start that"),
+                  },
+                )
+              }
+            >
+              {start.isPending ? "Opening…" : "Connect"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

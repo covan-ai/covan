@@ -1,26 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { SectionTitle } from "@/components/section";
 import { ApiKeysSection } from "@/components/api-keys-section";
+import { WebhooksSection } from "@/components/webhooks-section";
 
 export const Route = createFileRoute("/_authed/settings/api-keys")({
   component: ApiKeysSettingsPage,
   head: () => ({
     meta: [
       { title: "API keys — Settings — Covan" },
-      { name: "description", content: "Keys that act as you in Covan's API." },
+      {
+        name: "description",
+        content: "Keys that act as you in Covan's API, and the webhooks the workspace sends.",
+      },
     ],
   }),
 });
 
+/** Settings › API keys (A26): your keys, then the workspace's webhooks. */
 function ApiKeysSettingsPage() {
   return (
     <>
-      <SectionTitle
-        title="API keys"
-        lede="A key acts as you. It can do exactly what you can and nothing more, so there are no scopes to get wrong."
-      />
-      {/* Hides itself where the deployment cannot honour a key at all. */}
       <ApiKeysSection />
+      <div className="mt-8">
+        <WebhooksSection />
+      </div>
     </>
   );
 }

@@ -1,70 +1,68 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { PageContainer, PageHeader } from "@/components/page-container";
-import { RoutinesList } from "@/components/routines/routines-list";
-import { CreateRoutineDialog } from "@/components/routines/create-routine-dialog";
-import { DocsLink } from "@/components/docs-link";
-import { api } from "@/lib/api-client";
+import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
+import { RoutinesPane } from "@/components/routines/routines-pane";
+import { EmptyPage } from "@/components/empty-page";
+import { Button } from "@/components/ui/button";
 import { useRoutines } from "@/hooks/use-routines";
+import { useAgentsStore } from "@/lib/agents-store";
 
-// An index route, not `.routines.tsx`. As a plain `routines.tsx` this file
-// would be the PARENT of routines.$routineId.tsx, and TanStack Router would
-// render the detail page inside an <Outlet /> this list has no reason to own —
-// so clicking a routine matched the URL and showed the list right back.
+// An index route, not `.routines.tsx`: as a plain `routines.tsx` this file
+// would be the PARENT of routines.$routineId.tsx, and the routine would render
+// inside an <Outlet /> this list has no reason to own.
 export const Route = createFileRoute("/_authed/agents/$agentId/routines/")({
   component: RoutinesTab,
+  // An old `?template=` link still works: it opens the editor on it.
   validateSearch: (search: Record<string, unknown>): { template?: string } => ({
     template: typeof search.template === "string" ? search.template : undefined,
   }),
 });
 
+/**
+ * An agent's Routines tab (A7, under the agent's bar): its own list, and its
+ * first routine beside it — or what a routine is for, when it has none.
+ */
 function RoutinesTab() {
   const { agentId } = Route.useParams();
   const { template } = Route.useSearch();
-  const navigate = useNavigate();
-  const clearTemplate = () =>
-    navigate({
-      to: "/agents/$agentId/routines",
-      params: { agentId },
-      search: {},
-      replace: true,
-    });
+  const { canWrite } = useAgentsStore();
   const { data: routines = [], isLoading } = useRoutines();
-  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
 
-  const memberNames = Object.fromEntries(
-    (me?.members ?? []).map((m) => [m.id, m.name ?? m.email ?? "a teammate"]),
-  );
-
+  if (template) {
+    return <Navigate to="/routines/new" search={{ agent: agentId, template }} replace />;
+  }
+  const first = routines.find((r) => r.agentId === agentId);
+  if (!isLoading && first) {
+    return (
+      <Navigate
+        to="/agents/$agentId/routines/$routineId"
+        params={{ agentId, routineId: first.id }}
+        replace
+      />
+    );
+  }
   return (
-    <PageContainer width="list">
-      <PageHeader
-        badge="Routines"
-        title="Work that happens"
-        turn="while nobody is watching."
-        action={
-          <CreateRoutineDialog
-            agentId={agentId}
-            openTemplate={template}
-            onTemplateConsumed={clearTemplate}
+    <div data-fill-screen className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <RoutinesPane
+        agentId={agentId}
+        hrefFor={(r) => `/agents/${agentId}/routines/${r.id}`}
+        canCreate={canWrite}
+      />
+      <div className="min-w-0 flex-1">
+        {!isLoading && (
+          <EmptyPage
+            title="No routines yet"
+            description="A routine is work this agent does on its own: a weekly brief, a daily digest, a check when something arrives."
+            actions={
+              canWrite ? (
+                <Button asChild>
+                  <Link to="/routines/new" search={{ agent: agentId }}>
+                    New routine
+                  </Link>
+                </Button>
+              ) : undefined
+            }
           />
-        }
-      >
-        <DocsLink page="routines">
-          What a routine can reach, and what it does with a secret
-        </DocsLink>
-      </PageHeader>
-      {isLoading ? (
-        <p className="mt-8 text-sm text-muted-foreground">Loading…</p>
-      ) : (
-        <RoutinesList
-          agentId={agentId}
-          currentUserId={me?.user.id ?? null}
-          memberNames={memberNames}
-          routines={routines}
-          action={<CreateRoutineDialog agentId={agentId} />}
-        />
-      )}
-    </PageContainer>
+        )}
+      </div>
+    </div>
   );
 }

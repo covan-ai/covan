@@ -1,23 +1,9 @@
-import { beforeAll, beforeEach, describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
 
-/**
- * The tab's own wiring of `?template=` onto its two `<CreateRoutineDialog>`
- * mounts — not the dialog's effect, which create-routine-dialog.test.tsx
- * already covers. This is about which mount(s) the tab hands the request to.
- *
- * `PageHeader` renders its action unconditionally, and `RoutinesList`
- * renders its own inside the empty-state branch — so with zero routines and
- * `isLoading` false, both <CreateRoutineDialog> instances are mounted at
- * once. The dialog is mocked to a stub that renders a marker only when it
- * receives `openTemplate`, so the test can tell "one mount got the request"
- * from "both did" without pulling in the real dialog's channels, connections
- * and agents-store dependencies.
- */
-
 let search: { template?: string } = {};
+const navigated: Array<Record<string, unknown>> = [];
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: { component: () => React.ReactElement }) => ({
@@ -25,63 +11,65 @@ vi.mock("@tanstack/react-router", () => ({
     useParams: () => ({ agentId: "agent-1" }),
     useSearch: () => search,
   }),
-  useNavigate: () => vi.fn(),
+  Navigate: (props: Record<string, unknown>) => {
+    navigated.push(props);
+    return null;
+  },
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
     <a href={to}>{children}</a>
   ),
 }));
 
-vi.mock("@/lib/api-client", () => ({
-  api: { me: vi.fn().mockResolvedValue({ user: { id: "u1" }, members: [] }) },
-}));
-
 const routinesResult = vi.fn();
 vi.mock("@/hooks/use-routines", () => ({ useRoutines: () => routinesResult() }));
-
-vi.mock("@/components/routines/create-routine-dialog", () => ({
-  CreateRoutineDialog: ({ openTemplate }: { agentId: string; openTemplate?: string }) =>
-    openTemplate ? <div data-testid="template-dialog-open" /> : null,
+vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => ({ canWrite: true }) }));
+vi.mock("@/components/routines/routines-pane", () => ({
+  RoutinesPane: () => <section aria-label="Routines list" />,
 }));
 
-// Imported once rather than per test — same reasoning as the other route
-// test files: the mocks above are hoisted, so the module is safe to pull in
-// from a hook, and importing it fresh per test just pays the cost repeatedly.
-let Component: () => React.ReactElement;
-
-beforeAll(async () => {
-  const { Route } = await import("./_authed.agents.$agentId.routines.index");
-  Component = (Route as unknown as { component: () => React.ReactElement }).component;
-});
-
-function renderTab() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
-    <QueryClientProvider client={client}>
-      <Component />
-    </QueryClientProvider>,
-  );
-}
+const { Route } = await import("./_authed.agents.$agentId.routines.index");
+const Tab = (Route as unknown as { component: () => React.ReactElement }).component;
 
 beforeEach(() => {
   search = {};
-  routinesResult.mockReset().mockReturnValue({ data: [], isLoading: false });
+  navigated.length = 0;
 });
 
-describe("the routines tab's own ?template= wiring", () => {
-  // Review Focus: a deep link that opens on a template must reach exactly one
-  // of the tab's two dialog mounts. Reaching both means following the link
-  // opens two stacked, identically pre-filled dialogs — submit each without
-  // noticing the duplicate and the same routine gets created twice.
-  it("hands the template request to exactly one mounted dialog when the agent has no routines yet", () => {
-    search = { template: "first-week" };
-    renderTab();
-
-    expect(screen.getAllByTestId("template-dialog-open")).toHaveLength(1);
+describe("an agent's Routines tab", () => {
+  it("opens the agent's first routine beside its list", () => {
+    routinesResult.mockReturnValue({
+      data: [
+        { id: "r-other", agentId: "agent-2" },
+        { id: "r1", agentId: "agent-1" },
+      ],
+      isLoading: false,
+    });
+    render(<Tab />);
+    expect(navigated[0]).toMatchObject({
+      to: "/agents/$agentId/routines/$routineId",
+      params: { agentId: "agent-1", routineId: "r1" },
+      replace: true,
+    });
   });
 
-  it("does nothing special with no template named", () => {
-    renderTab();
+  it("says what a routine is for when the agent has none, and offers one", () => {
+    routinesResult.mockReturnValue({ data: [], isLoading: false });
+    render(<Tab />);
+    expect(screen.getByText("No routines yet")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "New routine" })).toHaveAttribute(
+      "href",
+      "/routines/new",
+    );
+  });
 
-    expect(screen.queryByTestId("template-dialog-open")).not.toBeInTheDocument();
+  // An old `?template=` link still lands somewhere: the editor, on it.
+  it("hands a template link to the editor", () => {
+    search = { template: "weekly-digest" };
+    routinesResult.mockReturnValue({ data: [], isLoading: false });
+    render(<Tab />);
+    expect(navigated[0]).toMatchObject({
+      to: "/routines/new",
+      search: { agent: "agent-1", template: "weekly-digest" },
+    });
   });
 });

@@ -1,200 +1,106 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, type AgentUsage, type UsageMonth } from "@/lib/api-client";
-import { creditsPhrase, useIsHosted } from "@/lib/credits";
-import { SectionHeading } from "@/components/page-container";
-import { SectionCard, DataRow, Disclosure, EmptyState } from "@/components/section-card";
-import { AgentAvatar } from "@/components/avatars";
-import { CreditLedger } from "@/components/credit-ledger";
+import { AgentMark } from "@/components/agent-mark";
+import { DataTable } from "@/components/data-table";
+import { SectionLabel } from "@/components/section";
+import { api, type AgentUsage } from "@/lib/api-client";
 
-const compact = (n: number) =>
-  n >= 1_000_000
-    ? `${(n / 1_000_000).toFixed(1)}M`
-    : n >= 1_000
-      ? `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
-      : String(n);
+const compact = (v: number) =>
+  v >= 1_000_000
+    ? `${(v / 1_000_000).toFixed(1)}M`
+    : v >= 1_000
+      ? `${(v / 1_000).toFixed(v >= 10_000 ? 0 : 1)}k`
+      : String(v);
 
-// `<$0.01` is for an amount too small to print, not for the absence of one: a
-// month or an agent that really spent nothing reads `$0.00`, because "<$0.01"
-// under 0 replies says money moved and none did.
-const usd = (n: number) => (n === 0 ? "$0.00" : n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
-
-const monthLabel = (iso: string) =>
-  new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en", {
-    month: "short",
-    timeZone: "UTC",
-  });
+// `<$0.01` is for an amount too small to print, not for the absence of one: an
+// agent that really spent nothing reads `$0.00`.
+const usd = (v: number) => (v === 0 ? "$0.00" : v < 0.01 ? "<$0.01" : `$${v.toFixed(2)}`);
 
 /**
- * What the whole workspace costs, for the person holding the invoice.
+ * Settings › Usage, on an install that charges nobody (A15, self-hosted): one
+ * table, by agent, at list prices — what the provider bills the install
+ * directly.
  *
- * The section above it is the caller's own and says so. This one is everyone's,
- * and says that too — two figures on one screen that mean different things have
- * to be labelled apart, which is the same reason the credits and the lifetime
- * totals above are under separate headings.
- *
- * **By agent and by month, never by person.** That is not a rule this component
- * follows; it is the only thing it can do. `workspace_usage_all` does not
- * select, group by or return a `user_id`, so there is no per-person breakdown
- * to render even if a later screen wanted one. See `0032`.
- *
- * Rendered only for an admin, and only once the migration behind it exists —
- * `available: false` is the window between deploying the API and hand-applying
- * `0032`, and an admin should see nothing rather than an error about a feature
- * they never asked for.
+ * An admin sees everyone's conversations together (`workspace_usage_all`,
+ * 0032), by agent and never by person; anybody else sees their own, and the
+ * sentence under the table says which it is.
  */
-export function WorkspaceUsageSection() {
-  const { data, isLoading } = useQuery({
+export function WorkspaceUsageSection({ isAdmin }: { isAdmin: boolean }) {
+  // `["usage"]` is already loaded — it is how the page knows it is not hosted.
+  const own = useQuery({ queryKey: ["usage"], queryFn: api.usage });
+  const all = useQuery({
     queryKey: ["usage", "workspace"],
     queryFn: api.workspaceUsage,
+    enabled: isAdmin,
   });
-  // Credits on the hosted service, dollars on an install that has none. Read
-  // from the `["usage"]` query the ledger below already shares.
-  const hosted = useIsHosted() === true;
-
-  if (isLoading || !data?.available) return null;
-
-  const used = data.agents.filter((a) => a.messageCount > 0);
-  const months = data.months;
-  const money = (a: AgentUsage) =>
-    hosted
-      ? typeof a.estCredits === "number"
-        ? creditsPhrase(a.estCredits)
-        : null
-      : usd(a.estCostUsd);
+  // Before its migration the workspace read answers `available: false`; the
+  // admin's own figures are still true, so they stand in.
+  const workspaceWide = isAdmin && all.data?.available === true;
+  const agents = (workspaceWide ? all.data?.agents : own.data?.agents) ?? [];
+  const used = agents.filter((a) => a.messageCount > 0);
+  const loading = own.isLoading || (isAdmin && all.isLoading);
 
   return (
-    <section className="mt-16">
-      <SectionHeading
-        title="The workspace"
-        description="Everyone's conversations together, by agent — never by person."
-      />
-
-      {months.length > 0 && <MonthlyTrend months={months} hosted={hosted} />}
-
-      <SectionCard padded={false} className="mt-3 overflow-hidden">
-        {used.length === 0 ? (
-          <EmptyState
-            title="Nothing yet"
-            description="Once anybody talks to an agent, what the workspace spends shows up here."
+    <section>
+      <SectionLabel>By agent</SectionLabel>
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <DataTable<AgentUsage>
+            label="Usage by agent"
+            rows={used}
+            rowKey={(a) => a.agentId}
+            empty={
+              <p className="text-sm text-muted-foreground">
+                Once anybody talks to an agent, what it costs shows up here.
+              </p>
+            }
+            columns={[
+              {
+                key: "agent",
+                header: "Agent",
+                cell: (a) => (
+                  <span className="flex items-center gap-2.5 font-medium">
+                    <AgentMark agent={a} size={24} />
+                    {a.name}
+                  </span>
+                ),
+              },
+              {
+                key: "model",
+                header: "Model now",
+                hideBelow: "md",
+                cell: (a) => <span className="text-muted-foreground">{a.model}</span>,
+              },
+              {
+                key: "replies",
+                header: "Replies",
+                num: true,
+                cell: (a) => a.messageCount.toLocaleString("en-US"),
+              },
+              {
+                key: "tokens",
+                header: "Tokens",
+                num: true,
+                hideBelow: "md",
+                cell: (a) => compact(a.totalTokens),
+              },
+              {
+                key: "cost",
+                header: "At list price",
+                num: true,
+                cell: (a) => usd(a.estCostUsd),
+              },
+            ]}
           />
-        ) : (
-          <ul className="divide-y divide-hairline">
-            {used.map((a) => (
-              <li key={a.agentId}>
-                <DataRow
-                  icon={<AgentAvatar emoji={a.emoji ?? "🤖"} className="h-8 w-8 text-sm" />}
-                  title={a.name}
-                  meta={`${a.messageCount} ${a.messageCount === 1 ? "reply" : "replies"} · ${a.model}`}
-                  trailing={
-                    <span className="text-right text-xs text-muted-foreground">
-                      <span className="block font-medium text-foreground">
-                        {compact(a.totalTokens)}
-                      </span>
-                      {money(a)}
-                    </span>
-                  }
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </SectionCard>
-
-      <p className="mt-3 text-xs text-muted-foreground">
-        Everything anybody in this workspace has ever asked, at list prices
-        {hosted ? ", in credits at today's rate" : ""}. Nothing here is broken down by person, and
-        there is no view that does.
+        </div>
+      )}
+      <p className="mt-3 text-meta text-muted-foreground">
+        {workspaceWide
+          ? "Everyone's conversations together, by agent — never by person."
+          : "Your own conversations."}{" "}
+        Nothing here is charged to anyone: an install on its own keys pays its providers directly.
       </p>
-
-      {/* The methodology folds; the two claims above it do not. One says what
-          the figures cover and the other is a promise about what they never
-          will. */}
-      <Disclosure className="mt-3" label="How a reply is priced">
-        Each reply is priced by the model that wrote it, which a reply has recorded since
-        2026-09-27; older replies are priced at their agent's model. The model shown beside an agent
-        is the one it is set to now — what its next reply will use — so it can differ from what
-        priced the rows.
-        {hosted
-          ? " These are list-price estimates in credits; the ledger below is what was actually charged."
-          : ""}
-      </Disclosure>
-
-      <CreditLedger />
     </section>
-  );
-}
-
-/**
- * Six months of tokens, in the system's own vocabulary: squares, one amber
- * fill, no chart library. Everything the product shows is otherwise either a
- * lifetime total or the current month, so this is the only place that answers
- * "are we spending more than we were".
- *
- * A month nobody used is a zero rather than a gap — `workspace_usage_monthly`
- * generates the span so a quiet month cannot silently close up and make a fall
- * look like a flat line.
- */
-function MonthlyTrend({ months, hosted }: { months: UsageMonth[]; hosted: boolean }) {
-  const peak = Math.max(...months.map((m) => m.totalTokens), 1);
-  // One unit per screen: the credits figure where there are credits, the
-  // dollar one otherwise, and never a fallback from one to the other.
-  const amountOf = (m: UsageMonth) => (hosted ? m.estCredits : m.estCostUsd);
-  const money = (n: number) => (hosted ? creditsPhrase(n) : usd(n));
-  // Summed only over the months that carry one. A month whose cost is absent is
-  // a month nothing can price — an API or a database without `0071` — and
-  // folding it in as zero would quietly understate the total instead of saying
-  // the figure is incomplete. All or nothing is the honest pair of options, and
-  // nothing is the one that cannot mislead.
-  const priced = months.filter((m) => typeof amountOf(m) === "number");
-  const spend =
-    priced.length === months.length ? priced.reduce((n, m) => n + (amountOf(m) ?? 0), 0) : null;
-
-  return (
-    <SectionCard className="mt-6">
-      <div className="flex items-baseline justify-between gap-4">
-        <span className="text-sm text-muted-foreground">Last {months.length} months</span>
-        <span className="text-sm font-medium">
-          {compact(months.reduce((n, m) => n + m.totalTokens, 0))} tokens
-          {spend === null ? null : (
-            <span className="ml-2 text-muted-foreground">{money(spend)}</span>
-          )}
-        </span>
-      </div>
-
-      <div className="mt-4 flex items-end gap-2">
-        {months.map((m) => (
-          <div key={m.month} className="flex flex-1 flex-col items-center gap-2">
-            {/* 64px of headroom, and a 2px floor so an empty month still reads
-                as a month rather than as missing. */}
-            <div
-              className="flex h-16 w-full items-end"
-              title={
-                typeof amountOf(m) === "number"
-                  ? `${compact(m.totalTokens)} tokens · ${money(amountOf(m) ?? 0)}`
-                  : `${compact(m.totalTokens)} tokens`
-              }
-            >
-              <div
-                className="w-full bg-brand"
-                style={{ height: `${Math.max(2, Math.round((m.totalTokens / peak) * 100))}%` }}
-                aria-hidden
-              />
-            </div>
-            <span className="text-xs text-muted-foreground">{monthLabel(m.month)}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* The bars are decoration; this is the same data in a form a screen
-          reader can read out. */}
-      <ul className="sr-only">
-        {months.map((m) => (
-          <li key={m.month}>
-            {monthLabel(m.month)}: {m.totalTokens} tokens across {m.messageCount} replies
-            {typeof amountOf(m) === "number" ? `, ${money(amountOf(m) ?? 0)}` : ""}
-          </li>
-        ))}
-      </ul>
-    </SectionCard>
   );
 }

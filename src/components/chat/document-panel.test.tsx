@@ -46,4 +46,35 @@ describe("DocumentPanel", () => {
     expect(scroller.className).toMatch(/\boverflow-y-auto\b/);
     expect(scroller.className).toMatch(/\boverscroll-contain\b/);
   });
+
+  it("names who wrote it and where it is filed, and offers the file once it is filed", () => {
+    render(
+      <DocumentPanel
+        job={job}
+        agent={{ name: "Research", avatar: "owl" }}
+        folderName="Reports / Competitor briefs"
+        onClose={vi.fn()}
+        onStop={vi.fn()}
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { level: 1, name: "Q3" })).toBeInTheDocument();
+    expect(screen.getByText("Reports / Competitor briefs")).toBeInTheDocument();
+    expect(screen.getByText(/^Written by Research · /)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Print" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Download/ })).toBeInTheDocument();
+  });
+
+  it("offers Stop while it is being written, and no file yet", () => {
+    render(
+      <DocumentPanel
+        job={{ ...job, status: "writing", written: 1, documentId: null }}
+        onClose={vi.fn()}
+        onStop={vi.fn()}
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Print" })).toBeNull();
+  });
 });

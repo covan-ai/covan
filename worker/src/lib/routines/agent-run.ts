@@ -73,6 +73,7 @@ export function runRoutineWithTools(
       userId: input.userId,
       surface: "schedule",
       browser: Boolean(input.browser),
+      agentId: input.agentId,
     });
     if (tools.length === 0) return null;
 

@@ -24,7 +24,7 @@ import type React from "react";
  * "Reply to" once there is something in it, and a test should not care which.
  */
 function composerPlaceholder(name: string): RegExp {
-  return new RegExp(`^(Message|Reply to) ${name}$`);
+  return new RegExp(`^(Ask|Reply to) ${name}…$`);
 }
 
 const navigate = vi.fn();
@@ -85,6 +85,11 @@ const store = {
   bundles: [] as { id: string; name: string; shared?: boolean; mine?: boolean }[],
 };
 vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
+// The thread's search and browser controls go up into the agent's bar; with no
+// bar around the page in a test, they are drawn where they stand.
+vi.mock("@/components/top-bar", () => ({
+  TopBarPortal: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 
 const listMessages = vi.fn();
 const createMessage = vi.fn();
@@ -98,6 +103,7 @@ const turnStatus = vi.fn();
 const stopTurn = vi.fn();
 const documentJobs = vi.fn();
 const stopDocument = vi.fn();
+const setVisibility = vi.fn(() => Promise.resolve());
 /**
  * What `/me` answers. A variable rather than a literal so the dial's tests can
  * add `modelSpecs` — without it every model reads as one that does not
@@ -119,7 +125,7 @@ vi.mock("@/lib/api-client", () => ({
     me: () => Promise.resolve(meReply),
     sessions: {
       messages: listMessages,
-      setVisibility: vi.fn(),
+      setVisibility,
       browserTasks,
       tune: tuneSession,
       turn: turnStatus,
@@ -173,8 +179,8 @@ vi.mock("@/lib/use-report", () => ({
   }),
 }));
 
-vi.mock("@/components/chat-attach", () => ({ ChatAttach: () => null, ChatReceipts: () => null }));
-vi.mock("@/components/chat-report", () => ({ ChatReport: () => null }));
+vi.mock("@/components/chat-attach", () => ({ AttachInput: () => null, ChatReceipts: () => null }));
+vi.mock("@/components/chat-report", () => ({ ReportDialog: () => null }));
 vi.mock("@/components/chat-mic", () => ({ ChatMic: () => null }));
 vi.mock("@/components/feedback-dialog", () => ({ FeedbackDialog: () => null }));
 vi.mock("@/components/idea-board", () => ({ IdeaBoard: () => null }));
@@ -278,19 +284,19 @@ async function renderChat() {
       <ChatTab />
     </QueryClientProvider>,
   );
-  // Waits on the share toggle rather than the composer, which renders before
-  // anything has loaded. The toggle needs `isOwner`, which needs `/me` — so by
-  // the time it is on screen both queries have settled and the shortcuts that
-  // turn on ownership behave the way they will in a browser.
+  // Waits on "Started by you" rather than the composer, which renders before
+  // anything has loaded. It needs `isOwner`, which needs `/me` — so by the time
+  // it is on screen both queries have settled and the shortcuts that turn on
+  // ownership behave the way they will in a browser.
   await screen.findByPlaceholderText(composerPlaceholder(agent.name));
-  await screen.findByRole("button", { name: /Private to you|Shared with your workspace/ });
+  await screen.findByText(/Started by you/);
   return { ...view, client };
 }
 
 /** Opens the conversation search and hands back the field. */
 async function openSearch() {
-  await userEvent.click(screen.getByRole("button", { name: "Search this conversation" }));
-  return screen.getByPlaceholderText("Search this conversation");
+  await userEvent.click(screen.getByRole("button", { name: "Search this thread" }));
+  return screen.getByPlaceholderText("Search this thread");
 }
 
 /** The scrolling element, which has no other handle on it. */
@@ -1831,7 +1837,8 @@ describe("the browser beside the conversation", () => {
     const control = await screen.findByRole("button", {
       name: "Show the browser: a site needs you to sign in",
     });
-    expect(control.querySelector(".bg-brand")).not.toBeNull();
+    // The ring: something is waiting on the person (DESIGN.md §12).
+    expect(control.querySelector(".border-brand")).not.toBeNull();
   });
 
   it("does not mark it when nothing is waiting on the person", async () => {
@@ -1840,7 +1847,9 @@ describe("the browser beside the conversation", () => {
     await renderChat();
 
     const control = await screen.findByRole("button", { name: "Show the browser" });
-    expect(control.querySelector(".bg-brand")).toBeNull();
+    // The agent is driving: the running dot, never the ring.
+    expect(control.querySelector(".border-brand")).toBeNull();
+    expect(control.querySelector(".dot-live")).not.toBeNull();
   });
 
   /** Ruling R18: a drained v2 task keeps its old card, in the transcript. */
@@ -1868,10 +1877,7 @@ describe("the browser beside the conversation", () => {
 
 // The whole screen and then a Radix menu on top of it: slow on a loaded
 // laptop, not stuck, so the same leash as the heaviest case above.
-describe("the dial beside the question", { timeout: 20_000 }, () => {
-  // Put back before each case rather than only in a `finally`, which a timed
-  // out test never reaches — and a dial left turned would fail every test
-  // after it for a reason none of them is about.
+describe("the Model and Thinking chips", { timeout: 20_000 }, () => {
   beforeEach(() => {
     Object.assign(session, { model: null, reasoningEffort: null, webSearch: null, mode: null });
   });
@@ -1884,52 +1890,60 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
     },
   };
 
-  it("shows what this conversation is answered with, and says the same under the composer", async () => {
+  it("show what the next message is answered with, by the tier's word", async () => {
     meReply = opusThinks;
     Object.assign(session, { model: "claude-opus-5", reasoningEffort: "high" });
     try {
       await renderChat();
-
-      // By its tier's word, on the chip and under the composer alike.
       expect(await screen.findByLabelText("Model: Best")).toBeInTheDocument();
-      expect(await screen.findByLabelText("Thinking: Extended")).toBeInTheDocument();
-      expect(screen.getByLabelText("Web search: Off")).toBeInTheDocument();
-      expect(screen.getByText(/GTM Agent · Best · Extended ·/)).toBeInTheDocument();
+      expect(await screen.findByLabelText("Thinking: Extended")).toHaveTextContent(
+        "Thinking · Extended",
+      );
+      // Web and Mode are the agent's, in Configuration.
+      expect(screen.queryByLabelText(/^Web search/)).toBeNull();
+      expect(screen.queryByLabelText(/^Mode:/)).toBeNull();
     } finally {
       Object.assign(session, { model: null, reasoningEffort: null });
     }
   });
 
-  it("asks the server to change the conversation, not the agent", async () => {
-    tuneSession.mockResolvedValue({ ...session, model: "claude-opus-5" });
+  it("send the choice with the next message only, and change neither the thread nor the agent", async () => {
+    meReply = opusThinks;
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(streamOf([{ type: "delta", text: "Forty." }, { type: "done" }])),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     await renderChat();
 
     fireEvent.keyDown(screen.getByLabelText("Model: gpt-4.1"), { key: "Enter" });
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /Best/ }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Best/ }));
+    expect(await screen.findByLabelText("Model: Best")).toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(tuneSession).toHaveBeenCalledWith("session-1", { model: "claude-opus-5" }),
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "and per seat?",
     );
+    await userEvent.click(screen.getByLabelText("Send message"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = JSON.parse(
+      String((fetchMock.mock.calls[0] as unknown[] as [string, RequestInit])[1].body),
+    );
+    expect(body).toMatchObject({ sessionId: "session-1", model: "claude-opus-5" });
+    expect(tuneSession).not.toHaveBeenCalled();
+    // Forgotten once sent: the next message is the thread's own again.
+    expect(await screen.findByLabelText("Model: gpt-4.1")).toBeInTheDocument();
   });
 
-  it("leaves a conversation somebody else started as a reading of it", async () => {
-    session.ownerId = "someone-else";
-    try {
-      render(
-        <QueryClientProvider
-          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-        >
-          <ChatTab />
-        </QueryClientProvider>,
-      );
-      const model = await screen.findByLabelText("Model: gpt-4.1");
-      expect(model).toHaveAttribute("aria-disabled", "true");
-      fireEvent.keyDown(model, { key: "Enter" });
-      expect(screen.queryByRole("menu")).toBeNull();
-      expect(tuneSession).not.toHaveBeenCalled();
-    } finally {
-      session.ownerId = "user-1";
-    }
+  it("wait while a reply is running", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(openStream())),
+    );
+    turnStatus.mockResolvedValue({ turn: { running: true, mine: true, startedAt: 0 } });
+    await renderChat();
+    await screen.findByLabelText("Stop generating");
+    expect(screen.getByLabelText("Model: gpt-4.1")).toBeDisabled();
   });
 });
 
@@ -1968,14 +1982,15 @@ describe("a document written from the conversation", () => {
     expect(card).toHaveTextContent("Writing — 1 of 2 sections");
   });
 
-  it("opens it beside the conversation, filling in section by section", async () => {
+  it("opens it over the conversation, filling in section by section", async () => {
     listMessages.mockResolvedValue([question, answer]);
     documentJobs.mockResolvedValue([job()]);
 
     await renderChat();
     await userEvent.click(await screen.findByRole("button", { name: "Open Pricing review" }));
 
-    expect(await screen.findByRole("heading", { name: "Pricing review" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Pricing review" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Pricing review" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Where we are" })).toBeInTheDocument();
     expect(screen.getByText("Being written…")).toBeInTheDocument();
   });
@@ -1991,7 +2006,7 @@ describe("a document written from the conversation", () => {
     expect(stopDocument).toHaveBeenCalledWith("job-1");
   });
 
-  it("offers the finished document as Markdown, Word and PDF", async () => {
+  it("offers the finished document to print, or as Markdown, Word and PDF", async () => {
     listMessages.mockResolvedValue([question, answer]);
     documentJobs.mockResolvedValue([
       job({ status: "ready", written: 2, documentId: "doc-9", sections: [] }),
@@ -2000,8 +2015,10 @@ describe("a document written from the conversation", () => {
     await renderChat();
     await userEvent.click(await screen.findByRole("button", { name: "Open Pricing review" }));
 
+    expect(await screen.findByRole("button", { name: "Print" })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("button", { name: /Download/ }), { key: "Enter" });
     for (const name of ["Markdown", "Word", "PDF"]) {
-      expect(await screen.findByRole("button", { name })).toBeInTheDocument();
+      expect(await screen.findByRole("menuitem", { name })).toBeInTheDocument();
     }
   });
 });
@@ -2160,7 +2177,9 @@ describe("what a shared thread can read", () => {
     try {
       await renderChat();
 
-      expect(screen.getByText(/grounded in 1 team document$/)).toBeInTheDocument();
+      expect(screen.getByText(/Started by you/).parentElement).toHaveTextContent(
+        /grounded in 1 document$/,
+      );
       // Once in the empty screen, once under the composer.
       expect(screen.getAllByText(/can't read your private folders \(1 document\)/)).toHaveLength(2);
       // And the first starter names a file the thread can actually cite.
@@ -2184,7 +2203,9 @@ describe("what a shared thread can read", () => {
     try {
       await renderChat();
 
-      expect(screen.getByText(/grounded in 1 team document$/)).toBeInTheDocument();
+      expect(screen.getByText(/Started by you/).parentElement).toHaveTextContent(
+        /grounded in 1 document$/,
+      );
       expect(screen.queryByText(/can't read your private folders/)).toBeNull();
     } finally {
       store.bundles = [];
@@ -2230,17 +2251,19 @@ describe("who can read this thread", () => {
   // It used to be said three times — an icon in the header, a sentence under
   // the greeting, a clause under the composer — and a tester who read
   // "private" in one and "shared" in another could not tell which to believe.
-  it("is said once, in words, on the header control", async () => {
+  // Now it is one word on the thread's own line, and the owner's menu changes it.
+  it("is said once, on the thread's line, and changed from its menu", async () => {
     listMessages.mockResolvedValue([]);
     await renderChat();
 
-    const control = screen.getByRole("button", { name: /Private to you/ });
-    expect(control).toHaveTextContent("Private to you");
-    expect(control).toHaveAttribute("aria-pressed", "false");
-    // Nowhere else on the screen.
-    expect(screen.getAllByText(/private to you/i)).toHaveLength(1);
-    expect(screen.queryByText(/shared with your workspace/i)).toBeNull();
-    expect(screen.getByText(/grounded in 0 team documents$/)).toBeInTheDocument();
+    expect(screen.getByText(/Started by you/).parentElement).toHaveTextContent(
+      /^Started by you · Private$/,
+    );
+    expect(screen.queryByText(/shared with workspace/i)).toBeNull();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Thread actions" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Share with workspace" }));
+    await waitFor(() => expect(setVisibility).toHaveBeenCalledWith("session-1", "shared"));
   });
 
   it("says a brainstorm is the team's from the start, where the brainstorm opens", async () => {
@@ -2253,9 +2276,14 @@ describe("who can read this thread", () => {
       expect(
         screen.getByText(/Brainstorms are shared with your team from the start/),
       ).toBeInTheDocument();
-      const control = screen.getByRole("button", { name: /Shared with your workspace/ });
-      expect(control).toHaveTextContent("Shared with workspace");
-      expect(control).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText(/Started by you/).parentElement).toHaveTextContent(
+        /^Brainstorm · Started by you · Shared with workspace$/,
+      );
+      // From the keyboard, as the dial's tests open theirs: the Idea board
+      // beside a brainstorm takes focus as it mounts, which a pointer-opened
+      // menu reads as a click outside.
+      fireEvent.keyDown(screen.getByRole("button", { name: "Thread actions" }), { key: "Enter" });
+      expect(await screen.findByRole("menuitem", { name: "Make private" })).toBeInTheDocument();
     } finally {
       session.kind = "chat";
       session.visibility = "private";
@@ -2328,5 +2356,36 @@ describe("the first thing to do in an empty conversation", () => {
       agent.myAccess = "use";
       session.visibility = "private";
     }
+  });
+});
+
+describe("a question the agent asked", () => {
+  const asked = {
+    ...answer,
+    content: "The policy allows it within 60 days.",
+    ask: {
+      question: "Should I draft the reply to the customer?",
+      replies: ["Draft the reply", "Summary is enough"],
+    },
+  };
+
+  it("is the ask card under the last reply, with its answers as buttons", async () => {
+    listMessages.mockResolvedValue([question, asked]);
+    await renderChat();
+
+    const card = await screen.findByRole("group", { name: "GTM Agent is asking you" });
+    expect(card).toHaveTextContent("Should I draft the reply to the customer?");
+    expect(within(card).getByRole("button", { name: "Draft the reply" })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Summary is enough" })).toBeInTheDocument();
+  });
+
+  it("is gone once somebody has answered it", async () => {
+    listMessages.mockResolvedValue([
+      question,
+      asked,
+      { ...question, id: "msg-3", content: "Draft the reply" },
+    ]);
+    await renderChat();
+    expect(screen.queryByRole("group", { name: "GTM Agent is asking you" })).toBeNull();
   });
 });

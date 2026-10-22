@@ -781,7 +781,7 @@ describe("closing", () => {
 });
 
 describe("what the agent did", () => {
-  it("lists the events newest last, keeping earlier polls' lines", async () => {
+  it("says the newest thing it did in the line under the page", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     browserTasks
       .mockResolvedValueOnce(
@@ -799,9 +799,7 @@ describe("what the agent did", () => {
     await screen.findByText("Opened the portal");
     await act(() => vi.advanceTimersByTimeAsync(3_100));
     await screen.findByText("Clicked Invoices");
-
-    const lines = screen.getAllByRole("listitem").map((li) => li.textContent);
-    expect(lines).toEqual(["Opened the portal", "Clicked Invoices"]);
+    expect(screen.queryByText("Opened the portal")).toBeNull();
   });
 });
 
@@ -1123,7 +1121,8 @@ describe("a browser of your own (Task 3.1)", () => {
 
     await openIt();
     expect(container.querySelector(".browser-live")).toBeNull();
-    expect(container.querySelector(".bg-brand")).not.toBeNull();
+    // The ring: the browser is the person's (DESIGN.md §12).
+    expect(container.querySelector(".border-brand")).not.toBeNull();
   });
 });
 

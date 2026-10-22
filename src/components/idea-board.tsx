@@ -153,7 +153,7 @@ function IdeaCard({ idea, onRemove }: { idea: Idea; onRemove: (id: string) => vo
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
-      {idea.detail && <p className="mt-1 text-xs text-muted-foreground">{idea.detail}</p>}
+      {idea.detail && <p className="mt-1 text-meta text-muted-foreground">{idea.detail}</p>}
     </div>
   );
 }

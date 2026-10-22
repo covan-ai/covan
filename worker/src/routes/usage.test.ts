@@ -1,8 +1,14 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
 import { usage } from "./usage";
 import { estimateCostUsd } from "../lib/pricing";
+import {
+  activeWorkspaceTables,
+  fakeDb as strictDb,
+  type QueryContext,
+  type TableHandlers,
+} from "../test-support/fake-db";
 
 const USER_ID = "user-1";
 const WORKSPACE_ID = "workspace-1";
@@ -413,48 +419,58 @@ describe("GET /usage credits", () => {
 });
 
 describe("GET /usage/credits/ledger", () => {
-  /** `fakeDb`, plus the one ledger read, which is recorded. */
-  function ledgerDb(rows: unknown[]) {
-    const base = fakeDb({});
-    const reads: Array<{ columns: string }> = [];
-    const db = {
-      ...base.db,
-      from(table: string) {
-        if (table !== "credit_ledger") return base.db.from(table);
-        const chain = {
-          select: (columns: string) => {
-            reads.push({ columns });
-            return chain;
-          },
-          eq: () => chain,
-          order: () => chain,
-          limit: async () => ({ data: rows, error: null }),
-        };
-        return chain;
+  const ROW = {
+    id: 7,
+    created_at: "2026-10-12T10:00:00Z",
+    kind: "completion",
+    model: "claude-sonnet-5",
+    purpose: "reply",
+    delta_micro: -2_500_000,
+    balance_after: 497_500_000,
+    note: null,
+    session_id: null,
+    routine_run_id: null,
+  };
+
+  /** The ledger and the rows a charge is described by, every read recorded. */
+  function ledgerDb(rows: unknown[], extra: Record<string, unknown[]> = {}) {
+    const reads: QueryContext[] = [];
+    const table = (name: string) => ({
+      select: (ctx: QueryContext) => {
+        reads.push(ctx);
+        if (name !== "credit_ledger") return { data: extra[name] ?? [], error: null };
+        const before = ctx.filters.find((f) => f.kind === "lt")?.value as number | undefined;
+        const kept = (rows as Array<{ id: number }>).filter((r) => !before || r.id < before);
+        return { data: kept.slice(0, ctx.limit), error: null };
+      },
+    });
+    const active = activeWorkspaceTables(USER_ID, WORKSPACE_ID);
+    const tables: Record<string, TableHandlers> = {
+      ...active,
+      ...Object.fromEntries(
+        ["credit_ledger", "chat_sessions", "routine_runs", "routines", "agents"].map((n) => [
+          n,
+          table(n),
+        ]),
+      ),
+      // One table, two reads: the active workspace (single) and the names.
+      profiles: {
+        select: (ctx) => (ctx.single ? active.profiles.select() : table("profiles").select(ctx)),
       },
     };
+    const { db } = strictDb({ tables });
     return { db, reads };
   }
 
   it("answers an empty list on an unmetered install without reading anything", async () => {
     const { db, reads } = ledgerDb([]);
     const res = await appWithDb(db).request("/usage/credits/ledger");
-    expect(await res.json()).toEqual({ entries: [] });
-    expect(reads).toEqual([]);
+    expect(await res.json()).toEqual({ entries: [], hasMore: false });
+    expect(reads.filter((r) => r.table === "credit_ledger")).toEqual([]);
   });
 
   it("returns the rows in credits, and never asks who caused them", async () => {
-    const { db, reads } = ledgerDb([
-      {
-        id: 7,
-        created_at: "2026-10-12T10:00:00Z",
-        kind: "completion",
-        model: "claude-sonnet-5",
-        purpose: "reply",
-        delta_micro: -2_500_000,
-        balance_after: 497_500_000,
-      },
-    ]);
+    const { db, reads } = ledgerDb([ROW]);
     const res = await appWithDb(db, async () => METERED).request("/usage/credits/ledger");
     expect(await res.json()).toEqual({
       entries: [
@@ -466,11 +482,174 @@ describe("GET /usage/credits/ledger", () => {
           purpose: "reply",
           credits: -2.5,
           balanceAfter: 497.5,
+          note: null,
+          sessionId: null,
         },
       ],
+      hasMore: false,
     });
-    // A workspace's figures are never reported per person (0032).
-    expect(reads[0].columns).not.toMatch(/user_id/);
+    // `user_id` is withheld by its column grant (cloud 0002); asking would fail.
+    expect(reads.find((r) => r.table === "credit_ledger")?.columns).not.toMatch(/user_id/);
+  });
+
+  it("names the thread, its agent and who started it, and a routine's charge as the routine's", async () => {
+    const { db } = ledgerDb(
+      [
+        { ...ROW, id: 9, session_id: "s1" },
+        { ...ROW, id: 8, routine_run_id: "run-1" },
+        { ...ROW, id: 7, session_id: "s-private" },
+      ],
+      {
+        chat_sessions: [
+          {
+            id: "s1",
+            title: "Refund for order 1042",
+            agent_id: "a1",
+            user_id: "u1",
+            routine_id: null,
+          },
+        ],
+        routine_runs: [{ id: "run-1", routine_id: "r1" }],
+        routines: [{ id: "r1", name: "Weekly competitor brief", agent_id: "a2" }],
+        agents: [
+          { id: "a1", name: "Support", avatar: "headset" },
+          { id: "a2", name: "Research", avatar: "owl" },
+        ],
+        profiles: [{ id: "u1", name: "Mina Kaya" }],
+      },
+    );
+    const res = await appWithDb(db, async () => METERED).request("/usage/credits/ledger");
+    const { entries } = (await res.json()) as { entries: Array<Record<string, unknown>> };
+
+    expect(entries[0]).toMatchObject({
+      sessionTitle: "Refund for order 1042",
+      agentName: "Support",
+      by: { kind: "person", name: "Mina Kaya" },
+    });
+    expect(entries[1]).toMatchObject({
+      routineId: "r1",
+      routineName: "Weekly competitor brief",
+      agentName: "Research",
+      by: { kind: "routine" },
+    });
+    // A thread the admin's policies hide stays unnamed; its amount stays.
+    expect(entries[2]).not.toHaveProperty("sessionTitle");
+    expect(entries[2]).not.toHaveProperty("by");
+    expect(entries[2].credits).toBe(-2.5);
+  });
+
+  it("pages by id and says whether there is more", async () => {
+    const rows = [5, 4, 3, 2, 1].map((id) => ({ ...ROW, id }));
+    const { db } = ledgerDb(rows);
+    const app = appWithDb(db, async () => METERED);
+
+    const first = (await (await app.request("/usage/credits/ledger?limit=2")).json()) as {
+      entries: Array<{ id: number }>;
+      hasMore: boolean;
+    };
+    expect(first.entries.map((e) => e.id)).toEqual([5, 4]);
+    expect(first.hasMore).toBe(true);
+
+    const last = (await (await app.request("/usage/credits/ledger?limit=2&before=2")).json()) as {
+      entries: Array<{ id: number }>;
+      hasMore: boolean;
+    };
+    expect(last.entries.map((e) => e.id)).toEqual([1]);
+    expect(last.hasMore).toBe(false);
+  });
+
+  it("exports CSV with the thread's title and nothing a spreadsheet would run", async () => {
+    const { db } = ledgerDb([{ ...ROW, session_id: "s1" }], {
+      chat_sessions: [
+        { id: "s1", title: "=HYPERLINK(1)", agent_id: "a1", user_id: "u1", routine_id: null },
+      ],
+      agents: [{ id: "a1", name: "Support", avatar: null }],
+      profiles: [{ id: "u1", name: "Mina Kaya" }],
+    });
+    const res = await appWithDb(db, async () => METERED).request(
+      "/usage/credits/ledger?format=csv",
+    );
+    expect(res.headers.get("Content-Type")).toMatch(/text\/csv/);
+    expect(res.headers.get("Content-Disposition")).toMatch(/attachment; filename="covan-credits-/);
+    const text = await res.text();
+    expect(text.split("\r\n")[0]).toBe(
+      "When,Kind,Purpose,Entry,Agent,By,Model,Credits,Balance after",
+    );
+    expect(text).toContain("'=HYPERLINK(1),Support,Mina Kaya,claude-sonnet-5,-2.5,497.5");
+  });
+
+  it("has no CSV where there is no ledger", async () => {
+    const { db } = ledgerDb([]);
+    const res = await appWithDb(db).request("/usage/credits/ledger?format=csv");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /usage/credits/month", () => {
+  function monthDb(rows: unknown[] | { code: string; message: string }) {
+    const { db } = strictDb({
+      tables: {
+        ...activeWorkspaceTables(USER_ID, WORKSPACE_ID),
+        agents: {
+          select: () => ({
+            data: [
+              { id: "a1", name: "Support", avatar: "headset" },
+              { id: "a2", name: "Research", avatar: "owl" },
+            ],
+            error: null,
+          }),
+        },
+      },
+      rpc: {
+        workspace_spend_daily: () =>
+          Array.isArray(rows) ? { data: rows, error: null } : { data: null, error: rows },
+      },
+    });
+    return db;
+  }
+  const spend = (day: string, agent: string, prompt: number) => ({
+    day,
+    agent_id: agent,
+    model: "gpt-4o",
+    prompt_tokens: prompt,
+    completion_tokens: 0,
+    cached_tokens: 0,
+    cache_write_tokens: 0,
+  });
+
+  it("sums this month by agent, largest first, and leaves last month out", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-22T12:00:00Z"), toFake: ["Date"] });
+    try {
+      const db = monthDb([
+        spend("2026-09-30", "a1", 9_000_000),
+        spend("2026-10-02", "a1", 1_000_000),
+        spend("2026-10-21", "a2", 2_000_000),
+      ]);
+      const res = await appWithDb(
+        db,
+        async () => METERED,
+        (usd) => usd * 100,
+      ).request("/usage/credits/month");
+      const body = (await res.json()) as {
+        unit: string;
+        since: string;
+        spent: number;
+        byAgent: Array<{ agentId: string; name: string; amount: number }>;
+      };
+      expect(body.unit).toBe("credits");
+      expect(body.since).toBe("2026-10-01");
+      expect(body.byAgent.map((a) => a.name)).toEqual(["Research", "Support"]);
+      expect(body.byAgent[0].amount).toBe(body.byAgent[1].amount * 2);
+      expect(body.spent).toBe(body.byAgent[0].amount + body.byAgent[1].amount);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is an admin's: the function's refusal is a 403", async () => {
+    const db = monthDb({ code: "42501", message: "admins only" });
+    const res = await appWithDb(db).request("/usage/credits/month");
+    expect(res.status).toBe(403);
   });
 });
 

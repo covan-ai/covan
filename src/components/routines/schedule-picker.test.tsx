@@ -8,10 +8,19 @@ import { SchedulePicker, scheduleError } from "./schedule-picker";
 // mode from the cron it is given — so each test starts in the mode it exercises.
 
 describe("SchedulePicker", () => {
-  it("shows no cron expression anywhere", () => {
+  it("says the schedule in words, with its cron beside it (A28)", () => {
     render(<SchedulePicker value="0 */6 * * *" onChange={vi.fn()} />);
-    expect(screen.queryByText(/\*/)).toBeNull();
     expect(screen.getByText("Every 6 hours")).toBeInTheDocument();
+    expect(screen.getByText("0 */6 * * *")).toBeInTheDocument();
+  });
+
+  it("picks days of the week, Monday first", async () => {
+    const onChange = vi.fn();
+    const user = userEvent.setup();
+    render(<SchedulePicker value="30 8 * * 1" onChange={onChange} />);
+    expect(screen.getByRole("button", { name: "Mon" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Thu" }));
+    expect(onChange).toHaveBeenLastCalledWith("30 8 * * 1,4");
   });
 
   it("emits an hourly cron when the hour count changes", async () => {
@@ -95,19 +104,18 @@ describe("SchedulePicker", () => {
   // Routines created before this picker existed carry whatever they were made
   // with. Rounding those to the nearest shape the picker knows would change a
   // schedule without being asked.
-  it("describes a schedule it cannot express rather than rewriting it", async () => {
+  it("opens a schedule it cannot draw as its cron, rather than rewriting it", async () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
-    render(<SchedulePicker value="0 9 * * 1" onChange={onChange} />);
+    render(<SchedulePicker value="0 9 1 * *" onChange={onChange} />);
 
-    expect(screen.getByRole("button", { name: /change/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Cron expression")).toHaveValue("0 9 1 * *");
     expect(onChange).not.toHaveBeenCalled();
 
-    // Pressing Change makes what the fields show the schedule, so the old
+    // Back to the picker makes what its fields show the schedule, so the old
     // expression is not saved underneath a picker that no longer shows it.
-    await user.click(screen.getByRole("button", { name: /change/i }));
-    expect(screen.getByLabelText(/hours between runs/i)).toBeInTheDocument();
-    expect(onChange).toHaveBeenLastCalledWith("0 */1 * * *");
+    await user.click(screen.getByRole("button", { name: "Use the picker" }));
+    expect(onChange).toHaveBeenLastCalledWith("0 9 * * *");
   });
 });
 

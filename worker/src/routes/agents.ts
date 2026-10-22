@@ -5,7 +5,13 @@ import { AGENT_ACCESS, AVATAR_MARKS, mapAgent } from "../lib/dto";
 import { callerWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
 import { refusedByPolicy } from "../lib/refused";
-import { REASONING_EFFORTS, MODEL_IDS, ENDPOINT_MODEL_PATTERN } from "../lib/models";
+import {
+  REASONING_EFFORTS,
+  MODEL_IDS,
+  ENDPOINT_MODEL_PATTERN,
+  resolveModel,
+  type ModelEnv,
+} from "../lib/models";
 import { endpointIsVisible } from "../lib/model-endpoints";
 
 const agents = new Hono<AppEnv>();
@@ -51,6 +57,10 @@ const tuningFields = {
   temperature: z.number().min(0).max(2).nullable().optional(),
   reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
   webSearch: z.boolean().optional(),
+  // The Tools switches (0136). Ids are not checked against the workspace's
+  // connections: one that is not there matches nothing, which is "off" anyway.
+  browserOff: z.boolean().optional(),
+  connectionsOff: z.array(z.string().uuid()).max(500).optional(),
 };
 
 /**
@@ -129,7 +139,23 @@ function agentColumns(body: z.infer<typeof updateAgentSchema>): Record<string, u
   if ("temperature" in body) patch.temperature = body.temperature;
   if ("reasoningEffort" in body) patch.reasoning_effort = body.reasoningEffort;
   if ("webSearch" in body) patch.web_search = body.webSearch;
+  if ("browserOff" in body) patch.browser_off = body.browserOff;
+  if ("connectionsOff" in body) patch.connections_off = body.connectionsOff;
   return patch;
+}
+
+/**
+ * An agent as the screens show it. One with no model of its own is answered
+ * by the deployment's default (`resolveModel(null)`), so that is the model it
+ * is shown with: the composer labels and prices by it and offers thinking
+ * when it reasons. Only what is shown changes; the row keeps its null until
+ * somebody picks.
+ */
+function shownAgent(env: ModelEnv) {
+  return (row: Parameters<typeof mapAgent>[0]) => {
+    const agent = mapAgent(row);
+    return agent.model ? agent : { ...agent, model: resolveModel(null, env) };
+  };
 }
 
 // GET /agents
@@ -151,7 +177,7 @@ agents.get("/agents", async (c) => {
     return c.json({ error: "failed to load agents" }, 500);
   }
 
-  return c.json((data ?? []).map(mapAgent));
+  return c.json((data ?? []).map(shownAgent(c.env)));
 });
 
 // POST /agents
@@ -253,7 +279,7 @@ agents.post("/agents", async (c) => {
     return c.json({ error: "failed to load agent" }, 500);
   }
 
-  return c.json(mapAgent(created), 201);
+  return c.json(shownAgent(c.env)(created), 201);
 });
 
 // PATCH /agents/:id
@@ -295,7 +321,7 @@ agents.patch("/agents/:id", async (c) => {
     return c.json({ error: "you can use this agent but not change it" }, 403);
   }
 
-  return c.json(mapAgent(data));
+  return c.json(shownAgent(c.env)(data));
 });
 
 // PUT /agents/:id/sharing
@@ -322,7 +348,7 @@ agents.put("/agents/:id/sharing", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
-  return c.json(mapAgent(data));
+  return c.json(shownAgent(c.env)(data));
 });
 
 /**
@@ -422,6 +448,12 @@ agents.get("/agents/:id/knowledge-usage", async (c) => {
   return c.json({
     byBundle,
     answers,
+    // The three buckets, for A32's bar: what the share below is made of.
+    grounding: {
+      covered: Number(g?.covered) || 0,
+      fallback: Number(g?.fallback) || 0,
+      ungrounded: Number(g?.ungrounded) || 0,
+    },
     // Null with nothing to divide: "0% not covered" of no replies says nothing.
     notCoveredPct: answers > 0 ? Math.round((notCovered / answers) * 100) : null,
   });

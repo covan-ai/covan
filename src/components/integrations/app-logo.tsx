@@ -1,5 +1,5 @@
 import { useState, type ComponentType } from "react";
-import { getInitials } from "@/components/avatars";
+import { monogram } from "@/lib/monogram";
 import { cn } from "@/lib/utils";
 
 /**
@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
  */
 const TILE = {
   28: { box: "h-7 w-7", mark: "h-[14px] w-[14px]", monogram: "text-[10px]" },
+  32: { box: "h-8 w-8", mark: "h-4 w-4", monogram: "text-[11px]" },
   36: { box: "h-9 w-9", mark: "h-[18px] w-[18px]", monogram: "text-xs" },
   44: { box: "h-11 w-11", mark: "h-[22px] w-[22px]", monogram: "text-xs" },
 } as const;
@@ -64,17 +65,24 @@ export function AppLogo({
   /** What the thing is called. Only ever rendered as a monogram. */
   name: string;
   /** 44 on Integrations, 36 in a connected app's row, 28 in a chip. */
-  size?: 28 | 36 | 44;
+  size?: 28 | 32 | 36 | 44;
   className?: string;
 }) {
   const [failed, setFailed] = useState(false);
   const tile = TILE[size];
   const showImage = Boolean(src) && !failed;
 
+  // A drawn or fetched mark sits on white with a hairline; a monogram on the
+  // grey tile every app without one wears (A8).
+  const drawn = Boolean(Mark) || showImage;
   return (
     <span
       className={cn(
-        "grid shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline",
+        "grid shrink-0 place-items-center",
+        size === 28 ? "rounded-md" : "rounded-lg",
+        drawn
+          ? "bg-background text-muted-foreground ring-1 ring-inset ring-hairline"
+          : "bg-surface text-chip-foreground",
         tile.box,
         className,
       )}
@@ -95,7 +103,9 @@ export function AppLogo({
       ) : (
         // A monogram is not a type role, which is why it has no step of its
         // own — it is sized by the tile it sits in. See `TILE`.
-        <span className={cn(tile.monogram, "font-medium")}>{getInitials(name)}</span>
+        <span className={cn(tile.monogram, "font-semibold tracking-[0.02em]")}>
+          {monogram(name)}
+        </span>
       )}
     </span>
   );

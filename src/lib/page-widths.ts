@@ -3,15 +3,20 @@
  * takes one of these through `PageBody`; none sets its own.
  */
 export const PAGE_WIDTHS = {
-  home: "max-w-[1120px]",
+  // Home fills the window: its cards and table stretch with the screen.
+  home: "max-w-none",
+  // An agent's Knowledge (A32).
+  wide: "max-w-[1120px]",
   table: "max-w-[1160px]",
   list: "max-w-[1000px]",
-  settings: "max-w-[800px]",
+  // 800px of content inside the 40px padding (A9, A16).
+  settings: "max-w-[880px]",
+  // 880px: the settings pages with tables (A8, A15, A18, A26, A27).
+  "settings-wide": "max-w-[960px]",
   form: "max-w-[760px]",
+  // 840px of content: an agent's Configuration (A10).
+  agent: "max-w-[920px]",
   reading: "max-w-[760px]",
-  // The old tiers, until `page-container.tsx` and `settings-page.tsx` go
-  // with the screens that still use them (Phase 3).
-  dashboard: "max-w-[1120px]",
 } as const;
 
 export type PageWidth = keyof typeof PAGE_WIDTHS;

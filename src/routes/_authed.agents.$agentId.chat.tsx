@@ -2,12 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import {
-  useAgentsStore,
-  type ChatSession,
-  type Message,
-  type SessionTuning,
-} from "@/lib/agents-store";
+import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
 import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
 import { ACCEPTED_SUMMARY } from "@/lib/uploads";
 import { supabase } from "@/lib/supabase/client";
@@ -18,19 +13,16 @@ import {
   ArrowDown,
   ArrowUp,
   FileText,
-  Lock,
   RefreshCw,
   Search,
   Sparkles,
   Square,
   Upload,
-  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { dayPart } from "@/lib/day-part";
-import { ChatAttach, ChatReceipts } from "@/components/chat-attach";
-import { ChatReport } from "@/components/chat-report";
+import { AttachInput, ChatReceipts } from "@/components/chat-attach";
+import { ReportDialog } from "@/components/chat-report";
 import { ChatMic } from "@/components/chat-mic";
 import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
@@ -42,15 +34,21 @@ import { useCredits, creditsSentence } from "@/lib/credits";
 import { startersFor } from "@/lib/chat-starters";
 import { visibleDocuments } from "@/lib/visible-documents";
 import { sessionLabel } from "@/lib/session-label";
-import { dialLabel, modelsFor, replyPricesOf, specFor } from "@/lib/agent-meta";
+import { lastActivityLabel } from "@/lib/day-groups";
+import { SectionLabel } from "@/components/section";
+import { modelsFor, replyPricesOf, specFor, type ReasoningEffort } from "@/lib/agent-meta";
 import { dateDividers } from "@/lib/message-groups";
 import { gapBefore, GAP_CLASS } from "@/lib/chat-rhythm";
 import { DateDivider } from "@/components/chat/date-divider";
 import { EditTurn } from "@/components/chat/edit-turn";
 import { QuestionTurn } from "@/components/chat/question-turn";
 import { AnswerTurn } from "@/components/chat/answer-turn";
-import { TurnDial } from "@/components/chat/turn-dial";
+import { ModelChip } from "@/components/chat/model-chip";
+import { ThinkingChip } from "@/components/chat/thinking-chip";
+import { ComposerAddMenu } from "@/components/chat/composer-add-menu";
+import { Chip } from "@/components/chip";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BrowserPanel } from "@/components/chat/browser-panel";
 import { TakeoverCard } from "@/components/chat/takeover-card";
 import {
@@ -76,7 +74,10 @@ import {
 } from "@/components/prompt-kit/prompt-input";
 import { ConnectedStarters } from "@/components/chat/connected-starters";
 import { FirstDocument } from "@/components/chat/first-document";
-import { HeaderAction } from "@/components/chat/turn-actions";
+import { TopBarPortal } from "@/components/top-bar";
+import { StatusDot } from "@/components/status-dot";
+import { ThreadTitle } from "@/components/chat/thread-title";
+import { AskCard } from "@/components/chat/ask-card";
 import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { runToolProposal } from "@/lib/connections-api";
@@ -146,14 +147,23 @@ function ceilingOf(outcome: string | undefined): "budget" | "tokens" | "runtime"
 }
 
 function formatTime(ts: number) {
-  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
 function ChatTab() {
   const { agentId } = Route.useParams();
   const { s: activeId } = Route.useSearch();
   const navigate = useNavigate();
-  const { agents, sessions, sessionsLoaded, bundles, startSession, canWrite } = useAgentsStore();
+  const {
+    agents,
+    sessions,
+    sessionsLoaded,
+    bundles,
+    startSession,
+    canWrite,
+    renameSession,
+    deleteSession,
+  } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId)!;
   // A file dropped here goes into the agent's chat bundle, and the first one
   // attaches that bundle to the agent — which since 0104 takes Can edit on it.
@@ -298,47 +308,18 @@ function ChatTab() {
       api.sessions.setVisibility(id, visibility),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
-  // The dial in the composer. Optimistic, like a rename: the chip is the thing
-  // somebody just pressed, and a chip that keeps its old value for a round trip
-  // reads as the press not having taken. A refusal puts the list back as it
-  // was and says so; either way the list is re-read, so what the screen shows
-  // is what the server stored.
-  const tuneMutation = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: SessionTuning }) =>
-      api.sessions.tune(id, patch),
-    onMutate: async ({ id, patch }) => {
-      await queryClient.cancelQueries({ queryKey: ["sessions"] });
-      const previous = queryClient.getQueryData<ChatSession[]>(["sessions"]);
-      queryClient.setQueryData<ChatSession[]>(["sessions"], (old) =>
-        old?.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-      );
-      return { previous };
-    },
-    onError: (_error, _vars, context) => {
-      if (context?.previous) queryClient.setQueryData(["sessions"], context.previous);
-      toast.error("Couldn't change that.");
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
-  });
-  // Stable, so the memoised dial is not redrawn by every streamed token.
+  // The composer's Model and Thinking chips (A2): what the NEXT message is
+  // answered with, sent with it and forgotten after — "Applies to this
+  // message". Unset, the conversation's own setting stands, else the agent's.
   const dialModels = useMemo(() => modelsFor(me?.models, agent.model), [me?.models, agent.model]);
-  // Per-reply prices in the unit this deployment answers in, for the dial and
-  // the retry menu. Stable for the same reason as the list above.
+  // Per-reply prices in the unit this deployment answers in, for the chips and
+  // the retry menu.
   const prices = useMemo(() => replyPricesOf(me), [me]);
-  // The write in flight, if one is. `submit` waits on it before it asks for a
-  // reply: a chip changes the moment it is pressed, and a question sent in the
-  // same second would otherwise be answered on the setting the chip no longer
-  // shows. Settled either way — a refused turn of the dial is a toast, not a
-  // reason to hold the question.
-  const tuneInFlight = useRef<Promise<unknown> | null>(null);
-  const onTune = useStableCallback((patch: SessionTuning) => {
-    if (!active) return;
-    const write = tuneMutation.mutateAsync({ id: active.id, patch }).catch(() => undefined);
-    tuneInFlight.current = write;
-    void write.finally(() => {
-      if (tuneInFlight.current === write) tuneInFlight.current = null;
-    });
-  });
+  const [next, setNext] = useState<{ model?: string; effort?: ReasoningEffort | null }>({});
+  const nextModel = next.model ?? effectiveModel;
+  const baseEffort = active?.reasoningEffort ?? agent.reasoningEffort;
+  const nextEffort = next.effort !== undefined ? next.effort : baseEffort;
+  const nextReasons = specFor(me?.modelSpecs, nextModel).reasoning;
 
   // Candidate ideas carry a local id rather than being keyed by their title.
   // The extractor is a language model reading a conversation, and it will
@@ -855,6 +836,8 @@ function ChatTab() {
       continuing?: string;
       regenerate?: boolean;
       model?: string;
+      /** This message's thinking, from the composer's chip; absent is the conversation's. */
+      reasoningEffort?: ReasoningEffort | null;
       /**
        * Answering a question the agent asked, rather than asking one.
        *
@@ -967,6 +950,9 @@ function ChatTab() {
                       ...(opts.continuing ? { continue: true } : {}),
                       ...(opts.regenerate ? { regenerate: true } : {}),
                       ...(opts.model ? { model: opts.model } : {}),
+                      ...(opts.reasoningEffort !== undefined
+                        ? { reasoningEffort: opts.reasoningEffort }
+                        : {}),
                       ...(opts.kickoff ? { kickoff: true } : {}),
                     },
               ),
@@ -1430,9 +1416,13 @@ function ChatTab() {
         return;
       }
       invalidateMessages(sessionId);
-      // See `tuneInFlight`: the dial's write lands before the reply is asked for.
-      if (tuneInFlight.current) await tuneInFlight.current;
-      await streamReply(sessionId);
+      // The chips' choice goes with this message and no further.
+      const chosen = next;
+      setNext({});
+      await streamReply(sessionId, {
+        ...(chosen.model ? { model: chosen.model } : {}),
+        ...(chosen.effort !== undefined ? { reasoningEffort: chosen.effort } : {}),
+      });
     } finally {
       sending.current = false;
     }
@@ -1831,9 +1821,26 @@ function ChatTab() {
    */
   const isEmpty = !active || (messagesLoaded && allMessages.length === 0);
 
+  // The thread's line under its title (A2): "Started by you · 12 min ago ·
+  // Private · grounded in 12 documents".
+  const ownerName =
+    active && !isOwner
+      ? (me?.members?.find((m) => m.id === active.ownerId)?.name ?? "a teammate")
+      : null;
+  const startedAt = allMessages[0]?.createdAt;
+  const threadMeta = [
+    isBrainstorm ? "Brainstorm" : null,
+    active ? `Started by ${isOwner ? "you" : ownerName}` : null,
+    startedAt ? lastActivityLabel(startedAt) : null,
+    active ? (isShared ? "Shared with workspace" : "Private") : null,
+    readable.length > 0
+      ? `grounded in ${readable.length} ${readable.length === 1 ? "document" : "documents"}`
+      : null,
+  ];
+
   const chatPane = (
     <section
-      className="relative flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col lg:h-screen"
+      className="relative flex h-full min-h-0 flex-col"
       // The whole pane takes a drop, not just the composer: a file dragged at a
       // conversation is aimed at the conversation, and a 40px target under the
       // text is a worse answer than the obvious one.
@@ -1864,24 +1871,19 @@ function ChatTab() {
           </div>
         </div>
       )}
-      {/* Conversation header.
-
-          The title, and the two things you can do to a conversation. What used
-          to be here as well — the agent's avatar, its name, its model, and
-          whether the thread is shared — said nothing the rail two inches to the
-          left was not already saying, and said it over the top of the one thing
-          only this bar knows, which is what this conversation is called. The
-          grounding line moved to the foot of the composer, where it is read
-          once before you type rather than every time you look up. */}
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/80 px-4 backdrop-blur lg:px-6">
+      {/* The thread's controls live in the agent's bar (A2): search, and the
+          way to the browser. The title and what can be done to the thread
+          are the first line of the transcript below. */}
+      <TopBarPortal>
         {searchOpen ? (
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <div className="relative flex items-center gap-2">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <input
               id="conversation-search"
               autoFocus
               type="text"
-              placeholder={`Search this conversation`}
+              placeholder="Search this thread"
+              aria-label="Search this thread"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onBlur={() => {
@@ -1895,174 +1897,138 @@ function ChatTab() {
                   setSearchOpen(false);
                 }
               }}
-              className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              className="h-8 w-56 rounded-md border border-input bg-background pr-3 pl-8 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             />
+            {searchQuery !== "" && (
+              <span
+                className="text-xs text-muted-foreground tabular-nums"
+                aria-label={`${messages.length} of ${allMessages.length} messages match`}
+              >
+                {messages.length}/{allMessages.length}
+              </span>
+            )}
           </div>
         ) : (
-          <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
-            {active ? sessionLabel(active) : "New thread"}
-          </h1>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Search this thread"
+            className="text-muted-foreground"
+            onClick={() => setSearchOpen(true)}
+          >
+            <Search />
+          </Button>
         )}
+        {/* The way back to the browser once somebody has closed it — and,
+            below `lg`, the only way in: there the panel is a sheet and never
+            slides over the conversation by itself. While the agent is driving
+            and the panel is shut, the running dot sits on the control; a
+            sign-in waiting on the person is the ring.
 
-        <div className="flex shrink-0 items-center gap-0.5">
-          {searchQuery !== "" && (
-            <span
-              className="mr-1 text-xs tabular-nums text-muted-foreground"
-              aria-label={`${messages.length} of ${allMessages.length} messages match`}
-            >
-              {messages.length}/{allMessages.length}
-            </span>
-          )}
-          {!searchOpen && (
-            <HeaderAction label="Search this conversation" onClick={() => setSearchOpen(true)}>
-              <Search className="h-4 w-4" />
-            </HeaderAction>
-          )}
-          {/* The way back to the browser once somebody has closed it — and,
-              below `lg`, the only way in: there the panel is a sheet and never
-              slides over the conversation by itself. While the agent is
-              driving and the panel is shut, the running square sits on the
-              control, so a phone still shows that something is happening.
-
-              Always there for the conversation's owner (Task 3.1, ruling
-              R42), even before the agent has opened a browser: the panel then
-              offers Open browser, a browser of their own to sign in to sites
-              ahead of time. The control itself only opens the panel — it never
-              rents anything. Owner-only, as the panel is: a colleague in a
-              shared conversation has no browser here to see. */}
-          {(browserPanel.available || isOwner) && (
-            <HeaderAction
-              label={
-                browserPanel.open
-                  ? "Hide the browser"
-                  : browserPanel.signIn
-                    ? "Show the browser: a site needs you to sign in"
-                    : "Show the browser"
-              }
-              active={browserPanel.open}
-              onClick={browserPanel.open ? browserPanel.hide : browserPanel.show}
-            >
-              <span className="relative">
-                <AppWindow className="h-4 w-4" />
-                {/* The two ambers `.step-running` keeps apart: the outline
-                    square while the machine is busy, the filled one while
-                    something waits on the person — here, a sign-in, which on
-                    a phone has no other cue because the sheet never opens by
-                    itself. */}
-                {!browserPanel.open && (browserPanel.signIn || browserPanel.driving) && (
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full",
-                      browserPanel.signIn ? "bg-brand" : "step-running",
-                    )}
-                  />
-                )}
-              </span>
-            </HeaderAction>
-          )}
-          {/* Owners get the toggle; everyone else gets the state it is in.
-              One home per control (DESIGN.md §5), and the one place the
-              screen says who can read the thread: it used to be said here as
-              an icon, again under the greeting and again under the composer,
-              and a tester who read "private" in one of them and "shared" in
-              another could not tell which to believe. In words, because this
-              is the fact about a thread worth reading without hovering. */}
-          {isOwner && active ? (
-            <HeaderAction
-              label={
-                isShared
-                  ? "Shared with your workspace. Press to make it private"
-                  : "Private to you. Press to share it with your workspace"
-              }
-              words={isShared ? "Shared with workspace" : "Private to you"}
-              active={isShared}
-              onClick={() =>
-                setVisibilityMutation.mutate({
-                  id: active.id,
-                  visibility: isShared ? "private" : "shared",
-                })
-              }
-            >
-              {isShared ? <Users className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
-            </HeaderAction>
-          ) : (
-            <span className="flex h-9 items-center gap-1.5 px-2.5 text-sm text-muted-foreground">
-              {isShared ? <Users className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
-              {isShared ? "Shared with workspace" : "Private to you"}
-            </span>
-          )}
-        </div>
-      </div>
+            Always there for the conversation's owner (Task 3.1, ruling R42),
+            even before the agent has opened a browser: the panel then offers
+            Open browser, a browser of their own to sign in to sites ahead of
+            time. Owner-only, as the panel is. */}
+        {(browserPanel.available || isOwner) && (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-pressed={browserPanel.open}
+            aria-label={
+              browserPanel.open
+                ? "Hide the browser"
+                : browserPanel.signIn
+                  ? "Show the browser: a site needs you to sign in"
+                  : "Show the browser"
+            }
+            className={cn(
+              "relative",
+              browserPanel.open ? "bg-surface text-foreground" : "text-muted-foreground",
+            )}
+            onClick={browserPanel.open ? browserPanel.hide : browserPanel.show}
+          >
+            <AppWindow />
+            {!browserPanel.open && (browserPanel.signIn || browserPanel.driving) && (
+              <StatusDot
+                state={browserPanel.signIn ? "waiting" : "running"}
+                className="absolute top-1 right-1"
+              />
+            )}
+          </Button>
+        )}
+      </TopBarPortal>
 
       {/* Conversation */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto bg-background">
-        <div
-          className={cn(
-            "mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-8 lg:px-6",
-            isEmpty && "items-center justify-center",
-          )}
-        >
+      <div ref={scrollRef} className="flex-1 overflow-y-auto bg-background px-4 lg:px-10">
+        <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col pt-7 pb-8">
+          <ThreadTitle
+            title={active ? sessionLabel(active) : "New thread"}
+            meta={threadMeta}
+            actions={
+              isOwner && active
+                ? {
+                    rename: (title) => renameSession(active.id, title),
+                    shared: isShared,
+                    setShared: (next) =>
+                      setVisibilityMutation.mutate({
+                        id: active.id,
+                        visibility: next ? "shared" : "private",
+                      }),
+                    writeReport: canWrite ? () => reports.setDialogOpen(true) : undefined,
+                    remove: () => {
+                      deleteSession(active.id);
+                      void navigate({ to: "/agents/$agentId/threads", params: { agentId } });
+                    },
+                  }
+                : undefined
+            }
+          />
           {isEmpty ? (
-            <div className="w-full max-w-xl text-center">
-              {/* The same two lines the home page opens with, so a new thread
-                  and the front door are one screen, not two. */}
-              <h3 className="text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[2.125rem]">
-                Hi, I'm <span className="text-brand">{agent.name}</span>.
-              </h3>
-              <p className="text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.02em] sm:text-[2.125rem]">
-                What can I do for you {dayPart()}?
-              </p>
+            <div className="w-full">
               {/* A brainstorm opens shared, which is the one default a person
                   would not guess from "threads start private", so it is said
-                  where the brainstorm opens. Who can read a thread is the
-                  header's to say (above); this line does not repeat it. */}
-              <p className="mx-auto mt-3 max-w-sm text-sm text-muted-foreground">
-                {isBrainstorm
-                  ? "Brainstorms are shared with your team from the start, so everyone can add ideas."
-                  : "Grounded in your team's shared knowledge."}
-              </p>
+                  where the brainstorm opens. */}
+              {isBrainstorm && (
+                <p className="mb-5 text-sm text-muted-foreground">
+                  Brainstorms are shared with your team from the start, so everyone can add ideas.
+                </p>
+              )}
               {/* Two groups, because they answer two questions: what this
                   agent has READ, and what it can REACH. The second draws
                   nothing at all when there is nothing connected — heading
                   included — so a workspace on its first day sees exactly what
                   it saw before. */}
-              <div className="mt-8 text-left">
-                <h4 className="text-xs font-medium uppercase tracking-[0.06em] text-micro-foreground">
-                  Knowledge
-                </h4>
-                {hasKnowledge ? (
-                  <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-                    {starters.map((s) => (
-                      <Button
-                        key={s}
-                        variant="outline"
+              <SectionLabel>Knowledge</SectionLabel>
+              {hasKnowledge ? (
+                <ul className="m-0 flex list-none flex-col gap-2 p-0">
+                  {starters.map((s) => (
+                    <li key={s}>
+                      {/* A starter is a sentence, not a label: it wraps, it is
+                          left-aligned, and it is as tall as it needs to be. */}
+                      <button
+                        type="button"
                         onClick={() => void submit(s)}
-                        // A starter is a sentence, not a label: it wraps, it is
-                        // left-aligned, and it is as tall as it needs to be.
-                        className="h-auto justify-start whitespace-normal bg-surface px-4 py-3 text-left hover:bg-surface-hover"
+                        className="flex min-h-11 w-full items-center rounded-lg border border-border px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-surface-muted"
                       >
                         {s}
-                      </Button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="mt-3">
-                    <FirstDocument
-                      agentName={agent.name}
-                      canUpload={canUpload}
-                      isShared={isShared}
-                      onPick={() => fileInputRef.current?.click()}
-                      onKnowledge={() =>
-                        navigate({ to: "/agents/$agentId/knowledge", params: { agentId } })
-                      }
-                    />
-                  </div>
-                )}
-                {privateFoldersNote && (
-                  <p className="mt-3 text-meta text-muted-foreground">{privateFoldersNote}</p>
-                )}
-              </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <FirstDocument
+                  agentName={agent.name}
+                  canUpload={canUpload}
+                  isShared={isShared}
+                  onPick={() => fileInputRef.current?.click()}
+                  onKnowledge={() =>
+                    navigate({ to: "/agents/$agentId/knowledge", params: { agentId } })
+                  }
+                />
+              )}
+              {privateFoldersNote && (
+                <p className="mt-3 text-meta text-muted-foreground">{privateFoldersNote}</p>
+              )}
               <ConnectedStarters onPick={(s) => void submit(s)} />
             </div>
           ) : (
@@ -2087,7 +2053,7 @@ function ChatTab() {
               {hasEarlier && (
                 <div className="mb-11 flex justify-center">
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={() => void loadEarlier()}
                     disabled={loadingEarlier}
@@ -2210,8 +2176,6 @@ function ChatTab() {
                               ? ceilingOf(m.outcome)
                               : null
                         }
-                        agentName={agent.name}
-                        agentEmoji={agent.emoji}
                         canSpeak={tts.supported}
                         speaking={tts.speaking && speakingId === m.id}
                         onSpeak={onSpeak}
@@ -2226,6 +2190,15 @@ function ChatTab() {
                       {placedJobs.byMessage.get(m.id)?.map((job) => (
                         <DocumentCard key={job.id} job={job} onOpen={openJob} className="mt-3" />
                       ))}
+                      {m.ask && isLast && canWrite && replyingIn !== active?.id && (
+                        <AskCard
+                          agentName={agent.name}
+                          question={m.ask.question}
+                          replies={m.ask.replies}
+                          busy={busy}
+                          onReply={(reply) => void submit(reply)}
+                        />
+                      )}
                       {kickoffTool && m.id === firstReplyId && (
                         <KickoffCard
                           tool={kickoffTool}
@@ -2283,7 +2256,7 @@ function ChatTab() {
                     <span className="min-w-0 flex-1">{failed.message}</span>
                     {isOwner && failed.retryable !== false && (
                       <Button
-                        variant="outline"
+                        variant="secondary"
                         size="sm"
                         onClick={() => void streamReply(failed.sessionId)}
                       >
@@ -2303,7 +2276,11 @@ function ChatTab() {
                   <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
                   <span className="min-w-0 flex-1">This question didn't get an answer.</span>
                   {isOwner && active && (
-                    <Button variant="outline" size="sm" onClick={() => void streamReply(active.id)}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void streamReply(active.id)}
+                    >
                       <RefreshCw className="h-3.5 w-3.5" /> Try again
                     </Button>
                   )}
@@ -2323,7 +2300,7 @@ function ChatTab() {
                     steps={kept.steps}
                     streaming={false}
                   />
-                  <p className="mt-3 text-xs text-muted-foreground">You stopped this answer.</p>
+                  <p className="mt-3 text-meta text-muted-foreground">You stopped this answer.</p>
                 </div>
               )}
             </div>
@@ -2347,6 +2324,7 @@ function ChatTab() {
             anything has no message to hang a card off. */}
           {pendingConfirm && pendingConfirm.sessionId === active?.id && (
             <ConfirmCard
+              agentName={agent.name}
               pending={pendingConfirm}
               busy={busy}
               onAnswer={(approve) => void answerConfirmation(approve)}
@@ -2397,7 +2375,7 @@ function ChatTab() {
             is no end to go back to. */}
         {adrift && !isEmpty && (
           <Button
-            variant="outline"
+            variant="secondary"
             size="icon"
             onClick={jumpToEnd}
             aria-label="Jump to the latest message"
@@ -2407,22 +2385,12 @@ function ChatTab() {
           </Button>
         )}
         <div className="mx-auto max-w-3xl">
-          {credits && (credits.level !== "fine" || outOfCredits) && (
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />
-              <span>
-                {outOfCredits
-                  ? "This workspace is out of credits. Replies start again as soon as an admin adds more."
-                  : creditsSentence(credits)}
-              </span>
-            </div>
-          )}
           {followUps.length > 0 && !busy && (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {followUps.map((q) => (
                 <Button
                   key={q}
-                  variant="outline"
+                  variant="secondary"
                   size="sm"
                   onClick={() => void submit(q)}
                   className="bg-popover text-muted-foreground hover:bg-secondary hover:text-foreground"
@@ -2453,7 +2421,7 @@ function ChatTab() {
             onValueChange={setInput}
             // What `max-h-44` meant: eleven rem, then scroll.
             maxHeight={176}
-            className="border-border p-0 transition-colors duration-200"
+            className="p-0 shadow-xs transition-colors duration-200"
             // Where the setup list's "Ask your first question" points.
             data-coach="composer"
           >
@@ -2516,55 +2484,75 @@ function ChatTab() {
               }}
               // "Reply" once there is something to reply to. The first
               // message in a thread is not a reply to anything.
-              placeholder={messages.length > 0 ? `Reply to ${agent.name}` : `Message ${agent.name}`}
-              className="min-h-[52px] overflow-y-auto px-5 pb-1 pt-4 text-base"
+              placeholder={messages.length > 0 ? `Reply to ${agent.name}…` : `Ask ${agent.name}…`}
+              className="min-h-[52px] overflow-y-auto px-3.5 pt-3.5 pb-1 text-lead"
             />
-            <PromptInputActions className="justify-between px-3 pb-3">
-              <div className="flex min-w-0 items-center gap-1">
-                <ChatAttach uploads={uploads} canWrite={canUpload} inputRef={fileInputRef} />
-                <ChatReport reports={reports} canWrite={canWrite} />
-                <ChatMic dictation={dictation} />
-              </div>
-              {/* The dial sits with Send rather than with the attachments:
-                  what the reply will be made of is a fact about the send, and
-                  the left of the row is for what goes INTO the message. */}
-              <div className="flex min-w-0 items-center gap-1.5">
-                {active && (
-                  <TurnDial
-                    session={active}
-                    agent={agent}
-                    models={dialModels}
-                    prices={prices}
-                    modelSpecs={me?.modelSpecs}
-                    canTune={isOwner}
-                    busy={busy}
+            <PromptInputActions className="gap-0.5 px-2 pt-1 pb-2">
+              {/* Left, what goes INTO the message; right, what it is answered
+                  with and the send (A2). */}
+              <ComposerAddMenu
+                onAttach={canUpload ? () => fileInputRef.current?.click() : undefined}
+                onUpload={
+                  canUpload
+                    ? () => void navigate({ to: "/agents/$agentId/knowledge", params: { agentId } })
+                    : undefined
+                }
+                onReport={canWrite ? () => reports.setDialogOpen(true) : undefined}
+                onDictate={
+                  isMobile && dictation.supported ? () => void dictation.start() : undefined
+                }
+              />
+              {(!isMobile || dictation.state !== "idle") && <ChatMic dictation={dictation} />}
+              <div className="ml-auto flex min-w-0 items-center gap-0.5">
+                {isBrainstorm && <Chip className="mr-1">Brainstorm</Chip>}
+                <ModelChip
+                  value={nextModel}
+                  agentModel={agent.model}
+                  models={dialModels}
+                  prices={prices}
+                  disabled={busy}
+                  compact={isMobile}
+                  onChange={(model) =>
+                    setNext((n) => ({ ...n, model: model === effectiveModel ? undefined : model }))
+                  }
+                />
+                {nextReasons && (
+                  <ThinkingChip
+                    value={nextEffort}
+                    agentEffort={agent.reasoningEffort}
+                    disabled={busy}
                     compact={isMobile}
-                    onChange={onTune}
+                    onChange={(effort) =>
+                      setNext((n) => ({
+                        ...n,
+                        effort: effort === baseEffort ? undefined : effort,
+                      }))
+                    }
                   />
                 )}
                 {/* Stop belongs to the conversation that is actually streaming.
-                  There is one stream at a time, so opening a second
-                  conversation while a reply runs used to show a Stop button
-                  over a composer with nothing to stop — and pressing it cut
-                  off the answer in the tab you had just left. */}
+                    There is one stream at a time, so opening a second
+                    conversation while a reply runs used to show a Stop button
+                    over a composer with nothing to stop — and pressing it cut
+                    off the answer in the tab you had just left. Escape stops
+                    it too. */}
                 {replyingIn === active?.id ? (
-                  <PromptInputAction tooltip="Stop generating">
-                    <Button
-                      size="icon"
-                      onClick={stop}
-                      aria-label="Stop generating"
-                      className="shrink-0"
-                    >
-                      <Square className="h-3.5 w-3.5 fill-current" />
-                    </Button>
-                  </PromptInputAction>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={stop}
+                    aria-label="Stop generating"
+                    className="ml-1 shrink-0"
+                  >
+                    <StatusDot state="running" className="size-1.5" />
+                    Stop
+                  </Button>
                 ) : (
-                  /* A real tooltip rather than `title`, which never appears on a
-                   touch screen — and this is the one control on the row whose
-                   `title` was carrying something a reader needs ("waiting for
-                   the current reply to finish", on a button that looks broken
-                   until you know that). The three to the left of it are their
-                   own components and keep their own `aria-label`s. */
+                  /* A real tooltip rather than `title`, which never appears on
+                     a touch screen — and this is the one control on the row
+                     whose `title` was carrying something a reader needs
+                     ("waiting for the current reply to finish", on a button
+                     that looks broken until you know that). */
                   <PromptInputAction
                     tooltip={
                       busy
@@ -2579,32 +2567,26 @@ function ChatTab() {
                       onClick={send}
                       disabled={!input.trim() || busy || outOfCredits}
                       aria-label="Send message"
-                      className="shrink-0 rounded-full"
+                      className="ml-1 shrink-0"
                     >
-                      <ArrowUp className="h-4 w-4" />
+                      <ArrowUp />
                     </Button>
                   </PromptInputAction>
                 )}
               </div>
             </PromptInputActions>
           </PromptInput>
-          {/* What the header used to say twice over, said once, here, where
-              it is read before you type rather than every time you look up. */}
-          <p className="mt-2 flex flex-wrap items-center justify-center gap-x-1.5 text-xs text-muted-foreground">
-            {/* The model in force, not the agent's, or this sentence would
-                contradict the chip a few pixels above it. Who can read the
-                thread is not repeated here: the header says it, once. */}
-            {agent.name} ·{" "}
-            {dialLabel(
-              effectiveModel,
-              active?.reasoningEffort ?? agent.reasoningEffort,
-              specFor(me?.modelSpecs, effectiveModel).reasoning,
-            )}{" "}
-            · grounded in {readable.length} team {readable.length === 1 ? "document" : "documents"}
-            {credits?.level === "fine" && <> · {creditsSentence(credits)}</>}
-          </p>
+          <AttachInput uploads={uploads} canWrite={canUpload} inputRef={fileInputRef} />
+          <ReportDialog reports={reports} canWrite={canWrite} />
+          {/* Not on a phone, where Enter is the newline and the send button is
+              under the thumb. */}
+          {!isMobile && (
+            <p className="mt-2 text-center text-xs text-micro-foreground">
+              Enter to send · Shift + Enter for a new line
+            </p>
+          )}
           {privateFoldersNote && (
-            <p className="mt-1 text-center text-xs text-muted-foreground">{privateFoldersNote}</p>
+            <p className="mt-1 text-center text-meta text-muted-foreground">{privateFoldersNote}</p>
           )}
         </div>
       </div>
@@ -2624,24 +2606,6 @@ function ChatTab() {
         initialKind={rating?.kind ?? null}
       />
 
-      {/* Below `lg` a document is a full-height sheet too, for the browser's
-          reason below: a split at that width leaves neither side readable. */}
-      {belowLg && shownJob && active && (
-        <div
-          role="dialog"
-          aria-label="Document"
-          className="fixed inset-0 z-40 flex flex-col bg-background"
-        >
-          <DocumentPanel
-            key={shownJob.id}
-            job={shownJob}
-            onClose={() => setOpenDocument(null)}
-            onStop={(jobId) => void controlDocument(jobId, "stop")}
-            onRetry={(jobId) => void controlDocument(jobId, "retry")}
-          />
-        </div>
-      )}
-
       {/* Below `lg`, the browser is a full-height sheet over the conversation,
           opened from the header control. Inside the pane for the same reason
           the dialog above is: every layout returned below wraps this one
@@ -2658,6 +2622,7 @@ function ChatTab() {
             agentId={agentId}
             canShare={canWrite}
             layout="sheet"
+            agentName={agent.name}
             onHide={browserPanel.hide}
           />
         </div>
@@ -2666,37 +2631,28 @@ function ChatTab() {
   );
 
   /*
-   * What sits beside the conversation, if anything: a document (only ever
-   * open because somebody opened it, or just asked for it), then the browser at
-   * `lg` and up (being driven, or waiting on a sign-in, it is the thing
-   * happening right now — and closing it gives the Idea board back), then a
-   * brainstorm's Idea board.
+   * What sits beside the conversation, if anything. The browser, at `lg` and
+   * up, floats in a 580px column of its own (A13) — being driven, or waiting
+   * on a sign-in, it is the thing happening right now. Otherwise a
+   * brainstorm's Idea board. A document opens over all of it (A22).
    */
+  const browserAside =
+    browserPanel.open && active && !belowLg ? (
+      <aside aria-label="Browser" className="flex w-[580px] shrink-0 py-4 pr-5">
+        {/* Keyed by the conversation so a second chat never inherits the
+            first one's live view. */}
+        <BrowserPanel
+          key={active.id}
+          sessionId={active.id}
+          agentId={agentId}
+          agentName={agent.name}
+          canShare={canWrite}
+          onHide={browserPanel.hide}
+        />
+      </aside>
+    ) : null;
   let side: ReactNode = null;
-  const documentPanel = shownJob ? (
-    <DocumentPanel
-      key={shownJob.id}
-      job={shownJob}
-      onClose={() => setOpenDocument(null)}
-      onStop={(jobId) => void controlDocument(jobId, "stop")}
-      onRetry={(jobId) => void controlDocument(jobId, "retry")}
-    />
-  ) : null;
-  if (documentPanel && active && !belowLg) {
-    side = documentPanel;
-  } else if (browserPanel.open && active && !belowLg) {
-    // Keyed by the conversation so a second chat never inherits the first
-    // one's live view.
-    side = (
-      <BrowserPanel
-        key={active.id}
-        sessionId={active.id}
-        agentId={agentId}
-        canShare={canWrite}
-        onHide={browserPanel.hide}
-      />
-    );
-  } else if (isBrainstorm && active) {
+  if (!browserAside && isBrainstorm && active) {
     side = (
       <div className="flex h-full flex-col border-l border-border">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -2706,7 +2662,7 @@ function ChatTab() {
           {/* Secondary on purpose: the composer's send is this view's one
               primary action (DESIGN.md §2). */}
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => suggestMutation.mutate(active.id)}
             disabled={suggestMutation.isPending}
@@ -2731,7 +2687,7 @@ function ChatTab() {
                     {s.detail && <div className="text-xs text-muted-foreground">{s.detail}</div>}
                   </div>
                   <Button
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={() =>
                       addIdeaMutation.mutate({
@@ -2771,23 +2727,50 @@ function ChatTab() {
    * the set of panel ids, so each arrangement keeps its own sizes.
    */
   return (
-    <ResizablePanelGroup className="h-[calc(100dvh-3.5rem)] lg:h-screen">
-      <ResizablePanel id="chat" minSize="35">
-        {chatPane}
-      </ResizablePanel>
-      {side && (
-        <>
-          <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
-          <ResizablePanel id="side" defaultSize="45" minSize="25">
-            {/* Held to the screen's height, the way `chatPane` holds itself.
-                The panel group's own `height: 100%` resolves against a parent
-                with no height, so without this a side panel is as tall as
-                its content — and a long document scrolled the page instead
-                of itself. */}
-            <div className="h-[calc(100dvh-3.5rem)] min-h-0 lg:h-screen">{side}</div>
-          </ResizablePanel>
-        </>
-      )}
-    </ResizablePanelGroup>
+    <div data-fill-screen className="flex min-h-0 flex-1">
+      <ResizablePanelGroup className="min-h-0 flex-1">
+        <ResizablePanel id="chat" minSize="35">
+          {chatPane}
+        </ResizablePanel>
+        {side && (
+          <>
+            <ResizableHandle className="w-1 bg-border transition-colors hover:bg-primary/40" />
+            <ResizablePanel id="side" defaultSize="45" minSize="25">
+              <div className="h-full min-h-0">{side}</div>
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
+      {browserAside}
+      <Dialog
+        open={!!shownJob && !!active}
+        onOpenChange={(open) => {
+          if (!open) setOpenDocument(null);
+        }}
+      >
+        <DialogContent
+          hideClose
+          aria-describedby={undefined}
+          className="h-[min(820px,calc(100dvh-4.5rem))] max-w-[960px] gap-0 overflow-hidden p-0"
+        >
+          <DialogTitle className="sr-only">{shownJob?.title ?? "Document"}</DialogTitle>
+          {shownJob && (
+            <DocumentPanel
+              key={shownJob.id}
+              job={shownJob}
+              agent={agent}
+              folderName={bundles.find((b) => b.id === shownJob.bundleId)?.name ?? null}
+              onOpenInKnowledge={() => {
+                setOpenDocument(null);
+                void navigate({ to: "/knowledge" });
+              }}
+              onClose={() => setOpenDocument(null)}
+              onStop={(jobId) => void controlDocument(jobId, "stop")}
+              onRetry={(jobId) => void controlDocument(jobId, "retry")}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

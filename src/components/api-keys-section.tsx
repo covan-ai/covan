@@ -1,15 +1,23 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound } from "lucide-react";
-import { SectionHeading } from "@/components/page-container";
-import { SectionCard, DataRow, EmptyState } from "@/components/section-card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Plus } from "lucide-react";
+import { DataTable } from "@/components/data-table";
+import { SectionLabel, SectionTitle } from "@/components/section";
+import { StatusDot } from "@/components/status-dot";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DocsLink } from "@/components/docs-link";
 import { api, ApiError, type ApiKey } from "@/lib/api-client";
-import { formatRelative } from "@/lib/relative-time";
+import { lastActivityLabel } from "@/lib/day-groups";
 import { toast } from "sonner";
 import { RevealedSecret } from "@/components/revealed-secret";
 
@@ -23,83 +31,157 @@ import { RevealedSecret } from "@/components/revealed-secret";
  * on the screen rather than left in a migration — leave the workspace and your
  * keys stop working with you.
  *
- * Rendered only where the API can honour one. `available: false` is a
- * deployment without `SUPABASE_JWT_SECRET`, where offering a create button
- * would mint a credential nothing would accept.
+ * Settings › API keys (A26): "New key" in the title, the key shown once in
+ * an ink-bordered box, then the keys as a table. `available: false` is a
+ * deployment without `SUPABASE_JWT_SECRET`, where a create button would mint
+ * a credential nothing would accept.
  */
 export function ApiKeysSection() {
   const [creating, setCreating] = useState(false);
+  const [revealed, setRevealed] = useState<{ name: string; token: string } | null>(null);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["api-keys"],
     queryFn: api.apiKeys.list,
   });
 
-  if (isLoading) return null;
+  const title = (
+    <SectionTitle
+      title="API keys"
+      lede="A key acts as you. It can do exactly what you can and nothing more, so there are no scopes to get wrong. Leave the workspace and your keys stop with you."
+      action={
+        data?.available ? (
+          <Button onClick={() => setCreating(true)}>
+            <Plus /> New key
+          </Button>
+        ) : undefined
+      }
+    />
+  );
+
+  if (isLoading) return title;
 
   // A failure is not the same as "this deployment does not do that", and the
   // first version of this component treated them alike — one `!data?.available`
   // covered both, so when the API answered 500 the section rendered nothing and
-  // the feature looked unshipped rather than broken. It took a probe against
-  // production to find out otherwise. Whatever went wrong, say that something
-  // did.
+  // the feature looked unshipped rather than broken. Whatever went wrong, say
+  // that something did.
   if (isError) {
     return (
-      <section className="mt-16">
-        <SectionHeading title="API keys" />
-        <SectionCard className="mt-6">
-          <p className="text-sm text-muted-foreground">
-            Couldn't load your keys. This is a fault rather than a setting — try again, and tell
-            whoever runs this deployment if it persists.
-          </p>
-        </SectionCard>
-      </section>
+      <>
+        {title}
+        <p className="mt-6 text-sm text-muted-foreground">
+          Couldn't load your keys. This is a fault rather than a setting — try again, and tell
+          whoever runs this deployment if it persists.
+        </p>
+      </>
     );
   }
 
-  if (!data?.available) return null;
+  // A deployment without SUPABASE_JWT_SECRET: a create button would mint a
+  // credential nothing accepts, so say there is none instead.
+  if (!data?.available) {
+    return (
+      <>
+        {title}
+        <p className="mt-6 text-sm text-muted-foreground">
+          This deployment does not issue keys. Whoever runs it can turn them on in its settings.
+        </p>
+      </>
+    );
+  }
 
   return (
-    <section className="mt-16">
-      <SectionHeading
-        title="API keys"
-        description="For scripts and scheduled jobs. A key does exactly what you can do — no more, and no less."
-      />
+    <>
+      {title}
 
-      <SectionCard padded={false} className="mt-6 overflow-hidden">
-        {data.keys.length === 0 ? (
-          <EmptyState
-            title="No keys yet"
-            description="Create one to reach the API from somewhere that cannot sign in."
-          />
-        ) : (
-          <ul className="divide-y divide-hairline">
-            {data.keys.map((key) => (
-              <li key={key.id}>
-                <KeyRow apiKey={key} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </SectionCard>
-
-      <div className="mt-4 flex items-end justify-between gap-4">
-        <div className="space-y-1.5">
-          <p className="text-xs text-muted-foreground">
-            Keys are yours, not the workspace's — they stop working the moment your own access does.
-          </p>
-          <DocsLink page="api">What the API accepts</DocsLink>
+      {/* The key, once (A26): an ink-bordered box with the waiting ring,
+          because nothing anywhere can show it again. */}
+      {revealed && (
+        <div className="mt-6 flex items-start gap-3.5 rounded-xl border border-foreground p-4">
+          <StatusDot state="waiting" className="mt-1.5" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">Your new key, &ldquo;{revealed.name}&rdquo;</div>
+            <p className="mt-0.5 mb-2.5 text-meta text-muted-foreground">
+              Copy it now. This is the only time it is shown; the server keeps a hash, not the key.
+            </p>
+            <RevealedSecret value={revealed.token} label="Copy key" inline>
+              <Button variant="ghost" size="sm" onClick={() => setRevealed(null)}>
+                I have saved it
+              </Button>
+            </RevealedSecret>
+          </div>
         </div>
-        <Button onClick={() => setCreating(true)} className="shrink-0">
-          New key
-        </Button>
-      </div>
+      )}
 
-      <CreateKeyDialog open={creating} onOpenChange={setCreating} />
-    </section>
+      <SectionLabel action={<DocsLink page="api">API reference</DocsLink>}>
+        Keys · {data.keys.length}
+      </SectionLabel>
+      {data.keys.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No keys yet. Create one to reach the API from somewhere that cannot sign in.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <DataTable
+            label="API keys"
+            rows={data.keys}
+            rowKey={(k) => k.id}
+            columns={[
+              {
+                key: "name",
+                header: "Name",
+                cell: (k) => <span className="font-medium">{k.name}</span>,
+              },
+              {
+                key: "key",
+                header: "Key",
+                cell: (k) => (
+                  <span className="font-mono text-meta text-muted-foreground">{k.prefix}…</span>
+                ),
+              },
+              {
+                key: "created",
+                header: "Created",
+                hideBelow: "md",
+                cell: (k) => (
+                  <span className="text-muted-foreground">{lastActivityLabel(k.createdAt)}</span>
+                ),
+              },
+              {
+                key: "used",
+                header: "Last used",
+                // Never used reads as a fact; "last used —" reads as missing data.
+                cell: (k) => (
+                  <span className="text-muted-foreground">
+                    {k.lastUsedAt ? lastActivityLabel(k.lastUsedAt) : "Never"}
+                  </span>
+                ),
+              },
+              {
+                key: "revoke",
+                header: <span className="sr-only">Revoke</span>,
+                className: "w-20 text-right",
+                cell: (k) => <RevokeKey apiKey={k} />,
+              },
+            ]}
+          />
+        </div>
+      )}
+      <p className="mt-3 text-meta text-muted-foreground">
+        Keys belong to people, not to the workspace: a teammate&rsquo;s keys are on their page. A
+        revoked key fails on the next request.
+      </p>
+
+      <CreateKeyDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={(name, token) => setRevealed({ name, token })}
+      />
+    </>
   );
 }
 
-function KeyRow({ apiKey }: { apiKey: ApiKey }) {
+function RevokeKey({ apiKey }: { apiKey: ApiKey }) {
   const queryClient = useQueryClient();
   const [revoking, setRevoking] = useState(false);
 
@@ -116,27 +198,16 @@ function KeyRow({ apiKey }: { apiKey: ApiKey }) {
   };
 
   return (
-    <DataRow
-      icon={
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline bg-surface">
-          <KeyRound className="h-4 w-4 text-muted-foreground" />
-        </span>
-      }
-      title={apiKey.name}
-      meta={
-        <>
-          <span className="font-mono">{apiKey.prefix}…</span>
-          {" · "}
-          {/* Never used reads as a fact; "last used —" reads as missing data. */}
-          {apiKey.lastUsedAt ? `last used ${formatRelative(apiKey.lastUsedAt)}` : "never used"}
-        </>
-      }
-      trailing={
-        <Button variant="ghost" size="sm" onClick={revoke} disabled={revoking} className="shrink-0">
-          {revoking ? "Revoking…" : "Revoke"}
-        </Button>
-      }
-    />
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={revoke}
+      disabled={revoking}
+      className="text-destructive"
+      aria-label={`Revoke ${apiKey.name}`}
+    >
+      {revoking ? "Revoking…" : "Revoke"}
+    </Button>
   );
 }
 
@@ -152,21 +223,19 @@ function KeyRow({ apiKey }: { apiKey: ApiKey }) {
 function CreateKeyDialog({
   open,
   onOpenChange,
+  onCreated,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  onCreated: (name: string, token: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
-  const [created, setCreated] = useState<string | null>(null);
 
   const close = (v: boolean) => {
     onOpenChange(v);
-    if (!v) {
-      setName("");
-      setCreated(null);
-    }
+    if (!v) setName("");
   };
 
   const submit = async () => {
@@ -175,7 +244,8 @@ function CreateKeyDialog({
     try {
       const key = await api.apiKeys.create(name.trim());
       await queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-      setCreated(key.token);
+      onCreated(name.trim(), key.token);
+      close(false);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't create that key");
     } finally {
@@ -185,50 +255,32 @@ function CreateKeyDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-w-md">
+      <DialogContent size="sm">
         <DialogHeader>
-          <DialogTitle>{created ? "Your new key" : "New API key"}</DialogTitle>
+          <DialogTitle>New API key</DialogTitle>
         </DialogHeader>
-
-        {created ? (
-          <div className="space-y-4">
-            <RevealedSecret value={created} label="Copy key" />
-            <p className="text-xs text-muted-foreground">
-              This is the only time it is shown. Covan stores a hash of it, so nobody — including us
-              — can show it to you again. If you lose it, revoke it and make another.
-            </p>
-            <div className="flex justify-end">
-              <Button variant="ghost" onClick={() => close(false)}>
-                I've saved it
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="space-y-2">
-              <Label className="text-xs" htmlFor="api-key-name">
-                What is it for
-              </Label>
-              <Input
-                id="api-key-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Nightly report script"
-                maxLength={60}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submit();
-                }}
-              />
-              <p className="text-xs text-muted-foreground">Only for you to recognise it later.</p>
-            </div>
-
-            <div className="mt-4 flex justify-end">
-              <Button onClick={submit} disabled={saving || !name.trim()}>
-                {saving ? "Creating…" : "Create key"}
-              </Button>
-            </div>
-          </>
-        )}
+        <DialogBody className="space-y-1.5">
+          <Label htmlFor="api-key-name">What is it for</Label>
+          <Input
+            id="api-key-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Nightly report script"
+            maxLength={60}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void submit();
+            }}
+          />
+          <p className="text-meta text-muted-foreground">Only for you to recognise it later.</p>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="secondary" onClick={() => close(false)}>
+            Cancel
+          </Button>
+          <Button onClick={() => void submit()} disabled={saving || !name.trim()}>
+            {saving ? "Creating…" : "Create key"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

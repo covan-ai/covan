@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
-import { SectionCard } from "@/components/section-card";
+import { Field } from "@/components/field";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -36,6 +44,7 @@ export function PasswordCard() {
   /** True once GoTrue has asked for a code and one has been sent. */
   const [needsCode, setNeedsCode] = useState(false);
   const [code, setCode] = useState("");
+  const [open, setOpen] = useState(false);
 
   const tooShort = password.length > 0 && password.length < PASSWORD_MIN;
   const mismatch = confirm.length > 0 && password !== confirm;
@@ -70,88 +79,100 @@ export function PasswordCard() {
     setConfirm("");
     setCode("");
     setNeedsCode(false);
+    setOpen(false);
     toast.success("Password updated");
   };
 
+  // A16: a row with a button; the form is a dialog, so the page does not
+  // carry three empty password boxes for something done once a year.
   return (
-    <SectionCard className="mt-6 space-y-5">
-      <div className="space-y-1">
-        <div className="text-title font-semibold">Password</div>
-        <p className="text-meta text-muted-foreground">
-          Change it, or set one if you signed in another way.
-        </p>
-      </div>
+    <Field label="Password" help="Change it, or set one if you signed in another way.">
+      <Button variant="secondary" onClick={() => setOpen(true)}>
+        Change password
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent size="sm">
+          <DialogHeader>
+            <DialogTitle>Change password</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="flex flex-col gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-password">New password</Label>
+              <div className="relative">
+                <Input
+                  id="new-password"
+                  type={show ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError(null);
+                  }}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShow((v) => !v)}
+                  className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+                  aria-label={show ? "Hide password" : "Show password"}
+                >
+                  {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {tooShort ? (
+                <p className="text-meta text-destructive">At least {PASSWORD_MIN} characters.</p>
+              ) : null}
+            </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="new-password">New password</Label>
-        <div className="relative">
-          <Input
-            id="new-password"
-            type={show ? "text" : "password"}
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              setError(null);
-            }}
-            className="pr-10"
-          />
-          <button
-            type="button"
-            onClick={() => setShow((v) => !v)}
-            className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
-            aria-label={show ? "Hide password" : "Show password"}
-          >
-            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </button>
-        </div>
-        {tooShort ? (
-          <p className="text-xs text-destructive">At least {PASSWORD_MIN} characters.</p>
-        ) : null}
-      </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirm-password">Confirm new password</Label>
+              <Input
+                id="confirm-password"
+                type={show ? "text" : "password"}
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(e) => {
+                  setConfirm(e.target.value);
+                  setError(null);
+                }}
+              />
+              {mismatch ? (
+                <p className="text-meta text-destructive">The two do not match.</p>
+              ) : null}
+            </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="confirm-password">Confirm new password</Label>
-        <Input
-          id="confirm-password"
-          type={show ? "text" : "password"}
-          autoComplete="new-password"
-          value={confirm}
-          onChange={(e) => {
-            setConfirm(e.target.value);
-            setError(null);
-          }}
-        />
-        {mismatch ? <p className="text-xs text-destructive">The two do not match.</p> : null}
-      </div>
+            {needsCode ? (
+              <div className="space-y-2">
+                <Label htmlFor="reauth-code">Code from your email</Label>
+                <Input
+                  id="reauth-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => {
+                    setCode(e.target.value);
+                    setError(null);
+                  }}
+                  className="tracking-widest"
+                />
+                <p className="text-meta text-muted-foreground">
+                  You last signed in a while ago, so we emailed you a code to make sure it is you.
+                </p>
+              </div>
+            ) : null}
 
-      {needsCode ? (
-        <div className="space-y-2">
-          <Label htmlFor="reauth-code">Code from your email</Label>
-          <Input
-            id="reauth-code"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            value={code}
-            onChange={(e) => {
-              setCode(e.target.value);
-              setError(null);
-            }}
-            className="tracking-widest"
-          />
-          <p className="text-xs text-muted-foreground">
-            You last signed in a while ago, so we emailed you a code to make sure it is you.
-          </p>
-        </div>
-      ) : null}
-
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-
-      <div className="flex justify-end border-t border-hairline pt-4">
-        <Button onClick={save} disabled={saving || !ready}>
-          {saving ? "Saving…" : "Update password"}
-        </Button>
-      </div>
-    </SectionCard>
+            {error ? <p className="text-meta text-destructive">{error}</p> : null}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={save} disabled={saving || !ready}>
+              {saving ? "Saving…" : "Update password"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Field>
   );
 }

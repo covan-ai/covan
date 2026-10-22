@@ -90,8 +90,8 @@ describe("LiveAnswer", () => {
         streamText="You accrue 1.67 days a month."
       />,
     );
-    expect(screen.getByText("Thought for 2.4s")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Thought for 2.4s/ })).toHaveAttribute(
+    expect(screen.getByText("Thinking · 2 s")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Thinking · 2 s/ })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
@@ -101,10 +101,10 @@ describe("LiveAnswer", () => {
     const { rerender } = render(
       <LiveAnswer {...base} thinkingText="Working through accrual." thinkingMs={900} />,
     );
-    await userEvent.click(screen.getByRole("button", { name: /Thought for 0.9s/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Thinking · 0.9 s/ }));
 
     rerender(<LiveAnswer {...base} thinkingText="Working through accrual." thinkingMs={900} />);
-    expect(screen.getByRole("button", { name: /Thought for 0.9s/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /Thinking · 0.9 s/ })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
@@ -133,7 +133,7 @@ describe("LiveAnswer", () => {
         thinkingMs={900}
       />,
     );
-    const trigger = () => screen.getByRole("button", { name: /Thought for 0.9s/ });
+    const trigger = () => screen.getByRole("button", { name: /Thinking · 0.9 s/ });
 
     // Mounted — the fold is a zero-height grid row, not a removed subtree —
     // and out of reach all the same.

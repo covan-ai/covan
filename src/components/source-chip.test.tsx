@@ -31,7 +31,10 @@ describe("a citation old enough to be worth checking", () => {
     render(<SourceChip source={{ id: "d1", name: "process.md" }} uploadedAt={daysAgo(200)} />);
 
     expect(screen.getByText("6 months ago")).toBeInTheDocument();
-    expect(chip().className).toContain("amber");
+    // A mark and a word, never amber: amber is a pointer, not a warning
+    // colour (DESIGN.md §1).
+    expect(chip().querySelector("svg")).toBeInTheDocument();
+    expect(chip().className).not.toContain("amber");
   });
 
   it("does not warn a day early", () => {
@@ -41,7 +44,7 @@ describe("a citation old enough to be worth checking", () => {
         uploadedAt={daysAgo(STALE_AFTER_DAYS - 1)}
       />,
     );
-    expect(chip().className).not.toContain("amber");
+    expect(chip().querySelector("svg")).not.toBeInTheDocument();
   });
 
   it("says it in words as well as in colour", () => {

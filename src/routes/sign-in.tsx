@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
@@ -82,13 +82,13 @@ function SignIn() {
 
   return (
     <AuthLayout
-      title="Welcome back"
-      subtitle="Ask it anything your team wrote down."
+      title="Sign in"
+      subtitle="Use the account your team invited."
       footer={
         <>
-          Don't have an account?{" "}
+          New here?{" "}
           <Link to="/sign-up" className="font-medium text-foreground hover:underline">
-            Sign up
+            Create a workspace
           </Link>
         </>
       }
@@ -110,40 +110,43 @@ function SignIn() {
           POST puts it in a request body instead, where the page answers 200 and
           nothing is written down. The three other credential forms carry this
           for the same reason. */}
-      <form method="post" onSubmit={handleSubmit} className="space-y-4">
+      <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-3.5">
         <div className="space-y-1.5">
-          <Label htmlFor="email">Work email</Label>
-          <div className="relative">
-            <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              placeholder="you@company.com"
-              required
-              autoComplete="email"
-              className="pl-9"
-            />
-          </div>
+          <Label htmlFor="email" className="text-meta">
+            Email
+          </Label>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="you@company.com"
+            required
+            autoComplete="email"
+            className="h-9"
+          />
         </div>
 
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="password">Password</Label>
-            <Link to="/forgot-password" className="text-xs text-primary hover:underline">
-              Forgot password?
+          <div className="flex items-baseline justify-between">
+            <Label htmlFor="password" className="text-meta">
+              Password
+            </Label>
+            <Link
+              to="/forgot-password"
+              className="text-meta text-muted-foreground hover:text-foreground"
+            >
+              Forgot it?
             </Link>
           </div>
           <div className="relative">
-            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="password"
               name="password"
               type={showPassword ? "text" : "password"}
-              placeholder="••••••••"
+              placeholder="••••••••••"
               required
               autoComplete="current-password"
-              className="px-9"
+              className="h-9 pr-9"
             />
             <button
               type="button"
@@ -167,7 +170,7 @@ function SignIn() {
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" className="w-full" disabled={submitting}>
+        <Button type="submit" size="lg" className="mt-1 w-full" disabled={submitting}>
           {submitting ? "Signing in…" : "Sign in"}
         </Button>
       </form>

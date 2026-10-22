@@ -143,7 +143,7 @@ export function FeedbackDialog({
           {/* Said out loud rather than attached quietly. The privacy page
               promises there is no invisible collection, and neither the page
               nor the answer is an exception to that. */}
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             {about ? (
               <>
                 Sent about <span className="font-medium text-foreground">{about.label}</span> and
@@ -160,7 +160,7 @@ export function FeedbackDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={sending}>
+          <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={sending}>
             Cancel
           </Button>
           <Button onClick={() => void send()} disabled={!message.trim() || sending}>

@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { UserAvatar } from "@/components/avatars";
+import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -23,28 +23,23 @@ export function AvatarPicker({
 }) {
   const input = useRef<HTMLInputElement>(null);
 
+  // A16: the photo at 48px, then Upload photo and Remove.
   return (
-    <div className="flex items-center gap-4">
-      <UserAvatar name={name} url={url} className="h-16 w-16 text-xs" />
-      <div className="flex min-w-0 flex-col gap-2">
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() => input.current?.click()}
-          >
-            {busy ? "Saving…" : url ? "Change photo" : "Upload photo"}
-          </Button>
-          {url ? (
-            <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onRemove}>
-              Remove
-            </Button>
-          ) : null}
-        </div>
-        <p className="text-xs text-muted-foreground">PNG, JPEG or WebP. Cropped to a square.</p>
-      </div>
+    <div className="flex flex-wrap items-center gap-3">
+      <Avatar name={name} url={url} size={48} />
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={busy}
+        onClick={() => input.current?.click()}
+      >
+        {busy ? "Saving…" : url ? "Change photo" : "Upload photo"}
+      </Button>
+      {url ? (
+        <Button type="button" variant="ghost" disabled={busy} onClick={onRemove}>
+          Remove
+        </Button>
+      ) : null}
       <input
         ref={input}
         type="file"

@@ -10,8 +10,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { SectionHeading } from "@/components/page-container";
-import { SectionCard } from "@/components/section-card";
+import { Field } from "@/components/field";
+import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,20 +76,25 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
     }
   };
 
+  // A16's Danger: one field, the consequences in its help and under it.
   return (
-    <section className="mt-16">
-      <SectionHeading title="Closing your account" />
-      <SectionCard className="mt-6 space-y-4">
-        <p className="text-sm leading-[1.5] text-muted-foreground">
-          This deletes your account and everything that belongs only to you — your conversations,
-          your API keys, and any workspace you are the last person in. It cannot be undone.
-        </p>
-        <p className="text-sm leading-[1.5] text-muted-foreground">
-          Workspaces you share with other people keep running without you. What you uploaded and
-          what you wrote there stays, because it belongs to the workspace rather than to you; your
-          name simply comes off it.
-        </p>
-        {/* The way out of the paragraph above, and it has to be here rather than
+    <>
+      <SectionLabel>Danger</SectionLabel>
+      <Field
+        label="Close account"
+        help="Leaves every workspace. What you made in a shared one stays with it, without your name."
+      >
+        <div className="flex max-w-[560px] flex-col gap-2">
+          <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
+            This deletes your account and everything that belongs only to you — your conversations,
+            your API keys, and any workspace you are the last person in. It cannot be undone.
+          </p>
+          <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
+            Workspaces you share with other people keep running without you. What you uploaded and
+            what you wrote there stays, because it belongs to the workspace rather than to you; your
+            name simply comes off it.
+          </p>
+          {/* The way out of the paragraph above, and it has to be here rather than
             only on /privacy — this is the screen where somebody decides, and a
             page they would have to already be reading is not where you put the
             one thing that has to happen first. Deliberately not a button: a
@@ -98,67 +103,67 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
             is a way to damage a team. Asking puts a person in the loop, which
             is the right amount of friction for something irreversible that
             affects somebody other than the asker. See covan#56. */}
-        <p className="text-sm leading-[1.5] text-muted-foreground">
-          If you want a file you uploaded removed rather than anonymous, ask before you close, not
-          after — once the account is gone there is nothing left to tell which files were yours.
-        </p>
+          <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
+            If you want a file you uploaded removed rather than anonymous, ask before you close, not
+            after — once the account is gone there is nothing left to tell which files were yours.
+          </p>
 
-        <div className="border-t border-hairline pt-4">
-          <AlertDialog open={open} onOpenChange={reset}>
-            <AlertDialogTrigger asChild>
-              <Button variant="ghost" className="text-destructive hover:bg-destructive/10">
-                Close my account
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Close your account?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  There is no undo and no grace period. Your conversations and API keys go, and any
-                  workspace you are the last person in goes with them.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
+          <div className="pt-1">
+            <AlertDialog open={open} onOpenChange={reset}>
+              <AlertDialogTrigger asChild>
+                <Button variant="danger">Close my account</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Close your account?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    There is no undo and no grace period. Your conversations and API keys go, and
+                    any workspace you are the last person in goes with them.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
 
-              <div className="space-y-2">
-                <Label htmlFor="confirm-email">
-                  Type <span className="font-mono text-foreground">{email ?? "your email"}</span> to
-                  confirm
-                </Label>
-                <Input
-                  id="confirm-email"
-                  value={typed}
-                  onChange={(e) => setTyped(e.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirm-email">
+                    Type <span className="font-mono text-foreground">{email ?? "your email"}</span>{" "}
+                    to confirm
+                  </Label>
+                  <Input
+                    id="confirm-email"
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
 
-              {refusal ? (
-                // The 409 lands here. Nothing was deleted to produce it, so the
-                // dialog stays open with the reason in it and the button still
-                // available for after the person has fixed it.
-                <p className="text-sm leading-[1.45] text-destructive">{refusal}</p>
-              ) : null}
+                {refusal ? (
+                  // The 409 lands here. Nothing was deleted to produce it, so the
+                  // dialog stays open with the reason in it and the button still
+                  // available for after the person has fixed it.
+                  <p className="text-sm leading-[1.45] text-destructive">{refusal}</p>
+                ) : null}
 
-              <AlertDialogFooter>
-                <AlertDialogCancel disabled={closing}>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={(e) => {
-                    // Kept open on purpose: the action would otherwise dismiss
-                    // the dialog before the server has answered, and a refusal
-                    // would have nowhere to be read.
-                    e.preventDefault();
-                    void closeAccount();
-                  }}
-                  disabled={!confirmed || closing}
-                >
-                  {closing ? "Closing…" : "Close my account"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={closing}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={(e) => {
+                      // Kept open on purpose: the action would otherwise dismiss
+                      // the dialog before the server has answered, and a refusal
+                      // would have nowhere to be read.
+                      e.preventDefault();
+                      void closeAccount();
+                    }}
+                    variant="danger"
+                    disabled={!confirmed || closing}
+                  >
+                    {closing ? "Closing…" : "Close my account"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </div>
-      </SectionCard>
-    </section>
+      </Field>
+    </>
   );
 }

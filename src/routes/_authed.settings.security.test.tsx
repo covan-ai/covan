@@ -18,6 +18,7 @@ vi.mock("@/components/account/profile-form", () => ({
   ),
 }));
 vi.mock("@/components/account/email-card", () => ({ EmailCard: stub("email") }));
+vi.mock("@/components/account/sessions-list", () => ({ SessionsList: stub("sessions") }));
 vi.mock("@/components/account/password-card", () => ({ PasswordCard: stub("password") }));
 vi.mock("@/components/account/two-factor-card", () => ({ TwoFactorCard: stub("two-factor") }));
 vi.mock("@/components/preferences-section", () => ({

@@ -19,7 +19,10 @@ export type ScheduleForm =
   // somebody says "every weekday", which is much of what people ask a routine
   // for, and the picker used to answer that with a Change button that opened
   // on "every 1 hours".
-  | { mode: "weekdays"; hour: number; minute: number };
+  | { mode: "weekdays"; hour: number; minute: number }
+  // Some days of the week (A28's "Every week on Mon … at 08:30"), 0 = Sunday
+  // as cron counts them, kept in Monday-first order.
+  | { mode: "weekly"; days: number[]; hour: number; minute: number };
 
 export type ScheduleMode = ScheduleForm["mode"];
 
@@ -33,7 +36,14 @@ export function toCron(form: ScheduleForm): string {
       return `${form.minute} ${form.hour} * * *`;
     case "weekdays":
       return `${form.minute} ${form.hour} * * 1-5`;
+    case "weekly":
+      return `${form.minute} ${form.hour} * * ${[...form.days].sort(weekOrder).join(",")}`;
   }
+}
+
+/** Monday first, Sunday last: the order a person reads a week in. */
+function weekOrder(a: number, b: number): number {
+  return ((a + 6) % 7) - ((b + 6) % 7);
 }
 
 /** A whole number in [min, max], or null. Rejects "07", "+7", "7.0" and "". */
@@ -63,7 +73,15 @@ export function fromCron(expr: string): ScheduleForm | null {
     const m = intInRange(minute, 0, 59);
     return h === null || m === null ? null : { mode: "weekdays", hour: h, minute: m };
   }
-  if (dayOfWeek !== "*") return null;
+  if (dayOfWeek !== "*") {
+    // A list of single days: `1`, `1,3,5`. Ranges other than Monday to Friday
+    // are outside what the picker draws.
+    if (!/^[0-6](,[0-6])*$/.test(dayOfWeek)) return null;
+    const days = [...new Set(dayOfWeek.split(",").map(Number))].sort(weekOrder);
+    const h = intInRange(hour, 0, 23);
+    const m = intInRange(minute, 0, 59);
+    return h === null || m === null ? null : { mode: "weekly", days, hour: h, minute: m };
+  }
 
   if (hour === "*") {
     const every = step(minute, 59);

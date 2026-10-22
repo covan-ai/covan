@@ -11,8 +11,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { SectionHeading } from "@/components/page-container";
-import { SectionCard } from "@/components/section-card";
+import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { OpenBrowsersList } from "@/components/open-browsers";
 import { SavedLoginsList } from "@/components/saved-logins";
@@ -54,29 +53,32 @@ import { api, ApiError } from "@/lib/api-client";
  * what saves what was signed in there, and an open one is what Forget refuses
  * on — the person who meets that refusal finds the browser just below it.
  */
-export function BrowserSignInsSection() {
+export function BrowserSignInsSection({ agentNames }: { agentNames?: Map<string, string> }) {
   return (
     <>
-      <CookieJarSection />
-      <OpenBrowsersList
-        wrap={(list) => (
-          <section className="mt-16">
-            <SectionHeading
-              title="Open browsers"
-              description="Browsers of yours that may still be open. Stopping one saves its sign-ins; none is stopped while the agent is using it."
-            />
-            <SectionCard className="mt-6">{list}</SectionCard>
+      <SavedLoginsList
+        agentNames={agentNames}
+        wrap={(list, count) => (
+          <section className="mt-8">
+            <SectionLabel>Saved sign-ins · {count}</SectionLabel>
+            {list}
+            <p className="mt-2 mb-0 text-meta text-muted-foreground">
+              Logins you saved for an agent, and the ones your team saved for everyone using one.
+              Encrypted; Covan's AI model is never given them.
+            </p>
           </section>
         )}
       />
-      <SavedLoginsList
+      <CookieJarSection />
+      <OpenBrowsersList
         wrap={(list) => (
-          <section className="mt-16">
-            <SectionHeading
-              title="Saved logins"
-              description="Logins you saved for an agent, and the ones your team saved for everyone using one. Encrypted; Covan's AI model is never given them."
-            />
-            <SectionCard className="mt-6">{list}</SectionCard>
+          <section className="mt-8">
+            <SectionLabel>Open browsers</SectionLabel>
+            <p className="mt-0 mb-2 text-meta text-muted-foreground">
+              Browsers of yours that may still be open. Stopping one saves its sign-ins; none is
+              stopped while the agent is using it.
+            </p>
+            {list}
           </section>
         )}
       />
@@ -124,9 +126,9 @@ function CookieJarSection() {
   };
 
   return (
-    <section className="mt-16">
-      <SectionHeading title="Browser sign-ins" />
-      <SectionCard className="mt-6 space-y-4">
+    <section className="mt-8">
+      <SectionLabel>Browser sign-ins</SectionLabel>
+      <div className="space-y-4">
         <p className="text-sm leading-[1.5] text-muted-foreground">
           When a browser task stops at a login, you can sign in yourself in your own tab. What
           survives that is a cookie jar held by our browser provider, so the next task does not ask
@@ -168,7 +170,7 @@ function CookieJarSection() {
           </p>
         )}
 
-        <div className="border-t border-hairline pt-4">
+        <div>
           <AlertDialog open={open} onOpenChange={reset}>
             <AlertDialogTrigger asChild>
               <Button variant="ghost" className="text-destructive hover:bg-destructive/10">
@@ -205,7 +207,7 @@ function CookieJarSection() {
             </AlertDialogContent>
           </AlertDialog>
         </div>
-      </SectionCard>
+      </div>
     </section>
   );
 }

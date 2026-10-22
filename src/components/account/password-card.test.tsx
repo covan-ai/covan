@@ -29,6 +29,7 @@ describe("PasswordCard", () => {
   // Eight, as sign-up and the reset page ask, and as GoTrue enforces.
   it("refuses a password under eight characters", async () => {
     render(<PasswordCard />);
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
     await fill("abcdefg", "abcdefg");
     expect(screen.getByText("At least 8 characters.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update password" })).toBeDisabled();
@@ -36,6 +37,7 @@ describe("PasswordCard", () => {
 
   it("refuses two that do not match", async () => {
     render(<PasswordCard />);
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
     await fill("correct horse", "correct hose");
     expect(screen.getByText("The two do not match.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Update password" })).toBeDisabled();
@@ -43,13 +45,16 @@ describe("PasswordCard", () => {
 
   // This is the session you are using, not a recovery link somebody forwarded,
   // so unlike the reset page it keeps you signed in.
-  it("changes it, clears the fields, and leaves you signed in", async () => {
+  it("changes it, closes, and leaves you signed in with nothing left in the boxes", async () => {
     render(<PasswordCard />);
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
     await fill("correct horse", "correct horse");
     await userEvent.click(screen.getByRole("button", { name: "Update password" }));
 
     expect(updateUser).toHaveBeenCalledWith({ password: "correct horse" });
-    await waitFor(() => expect(screen.getByLabelText("New password")).toHaveValue(""));
+    await waitFor(() => expect(screen.queryByLabelText("New password")).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
+    expect(screen.getByLabelText("New password")).toHaveValue("");
     expect(screen.getByLabelText("Confirm new password")).toHaveValue("");
     expect(signOut).not.toHaveBeenCalled();
   });
@@ -57,6 +62,7 @@ describe("PasswordCard", () => {
   it("shows what Supabase refused", async () => {
     updateUser.mockResolvedValue({ error: { message: "New password should be different" } });
     render(<PasswordCard />);
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
     await fill("same-as-before", "same-as-before");
     await userEvent.click(screen.getByRole("button", { name: "Update password" }));
     expect(await screen.findByText("New password should be different")).toBeInTheDocument();
@@ -73,6 +79,7 @@ describe("PasswordCard", () => {
       },
     });
     render(<PasswordCard />);
+    await userEvent.click(screen.getByRole("button", { name: "Change password" }));
     await fill("correct horse", "correct horse");
     await userEvent.click(screen.getByRole("button", { name: "Update password" }));
 

@@ -171,6 +171,10 @@ export async function listConnections(
  * looking for a row that is on their screen.
  */
 export async function loadConnection(ctx: ToolContext, id: string): Promise<ToolConnection | null> {
+  // An agent told not to use this one (0136) is told it does not exist: the
+  // manifest never named it, so a model that has its id remembered it from
+  // somewhere else.
+  if ((await connectionsOffFor(ctx)).has(id)) return null;
   const { data, error } = await ctx.db
     .from("tool_connections")
     .select(SELECT)
@@ -180,6 +184,47 @@ export async function loadConnection(ctx: ToolContext, id: string): Promise<Tool
     .maybeSingle();
   if (error) throw new Error(`could not load connection: ${error.message}`);
   return data ? normalise(data as Record<string, unknown>) : null;
+}
+
+/** What an agent was told not to use (0136): the browser, and connections by id. */
+export type AgentToolsOff = { browser: boolean; connections: Set<string> };
+
+/**
+ * One agent's switches, read through whichever client the turn has. Best
+ * effort: a read that fails turns nothing off, which is every agent as it was
+ * before the switches existed.
+ */
+export async function agentToolsOff(
+  db: ToolContext["db"],
+  agentId: string,
+): Promise<AgentToolsOff> {
+  try {
+    const { data, error } = await db
+      .from("agents")
+      .select("browser_off, connections_off")
+      .eq("id", agentId)
+      .maybeSingle();
+    if (error || !data) return { browser: false, connections: new Set() };
+    const row = data as { browser_off?: boolean | null; connections_off?: string[] | null };
+    return {
+      browser: row.browser_off === true,
+      connections: new Set(Array.isArray(row.connections_off) ? row.connections_off : []),
+    };
+  } catch {
+    return { browser: false, connections: new Set() };
+  }
+}
+
+/** Read once per turn: a tool context is one turn, and its agent does not change in it. */
+const offByContext = new WeakMap<ToolContext, Promise<Set<string>>>();
+
+export function connectionsOffFor(ctx: ToolContext): Promise<Set<string>> {
+  let found = offByContext.get(ctx);
+  if (!found) {
+    found = agentToolsOff(ctx.db, ctx.agentId).then((off) => off.connections);
+    offByContext.set(ctx, found);
+  }
+  return found;
 }
 
 /** What one connection is called in the manifest, and how it is reached. */

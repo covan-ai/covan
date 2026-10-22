@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompletionUsage } from "../completion";
 import type { RoutineEnv } from "../../types";
 
@@ -197,6 +198,58 @@ export interface Entitlements {
    * and a caller leaves the credits figure out rather than inventing one.
    */
   quote?(usd: number): number;
+
+  /**
+   * Buying credits and the settings around it (A15): auto top-up, the
+   * low-balance warning, the card on file, the invoices. The hosted build's,
+   * through its payment provider; absent everywhere else, where the screen
+   * leaves those rows out rather than offering a card nobody can charge.
+   */
+  billing?: Billing;
+}
+
+/** What Settings › Usage and billing shows about paying, for one workspace. */
+export type BillingSettings = {
+  /**
+   * Buys `amount` credits when the balance drops below `below`. `available`
+   * is false until the provider can charge a saved card outside a
+   * subscription; the switch is then shown off and disabled ("Coming soon").
+   */
+  autoTopUp: { available: boolean; enabled: boolean; below: number; amount: number };
+  /** Everyone is told when the balance drops below `below`. */
+  lowBalance: { enabled: boolean; below: number };
+  card: { brand: string; last4: string } | null;
+};
+
+export type BillingSettingsPatch = {
+  autoTopUp?: { enabled?: boolean; below?: number; amount?: number };
+  lowBalance?: { enabled?: boolean; below?: number };
+};
+
+export type BillingInvoice = {
+  id: string;
+  /** ISO timestamp of the purchase. */
+  at: string;
+  credits: number;
+  /** As the provider printed it, "$25.00". */
+  total: string | null;
+  status: "paid" | "refunded" | "pending";
+};
+
+/**
+ * Every method takes the caller's own client, so the hosted build's policies
+ * decide who reads and who changes what — an admin, as for the ledger.
+ */
+export interface Billing {
+  settings(db: SupabaseClient, workspaceId: string): Promise<BillingSettings>;
+  updateSettings(
+    db: SupabaseClient,
+    workspaceId: string,
+    patch: BillingSettingsPatch,
+  ): Promise<BillingSettings>;
+  invoices(db: SupabaseClient, workspaceId: string): Promise<BillingInvoice[]>;
+  /** Where the invoice's PDF can be fetched now, or null when it is not one of theirs. */
+  invoicePdfUrl(db: SupabaseClient, workspaceId: string, invoiceId: string): Promise<string | null>;
 }
 
 /** `quote` as a plain function, or null where there is none — one `if` per route. */

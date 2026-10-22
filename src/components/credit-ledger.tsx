@@ -1,24 +1,34 @@
-import { useQuery } from "@tanstack/react-query";
-import { api, type CreditLedgerEntry } from "@/lib/api-client";
+import { useState } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { toast } from "sonner";
+import { Chip } from "@/components/chip";
+import { DataTable } from "@/components/data-table";
+import { SectionLabel } from "@/components/section";
+import { Button } from "@/components/ui/button";
+import { api, ApiError, type CreditLedgerEntry } from "@/lib/api-client";
 import { useIsHosted } from "@/lib/credits";
-import { SectionCard, EmptyState } from "@/components/section-card";
+import { ledgerWhen } from "@/lib/day-groups";
 
-/** How each kind of row reads to somebody holding the invoice. */
+/** How each kind of row reads when nothing names what it was for. */
 const KIND: Record<CreditLedgerEntry["kind"], string> = {
   signup_grant: "Free credits",
   grant: "Credits added",
+  purchase: "Bought credits",
+  refund: "Refund",
   completion: "Model",
   embedding: "Indexing and search",
   transcription: "Dictation",
   composio_call: "Connected app",
   composio_search: "Connected app search",
   browser_task: "Browser task",
+  browser_session: "Browser session",
 };
 
-/** Why a completion happened, when the row says. Anything else reads as the kind. */
+/** Why a completion happened, when the row says. */
 const PURPOSE: Record<string, string> = {
   reply: "Reply",
-  title: "Conversation title",
+  title: "Thread title",
   follow_ups: "Suggested questions",
   persona: "Persona draft",
   brainstorm: "Brainstorm",
@@ -31,95 +41,198 @@ const PURPOSE: Record<string, string> = {
   reading: "Reading connected-app results",
 };
 
-function label(e: CreditLedgerEntry): string {
+/** "Bought 10,000 credits", "Persona draft", the note a grant was written with. */
+function what(e: CreditLedgerEntry): string {
+  if (e.kind === "purchase")
+    return `Bought ${Math.round(e.credits).toLocaleString("en-US")} credits`;
+  if ((e.kind === "grant" || e.kind === "signup_grant") && e.note) return e.note;
   if (e.kind === "completion" && e.purpose && PURPOSE[e.purpose]) return PURPOSE[e.purpose];
   return KIND[e.kind] ?? e.kind;
 }
 
 /** Two decimals under one credit, whole credits above — a credit is the unit, not a rounding. */
-function amount(n: number): string {
-  const abs = Math.abs(n);
-  const shown = abs >= 1 ? abs.toFixed(abs >= 100 ? 0 : 1) : abs.toFixed(2);
-  return `${n > 0 ? "+" : n < 0 ? "−" : ""}${shown === "0.00" ? "<0.01" : shown}`;
+function amount(v: number): string {
+  const abs = Math.abs(v);
+  const shown =
+    abs >= 100
+      ? Math.round(abs).toLocaleString("en-US")
+      : abs >= 1
+        ? abs.toFixed(1).replace(/\.0$/, "")
+        : abs.toFixed(2);
+  return `${v > 0 ? "+" : v < 0 ? "−" : ""}${shown === "0.00" ? "<0.01" : shown}`;
 }
 
+function Entry({ e }: { e: CreditLedgerEntry }) {
+  const why = e.kind === "completion" && e.purpose && e.purpose !== "reply" ? what(e) : null;
+  const suffix = why ? <span className="text-muted-foreground"> · {why}</span> : null;
+  if (e.routineId && e.routineName) {
+    return (
+      <span>
+        <Link
+          to="/routines/$routineId"
+          params={{ routineId: e.routineId }}
+          className="underline-offset-4 hover:underline"
+        >
+          {e.routineName}
+        </Link>
+        {suffix}
+      </span>
+    );
+  }
+  if (e.sessionTitle && e.sessionId && e.agentId) {
+    return (
+      <span>
+        <Link
+          to="/agents/$agentId/chat"
+          params={{ agentId: e.agentId }}
+          search={{ s: e.sessionId }}
+          className="underline-offset-4 hover:underline"
+        >
+          {e.sessionTitle}
+        </Link>
+        {suffix}
+      </span>
+    );
+  }
+  // Somebody's private thread: its cost is the workspace's, its title is not.
+  if (e.sessionId && !e.sessionTitle) {
+    return (
+      <span>
+        A private thread<span className="text-muted-foreground"> · {what(e)}</span>
+      </span>
+    );
+  }
+  return <span>{what(e)}</span>;
+}
+
+const firstName = (name: string) => name.split(/\s+/)[0] || name;
+
 /**
- * What the workspace's credits went on, most recent first, for an admin.
+ * Settings › Usage and billing › Ledger (A15): every charge and grant, newest
+ * first, with what it was for — the thread or routine, its agent, who started
+ * it — for an admin. Older rows a page at a time; the whole of it as CSV.
  *
- * **By kind and model, never by person.** The API names the columns it reads
- * and the one that says who caused a charge is not among them — the policy
- * behind the ledger grants it to no reader at all. A workspace's figures are
- * never reported per person (see `0032`), and this list is no exception.
- *
- * Hosted only. A self-hosted install keeps no ledger, and the API answers an
- * empty list there without asking; this renders nothing in that case rather
- * than an empty card about a feature that does not exist.
+ * Hosted only. A self-hosted install keeps no ledger, and this renders nothing
+ * there rather than an empty table about a feature that does not exist.
  */
 export function CreditLedger() {
   const hosted = useIsHosted();
-  const { data, isLoading } = useQuery({
+  const [exporting, setExporting] = useState(false);
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ["usage", "credit-ledger"],
-    queryFn: () => api.creditLedger(50),
+    queryFn: ({ pageParam }) => api.creditLedger({ limit: 50, before: pageParam }),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (last) => (last.hasMore ? last.entries.at(-1)?.id : undefined),
     enabled: hosted === true,
   });
 
   if (hosted !== true) return null;
+  const entries = data?.pages.flatMap((p) => p.entries) ?? [];
 
-  const entries = data?.entries ?? [];
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      await api.creditLedgerCsv();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't export the ledger");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
-    <>
-      <h3 className="mt-10 text-sm font-medium">Where the credits went</h3>
-      <SectionCard padded={false} className="mt-3 overflow-hidden">
-        {isLoading ? (
-          <p className="px-5 py-8 text-center text-sm text-muted-foreground">Loading…</p>
-        ) : entries.length === 0 ? (
-          <EmptyState
-            title="Nothing yet"
-            description="Every charge and every top-up shows up here as it happens."
-          />
-        ) : (
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-hairline text-left text-muted-foreground">
-                <th className="px-5 py-2 font-normal">When</th>
-                <th className="px-2 py-2 font-normal">What</th>
-                <th className="px-2 py-2 font-normal">Model</th>
-                <th className="px-5 py-2 text-right font-normal">Credits</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-hairline">
-              {entries.map((e) => (
-                <tr key={e.id}>
-                  <td className="whitespace-nowrap px-5 py-2 text-muted-foreground">
-                    {new Date(e.at).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </td>
-                  <td className="px-2 py-2">{label(e)}</td>
-                  <td className="px-2 py-2 text-muted-foreground">{e.model ?? "—"}</td>
-                  <td
-                    className={
-                      e.credits > 0
-                        ? "px-5 py-2 text-right font-medium text-foreground"
-                        : "px-5 py-2 text-right text-muted-foreground"
-                    }
-                  >
+    <section className="mt-10">
+      <SectionLabel
+        action={
+          <button
+            type="button"
+            onClick={() => void exportCsv()}
+            disabled={exporting || entries.length === 0}
+            className="text-meta font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            {exporting ? "Exporting…" : "Export CSV"}
+          </button>
+        }
+      >
+        Ledger
+      </SectionLabel>
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <DataTable
+            label="Credit ledger"
+            rows={entries}
+            rowKey={(e) => String(e.id)}
+            empty={
+              <p className="text-sm text-muted-foreground">
+                Every charge and every purchase shows up here as it happens.
+              </p>
+            }
+            columns={[
+              {
+                key: "when",
+                header: "When",
+                className: "whitespace-nowrap",
+                cell: (e) => (
+                  <span className="text-muted-foreground">{ledgerWhen(Date.parse(e.at))}</span>
+                ),
+              },
+              { key: "entry", header: "Entry", cell: (e) => <Entry e={e} /> },
+              {
+                key: "agent",
+                header: "Agent",
+                hideBelow: "md",
+                cell: (e) =>
+                  e.agentName ? (
+                    <Chip>{e.agentName}</Chip>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  ),
+              },
+              {
+                key: "by",
+                header: "By",
+                hideBelow: "md",
+                cell: (e) => (
+                  <span className="text-muted-foreground">
+                    {e.by?.kind === "routine"
+                      ? "Routine"
+                      : e.by?.kind === "person"
+                        ? firstName(e.by.name)
+                        : "—"}
+                  </span>
+                ),
+              },
+              {
+                key: "credits",
+                header: "Credits",
+                num: true,
+                cell: (e) => (
+                  <span className={e.credits > 0 ? "font-medium" : undefined}>
                     {amount(e.credits)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </SectionCard>
-      <p className="mt-3 text-xs text-muted-foreground">
-        The last fifty charges and top-ups. A browser task appears twice: a hold when it starts, and
-        the difference once the provider says what it really cost.
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </div>
+      )}
+      {hasNextPage && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-2"
+          disabled={isFetchingNextPage}
+          onClick={() => void fetchNextPage()}
+        >
+          {isFetchingNextPage ? "Loading…" : "Show older"}
+        </Button>
+      )}
+      <p className="mt-3 text-meta text-muted-foreground">
+        A browser session appears twice: a hold when it starts, and the difference once the provider
+        says what it really cost. A private thread&rsquo;s cost is listed; its title is not.
       </p>
-    </>
+    </section>
   );
 }

@@ -36,8 +36,6 @@ const message = (over: Partial<Message> = {}): Message => ({
 const base = {
   message: message(),
   streamTail: null,
-  agentName: "Support Insights",
-  agentEmoji: "📊",
   time: "13:30",
   busy: false,
   model: "gpt-4.1",
@@ -180,16 +178,12 @@ describe("AnswerTurn", () => {
    * at the same time — the per-message clock, the open step trail, the
    * separate line of dots.
    */
-  it("says who is answering, once, above the answer", () => {
-    render(<AnswerTurn {...base} />);
-    expect(screen.getByText("Support Insights")).toBeInTheDocument();
-  });
-
-  it("puts the time in that header rather than in the action strip", () => {
+  it("has no byline, and keeps the time in the action strip", () => {
+    // A2: the agent is named in the bar over the page, and the reply starts
+    // at the margin the questions are measured from.
     const { container } = render(<AnswerTurn {...base} />);
-    const header = container.querySelector("[data-part='byline']");
-    expect(header).toHaveTextContent("Support Insights");
-    expect(header).toHaveTextContent("13:30");
+    expect(container.querySelector("[data-part='byline']")).toBeNull();
+    expect(container.querySelector("[data-part='actions']")).toHaveTextContent("13:30");
   });
 
   it("leaves the actions on screen instead of waiting for a mouse", () => {

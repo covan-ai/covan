@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { SectionCard } from "@/components/section-card";
+import { Field } from "@/components/field";
+import { Chip } from "@/components/chip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -46,45 +47,44 @@ export function EmailCard({ email }: { email: string | null | undefined }) {
     setNext("");
   };
 
+  // A16's Email field: the address you sign in with, and a new one beside it.
   return (
-    <SectionCard className="mt-6 space-y-5">
-      <div className="space-y-1">
-        <div className="text-title font-semibold">Email address</div>
-        <p className="text-meta text-muted-foreground">
-          You sign in with <span className="text-foreground">{email ?? "…"}</span>.
-        </p>
+    <Field label="Email" help="Sign-in and notifications go here.">
+      <div className="flex flex-wrap items-center gap-2.5 pt-1.5">
+        <span className="text-sm">{email ?? "…"}</span>
+        <Chip>Verified</Chip>
       </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="new-email">New address</Label>
-        <Input
-          id="new-email"
-          type="email"
-          autoComplete="email"
-          value={next}
-          onChange={(e) => {
-            setNext(e.target.value);
-            setError(null);
-          }}
-        />
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      <div className="mt-3 max-w-[420px] space-y-1.5">
+        <Label htmlFor="new-email" className="text-meta text-muted-foreground">
+          New address
+        </Label>
+        <div className="flex gap-2">
+          <Input
+            id="new-email"
+            type="email"
+            autoComplete="email"
+            value={next}
+            onChange={(e) => {
+              setNext(e.target.value);
+              setError(null);
+            }}
+          />
+          <Button variant="secondary" onClick={send} disabled={sending || !valid}>
+            {sending ? "Sending…" : "Change address"}
+          </Button>
+        </div>
+        {error ? <p className="text-meta text-destructive">{error}</p> : null}
         {sentTo ? (
-          <p className="text-xs text-muted-foreground" role="status">
+          <p className="text-meta text-muted-foreground" role="status">
             We sent a link to {email ?? "your current address"} and to {sentTo}. Click both; the
             change happens after the second.
           </p>
         ) : (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             We send a link to both addresses, and nothing changes until both are clicked.
           </p>
         )}
       </div>
-
-      <div className="flex justify-end border-t border-hairline pt-4">
-        <Button onClick={send} disabled={sending || !valid}>
-          {sending ? "Sending…" : "Change address"}
-        </Button>
-      </div>
-    </SectionCard>
+    </Field>
   );
 }

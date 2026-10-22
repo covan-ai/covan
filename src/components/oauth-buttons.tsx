@@ -69,6 +69,7 @@ const PROVIDER: Record<OAuthProvider, { label: string; Mark: (props: MarkProps) 
 export function OAuthButtons({
   remember,
   onError,
+  consent = true,
 }: {
   /**
    * Settled before leaving, for the reason sign-in settles it before the
@@ -78,6 +79,12 @@ export function OAuthButtons({
    */
   remember: boolean;
   onError: (message: string) => void;
+  /**
+   * The sentence that continuing agrees to the Terms. On by default: a
+   * provider's sign-in can make an account on any page that offers it, so a
+   * page leaves it out only where the card already says it (sign-up).
+   */
+  consent?: boolean;
 }) {
   const [providers, setProviders] = useState<OAuthProvider[]>([]);
   const [leaving, setLeaving] = useState<OAuthProvider | null>(null);
@@ -111,8 +118,8 @@ export function OAuthButtons({
   }
 
   return (
-    <div className="space-y-4">
-      <div className="space-y-2">
+    <div>
+      <div className="flex flex-col gap-2">
         {providers.map((provider) => {
           const { label, Mark } = PROVIDER[provider];
           return (
@@ -120,33 +127,36 @@ export function OAuthButtons({
               key={provider}
               type="button"
               variant="secondary"
-              className="w-full"
+              size="lg"
+              className="w-full gap-2.5"
               disabled={leaving !== null}
               onClick={() => void start(provider)}
             >
-              <Mark className="h-4 w-4" />
+              <Mark className="!size-[18px]" />
               {leaving === provider ? "Redirecting…" : `Continue with ${label}`}
             </Button>
           );
         })}
       </div>
 
-      <p className="text-center text-xs text-muted-foreground">
-        Continuing with {providers.map((p) => PROVIDER[p].label).join(" or ")} agrees to the{" "}
-        <LegalAnchor link={termsLink()} newTab>
-          Terms
-        </LegalAnchor>{" "}
-        and{" "}
-        <LegalAnchor link={privacyLink()} newTab>
-          Privacy Policy
-        </LegalAnchor>
-        .
-      </p>
+      {consent ? (
+        <p className="mt-3 mb-0 text-meta leading-[1.5] text-muted-foreground">
+          Continuing with {providers.map((p) => PROVIDER[p].label).join(" or ")} agrees to the{" "}
+          <LegalAnchor link={termsLink()} newTab>
+            Terms
+          </LegalAnchor>{" "}
+          and the{" "}
+          <LegalAnchor link={privacyLink()} newTab>
+            Privacy policy
+          </LegalAnchor>
+          .
+        </p>
+      ) : null}
 
-      <div className="flex items-center gap-3 text-xs text-micro-foreground">
-        <span className="h-px flex-1 bg-border" />
-        or with your email
-        <span className="h-px flex-1 bg-border" />
+      <div className="my-5 flex items-center gap-3 text-xs text-micro-foreground">
+        <span className="h-px flex-1 bg-hairline" />
+        or
+        <span className="h-px flex-1 bg-hairline" />
       </div>
     </div>
   );

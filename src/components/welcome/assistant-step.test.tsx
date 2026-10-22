@@ -1,72 +1,69 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AssistantStep } from "./assistant-step";
 
-const empty = { assistantName: null, assistantEmoji: null, assistantRole: null };
-
-function renderStep(over: Partial<Parameters<typeof AssistantStep>[0]> = {}) {
-  const onSubmit = vi.fn();
-  const onValidityChange = vi.fn();
+function renderStep(onSubmit = vi.fn()) {
   render(
-    <AssistantStep
-      formId="f"
-      firstName="Ada"
-      value={empty}
-      onSubmit={onSubmit}
-      onValidityChange={onValidityChange}
-      {...over}
-    />,
+    <>
+      <AssistantStep
+        formId="f"
+        workspaceName="Acme"
+        value={{ assistantName: null }}
+        onSubmit={onSubmit}
+      />
+      <button type="submit" form="f">
+        Create
+      </button>
+    </>,
   );
-  return { onSubmit, onValidityChange };
+  return onSubmit;
 }
 
 describe("AssistantStep", () => {
-  it("starts with the person's own assistant chosen and named", () => {
-    const { onValidityChange } = renderStep();
+  it("writes the persona from the jobs picked, until somebody edits it", async () => {
+    renderStep();
+    const persona = screen.getByLabelText("Persona");
+    expect((persona as HTMLTextAreaElement).value).toContain(
+      "answer customer questions using the documents in Knowledge",
+    );
 
-    const cards = screen.getAllByRole("radio", { name: /assistant|desk|scout|quill/i });
-    expect(cards[0]).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByLabelText("Name")).toHaveValue("Ada's assistant");
-    expect(onValidityChange).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole("button", { name: "Research the web" }));
+    expect((persona as HTMLTextAreaElement).value).toContain("research questions on the web");
+
+    await userEvent.clear(persona);
+    await userEvent.type(persona, "Mine.");
+    await userEvent.click(screen.getByRole("button", { name: "Reconcile numbers" }));
+    expect(persona).toHaveValue("Mine.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Rewrite" }));
+    expect((persona as HTMLTextAreaElement).value).toContain("check figures against each other");
   });
 
-  it("fills the name and the face from a ready-made assistant", async () => {
-    const { onSubmit } = renderStep();
-    const user = userEvent.setup();
+  it("shows the agent as the sidebar will", async () => {
+    renderStep();
+    await userEvent.type(screen.getByLabelText("Name"), "Support");
+    expect(screen.getByText("In the sidebar")).toBeInTheDocument();
+    expect(screen.getByText("Only you can use it until you share it.")).toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole("radio", { name: /scout/i }));
-    expect(screen.getByLabelText("Name")).toHaveValue("Scout");
-    expect(screen.getByRole("radio", { name: "Use 📊" })).toHaveAttribute("aria-checked", "true");
+  it("hands back the name, the mark, the jobs and the persona", async () => {
+    const onSubmit = renderStep();
+    await userEvent.type(screen.getByLabelText("Name"), "Support");
+    await userEvent.click(screen.getByRole("radio", { name: /fox/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    fireEvent.submit(screen.getByLabelText("Name").closest("form")!);
     expect(onSubmit).toHaveBeenCalledWith({
-      assistantName: "Scout",
-      assistantEmoji: "📊",
-      assistantRole: "scout",
+      assistantName: "Support",
+      assistantAvatar: "fox",
+      assistantJobs: ["answer-questions"],
+      persona: expect.stringContaining("You work for Acme."),
     });
   });
 
-  it("records a typed name as the person's own, and refuses an empty one", async () => {
-    const { onSubmit, onValidityChange } = renderStep();
-    const user = userEvent.setup();
-    const name = screen.getByLabelText("Name");
-
-    await user.clear(name);
-    expect(onValidityChange).toHaveBeenLastCalledWith(false);
-    fireEvent.submit(name.closest("form")!);
+  it("will not go on without a name", async () => {
+    const onSubmit = renderStep();
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
     expect(onSubmit).not.toHaveBeenCalled();
-
-    await user.type(name, "Atlas");
-    fireEvent.submit(name.closest("form")!);
-    expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({ assistantName: "Atlas", assistantRole: "custom" }),
-    );
-  });
-
-  it("resumes on what was recorded before", () => {
-    renderStep({ value: { assistantName: "Quill", assistantEmoji: "✍️", assistantRole: "quill" } });
-    expect(screen.getByRole("radio", { name: /quill/i })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByLabelText("Name")).toHaveValue("Quill");
   });
 });

@@ -2,13 +2,14 @@ import { cn } from "@/lib/utils";
 import { avatarSrc } from "@/lib/avatar-src";
 import { getInitials } from "@/lib/monogram";
 
-export type AvatarSize = 20 | 24 | 32 | 40 | 64;
+export type AvatarSize = 20 | 24 | 32 | 40 | 48 | 64;
 
 const BOX: Record<AvatarSize, string> = {
   20: "size-5 text-[9px]",
   24: "size-6 text-[11px]",
   32: "size-8 text-[12px]",
   40: "size-10 text-[14px]",
+  48: "size-12 text-[16px]",
   64: "size-16 text-[20px]",
 };
 

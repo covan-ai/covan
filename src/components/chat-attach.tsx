@@ -1,67 +1,44 @@
-import { useRef, useState, type RefObject } from "react";
-import { ChevronDown, FileText, Plus, X } from "lucide-react";
-import { Chip } from "@/components/section-card";
+import { useState, type RefObject } from "react";
+import { ChevronDown, FileText, X } from "lucide-react";
+import { Chip } from "@/components/chip";
 import { ACCEPT } from "@/lib/uploads";
 import type { ChatUploads } from "@/lib/use-chat-uploads";
 import { cn } from "@/lib/utils";
 
 /**
- * The attach control in the chat composer.
+ * The file picker behind the composer's "+ › Attach a file" (A2), and behind
+ * the empty thread's "Upload a document": one hidden input, opened by
+ * whoever holds its ref.
  *
- * Hidden entirely from a viewer rather than disabled. Uploading is a write to
- * what the workspace shares and `can_write_in_workspace` refuses it, so the
- * control would be a promise the database breaks — the same reasoning that
- * replaces the Knowledge tab's upload section with a sentence.
- *
- * Split from `ChatReceipts` because the two sit in different parts of the
- * composer: the button belongs on the bottom row beside send, the receipts
- * belong above the text being typed.
+ * Not drawn at all for a viewer. Uploading is a write to what the workspace
+ * shares and `can_write_in_workspace` refuses it, so the picker would be a
+ * promise the database breaks.
  */
-export function ChatAttach({
+export function AttachInput({
   uploads,
   canWrite,
   inputRef,
 }: {
   uploads: ChatUploads;
   canWrite: boolean;
-  /**
-   * The picker, for a caller that wants to open it from somewhere else — the
-   * empty screen's "Upload a document" button opens this same input rather
-   * than mounting a second one. Optional: the button here is its own caller.
-   */
-  inputRef?: RefObject<HTMLInputElement | null>;
+  inputRef: RefObject<HTMLInputElement | null>;
 }) {
-  const ownRef = useRef<HTMLInputElement>(null);
-  const ref = inputRef ?? ownRef;
-
   if (!canWrite) return null;
-
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => ref.current?.click()}
-        className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        aria-label="Attach a document"
-        data-coach="attach"
-      >
-        <Plus className="h-[18px] w-[18px]" />
-      </button>
-      <input
-        ref={ref}
-        type="file"
-        multiple
-        accept={ACCEPT}
-        aria-label="Choose documents to attach"
-        className="hidden"
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          // Reset first: picking the same file twice in a row must still fire.
-          e.target.value = "";
-          if (files.length > 0) void uploads.addFiles(files);
-        }}
-      />
-    </>
+    <input
+      ref={inputRef}
+      type="file"
+      multiple
+      accept={ACCEPT}
+      aria-label="Choose documents to attach"
+      className="hidden"
+      onChange={(e) => {
+        const files = Array.from(e.target.files ?? []);
+        // Reset first: picking the same file twice in a row must still fire.
+        e.target.value = "";
+        if (files.length > 0) void uploads.addFiles(files);
+      }}
+    />
   );
 }
 
@@ -99,10 +76,10 @@ export function ChatReceipts({ uploads }: { uploads: ChatUploads }) {
           )}
           {r.state === "done" &&
             (r.indexed ? (
-              <Chip tone="on">Indexed</Chip>
+              <Chip>Indexed</Chip>
             ) : (
               <span title="No embeddings, so no passage in it can be matched in chat.">
-                <Chip tone="neutral">Not indexed</Chip>
+                <Chip>Not indexed</Chip>
               </span>
             ))}
           {r.state === "failed" && <span className="text-destructive">{r.reason}</span>}

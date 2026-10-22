@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ChatAttach, ChatReceipts } from "./chat-attach";
+import { AttachInput, ChatReceipts } from "./chat-attach";
 import type { ChatUploadReceipt, ChatUploads } from "@/lib/use-chat-uploads";
 
 const receipt = (over: Partial<ChatUploadReceipt> = {}): ChatUploadReceipt => ({
@@ -31,17 +31,19 @@ function uploadsWith(
   };
 }
 
-describe("ChatAttach", () => {
-  it("offers no attach control to a viewer, who cannot write to the workspace", () => {
-    render(<ChatAttach uploads={uploadsWith()} canWrite={false} />);
+describe("AttachInput", () => {
+  it("draws no picker for a viewer, who cannot write to the workspace", () => {
+    const ref = { current: null as HTMLInputElement | null };
+    render(<AttachInput uploads={uploadsWith()} canWrite={false} inputRef={ref} />);
 
-    expect(screen.queryByRole("button", { name: /attach/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/choose documents/i)).not.toBeInTheDocument();
   });
 
   it("hands the picked files to the uploader", async () => {
     const user = userEvent.setup();
     const uploads = uploadsWith();
-    render(<ChatAttach uploads={uploads} canWrite />);
+    const ref = { current: null as HTMLInputElement | null };
+    render(<AttachInput uploads={uploads} canWrite inputRef={ref} />);
 
     const input = screen.getByLabelText(/choose documents/i);
     await user.upload(input, new File(["hello"], "notes.md", { type: "text/markdown" }));
@@ -51,11 +53,13 @@ describe("ChatAttach", () => {
 
   it("exposes its picker through the ref it is given", () => {
     const ref = { current: null as HTMLInputElement | null };
-    render(<ChatAttach uploads={uploadsWith()} canWrite inputRef={ref} />);
+    render(<AttachInput uploads={uploadsWith()} canWrite inputRef={ref} />);
 
     expect(ref.current).toBe(screen.getByLabelText(/choose documents/i));
   });
+});
 
+describe("ChatReceipts", () => {
   it("names an uploaded document and says it is retrievable", () => {
     render(<ChatReceipts uploads={uploadsWith([receipt()])} />);
 

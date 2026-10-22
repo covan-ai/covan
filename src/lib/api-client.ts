@@ -897,6 +897,9 @@ export const api = {
           | "mode"
           | "temperature"
           | "reasoningEffort"
+          | "webSearch"
+          | "browserOff"
+          | "connectionsOff"
         >
       >,
     ): Promise<Agent> => request("PATCH", `/agents/${id}`, patch),
@@ -915,6 +918,7 @@ export const api = {
       byBundle: Record<string, { replies: number }>;
       /** Its replies in the window, and the share not grounded in a passage (0134). */
       answers: number;
+      grounding?: { covered: number; fallback: number; ungrounded: number };
       notCoveredPct: number | null;
     }> => request("GET", `/agents/${id}/knowledge-usage?days=${days}`),
     /**
@@ -1680,9 +1684,36 @@ export const api = {
     confirm: (token: string): Promise<void> => request("POST", "/address-confirmations", { token }),
   },
   usage: (): Promise<UsageResponse> => request("GET", "/usage"),
-  /** The active workspace's recent charges and grants. Admins only, by policy. */
-  creditLedger: (limit = 50): Promise<{ entries: CreditLedgerEntry[] }> =>
-    request("GET", `/usage/credits/ledger?limit=${limit}`),
+  /**
+   * The active workspace's charges and grants, newest first, each with what
+   * it was for. Admins only, by policy. `before` is the last id already shown.
+   */
+  creditLedger: (
+    opts: { limit?: number; before?: number } = {},
+  ): Promise<{ entries: CreditLedgerEntry[]; hasMore: boolean }> =>
+    request(
+      "GET",
+      `/usage/credits/ledger?limit=${opts.limit ?? 50}${opts.before ? `&before=${opts.before}` : ""}`,
+    ),
+  /** "Export CSV": the ledger as a file, handed to the browser. */
+  creditLedgerCsv: (): Promise<void> => downloadArchive("/usage/credits/ledger?format=csv"),
+  /** "This month by agent" and "N used this month". Admins only (403 otherwise). */
+  usageMonth: (): Promise<UsageMonthByAgent | { available: false }> =>
+    request("GET", "/usage/credits/month"),
+  /**
+   * Paying for credits (A15): the hosted build's. `available: false` on an
+   * install that sells none, and the screen leaves those rows out.
+   */
+  billing: {
+    settings: (): Promise<({ available: true } & BillingSettings) | { available: false }> =>
+      request("GET", "/billing/settings"),
+    updateSettings: (patch: BillingSettingsPatch): Promise<{ available: true } & BillingSettings> =>
+      request("PATCH", "/billing/settings", patch),
+    invoices: (): Promise<{ available: true; invoices: BillingInvoice[] } | { available: false }> =>
+      request("GET", "/billing/invoices"),
+    invoicePdfUrl: (id: string): Promise<{ url: string }> =>
+      request("GET", `/billing/invoices/${encodeURIComponent(id)}/pdf`),
+  },
   workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
   coverage: {
     /**
@@ -2134,7 +2165,11 @@ export type CreditSnapshot =
       floor?: number;
     };
 
-/** One row of the workspace's credit ledger. Never names who caused it. */
+/**
+ * One row of the workspace's credit ledger, and what it was for. `by` is who
+ * started the thread a charge belongs to — never read from the ledger's own
+ * `user_id`, which no client may select.
+ */
 export type CreditLedgerEntry = {
   id: number;
   /** ISO timestamp. */
@@ -2142,17 +2177,61 @@ export type CreditLedgerEntry = {
   kind:
     | "signup_grant"
     | "grant"
+    | "purchase"
+    | "refund"
     | "completion"
     | "embedding"
     | "transcription"
     | "composio_call"
     | "composio_search"
-    | "browser_task";
+    | "browser_task"
+    | "browser_session";
   model: string | null;
   purpose: string | null;
   /** Positive for a grant, negative for a charge. */
   credits: number;
   balanceAfter: number;
+  note?: string | null;
+  sessionId?: string | null;
+  /** Absent for somebody's private thread, or one that is gone. */
+  sessionTitle?: string;
+  routineId?: string;
+  routineName?: string;
+  agentId?: string;
+  agentName?: string;
+  agentAvatar?: string | null;
+  by?: { kind: "person"; name: string } | { kind: "routine" };
+};
+
+/** This month so far, by agent, priced from what the models were paid. */
+export type UsageMonthByAgent = {
+  available: true;
+  /** `YYYY-MM-01`. */
+  since: string;
+  unit: "credits" | "usd";
+  spent: number;
+  byAgent: Array<{ agentId: string; name: string; avatar: string | null; amount: number }>;
+};
+
+export type BillingSettings = {
+  /** `available` is false until the provider can charge a saved card ("Coming soon"). */
+  autoTopUp: { available: boolean; enabled: boolean; below: number; amount: number };
+  lowBalance: { enabled: boolean; below: number };
+  card: { brand: string; last4: string } | null;
+};
+
+export type BillingSettingsPatch = {
+  autoTopUp?: { enabled?: boolean; below?: number; amount?: number };
+  lowBalance?: { enabled?: boolean; below?: number };
+};
+
+export type BillingInvoice = {
+  id: string;
+  /** ISO timestamp. */
+  at: string;
+  credits: number;
+  total: string | null;
+  status: "paid" | "refunded" | "pending";
 };
 
 export type UsageTotals = {

@@ -5,16 +5,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
 
 /**
- * The first run, from the first intro screen to the handoff into the chat.
- *
- * The router is stood in for: `search` is what the URL asks for, and
- * `navigate` is what the screen asked the URL to become. The API is stood in
- * for by module; the query cache is real, so the optimistic writes the screen
- * makes into it are what the next render reads, as in a browser.
+ * The first run (A14, A29): the workspace, the first agent, its first
+ * documents. The router is stood in for — `search` is what the URL asks for
+ * and `navigate` what the screen asked it to become — and so is the API; the
+ * query cache is real, so the optimistic writes are what the next render reads.
  */
 
 const navigate = vi.fn();
-let search: { step?: string } = {};
+let search: { step?: string; agent?: string; s?: string } = {};
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: { component: () => React.ReactElement }) => ({
     ...options,
@@ -26,25 +24,54 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const me = vi.fn();
-const onboardingGet = vi.fn();
-const update = vi.fn();
-const finish = vi.fn();
-const complete = vi.fn();
-const incoming = vi.fn();
-const events = vi.fn();
+const h = vi.hoisted(() => ({
+  me: vi.fn(),
+  onboardingGet: vi.fn(),
+  update: vi.fn(),
+  finish: vi.fn(),
+  complete: vi.fn(),
+  incoming: vi.fn(),
+  events: vi.fn(),
+  workspaceUpdate: vi.fn(),
+  metadata: {} as Record<string, unknown>,
+  /** What the session read waits on: the app reads it after /me is cached. */
+  sessionRead: Promise.resolve() as Promise<unknown>,
+}));
 vi.mock("@/lib/api-client", () => ({
   api: {
-    me,
-    onboarding: { get: onboardingGet, update, finish, complete, events },
-    invitations: { incoming },
-    feedback: { send: vi.fn() },
+    me: h.me,
+    onboarding: {
+      get: h.onboardingGet,
+      update: h.update,
+      finish: h.finish,
+      complete: h.complete,
+      events: h.events,
+    },
+    invitations: { incoming: h.incoming },
     workspaces: { create: vi.fn() },
-    workspace: { update: vi.fn() },
+    workspace: { update: h.workspaceUpdate },
   },
   getAccessToken: () => Promise.resolve("tok"),
-  assetSrc: (path: string) => (path ? `https://api.test${path}` : ""),
   ApiError: class ApiError extends Error {},
+}));
+vi.mock("@/lib/supabase/client", () => ({
+  supabase: {
+    auth: {
+      getSession: async () => {
+        await h.sessionRead;
+        return { data: { session: { user: { user_metadata: h.metadata } } } };
+      },
+    },
+  },
+}));
+vi.mock("@/lib/credits", () => ({ useIsHosted: () => true }));
+vi.mock("@/lib/agents-store", () => ({
+  useAgentsStore: () => ({
+    agents: [{ id: "a9", name: "Support", avatar: "headset", bundleIds: [] }],
+    createBundle: vi.fn(),
+    attachBundle: vi.fn(),
+    uploadToBundle: vi.fn(),
+  }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/accept-invitation", () => ({
@@ -63,12 +90,8 @@ const EMPTY: OnboardingState = {
   sessionId: null,
   answers: EMPTY_ANSWERS,
 };
-const NAMED: OnboardingState = {
-  ...EMPTY,
-  answers: { ...EMPTY_ANSWERS, assistantName: "Desk", assistantEmoji: "🧭", assistantRole: "desk" },
-};
 
-function meWith(onboarding: typeof EMPTY) {
+function meWith(onboarding: OnboardingState) {
   return { ...meFixture(), onboarding };
 }
 
@@ -87,175 +110,155 @@ async function renderWelcome() {
 beforeEach(() => {
   vi.clearAllMocks();
   search = {};
+  h.metadata = {};
+  h.sessionRead = Promise.resolve();
   sessionStorage.clear();
-  localStorage.clear();
-  me.mockResolvedValue(meWith(EMPTY));
-  incoming.mockResolvedValue([]);
-  update.mockResolvedValue(EMPTY);
-  events.mockResolvedValue({ accepted: 1 });
-  finish.mockResolvedValue({
-    completed: true,
-    agentId: "agent-9",
-    sessionId: "session-9",
-    created: true,
-  });
-  complete.mockResolvedValue({ completed: true });
+  h.me.mockResolvedValue(meWith(EMPTY));
+  h.incoming.mockResolvedValue([]);
+  h.update.mockResolvedValue(EMPTY);
+  h.events.mockResolvedValue({ accepted: 1 });
+  h.complete.mockResolvedValue({ completed: true });
+  h.workspaceUpdate.mockResolvedValue({});
 });
 
-describe("the intro", () => {
-  it("opens on the first screen, with one phrase in the brand colour and a way past it", async () => {
+describe("the first run", () => {
+  it("starts on naming the workspace, step 1 of 3, on the name given at sign-up", async () => {
+    h.metadata = { workspace_name: "Acme Robotics" };
     await renderWelcome();
 
-    await screen.findByRole("heading", { name: /answers from your own documents/i });
-    expect(screen.getByText("your own")).toHaveClass("text-brand");
-    expect(screen.getByRole("button", { name: "Skip intro" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Name your workspace" })).toBeInTheDocument();
+    expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Acme Robotics"));
   });
 
-  it("moves on and records the screen it moved to", async () => {
+  // In the app /me is already cached when the step mounts, so the name from
+  // the session arrives after the field is on screen; it was ignored.
+  it("takes the sign-up name even when it arrives after the field is on screen", async () => {
+    h.metadata = { workspace_name: "Acme Robotics" };
+    let release!: () => void;
+    h.sessionRead = new Promise<void>((r) => (release = r));
     await renderWelcome();
-    const user = userEvent.setup();
-    await screen.findByRole("heading", { name: /answers from/i });
 
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-
-    expect(update).toHaveBeenCalledWith({ lastStep: "intro:apps" });
-    expect(navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "/welcome", search: { step: "intro:apps" } }),
-    );
+    expect(await screen.findByLabelText("Name")).toHaveValue("Acme");
+    release();
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Acme Robotics"));
   });
 
-  it("skips to the first question", async () => {
+  it("moves on to the first agent once the workspace is named", async () => {
     await renderWelcome();
-    const user = userEvent.setup();
-    await screen.findByRole("heading", { name: /answers from/i });
+    const name = await screen.findByLabelText("Name");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Globex Robotics");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-    await user.click(screen.getByRole("button", { name: "Skip intro" }));
-
-    expect(update).toHaveBeenCalledWith({ lastStep: "assistant" });
-    expect(navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ search: { step: "assistant" } }),
-    );
-  });
-});
-
-describe("coming back", () => {
-  it("resumes on the screen that was open", async () => {
-    me.mockResolvedValue(meWith({ ...NAMED, lastStep: "purpose" }));
-    await renderWelcome();
-
-    await screen.findByRole("heading", { name: /what will it mostly do/i });
-  });
-
-  it("steps back to the last intro screen from the first question", async () => {
-    me.mockResolvedValue(meWith({ ...EMPTY, lastStep: "assistant" }));
-    await renderWelcome();
-    const user = userEvent.setup();
-    await screen.findByRole("heading", { name: /name your assistant/i });
-
-    await user.click(screen.getByRole("button", { name: "Back" }));
-
-    expect(update).toHaveBeenCalledWith({ lastStep: "intro:team" });
-    expect(navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ search: { step: "intro:team" } }),
-    );
-  });
-});
-
-describe("the questions", () => {
-  it("records the assistant's name and moves on", async () => {
-    search = { step: "assistant" };
-    await renderWelcome();
-    const user = userEvent.setup();
-    await screen.findByRole("heading", { name: /name your assistant/i });
-
-    await user.click(screen.getByRole("radio", { name: /quill/i }));
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-
-    expect(update).toHaveBeenCalledWith({
-      assistantName: "Quill",
-      assistantEmoji: "✍️",
-      assistantRole: "quill",
-      lastStep: "tools",
-    });
-    expect(navigate).toHaveBeenCalledWith(expect.objectContaining({ search: { step: "tools" } }));
-  });
-
-  it("will not continue past the tools without one, but will skip", async () => {
-    me.mockResolvedValue(meWith({ ...NAMED, lastStep: "tools" }));
-    await renderWelcome();
-    const user = userEvent.setup();
-    await screen.findByRole("heading", { name: /which tools/i });
-
-    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Skip for now" }));
-
-    expect(update).toHaveBeenCalledWith({ tools: [], lastStep: "purpose" });
-  });
-
-  it("asks about the team only when the team was chosen", async () => {
-    me.mockResolvedValue(meWith({ ...NAMED, lastStep: "mode" }));
-    await renderWelcome();
-    const user = userEvent.setup();
-    await screen.findByRole("heading", { name: /just you, or the team/i });
-
-    await user.click(screen.getByRole("radio", { name: /my team/i }));
-    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-
-    expect(update).toHaveBeenCalledWith({ mode: "team", lastStep: "team" });
-    expect(finish).not.toHaveBeenCalled();
-  });
-});
-
-describe("the end", () => {
-  it("makes the assistant once and opens its conversation", async () => {
-    me.mockResolvedValue(meWith({ ...NAMED, lastStep: "mode" }));
-    await renderWelcome();
-    const user = userEvent.setup();
-    await screen.findByRole("heading", { name: /just you, or the team/i });
-
-    await user.click(screen.getByRole("radio", { name: /just me/i }));
-    const button = screen.getByRole("button", { name: "Meet my assistant" });
-    await user.click(button);
-    await user.click(button);
-
-    await waitFor(() => expect(finish).toHaveBeenCalledTimes(1));
-    expect(finish).toHaveBeenCalledWith({ persona: expect.stringContaining("tutor") });
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          to: "/agents/$agentId/chat",
-          params: { agentId: "agent-9" },
-          search: { s: "session-9" },
-        }),
-      ),
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/welcome",
+        search: { step: "assistant" },
+        replace: true,
+      }),
     );
-    expect(sessionStorage.getItem("chat-kickoff:session-9")).toBe("1");
-    expect(complete).not.toHaveBeenCalled();
+    expect(h.workspaceUpdate).toHaveBeenCalledWith({ name: "Globex Robotics" });
   });
-});
 
-describe("an invited account", () => {
-  it("meets the invitation after the intro, and joining ends the run without an assistant", async () => {
-    incoming.mockResolvedValue([
-      { id: "inv-1", workspaceName: "Acme", inviterName: "Grace", role: "member" },
+  it("makes the agent with its mark and jobs, then asks for its documents", async () => {
+    search = { step: "assistant" };
+    h.me.mockResolvedValue(meWith({ ...EMPTY, lastStep: "assistant" }));
+    h.finish.mockResolvedValue({ completed: true, agentId: "a9", sessionId: "s9", created: true });
+    await renderWelcome();
+
+    expect(await screen.findByText("Step 2 of 3")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name"), "Support");
+    await userEvent.click(screen.getByRole("radio", { name: /owl/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Draft replies" }));
+    await userEvent.click(screen.getByRole("button", { name: "Create Support" }));
+
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/welcome",
+        search: { step: "first-docs", agent: "a9", s: "s9" },
+        replace: true,
+      }),
+    );
+    expect(h.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assistantName: "Support",
+        assistantAvatar: "owl",
+        assistantJobs: ["answer-questions", "draft-replies"],
+      }),
+    );
+    expect(h.finish).toHaveBeenCalledWith({
+      persona: expect.stringContaining("draft replies for the team to check and send"),
+    });
+  });
+
+  it("starts the first agent on the Standard tier where the install serves it", async () => {
+    search = { step: "assistant" };
+    h.me.mockResolvedValue({
+      ...meWith({ ...EMPTY, lastStep: "assistant" }),
+      models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"],
+    });
+    h.finish.mockResolvedValue({ completed: true, agentId: "a9", sessionId: "s9", created: true });
+    await renderWelcome();
+
+    expect(await screen.findByText("Step 2 of 3")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name"), "Support");
+    await userEvent.click(screen.getByRole("button", { name: "Create Support" }));
+
+    await waitFor(() =>
+      expect(h.finish).toHaveBeenCalledWith({
+        persona: expect.any(String),
+        model: "claude-sonnet-5",
+      }),
+    );
+  });
+
+  it("asks what the new agent should know, and opens it", async () => {
+    search = { step: "first-docs", agent: "a9", s: "s9" };
+    h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
+    await renderWelcome();
+
+    expect(
+      await screen.findByRole("heading", { name: "What should Support know?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Step 3 of 3")).toBeInTheDocument();
+    expect(screen.getByText(/earns the workspace 200 credits/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open Support" }));
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/agents/$agentId/chat",
+      params: { agentId: "a9" },
+      search: { s: "s9" },
+      replace: true,
+    });
+  });
+
+  it("sends a finished run without an agent in the address home", async () => {
+    h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true }));
+    await renderWelcome();
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/app", replace: true }));
+  });
+
+  it("saves and exits by finishing the run", async () => {
+    await renderWelcome();
+    await userEvent.click(await screen.findByRole("button", { name: "Save and exit" }));
+    await waitFor(() => expect(h.complete).toHaveBeenCalled());
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/app", replace: true }));
+  });
+
+  it("puts a waiting invitation first, outside the three steps", async () => {
+    h.incoming.mockResolvedValue([
+      {
+        id: "inv-1",
+        workspaceId: "w2",
+        workspaceName: "Globex",
+        inviterName: "Ada",
+        role: "member",
+      },
     ]);
-    search = { step: "invite-accept" };
     await renderWelcome();
 
-    await screen.findByRole("heading", { name: /you've been invited/i });
-    expect(screen.getByText("Acme")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Not now" })).toBeInTheDocument();
-  });
-
-  // 0115: no workspace yet. Its answers come from /onboarding rather than /me.
-  it("starts a workspace for an account that has none", async () => {
-    me.mockResolvedValue(null);
-    onboardingGet.mockResolvedValue({ ...EMPTY, lastStep: "workspace" });
-    await renderWelcome();
-
-    await screen.findByRole("heading", { name: /start your workspace/i });
-    expect(screen.getByLabelText("Workspace name")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "You've been invited" })).toBeInTheDocument();
+    expect(screen.queryByText(/Step \d of 3/)).not.toBeInTheDocument();
+    expect(screen.getByText("Globex")).toBeInTheDocument();
   });
 });

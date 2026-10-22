@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { forgetInvite, inviteFromFragment, stashInvite, stashedInviteToken } from "./invite-stash";
+import {
+  forgetInvite,
+  forgetInviteLink,
+  inviteFromFragment,
+  inviteLinkFromFragment,
+  stashInvite,
+  stashInviteLink,
+  stashedInviteLink,
+  stashedInviteToken,
+} from "./invite-stash";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -51,5 +60,22 @@ describe("inviteFromFragment", () => {
     expect(inviteFromFragment("")).toBeNull();
     expect(inviteFromFragment("#id=inv-1")).toBeNull();
     expect(inviteFromFragment("#access_token=x&refresh_token=y")).toBeNull();
+  });
+});
+
+describe("a workspace's link", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("is read from the fragment, and nothing else is", () => {
+    expect(inviteLinkFromFragment("#link=abc123")).toBe("abc123");
+    expect(inviteLinkFromFragment("#id=1&token=2")).toBeNull();
+  });
+
+  it("waits in this browser for eight days, then is gone", () => {
+    stashInviteLink("abc123", 0);
+    expect(stashedInviteLink(7 * 86_400_000)).toBe("abc123");
+    expect(stashedInviteLink(9 * 86_400_000)).toBeNull();
+    forgetInviteLink();
+    expect(stashedInviteLink(1)).toBeNull();
   });
 });

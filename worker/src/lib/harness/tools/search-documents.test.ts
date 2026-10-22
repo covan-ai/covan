@@ -15,6 +15,7 @@ vi.mock("../../entitlements", async (importOriginal) => ({
 const listConnections = vi.fn();
 vi.mock("../connections", () => ({
   listConnections: (...a: unknown[]) => listConnections(...a),
+  connectionsOffFor: async () => new Set<string>(),
 }));
 
 const { searchDocumentsTool, NO_PASSAGE_MATCHED } = await import("./search-documents");

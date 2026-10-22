@@ -21,6 +21,7 @@ import {
 import { sessionLabel } from "@/lib/session-label";
 import { ApiError } from "@/lib/api-error";
 import { cn } from "@/lib/utils";
+import { StatusDot } from "@/components/status-dot";
 
 /**
  * The person's browsers that may still be open (Task 3.2, ruling R48): the
@@ -64,7 +65,7 @@ const STALE_AFTER_ENDING = [
 function clock(at: string, now: number): string {
   const date = new Date(at);
   return date.toDateString() === new Date(now).toDateString()
-    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
     : date.toLocaleDateString();
 }
 
@@ -103,25 +104,15 @@ function stateOf(browser: OpenConversationBrowser): string {
   return "Nobody is using it";
 }
 
-/** The status square: the panel's chip, at row scale. Squares, not circles. */
+/** The status dot: the panel's, at row scale (DESIGN.md §12). */
 function Square({ tone }: { tone: "agent" | "person" | "idle" }) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "h-2 w-2 shrink-0 rounded-full",
-        tone === "agent"
-          ? "step-running"
-          : tone === "person"
-            ? "bg-brand"
-            : "bg-muted-foreground/40",
-      )}
-    />
+    <StatusDot state={tone === "agent" ? "running" : tone === "person" ? "waiting" : "done"} />
   );
 }
 
 const ROW =
-  "flex w-full items-center gap-3.5 rounded-lg border border-hairline bg-background px-4 py-3.5";
+  "flex min-h-[52px] w-full items-center gap-3.5 border-b border-hairline px-1 py-2 last:border-b-0";
 
 type Ending =
   { kind: "stop"; browser: OpenConversationBrowser } | { kind: "close"; takeover: OpenTakeover };
@@ -192,7 +183,7 @@ export function OpenBrowsersList({
 
   const list = (
     <>
-      <ul className="space-y-2">
+      <ul className="m-0 list-none p-0">
         {takeover && (
           <li key={takeover.id} className={ROW}>
             <Square tone="person" />

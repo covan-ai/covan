@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Menu, Plus } from "lucide-react";
 import { api } from "@/lib/api-client";
 import type { RoutineListItem } from "@/lib/routines-api";
 import { useAgentsStore } from "@/lib/agents-store";
+import { useShell } from "@/lib/shell";
 import { cronToShort } from "@/lib/cron-to-prose";
 import { routineDot, routineLine, statsLine } from "@/lib/routine-state";
 import { AgentMark } from "@/components/agent-mark";
@@ -24,13 +25,15 @@ export function RoutinesPane({
   agentId,
   selectedId,
   hrefFor,
-  newHref,
+  canCreate = true,
 }: {
   agentId?: string;
   selectedId?: string;
   hrefFor: (routine: RoutineListItem) => string;
-  newHref?: string;
+  /** The "+" to the editor (A28); off for a viewer. */
+  canCreate?: boolean;
 }) {
+  const shell = useShell();
   const { agents } = useAgentsStore();
   const [filter, setFilter] = useState<PaneFilter>("all");
   const { data: routines = [], isPending } = useQuery({
@@ -58,13 +61,27 @@ export function RoutinesPane({
       aria-label="Routines list"
       className="flex shrink-0 flex-col border-border bg-background max-lg:border-b lg:w-[340px] lg:border-r"
     >
-      <div className="flex h-12 items-center gap-2 border-b border-border pr-3 pl-4">
+      <div className="flex h-14 items-center gap-2 border-b border-border pr-3 pl-4 lg:h-12">
+        {/* The page has no top bar of its own (A7), so on a phone the way to
+            the menu is here. Under an agent, its bar already has one. */}
+        {agentId ? null : (
+          <button
+            type="button"
+            onClick={shell.openDrawer}
+            aria-label="Open the menu"
+            className="-ml-1.5 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface lg:hidden"
+          >
+            <Menu className="size-4" strokeWidth={1.75} />
+          </button>
+        )}
         <h2 className="m-0 text-lead font-semibold">Routines</h2>
         <span className="text-meta text-muted-foreground">{mine.length}</span>
-        {newHref && (
+        {canCreate && (
           <Link
-            to={newHref}
+            to="/routines/new"
+            search={agentId ? { agent: agentId } : {}}
             aria-label="New routine"
+            data-coach="new-routine"
             className="ml-auto grid size-8 place-items-center rounded-md text-foreground hover:bg-surface"
           >
             <Plus className="size-4" strokeWidth={1.75} />

@@ -1,21 +1,15 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, FileText, Library, MessageSquare, Repeat, Undo2 } from "lucide-react";
-import { SectionHeading } from "@/components/page-container";
-import { DataRow, EmptyState } from "@/components/section-card";
+import { Avatar } from "@/components/avatar";
+import { Chip } from "@/components/chip";
+import { DataTable } from "@/components/data-table";
+import { SectionLabel } from "@/components/section";
+import { StatusWord } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 import { api, ApiError, type TrashItem, type TrashKind } from "@/lib/api-client";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { formatRelative } from "@/lib/relative-time";
 import { toast } from "sonner";
-
-const ICONS: Record<TrashKind, typeof Bot> = {
-  agent: Bot,
-  bundle: Library,
-  document: FileText,
-  session: MessageSquare,
-  routine: Repeat,
-};
 
 /**
  * What this workspace deleted and can still get back.
@@ -90,93 +84,126 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
     }
   };
 
+  // A27: a table — Item, Type, Deleted by, When, Days left, Restore — with
+  // the last day marked by the ring.
   return (
-    <section className="mt-16" id="recently-deleted">
-      <SectionHeading
-        title="Recently deleted"
-        turn={`Yours for ${days} more days.`}
-        meta={items.length > 0 ? `${items.length} waiting` : undefined}
-      />
-
-      <div className="mt-6">
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : items.length === 0 ? (
-          <EmptyState
-            title="Nothing deleted"
-            description={`Agents, knowledge bundles and documents wait here for ${days} days before they go for good. Their conversations and routines come back with them.`}
+    <section id="recently-deleted" className="scroll-mt-16">
+      <SectionLabel action={<span className="font-normal">{days} days, then gone for good</span>}>
+        Recently deleted
+      </SectionLabel>
+      <p className="mb-2 text-meta text-muted-foreground">
+        Only deletions somebody performed are listed. Restoring an agent brings back every thread
+        and routine that went with it.
+      </p>
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="py-3 text-sm text-muted-foreground">
+          Nothing deleted. Agents, folders, documents, threads and routines wait here for {days}{" "}
+          days before they go for good.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <DataTable
+            label="Recently deleted"
+            rows={items}
+            rowKey={(item) => `${item.kind}:${item.id}`}
+            columns={[
+              {
+                key: "item",
+                header: "Item",
+                cell: (item) => (
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-medium">{item.name}</span>
+                    {item.kind === "document" && item.parentName ? (
+                      <span className="truncate text-muted-foreground">· {item.parentName}</span>
+                    ) : null}
+                  </span>
+                ),
+              },
+              { key: "kind", header: "Type", cell: (item) => <Chip>{KIND_WORD[item.kind]}</Chip> },
+              {
+                key: "by",
+                header: "Deleted by",
+                hideBelow: "md",
+                cell: (item) =>
+                  item.deletedBy ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Avatar name={item.deletedBy} size={20} />
+                      {firstName(item.deletedBy)}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Someone no longer here</span>
+                  ),
+              },
+              {
+                key: "when",
+                header: "When",
+                hideBelow: "md",
+                cell: (item) => (
+                  <span className="text-muted-foreground">{formatRelative(item.deletedAt)}</span>
+                ),
+              },
+              {
+                key: "left",
+                header: "Days left",
+                cell: (item) => {
+                  const left = daysLeft(item.purgesAt, days);
+                  return left <= 1 ? (
+                    <StatusWord state="waiting">{Math.max(0, left)}</StatusWord>
+                  ) : (
+                    <span className="tabular-nums">{left}</span>
+                  );
+                },
+              },
+              {
+                key: "actions",
+                header: <span className="sr-only">Actions</span>,
+                className: "text-right",
+                cell: (item) => (
+                  <span className="inline-flex items-center gap-1">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void restore(item)}
+                      disabled={restoring === item.id}
+                    >
+                      {restoring === item.id ? "Working…" : "Restore"}
+                    </Button>
+                    {item.kind === "bundle" || item.kind === "document" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void forget(item)}
+                        disabled={restoring === item.id}
+                        aria-label={`Delete ${item.name} for good`}
+                      >
+                        Delete for good
+                      </Button>
+                    ) : null}
+                  </span>
+                ),
+              },
+            ]}
           />
-        ) : (
-          <ul className="flex flex-col gap-2.5">
-            {items.map((item) => {
-              const Icon = ICONS[item.kind];
-              return (
-                <li key={`${item.kind}:${item.id}`}>
-                  <DataRow
-                    icon={
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-dashed border-border text-muted-foreground">
-                        <Icon className="h-4 w-4" />
-                      </span>
-                    }
-                    title={item.name}
-                    meta={metaFor(item, days)}
-                    trailing={
-                      <span className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => restore(item)}
-                          disabled={restoring === item.id}
-                        >
-                          <Undo2 className="h-4 w-4" />
-                          {restoring === item.id ? "Working…" : "Restore"}
-                        </Button>
-                        {item.kind === "bundle" || item.kind === "document" ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => forget(item)}
-                            disabled={restoring === item.id}
-                            aria-label={`Delete ${item.name} for good`}
-                          >
-                            Delete for good
-                          </Button>
-                        ) : null}
-                      </span>
-                    }
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
+        </div>
+      )}
     </section>
   );
 }
 
-/**
- * One line saying what it was, who took it, and how long is left.
- *
- * The deleter is omitted rather than guessed when it is null — that happens
- * when the person has since closed their own account, and "deleted by someone"
- * is worth less than saying nothing.
- */
-function metaFor(item: TrashItem, days: number): string {
-  const parts: string[] = [
-    item.kind === "document" && item.parentName ? item.parentName : item.kind,
-  ];
-  parts.push(item.deletedBy ? `deleted by ${item.deletedBy}` : "deleted");
-  parts.push(formatRelative(item.deletedAt));
-  parts.push(remaining(item.purgesAt, days));
-  return parts.join(" · ");
-}
+const KIND_WORD: Record<TrashKind, string> = {
+  agent: "Agent",
+  bundle: "Folder",
+  document: "Document",
+  session: "Thread",
+  routine: "Routine",
+};
 
-function remaining(purgesAt: number, days: number): string {
+const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name;
+
+function daysLeft(purgesAt: number, days: number): number {
   const ms = purgesAt - Date.now();
-  if (!Number.isFinite(ms)) return `${days} days left`;
-  const left = Math.ceil(ms / 86_400_000);
-  if (left <= 0) return "going any moment";
-  if (left === 1) return "1 day left";
-  return `${left} days left`;
+  if (!Number.isFinite(ms)) return days;
+  return Math.ceil(ms / 86_400_000);
 }

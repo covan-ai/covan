@@ -24,7 +24,7 @@ describe("the dot", () => {
 describe("identity", () => {
   it("draws a workspace's monogram and a person's initials", () => {
     expect(monogram("Google Drive")).toBe("GD");
-    expect(monogram("Acme", 16)).toBe("A");
+    expect(monogram("Notion")).toBe("NO");
     expect(getInitials("Mina Kaya")).toBe("MK");
     render(<Tile label="Acme" tone="ink" />);
     render(<Avatar name="Mina Kaya" />);

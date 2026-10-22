@@ -129,12 +129,12 @@ export function SignInCard({
         ask again anyway; LinkedIn is one of them.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" disabled={opening} onClick={onJustThisOnce}>
+        <Button variant="secondary" size="sm" disabled={opening} onClick={onJustThisOnce}>
           Just this once
         </Button>
         {reuse && (
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             disabled={opening}
             onClick={() => onSaved(reuse.siteHost, reuse.id)}
@@ -145,7 +145,7 @@ export function SignInCard({
         {canSave && (
           <>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={opening}
               onClick={() => setSaving("owner")}
@@ -154,7 +154,7 @@ export function SignInCard({
             </Button>
             {canShare && (
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 disabled={opening}
                 onClick={() => setSaving("agent")}

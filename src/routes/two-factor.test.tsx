@@ -24,6 +24,11 @@ vi.mock("@/lib/supabase/mfa", () => ({ giveSecondFactor }));
 
 const readSession = vi.fn<() => Promise<SessionAnswer>>();
 vi.mock("@/lib/supabase/session", () => ({ readSession }));
+vi.mock("@/lib/legal", () => ({
+  termsLink: () => ({ href: "/terms", external: false }),
+  privacyLink: () => ({ href: "/privacy", external: false }),
+  statusLink: () => null,
+}));
 
 const OWING: SessionAnswer = { kind: "second-factor", session: { access_token: "t" } as never };
 
@@ -44,10 +49,10 @@ describe("the second step of signing in", () => {
     const user = userEvent.setup();
     await renderPage();
 
-    const input = screen.getByLabelText(/authentication code/i);
+    const input = screen.getByLabelText("Digit 1");
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "123 456");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
+    await user.click(screen.getByRole("button", { name: /verify/i }));
 
     // Spaces are how people read a code aloud; GoTrue wants the digits.
     expect(giveSecondFactor).toHaveBeenCalledWith("123456");
@@ -59,10 +64,10 @@ describe("the second step of signing in", () => {
     const user = userEvent.setup();
     await renderPage();
 
-    const input = screen.getByLabelText(/authentication code/i);
+    const input = screen.getByLabelText("Digit 1");
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "123456");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
+    await user.click(screen.getByRole("button", { name: /verify/i }));
 
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith({ to: "/reset-password", replace: true }),
@@ -74,10 +79,10 @@ describe("the second step of signing in", () => {
     const user = userEvent.setup();
     await renderPage();
 
-    const input = screen.getByLabelText(/authentication code/i);
+    const input = screen.getByLabelText("Digit 1");
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, "000000");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
+    await user.click(screen.getByRole("button", { name: /verify/i }));
 
     expect(await screen.findByText("Invalid TOTP code entered")).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
@@ -103,7 +108,7 @@ describe("the second step of signing in", () => {
     const user = userEvent.setup();
     await renderPage();
 
-    await user.click(screen.getByRole("button", { name: /different account/i }));
+    await user.click(screen.getByRole("button", { name: /different account|not you/i }));
 
     expect(signOut).toHaveBeenCalled();
     await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/sign-in", replace: true }));

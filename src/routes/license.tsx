@@ -46,7 +46,7 @@ const REPO = "https://github.com/covan-ai/covan";
 
 function LicensePage() {
   return (
-    <LegalLayout title="Licence" updated="October 2026">
+    <LegalLayout title="Licence" updated="October 2026" current="/license">
       <p className="text-base text-muted-foreground">
         Covan is licensed under the{" "}
         <a

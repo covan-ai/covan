@@ -8,6 +8,7 @@ import {
   toStepViews,
   type AgentStepView,
 } from "./agent-steps";
+import { stepsSummary } from "@/lib/step-summary";
 
 /**
  * What an answer did, and the card that stops it doing something nobody
@@ -63,23 +64,20 @@ describe("the live trail", () => {
     expect(screen.getByText("running")).toBeInTheDocument();
   });
 
-  it("marks a running step with a square, not a spinning circle", () => {
-    // `DESIGN.md` allows circles in two places and both are window chrome.
-    // This was lucide's `Loader2`, which was neither — and said "busy" in
-    // general where the trail's whole job is saying which row.
+  it("marks a running step with the breathing dot, not a spinning circle", () => {
+    // This was lucide's `Loader2`, which said "busy" in general where the
+    // trail's whole job is saying which row.
     const { container } = render(
       <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
     );
-    expect(container.querySelector(".step-running")).toBeInTheDocument();
+    expect(container.querySelector(".dot-live")).toBeInTheDocument();
     expect(container.querySelector(".animate-spin")).not.toBeInTheDocument();
   });
 
-  it("gives the two ambers different shapes, not different animations", () => {
-    // A waiting step is a FILLED amber square: this one is yours. A running
-    // step is an amber OUTLINE with the fill sweeping through it: the machine
-    // is busy and nothing is being asked. The sweep is the only animated part,
-    // so a reader with motion switched off still has outline against fill —
-    // rather than two identical squares, one of which was moving.
+  it("gives running and waiting different shapes, not different animations", () => {
+    // DESIGN.md §12: running is the filled amber dot, waiting on you is the
+    // amber ring. Fill against ring is the difference, so a reader with motion
+    // switched off still sees two marks rather than one that was moving.
     const { container: waiting } = render(
       <StepTrail steps={[{ index: 0, tool: "a", status: "pending", label: "a" }]} />,
     );
@@ -87,8 +85,10 @@ describe("the live trail", () => {
       <StepTrail steps={[{ index: 0, tool: "a", status: "running", label: "a" }]} />,
     );
 
-    expect(waiting.querySelector(".bg-brand")).toBeInTheDocument();
-    expect(busy.querySelector(".bg-brand")).not.toBeInTheDocument();
+    expect(waiting.querySelector(".border-brand")).toBeInTheDocument();
+    expect(waiting.querySelector(".bg-brand")).not.toBeInTheDocument();
+    expect(busy.querySelector(".bg-brand")).toBeInTheDocument();
+    expect(busy.querySelector(".border-brand")).not.toBeInTheDocument();
   });
 
   it("draws nothing at all when there are no steps", () => {
@@ -98,63 +98,65 @@ describe("the live trail", () => {
 });
 
 describe("the settled trail", () => {
-  it("is folded shut, and says how many and how many did not finish", () => {
+  it("is one folded line that says what it did, and opens onto the rows", async () => {
     render(
       <SettledSteps
+        sources={3}
         steps={[
-          { index: 0, tool: "a", status: "ok", label: "a" },
-          { index: 1, tool: "b", status: "failed", label: "b" },
+          { index: 0, tool: "search_documents", status: "ok", label: "a", durationMs: 2400 },
+          { index: 1, tool: "search_documents", status: "ok", label: "b", durationMs: 3600 },
         ]}
       />,
     );
-    expect(screen.getByText("2 steps · 1 did not complete")).toBeInTheDocument();
-    // Closed: a person checking an answer opens it, and everybody else reads
-    // the reply.
-    expect(screen.queryByRole("group")).not.toHaveAttribute("open");
-  });
+    const line = screen.getByRole("button", { name: "Searched Knowledge · 3 sources · 6 s" });
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("a")).not.toBeInTheDocument();
 
-  it('counts one step in the singular, because "1 steps" is a bug people notice', () => {
-    render(<SettledSteps steps={[{ index: 0, tool: "a", status: "ok", label: "a" }]} />);
-    expect(screen.getByText("1 step")).toBeInTheDocument();
-  });
-
-  it("says how long the work took, when the steps recorded it", () => {
-    // The number was already in `message_steps` and was being dropped on the
-    // way to the screen. A folded line that says only "3 steps" answers a
-    // question nobody asked; the one people actually have about a pause is how
-    // long it was.
-    render(
-      <SettledSteps
-        steps={[
-          { index: 0, tool: "a", status: "ok", label: "a", durationMs: 800 },
-          { index: 1, tool: "b", status: "ok", label: "b", durationMs: 1400 },
-        ]}
-      />,
-    );
-    expect(screen.getByText("2 steps · 2.2s")).toBeInTheDocument();
+    await userEvent.click(line);
+    expect(line).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("a")).toBeInTheDocument();
   });
 
   it("says nothing about duration for steps written before it was stored", () => {
     // `durationMs` is null on every step recorded before the column existed,
-    // and "0.0s" would be a measurement rather than a missing one.
+    // and "0 s" would be a measurement rather than a missing one.
     render(
       <SettledSteps
-        steps={[{ index: 0, tool: "a", status: "ok", label: "a", durationMs: null }]}
+        steps={[{ index: 0, tool: "browse", status: "ok", label: "a", durationMs: null }]}
       />,
     );
-    expect(screen.getByText("1 step")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Used the browser" })).toBeInTheDocument();
   });
 
-  it("still leads with what went wrong when something did", () => {
+  it("says what did not complete", () => {
     render(
       <SettledSteps
         steps={[
-          { index: 0, tool: "a", status: "ok", label: "a", durationMs: 500 },
-          { index: 1, tool: "b", status: "failed", label: "b", durationMs: 500 },
+          { index: 0, tool: "search_documents", status: "ok", label: "a", durationMs: 500 },
+          { index: 1, tool: "run_tool", status: "failed", label: "b", durationMs: 500 },
         ]}
       />,
     );
-    expect(screen.getByText("2 steps · 1.0s · 1 did not complete")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Searched Knowledge and used a connected app · 1 s · 1 did not complete",
+      }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("stepsSummary", () => {
+  it("counts the steps past two kinds, and says time briefly", () => {
+    expect(
+      stepsSummary([
+        { tool: "search_documents", status: "ok" },
+        { tool: "browse", status: "ok" },
+        { tool: "run_tool", status: "ok", durationMs: 125_000 },
+      ]),
+    ).toBe("Searched Knowledge and 2 more steps · 2 min 5 s");
+    expect(stepsSummary([{ tool: "write_document", status: "ok", durationMs: 300 }], 1)).toBe(
+      "Wrote a document · 1 source · 0.3 s",
+    );
   });
 });
 

@@ -79,8 +79,9 @@ describe("recently deleted", () => {
     expect(await screen.findByText("Support")).toBeInTheDocument();
     // The countdown is the whole reason somebody opens this section, and it is
     // computed rather than stored — the kind of arithmetic that silently drifts.
-    expect(screen.getByText(/28 days left/)).toBeInTheDocument();
-    expect(screen.getByText(/deleted by Ali/)).toBeInTheDocument();
+    const row = screen.getByText("Support").closest("tr")!;
+    expect(row).toHaveTextContent("28");
+    expect(row).toHaveTextContent("Ali");
   });
 
   it("says 'deleted' rather than guessing when the deleter is gone", async () => {
@@ -88,7 +89,7 @@ describe("recently deleted", () => {
     renderSection();
 
     expect(await screen.findByText("Support")).toBeInTheDocument();
-    expect(screen.queryByText(/deleted by/)).not.toBeInTheDocument();
+    expect(screen.getByText("Someone no longer here")).toBeInTheDocument();
   });
 
   it("names the bundle a deleted document came out of", async () => {
@@ -135,7 +136,7 @@ describe("recently deleted", () => {
     list.mockResolvedValue({ retentionDays: 30, items: [] });
     renderSection();
 
-    expect(await screen.findByText("Nothing deleted")).toBeInTheDocument();
-    expect(screen.getByText(/30 days/)).toBeInTheDocument();
+    expect(await screen.findByText(/Nothing deleted/)).toBeInTheDocument();
+    expect(screen.getByText(/wait here for 30\s+days/)).toBeInTheDocument();
   });
 });

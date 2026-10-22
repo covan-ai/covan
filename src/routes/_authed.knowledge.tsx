@@ -5,7 +5,6 @@ import { formatFileSize } from "@/lib/file-size";
 
 import { DocsLink } from "@/components/docs-link";
 import { KnowledgeExplorer } from "@/components/knowledge-explorer";
-import { PageContainer } from "@/components/page-container";
 
 export const Route = createFileRoute("/_authed/knowledge")({
   component: KnowledgePage,
@@ -27,22 +26,18 @@ export const Route = createFileRoute("/_authed/knowledge")({
  * question where it lives, and the agent's Knowledge tab keeps the question that
  * is genuinely about the agent — which of these does it read.
  *
- * No heading over the window. The explorer's toolbar already says where you
- * are, and a title and a lede above a thing that is itself a window made the
+ * No heading over the window but the bar's own path ("Knowledge / Contracts"),
+ * and a title and a lede above a thing that is itself a window would make the
  * page two things — a document about the files, and the files. The usage line
- * that stood under the lede is the window's status line now.
+ * is the window's status line.
  */
 function KnowledgePage() {
+  // A window, not a document (A6): the bar, the folder column and the files
+  // fill the screen under the shell, and only the files scroll.
   return (
-    <>
-      <PageContainer width="dashboard" className="py-6">
-        <h1 className="sr-only">Knowledge</h1>
-        <KnowledgeExplorer
-          className="lg:h-[calc(100vh-3rem)] lg:min-h-[480px]"
-          footer={<KnowledgeUsage />}
-        />
-      </PageContainer>
-    </>
+    <div data-fill-screen className="flex min-h-0 flex-1 flex-col">
+      <KnowledgeExplorer chrome="page" footer={<KnowledgeUsage />} />
+    </div>
   );
 }
 
@@ -71,7 +66,7 @@ function KnowledgeUsage() {
         </>
       ) : null}
       <Link
-        to="/settings/workspace"
+        to="/settings/export"
         hash="recently-deleted"
         className="underline underline-offset-2 hover:text-foreground"
       >

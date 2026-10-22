@@ -3,11 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, ApiError, type Me } from "@/lib/api-client";
 import { useTheme, type ThemePreference } from "@/lib/theme";
-import { modelsFor, priceFor, replyPricesOf } from "@/lib/agent-meta";
-import { ModelCost, ModelCostScale } from "@/components/model-cost";
-import { SectionHeading } from "@/components/page-container";
-import { SectionCard } from "@/components/section-card";
-import { Label } from "@/components/ui/label";
+import { Field } from "@/components/field";
+import { Segmented } from "@/components/segmented";
+import { LOCALES } from "@/lib/locales";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -18,7 +16,8 @@ import {
 } from "@/components/ui/select";
 
 /** Stands for "no preference" in a picker, which cannot hold an empty value. */
-const NO_DEFAULT = "__none__";
+/** Stands for "follow the browser" in a picker, which cannot hold an empty value. */
+const FOLLOW_BROWSER = "__browser__";
 
 /**
  * Yours, and nobody else's.
@@ -32,109 +31,70 @@ const NO_DEFAULT = "__none__";
 export function PersonalPreferencesSection({ me }: { me: Me | undefined }) {
   const { preference, mounted, setPreference } = useTheme();
 
+  // A16's Preferences as Field rows.
   return (
-    <section className="mt-16">
-      <SectionHeading title="Preferences" />
-      <SectionCard className="mt-6 space-y-5">
-        <div className="space-y-2">
-          <Label className="text-xs">Appearance</Label>
-          <Select
+    <>
+      <Field label="Theme" help="System follows your device. Saved in this browser, for you.">
+        <div className={mounted ? "" : "pointer-events-none opacity-50"}>
+          <Segmented<ThemePreference>
+            label="Theme"
             value={preference}
-            onValueChange={(v) => setPreference(v as ThemePreference)}
-            // Before mount the stored preference is unknown and the control
-            // would render "System" for someone who chose Dark.
-            disabled={!mounted}
-          >
-            <SelectTrigger className="max-w-[220px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="system">Follow the device</SelectItem>
-              <SelectItem value="light">Light</SelectItem>
-              <SelectItem value="dark">Dark</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">
-            Saved in this browser, for you — teammates keep their own.
-          </p>
+            onChange={setPreference}
+            options={[
+              { value: "light", label: "Light" },
+              { value: "dark", label: "Dark" },
+              { value: "system", label: "System" },
+            ]}
+          />
         </div>
-
-        <NotificationToggles />
-        <CoverageOptOut workspaceId={me?.workspace.id} />
-      </SectionCard>
-    </section>
+      </Field>
+      <LanguageField locale={me?.user.locale ?? null} />
+      <NotificationToggles />
+      <CoverageOptOut workspaceId={me?.workspace.id} />
+    </>
   );
 }
 
-/**
- * Stored on the workspace and applies to everyone in it, which is why it sits
- * on the workspace page and not beside the personal preferences above.
- */
-export function DefaultModelSection({ me }: { me: Me | undefined }) {
+/** The interface's language; agents answer in whatever language you write. */
+function LanguageField({ locale }: { locale: string | null }) {
   const queryClient = useQueryClient();
-  const [savingModel, setSavingModel] = useState(false);
-
-  const defaultModel = me?.workspace.defaultModel ?? null;
-  const models = modelsFor(me?.models, defaultModel);
-
-  const saveDefaultModel = async (value: string) => {
-    const next = value === NO_DEFAULT ? null : value;
-    setSavingModel(true);
+  const [saving, setSaving] = useState(false);
+  const save = async (value: string) => {
+    setSaving(true);
     try {
-      await api.workspace.update({ defaultModel: next });
-      toast.success(next ? `New agents will start on ${next}` : "Default model cleared");
+      await api.profile.update({ locale: value === FOLLOW_BROWSER ? null : value });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
     } catch (err) {
-      // RLS lets only admins write this, and the API turns that into a 403 with
-      // a sentence rather than a silent no-op.
-      const message = err instanceof ApiError ? err.message : "Failed to save the default";
-      toast.error(message);
+      toast.error(err instanceof ApiError ? err.message : "Failed to save");
     } finally {
-      setSavingModel(false);
+      setSaving(false);
     }
   };
-
   return (
-    <section className="mt-16">
-      <SectionHeading title="Default model" />
-      <SectionCard className="mt-6 space-y-5">
-        <div className="space-y-2">
-          <Label className="text-xs">Default model for new agents</Label>
-          <Select
-            value={defaultModel ?? NO_DEFAULT}
-            onValueChange={saveDefaultModel}
-            disabled={savingModel || !me}
-          >
-            <SelectTrigger className="max-w-[220px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_DEFAULT}>No preference</SelectItem>
-              {models.map((m) => (
-                <SelectItem key={m} value={m}>
-                  <span className="flex w-full items-center justify-between">
-                    <span>{m}</span>
-                    <ModelCost price={priceFor(replyPricesOf(me), m)} />
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {/* Only once something is picked. "No preference" is not a model and
-              has no price, and a scale sitting at nothing would read as a claim
-              that the default is free. */}
-          {defaultModel && <ModelCostScale price={priceFor(replyPricesOf(me), defaultModel)} />}
-          {/* No fold here, and no sentence about price: ModelCostScale is
-              directly above and it states the money better than a sentence
-              can. A second <details> in this card would also stack two
-              bordered boxes a line apart, which reads busier than the three
-              sentences this replaced. */}
-          <p className="text-xs text-muted-foreground">
-            Where the picker starts when anyone here creates an agent, and only admins can set it.
-          </p>
-        </div>
-      </SectionCard>
-    </section>
+    <Field label="Language" help="The interface. Agents answer in whatever language you write.">
+      <Select
+        value={locale ?? FOLLOW_BROWSER}
+        onValueChange={(v) => void save(v)}
+        disabled={saving}
+      >
+        <SelectTrigger aria-label="Language" className="max-w-[420px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={FOLLOW_BROWSER}>Follow the browser</SelectItem>
+          {LOCALES.map((l) => (
+            <SelectItem key={l.tag} value={l.tag}>
+              {l.label}
+            </SelectItem>
+          ))}
+          {/* A tag set elsewhere (the API takes any BCP 47 tag) still shows
+              as itself rather than as a blank trigger. */}
+          {locale && !LOCALES.some((l) => l.tag === locale) ? (
+            <SelectItem value={locale}>{locale}</SelectItem>
+          ) : null}
+        </SelectContent>
+      </Select>
+    </Field>
   );
 }
 
@@ -193,37 +153,36 @@ function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
   };
 
   return (
-    <div className="flex items-start justify-between gap-4 border-t border-hairline pt-5">
-      <div className="min-w-0">
-        <div className="text-sm">Exclude my questions from the coverage report</div>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          A weekly report of topics nothing covered — it never shows names or anybody&rsquo;s
-          question.
+    <Field
+      label="Coverage report"
+      help="A weekly report of topics nothing covered. It never shows names or anybody's question."
+    >
+      <label className="flex items-center gap-3 pt-1 text-sm">
+        <Switch
+          checked={data ? data.excluded : false}
+          onCheckedChange={setExcluded}
+          disabled={!data || saving}
+          aria-label="Exclude my questions from the coverage report"
+        />
+        Leave my questions out
+      </label>
+      {/* A switch left disabled with no sentence reads as "not for you". This
+          is a consent control, so a failed read says so and offers the read
+          again, rather than looking like a setting that does not apply. */}
+      {isError && !data && (
+        <p role="alert" className="mt-1 text-xs text-muted-foreground">
+          Couldn&rsquo;t load this setting.{" "}
+          <button
+            type="button"
+            className="underline underline-offset-2 disabled:opacity-50"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+          >
+            {isFetching ? "Trying…" : "Try again"}
+          </button>
         </p>
-        {/* A switch left disabled with no sentence reads as "not for you". This
-            is a consent control, so a failed read says so and offers the read
-            again, rather than looking like a setting that does not apply. */}
-        {isError && !data && (
-          <p role="alert" className="mt-1 text-xs text-muted-foreground">
-            Couldn&rsquo;t load this setting.{" "}
-            <button
-              type="button"
-              className="underline underline-offset-2 disabled:opacity-50"
-              onClick={() => void refetch()}
-              disabled={isFetching}
-            >
-              {isFetching ? "Trying…" : "Try again"}
-            </button>
-          </p>
-        )}
-      </div>
-      <Switch
-        checked={data ? data.excluded : false}
-        onCheckedChange={setExcluded}
-        disabled={!data || saving}
-        aria-label="Exclude my questions from the coverage report"
-      />
-    </div>
+      )}
+    </Field>
   );
 }
 
@@ -241,7 +200,8 @@ function NotificationToggles() {
   });
   const [saving, setSaving] = useState<string | null>(null);
 
-  const set = async (key: "routinePaused" | "quotaExhausted", value: boolean) => {
+  type Key = "needsMeAway" | "routineFailed" | "weeklySummary" | "routinePaused" | "quotaExhausted";
+  const set = async (key: Key, value: boolean) => {
     setSaving(key);
     try {
       const next = await api.notifications.update({ [key]: value });
@@ -249,47 +209,41 @@ function NotificationToggles() {
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Failed to save";
       toast.error(message);
-      // Put the switch back where it was rather than leaving it showing a
-      // setting the server never accepted.
       await queryClient.invalidateQueries({ queryKey: ["notification-preferences"] });
     } finally {
       setSaving(null);
     }
   };
 
-  const rows = [
+  // A16's three first; then the two about a routine's own health, which
+  // were here before and still are.
+  const rows: Array<{ key: Key; label: string; fallback: boolean }> = [
     {
-      key: "routinePaused" as const,
-      label: "A routine stops working",
-      hint: "After repeated failures a routine pauses itself. Off means it pauses silently.",
+      key: "needsMeAway",
+      label: "An agent needs me and I have been away for an hour",
+      fallback: true,
     },
-    {
-      key: "quotaExhausted" as const,
-      label: "A routine is waiting on credits",
-      hint: "Sent once, not every time it tries.",
-    },
+    { key: "routineFailed", label: "A routine fails", fallback: true },
+    { key: "weeklySummary", label: "Weekly summary, Monday morning", fallback: false },
+    { key: "routinePaused", label: "A routine stops working and pauses itself", fallback: true },
+    { key: "quotaExhausted", label: "A routine is waiting on credits", fallback: true },
   ];
 
   return (
-    <div className="space-y-4 border-t border-hairline pt-5">
-      <Label className="text-xs">Notify me when</Label>
-      {rows.map((row) => (
-        <div key={row.key} className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-sm">{row.label}</div>
-            <p className="mt-0.5 text-xs text-muted-foreground">{row.hint}</p>
-          </div>
-          <Switch
-            checked={prefs ? prefs[row.key] : true}
-            onCheckedChange={(v) => set(row.key, v)}
-            disabled={!prefs || saving === row.key}
-            aria-label={row.label}
-          />
-        </div>
-      ))}
-      <p className="text-xs text-muted-foreground">
-        Sent through the delivery channel the routine already uses.
-      </p>
-    </div>
+    <Field label="Email me when" help="Everything else stays in the Inbox.">
+      <div className="flex flex-col gap-2.5 pt-1">
+        {rows.map((row) => (
+          <label key={row.key} className="flex items-center gap-3 text-sm">
+            <Switch
+              checked={prefs ? prefs[row.key] : row.fallback}
+              onCheckedChange={(v) => void set(row.key, v)}
+              disabled={!prefs || saving === row.key}
+              aria-label={row.label}
+            />
+            {row.label}
+          </label>
+        ))}
+      </div>
+    </Field>
   );
 }

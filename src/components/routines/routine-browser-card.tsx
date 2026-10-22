@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Globe } from "lucide-react";
-import { SectionCard } from "@/components/section-card";
-import { SectionHeading } from "@/components/page-container";
+import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -61,13 +60,13 @@ export function RoutineBrowserCard({
   };
 
   return (
-    <section className="mt-10">
-      <SectionHeading
-        title="Use a browser"
-        description="Let this routine open web pages on its own, and report what it found."
-      />
+    <section className="mt-2">
+      <SectionLabel>Use a browser</SectionLabel>
+      <p className="mt-0 mb-3 text-meta text-muted-foreground">
+        Let this routine open web pages on its own, and report what it found.
+      </p>
 
-      <SectionCard className="mt-3 space-y-4">
+      <div className="space-y-4">
         <div className="flex items-center justify-between gap-4">
           <label htmlFor="routine-browser" className="text-sm">
             Allow the browser on scheduled runs
@@ -153,7 +152,7 @@ export function RoutineBrowserCard({
               )}
             </p>
 
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               The report waits until the browser has answered, and is sent once with its answers in
               it.
               {routine.browserConversationId && (
@@ -174,7 +173,7 @@ export function RoutineBrowserCard({
             </p>
           </>
         )}
-      </SectionCard>
+      </div>
     </section>
   );
 }
@@ -212,7 +211,7 @@ function SiteField({
           }}
           disabled={saving}
         />
-        <Button variant="outline" onClick={onSave} disabled={!canSave || saving}>
+        <Button variant="secondary" onClick={onSave} disabled={!canSave || saving}>
           Save
         </Button>
       </div>

@@ -5,7 +5,12 @@ import {
   searchTools,
   type ComposioTool,
 } from "../../composio/client";
-import { listConnections, unavailableTools, type ToolConnection } from "../connections";
+import {
+  connectionsOffFor,
+  listConnections,
+  unavailableTools,
+  type ToolConnection,
+} from "../connections";
 import { cap } from "../budget";
 import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
@@ -711,7 +716,10 @@ export const findToolTool: AgentTool = {
     //
     // Read before the search rather than after it, because on a catalogue-wide
     // query it decides what gets searched. See `connectedSearches` below.
-    const connections = await listConnections(ctx.db, ctx.workspaceId, ctx.userId).catch(() => []);
+    const off = await connectionsOffFor(ctx);
+    const connections = (
+      await listConnections(ctx.db, ctx.workspaceId, ctx.userId).catch(() => [])
+    ).filter((c) => !off.has(c.id));
     // One connection per application, and the caller's own first: since 0098
     // a person's own Gmail and a Gmail a colleague shared can both be in reach,
     // and "my email" means the one they connected.

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { Disclosure } from "./section-card";
+import { Disclosure } from "./disclosure";
 
 /**
  * The foldable note, and the two properties that make it the house idiom
@@ -40,6 +40,6 @@ describe("Disclosure", () => {
     const details = container.querySelector("details");
 
     expect(details?.className).toContain("mt-3");
-    expect(details?.className).toContain("border-border");
+    expect(details?.className).toContain("group");
   });
 });

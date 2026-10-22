@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2 } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase/client";
@@ -127,25 +126,22 @@ function Confirmed() {
         title="That link didn't work"
         subtitle="It has expired, or it had already been used."
         footer={
-          <Link
-            to="/sign-in"
-            className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
+          <Link to="/sign-in" className="font-medium text-foreground hover:underline">
+            Back to sign in
           </Link>
         }
       >
-        <div className="flex flex-col items-center gap-3 py-2 text-center">
-          {urlError && <p className="text-sm text-destructive">{urlError}</p>}
-          <p className="text-sm text-muted-foreground">
+        <div className="flex flex-col gap-3">
+          {urlError && <p className="m-0 text-sm text-destructive">{urlError}</p>}
+          <p className="m-0 text-sm text-muted-foreground">
             If you have confirmed this address already, sign in. If you have not, signing up again
             with the same address sends a new link.
           </p>
-          <div className="mt-1 flex flex-wrap justify-center gap-2">
-            <Button asChild size="sm">
+          <div className="mt-1 flex flex-col gap-2">
+            <Button asChild size="lg" className="w-full">
               <Link to="/sign-in">Sign in</Link>
             </Button>
-            <Button asChild size="sm" variant="outline">
+            <Button asChild size="lg" variant="ghost" className="w-full">
               <Link to="/sign-up">Send a new link</Link>
             </Button>
           </div>
@@ -160,15 +156,12 @@ function Confirmed() {
         title="One more link to click"
         subtitle="Your address changes once both links are confirmed."
         footer={
-          <Link
-            to="/settings/account"
-            className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to your account
+          <Link to="/settings/profile" className="font-medium text-foreground hover:underline">
+            Back to your account
           </Link>
         }
       >
-        <p className="py-2 text-center text-sm text-muted-foreground">
+        <p className="m-0 text-sm text-muted-foreground">
           This one is done. Open the email we sent to your other address and click the link in it
           too.
         </p>
@@ -179,17 +172,14 @@ function Confirmed() {
   if (status === "changed") {
     return (
       <AuthLayout title="Address changed" subtitle="You sign in with your new address from now on.">
-        <div className="flex flex-col items-center gap-3 py-2 text-center">
-          <span className="grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
-            <CheckCircle2 className="h-5 w-5" />
-          </span>
+        <div className="flex flex-col gap-3">
           {changedTo ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="m-0 text-sm text-muted-foreground">
               Your account is now <span className="text-foreground">{changedTo}</span>.
             </p>
           ) : null}
-          <Button asChild size="sm" className="mt-1">
-            <Link to="/settings/account">Back to your account</Link>
+          <Button asChild size="lg" className="mt-1 w-full">
+            <Link to="/settings/profile">Back to your account</Link>
           </Button>
         </div>
       </AuthLayout>
@@ -202,20 +192,17 @@ function Confirmed() {
         title="Confirm your address"
         subtitle="This page opens from the link in your confirmation email."
         footer={
-          <Link
-            to="/sign-in"
-            className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
+          <Link to="/sign-in" className="font-medium text-foreground hover:underline">
+            Back to sign in
           </Link>
         }
       >
-        <div className="flex flex-col items-center gap-3 py-2 text-center">
-          <p className="text-sm text-muted-foreground">
+        <div className="flex flex-col gap-3">
+          <p className="m-0 text-sm text-muted-foreground">
             Open the email we sent and click the button in it. If you have already confirmed, you
             can sign in from here.
           </p>
-          <Button asChild size="sm" className="mt-1">
+          <Button asChild size="lg" className="mt-1 w-full">
             <Link to="/sign-in">Sign in</Link>
           </Button>
         </div>
@@ -236,15 +223,12 @@ function Confirmed() {
         </>
       }
     >
-      <div className="flex flex-col items-center gap-3 py-2 text-center">
-        <span className="grid h-11 w-11 place-items-center rounded-full bg-primary/10 text-primary">
-          <CheckCircle2 className="h-5 w-5" />
-        </span>
-        <p className="text-sm text-muted-foreground">
+      <div className="flex flex-col gap-3">
+        <p className="m-0 text-sm text-muted-foreground">
           If a colleague invited you, the invitation is matched to this address and is waiting
           inside.
         </p>
-        <Button asChild size="sm" className="mt-1">
+        <Button asChild size="lg" className="mt-1 w-full">
           <Link to="/app">Continue to Covan</Link>
         </Button>
       </div>

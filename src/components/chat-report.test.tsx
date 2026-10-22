@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ChatReport } from "./chat-report";
+import { ReportDialog } from "./chat-report";
 import type { ReportWriter } from "@/lib/use-report";
 
 function writerWith(over: Partial<ReportWriter> = {}): ReportWriter {
@@ -14,27 +14,17 @@ function writerWith(over: Partial<ReportWriter> = {}): ReportWriter {
   };
 }
 
-describe("ChatReport", () => {
+describe("ReportDialog", () => {
   it("offers nothing to a viewer, who cannot write a document to the workspace", () => {
-    render(<ChatReport reports={writerWith()} canWrite={false} />);
+    render(<ReportDialog reports={writerWith({ dialogOpen: true })} canWrite={false} />);
 
-    expect(screen.queryByRole("button", { name: /report/i })).not.toBeInTheDocument();
-  });
-
-  it("asks for the dialog when the composer button is pressed", async () => {
-    const user = userEvent.setup();
-    const reports = writerWith();
-    render(<ChatReport reports={reports} canWrite />);
-
-    await user.click(screen.getByRole("button", { name: /write a report/i }));
-
-    expect(reports.setDialogOpen).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("sends the instruction the person typed", async () => {
     const user = userEvent.setup();
     const reports = writerWith({ dialogOpen: true });
-    render(<ChatReport reports={reports} canWrite />);
+    render(<ReportDialog reports={reports} canWrite />);
 
     await user.type(screen.getByLabelText(/what should the report cover/i), "Sum up the quarter.");
     await user.click(screen.getByRole("button", { name: /^write report$/i }));
@@ -44,20 +34,20 @@ describe("ChatReport", () => {
 
   it("will not ask for a report with no instruction", () => {
     const reports = writerWith({ dialogOpen: true });
-    render(<ChatReport reports={reports} canWrite />);
+    render(<ReportDialog reports={reports} canWrite />);
 
     expect(screen.getByRole("button", { name: /^write report$/i })).toBeDisabled();
     expect(reports.write).not.toHaveBeenCalled();
   });
 
   it("says it is starting, and cannot be pressed twice while it does", () => {
-    render(<ChatReport reports={writerWith({ dialogOpen: true, pending: true })} canWrite />);
+    render(<ReportDialog reports={writerWith({ dialogOpen: true, pending: true })} canWrite />);
 
     expect(screen.getByRole("button", { name: /starting/i })).toBeDisabled();
   });
 
   it("tells the person they need not wait with the tab open", () => {
-    render(<ChatReport reports={writerWith({ dialogOpen: true })} canWrite />);
+    render(<ReportDialog reports={writerWith({ dialogOpen: true })} canWrite />);
 
     expect(screen.getByText(/close the tab while it is written/i)).toBeInTheDocument();
   });
@@ -66,7 +56,7 @@ describe("ChatReport", () => {
     // The dialog's open state lives on the writer rather than in here precisely
     // so the command can reach it: `/report` with nothing after it means "I want
     // a report and have not said what about", which is this dialog's question.
-    render(<ChatReport reports={writerWith({ dialogOpen: true })} canWrite />);
+    render(<ReportDialog reports={writerWith({ dialogOpen: true })} canWrite />);
 
     expect(screen.getByLabelText(/what should the report cover/i)).toBeInTheDocument();
   });

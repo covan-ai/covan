@@ -26,7 +26,7 @@ export const Route = createFileRoute("/terms")({
 
 function TermsPage() {
   return (
-    <LegalLayout title="Terms" updated="August 2026">
+    <LegalLayout title="Terms" updated="August 2026" current="/terms">
       <p className="text-base text-muted-foreground">
         Covan is software under a licence rather than a service, and these are the terms of the
         software. If you are using an install someone else operates — a hosted Covan, or your

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -11,7 +11,18 @@ import { toast } from "sonner";
  * moment it is on screen is the only chance to keep it — and a second copy of
  * this would be a second place for the clipboard failure path to be forgotten.
  */
-export function RevealedSecret({ value, label }: { value: string; label: string }) {
+export function RevealedSecret({
+  value,
+  label,
+  inline,
+  children,
+}: {
+  value: string;
+  label: string;
+  /** A26's look: the secret in a mono box, then an ink "Copy" and whatever follows. */
+  inline?: boolean;
+  children?: ReactNode;
+}) {
   const [copied, setCopied] = useState(false);
 
   const copy = () => {
@@ -25,6 +36,20 @@ export function RevealedSecret({ value, label }: { value: string; label: string 
       () => toast.error("Couldn't copy — your browser blocked it."),
     );
   };
+
+  if (inline) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="min-w-0 break-all rounded-md border border-input bg-surface-muted px-2.5 py-1.5 font-mono text-meta">
+          {value}
+        </code>
+        <Button size="sm" onClick={copy} aria-label={label}>
+          {copied ? "Copied" : "Copy"}
+        </Button>
+        {children}
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-2 rounded-lg border border-hairline bg-surface p-3">

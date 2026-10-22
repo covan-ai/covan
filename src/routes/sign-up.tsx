@@ -1,12 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { AuthLayout } from "@/components/auth-layout";
 import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+import { StatusDot } from "@/components/status-dot";
 import { supabase } from "@/lib/supabase/client";
 import { setRemember } from "@/lib/supabase/auth-storage";
 import { readSession } from "@/lib/supabase/session";
@@ -52,15 +52,9 @@ function SignUp() {
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
-    const name = String(form.get("name") ?? "");
+    const workspaceName = String(form.get("workspace") ?? "").trim();
     const email = String(form.get("email") ?? "");
     const password = form.get("password");
-    const confirmPassword = form.get("confirmPassword");
-
-    if (password !== confirmPassword) {
-      setError("Passwords don't match.");
-      return;
-    }
 
     setError(null);
     setSubmitting(true);
@@ -74,7 +68,10 @@ function SignUp() {
       email,
       password: String(password ?? ""),
       options: {
-        data: { name },
+        // Carried to the first run, whose first step names the workspace the
+        // sign-up made (`WorkspaceStep` reads it back). A default the person
+        // can change on the next screen, and trusted for nothing else.
+        data: workspaceName ? { workspace_name: workspaceName } : {},
         // Without this, GoTrue sends the confirmation link to the project's Site
         // URL — `/`, which is a redirect here and a marketing page on the hosted
         // build, and in both cases a page with nothing to say about the click
@@ -102,22 +99,26 @@ function SignUp() {
   if (sentTo) {
     return (
       <AuthLayout
-        title="Check your email"
-        subtitle="Confirm your account to get started."
+        title="Confirm your address"
+        subtitle={
+          <>
+            We sent a link to <span className="font-medium text-foreground">{sentTo}</span>. Open it
+            on any device to finish.
+          </>
+        }
         footer={
           <>
-            Already have an account?{" "}
+            Already have one?{" "}
             <Link to="/sign-in" className="font-medium text-foreground hover:underline">
               Sign in
             </Link>
           </>
         }
       >
-        <p className="text-sm text-muted-foreground">
-          We sent a confirmation link to{" "}
-          <span className="font-medium text-foreground">{sentTo}</span>. Clicking it activates the
-          account and brings you back signed in.
-        </p>
+        <div className="flex items-center gap-2.5 rounded-lg border border-border px-3 py-2.5">
+          <StatusDot state="waiting" />
+          <span className="text-sm">Waiting for the link to be opened</span>
+        </div>
       </AuthLayout>
     );
   }
@@ -130,75 +131,73 @@ function SignUp() {
   // anything is not available to it. Hence a sentence that needs neither.
   return (
     <AuthLayout
-      title="Create your team's brain"
-      subtitle="No credit card, and no plans to choose between."
+      title="Create a workspace"
+      subtitle="Your team, your agents, your documents. Free to start."
       footer={
         <>
-          Already have an account?{" "}
+          Already have one?{" "}
           <Link to="/sign-in" className="font-medium text-foreground hover:underline">
             Sign in
           </Link>
         </>
       }
     >
-      {/* Remembered, as the email form below is: this page has no box to clear. */}
-      <OAuthButtons remember onError={setError} />
+      {/* Remembered, as the email form below is: this page has no box to
+          clear. The consent sentence is the card's own, under the form. */}
+      <OAuthButtons remember consent={false} onError={setError} />
 
       {/* method="post" for the reason spelled out in sign-in.tsx: submitted before
           hydration, a form with no method is a GET and puts what was typed in
           the URL. */}
-      <form method="post" onSubmit={handleSubmit} className="space-y-4">
+      <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-3.5">
         <div className="space-y-1.5">
-          <Label htmlFor="name">Full name</Label>
-          <div className="relative">
-            <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="name"
-              name="name"
-              type="text"
-              placeholder="Alex Rivera"
-              required
-              autoComplete="name"
-              className="pl-9"
-            />
-          </div>
+          <Label htmlFor="workspace" className="text-meta">
+            Workspace name
+          </Label>
+          <Input
+            id="workspace"
+            name="workspace"
+            type="text"
+            placeholder="Acme"
+            maxLength={100}
+            autoComplete="organization"
+            className="h-9"
+          />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="email">Work email</Label>
-          <div className="relative">
-            <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              placeholder="you@company.com"
-              required
-              autoComplete="email"
-              className="pl-9"
-            />
-          </div>
+          <Label htmlFor="email" className="text-meta">
+            Work email
+          </Label>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            placeholder="you@company.com"
+            required
+            autoComplete="email"
+            className="h-9"
+          />
           {/* No `?email=` prefill here, and the invitation mail does not send
               one — see `src/lib/invite-text.ts` and docs/team.md. A link that
               fills the field in gets forwarded in place of the address, and the
-              person who follows it signs up as somebody else. The address is
-              named in prose in the mail instead, where it stays visibly the
-              thing that matters. */}
+              person who follows it signs up as somebody else. */}
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="password">Password</Label>
+          <Label htmlFor="password" className="text-meta">
+            Password
+          </Label>
           <div className="relative">
-            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id="password"
               name="password"
               type={showPassword ? "text" : "password"}
-              placeholder="••••••••"
+              placeholder={`At least ${MIN_PASSWORD} characters`}
               required
-              minLength={8}
+              minLength={MIN_PASSWORD}
               autoComplete="new-password"
-              className="px-9"
+              className="h-9 pr-9"
             />
             <button
               type="button"
@@ -211,48 +210,30 @@ function SignUp() {
           </div>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="confirmPassword">Confirm password</Label>
-          <div className="relative">
-            <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              id="confirmPassword"
-              name="confirmPassword"
-              type={showPassword ? "text" : "password"}
-              placeholder="••••••••"
-              required
-              minLength={8}
-              autoComplete="new-password"
-              className="pl-9"
-            />
-          </div>
-        </div>
+        {error && <p className="m-0 text-sm text-destructive">{error}</p>}
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
-        {/* These used to be `href="#"` — a required "I agree" next to two links
-            that went nowhere. Where they point is configurable, because an
-            operator running Covan for other people needs their own documents
-            and a self-hoster does not. See `src/lib/legal.ts`. */}
-        <label className="flex flex-wrap items-start gap-x-1 gap-y-2 text-sm text-muted-foreground">
-          <Checkbox id="terms" required className="mt-0.5" />
-          <span>
-            I agree to the{" "}
-            <LegalAnchor link={termsLink()} newTab>
-              Terms
-            </LegalAnchor>{" "}
-            and{" "}
-            <LegalAnchor link={privacyLink()} newTab>
-              Privacy Policy
-            </LegalAnchor>
-            .
-          </span>
-        </label>
-
-        <Button type="submit" className="w-full" disabled={submitting}>
-          {submitting ? "Creating account…" : "Create account"}
+        <Button type="submit" size="lg" className="mt-1 w-full" disabled={submitting}>
+          {submitting ? "Creating…" : "Create workspace"}
         </Button>
       </form>
+
+      {/* Where these point is configurable, because an operator running Covan
+          for other people needs their own documents and a self-hoster does
+          not. See `src/lib/legal.ts`. */}
+      <p className="mt-4 mb-0 text-meta leading-[1.5] text-muted-foreground">
+        By continuing you agree to the{" "}
+        <LegalAnchor link={termsLink()} newTab>
+          Terms
+        </LegalAnchor>{" "}
+        and the{" "}
+        <LegalAnchor link={privacyLink()} newTab>
+          Privacy policy
+        </LegalAnchor>
+        . We email you once to confirm the address.
+      </p>
     </AuthLayout>
   );
 }
+
+/** What the form asks for; GoTrue's own minimum is lower and still applies. */
+const MIN_PASSWORD = 12;

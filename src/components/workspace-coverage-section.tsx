@@ -1,14 +1,25 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { api, ApiError, type CoverageAgent, type CoverageTotals } from "@/lib/api-client";
-import { SectionHeading } from "@/components/page-container";
-import { SectionCard, DataRow, Chip, Disclosure, EmptyState } from "@/components/section-card";
-import { AgentAvatar } from "@/components/avatars";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { AgentMark } from "@/components/agent-mark";
+import { Chip } from "@/components/chip";
+import { DataTable } from "@/components/data-table";
+import { DocumentPreviewDialog } from "@/components/document-preview-dialog";
+import { SectionLabel, SectionTitle } from "@/components/section";
+import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { api, type CoverageAgent, type RevisitDocument } from "@/lib/api-client";
+import { ageWords, missedShareWords } from "@/lib/stale-documents";
 
 const WINDOWS = [7, 30, 90] as const;
+const ALL = "__all";
 
 /**
  * The share an agent has to miss before it is worth pointing at.
@@ -19,308 +30,297 @@ const WINDOWS = [7, 30, 90] as const;
  * it, most of what this agent is being asked is not in what it was given, and
  * that is a different fact about the workspace.
  */
-const MISS_SHARE_WORTH_POINTING_AT = 0.33;
+const MISS_SHARE_WORTH_POINTING_AT = 1 / 3;
 
-const pct = (n: number, of: number) => (of === 0 ? 0 : Math.round((n / of) * 100));
+/** Below this many replies a share is noise, and nobody is pointed at. */
+const MIN_ASKED_TO_POINT_AT = 10;
+
+const pct = (part: number, of: number) => (of === 0 ? 0 : Math.round((part / of) * 100));
+
+/** The three buckets, darkest first, as the legend reads them. */
+const BUCKETS = [
+  { key: "covered", label: "Found a passage", swatch: "bg-foreground" },
+  { key: "fallback", label: "Fell back to whole documents", swatch: "bg-foreground/50" },
+  { key: "ungrounded", label: "Nothing close", swatch: "bg-input" },
+] as const;
 
 /**
- * What the team asked that nothing written was close to.
+ * Settings › Coverage (A18): what the team asked that nothing written was
+ * close to.
  *
- * `messages.grounding` (0039) has recorded, on every reply, which of three
- * ways it was grounded — a passage that cleared the similarity floor, the
+ * `messages.grounding` (0039) records, on every reply, which of three ways it
+ * was grounded — a passage that cleared the similarity floor, the
  * whole-document fallback, or nothing. `0053` reads it back by agent and by
- * window. This is the screen.
+ * window; 0134 adds one agent at a time and the documents worth revisiting.
  *
  * **The middle bucket is the feature.** A reply that fell back to whole
  * documents is usually still a good answer, and it means no passage in
- * anything the team wrote was close to what was asked. That is the question
- * the team keeps asking that nobody has written down, and unlike a token
- * count it is a thing an admin can act on in an afternoon.
+ * anything the team wrote was close to what was asked — the question the team
+ * keeps asking that nobody has written down.
  *
  * **By agent and by window, never by person and never the question itself.**
- * The functions behind this do not select a `user_id` and return no content,
- * so there is nothing per-person to render even if a later screen wanted it.
- * Listing the questions themselves is a separate feature and needs the consent
- * of whoever asked — a count cannot identify anybody; the sentence they typed
- * can. See the header of `0053`.
+ * The functions behind this select no `user_id` and return no content.
  *
- * Rendered only for an admin, and only once the migration behind it exists:
- * `available: false` is the window between deploying the API and hand-applying
- * `0053`, and an admin should see nothing rather than an error about a feature
- * they never asked for. Same arrangement as `WorkspaceUsageSection`.
- *
- * Carries the workspace's own switch for the *separate* weekly routine
- * (`gap-report` in `routine-templates.ts`) that this dashboard's figures feed.
- * Flipping it on does not by itself start sending anything — it only lifts
- * the `gapReport` requirement that template checks before anyone can set the
- * routine up — but it is gated behind the same `available` check as the rest
- * of this section: both read from migrations this phase ships together, and
- * an admin who cannot see what nothing covered yet has nothing to turn the
- * routine on for either.
+ * An admin's; `available: false` is the window before the migration, and the
+ * page then shows the title alone rather than an error.
  */
-export function WorkspaceCoverageSection({ gapReportEnabled }: { gapReportEnabled: boolean }) {
+export function WorkspaceCoverageSection() {
   const [days, setDays] = useState<number>(30);
-  const queryClient = useQueryClient();
-  const [togglingReport, setTogglingReport] = useState(false);
+  const [agentId, setAgentId] = useState<string | null>(null);
+  const [opened, setOpened] = useState<RevisitDocument | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["coverage", "workspace", days],
+    queryKey: ["coverage", "workspace", days, agentId],
+    queryFn: () => (agentId ? api.coverage.workspace(days, agentId) : api.coverage.workspace(days)),
+  });
+  // The agent filter lists every agent the workspace figures name, so it is
+  // read from the unfiltered answer and kept while one agent is shown.
+  const { data: everyone } = useQuery({
+    queryKey: ["coverage", "workspace", days, null],
     queryFn: () => api.coverage.workspace(days),
   });
+  const { data: revisit } = useQuery({
+    queryKey: ["coverage", "documents", days, agentId],
+    queryFn: () => api.coverage.documents(days, agentId ?? undefined),
+    enabled: data?.available === true,
+  });
 
-  // No spinner on a switch: `keepPreviousData` is not in use here, so the only
-  // loading state that reaches the eye is the first one, and a section that
-  // appears mid-scroll is worse than a section that appears a moment late.
-  if (isLoading || !data?.available) return null;
+  const filters = (
+    <div className="flex flex-wrap gap-2">
+      <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
+        <SelectTrigger aria-label="Window" className="w-auto">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {WINDOWS.map((w) => (
+            <SelectItem key={w} value={String(w)}>
+              Last {w} days
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={agentId ?? ALL} onValueChange={(v) => setAgentId(v === ALL ? null : v)}>
+        <SelectTrigger aria-label="Agent" className="w-auto">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={ALL}>All agents</SelectItem>
+          {(everyone?.agents ?? []).map((a) => (
+            <SelectItem key={a.agentId} value={a.agentId}>
+              {a.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
 
-  const toggleReport = async (next: boolean) => {
-    if (togglingReport) return;
-    setTogglingReport(true);
-    try {
-      await api.coverage.setEnabled(next);
-      // `gapReportEnabled` lives on `me.workspace`, not on this query — the
-      // routine template picker and the home screen's notice both read it
-      // from there, so this is what makes either of them agree with the
-      // switch the moment it moves.
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
-    } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : "Couldn't change the coverage report setting",
-      );
-    } finally {
-      setTogglingReport(false);
-    }
-  };
+  const title = (
+    <SectionTitle
+      title="Coverage"
+      lede="What the team asked that nothing written was close to. Counts by agent and by window, never the questions themselves and never who asked."
+      action={data?.available ? filters : undefined}
+    />
+  );
+
+  if (isLoading || !data?.available) return title;
 
   const { totals, agents } = data;
-  // `0053` returns every agent in the workspace, including the ones nobody
-  // asked anything in this window. They are not rows — a list of zeroes buries
-  // the agents that have figures — but they are not nothing either, so they
-  // are counted in one line under the list.
-  const asked = agents.filter((a) => a.answers > 0);
-  const untouched = agents.length - asked.length;
+  // 0053 returns every agent, including the ones nobody asked anything in
+  // this window. They are not rows — a list of zeroes buries the agents that
+  // have figures — but they are counted in one line under the list.
+  const asked = agents.filter((a) => a.answers > 0).sort((a, b) => b.answers - a.answers);
+  const untouched = agentId ? 0 : agents.length - asked.length;
+  // The callout is for the one agent missing the largest share, past a third,
+  // and only once it has been asked enough for a share to mean something.
+  const missShare = (a: CoverageAgent) => (a.fallback + a.ungrounded) / a.answers;
+  const worst = asked
+    .filter((a) => a.answers >= MIN_ASKED_TO_POINT_AT)
+    .reduce<CoverageAgent | undefined>(
+      (w, a) => (!w || missShare(a) > missShare(w) ? a : w),
+      undefined,
+    );
+  const worstShare = worst ? missShare(worst) : 0;
+  const documents = revisit?.documents ?? [];
 
   return (
-    <section className="mt-16">
-      <SectionHeading
-        title="What nothing was close to."
-        description="By agent — never by person, and never the question itself."
-        action={<WindowPicker days={days} onChange={setDays} />}
-      />
+    <>
+      {title}
 
-      <div className="mt-6 flex items-start justify-between gap-4 rounded-lg border border-hairline bg-background px-4 py-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium">Weekly coverage report</div>
-          <p className="mt-1 text-meta leading-[1.45] text-muted-foreground">
-            Unavailable only for a workspace of exactly two — a reported topic would otherwise
-            identify the other person. Fine alone, and fine again from three people up.
-          </p>
-        </div>
-        <Switch
-          checked={gapReportEnabled}
-          onCheckedChange={toggleReport}
-          disabled={togglingReport}
-          aria-label="Weekly coverage report"
-        />
-      </div>
-
+      <SectionLabel>How replies were grounded</SectionLabel>
       {totals.answers === 0 ? (
-        // Bare, not inside a card. The empty state is already a well with its
-        // own 12px radius, and a 12px child inside a 12px parent is the radius
-        // mistake DESIGN.md lists fourth.
-        <EmptyState
-          className="mt-6"
-          title="Nothing in this window"
-          description={
-            totals.unrecorded > 0
-              ? `${totals.unrecorded} ${totals.unrecorded === 1 ? "reply" : "replies"} here predate this being recorded. Once somebody asks an agent a question, how it was grounded lands here.`
-              : "Once somebody asks an agent a question, whether anything you wrote was close to it lands here."
-          }
-        />
+        <p className="text-sm text-muted-foreground">
+          Nothing in this window. Once somebody asks an agent a question, whether anything you wrote
+          was close to it lands here.
+        </p>
       ) : (
         <>
-          <CoverageSummary totals={totals} days={days} />
-          <AgentBreakdown agents={asked} />
+          <div className="mb-2.5 flex flex-wrap gap-4 text-meta text-muted-foreground">
+            {BUCKETS.map((b) => (
+              <span key={b.key} className="inline-flex items-center gap-1.5">
+                <i className={`inline-block size-3 rounded-[3px] ${b.swatch}`} aria-hidden />
+                {b.label}
+              </span>
+            ))}
+          </div>
+          <ul className="m-0 list-none p-0">
+            {asked.map((a, i) => (
+              <AgentBar key={a.agentId} agent={a} first={i === 0} />
+            ))}
+          </ul>
         </>
       )}
 
       {untouched > 0 && (
-        <p className="mt-3 text-meta text-muted-foreground">
+        <p className="mt-2 text-meta text-muted-foreground">
           {untouched} {untouched === 1 ? "agent" : "agents"} nobody asked anything in this window.
         </p>
       )}
-
-      {/* Not folded with the rest: this one qualifies the percentage above it.
-          A figure whose denominator is a sample rather than a census has to say
-          so on the same screen as the figure — DESIGN.md's first failure mode is
-          about exactly the claim this sentence backs. */}
+      {/* A figure whose denominator is a sample rather than a census says so
+          on the same screen as the figure. */}
       {totals.unrecorded > 0 && (
-        <p className="mt-3 text-xs text-muted-foreground">
+        <p className="mt-2 text-meta text-muted-foreground">
           {totals.unrecorded} {totals.unrecorded === 1 ? "reply" : "replies"} in this window predate
           the recording and are left out of every figure above.
         </p>
       )}
 
-      <Disclosure className="mt-3" label="How this is measured">
-        Every reply records whether a passage your team wrote actually matched the question. A reply
-        that fell back to whole documents is usually still a good answer — it means no passage in
-        your knowledge was a close match for what was asked, which is the gap worth writing
-        something for. A reply with nothing to stand on is a different problem: that agent has no
-        usable documents attached.
-      </Disclosure>
-    </section>
-  );
-}
+      {worst && worstShare >= MISS_SHARE_WORTH_POINTING_AT && (
+        <div className="mt-5 flex items-start gap-3 rounded-xl border border-border p-4">
+          <StatusDot state="waiting" className="mt-1.5" />
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 text-sm font-medium">
+              {missedShareWords(worstShare)} what {worst.name} is asked is not in what it was given
+            </div>
+            <p className="mb-3 text-sm text-muted-foreground">
+              The middle bucket is the one to act on: those replies were still usable, but no
+              passage in anything the team wrote was close. That is the question people keep asking
+              that nobody has written down.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link to="/agents/$agentId/knowledge" params={{ agentId: worst.agentId }}>
+                  Add documents to {worst.name}
+                </Link>
+              </Button>
+              <Button variant="secondary" asChild>
+                <Link to="/agents/$agentId/configuration" params={{ agentId: worst.agentId }}>
+                  See the folders it reads
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
-/**
- * Three windows, as buttons rather than a select.
- *
- * Three options is under the count where a select earns its extra click, and a
- * row of buttons is reachable by keyboard and readable at 375px without
- * opening anything. `aria-pressed` carries the state that the ink fill shows.
- */
-function WindowPicker({ days, onChange }: { days: number; onChange: (d: number) => void }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      {WINDOWS.map((w) => (
-        <Button
-          key={w}
-          type="button"
-          size="sm"
-          variant={w === days ? "secondary" : "ghost"}
-          aria-pressed={w === days}
-          onClick={() => onChange(w)}
-        >
-          {w}d
-        </Button>
-      ))}
-    </div>
-  );
-}
-
-/**
- * The headline figure and the split behind it.
- *
- * The bar is ink and muted rather than ink and amber. Amber is a pointer in
- * this system and nothing amber may be larger than 44px (DESIGN.md §1); a
- * third of a full-width bar is not a pointer, it is a wall. So the bar states
- * the proportion in neutrals and the amber is spent, at most once on this
- * screen, on the one agent worth acting on.
- */
-function CoverageSummary({ totals, days }: { totals: CoverageTotals; days: number }) {
-  const coveredPct = pct(totals.covered, totals.answers);
-
-  return (
-    <SectionCard className="mt-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-        <span className="text-3xl font-semibold leading-none tracking-tight tabular-nums">
-          {coveredPct}%
-        </span>
-        <span className="text-sm text-muted-foreground">
-          of {totals.answers} {totals.answers === 1 ? "reply" : "replies"} in the last {days} days
-          stood on something you wrote
-        </span>
-      </div>
-
-      {/* One bar, three shares, in the order the legend reads them. Decoration:
-          the same numbers are spelled out underneath. */}
-      <div className="mt-5 flex h-2 w-full overflow-hidden rounded-sm bg-muted" aria-hidden>
-        <div
-          className="bg-foreground"
-          style={{ width: `${pct(totals.covered, totals.answers)}%` }}
-        />
-        <div
-          className="bg-foreground/35"
-          style={{ width: `${pct(totals.fallback, totals.answers)}%` }}
-        />
-      </div>
-
-      <dl className="mt-5 grid gap-3 sm:grid-cols-3">
-        <Bucket
-          swatch="bg-foreground"
-          label="Stood on a passage"
-          count={totals.covered}
-          share={pct(totals.covered, totals.answers)}
-        />
-        <Bucket
-          swatch="bg-foreground/35"
-          label="Fell back to whole documents"
-          count={totals.fallback}
-          share={pct(totals.fallback, totals.answers)}
-        />
-        <Bucket
-          swatch="bg-muted"
-          label="Nothing to stand on"
-          count={totals.ungrounded}
-          share={pct(totals.ungrounded, totals.answers)}
-        />
-      </dl>
-    </SectionCard>
-  );
-}
-
-/** One share of the bar, named. The swatch is a square, per DESIGN.md §1.3. */
-function Bucket({
-  swatch,
-  label,
-  count,
-  share,
-}: {
-  swatch: string;
-  label: string;
-  count: number;
-  share: number;
-}) {
-  return (
-    <div className="flex items-start gap-2.5">
-      <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${swatch}`} aria-hidden />
-      <div className="min-w-0">
-        <dt className="text-meta leading-tight text-muted-foreground">{label}</dt>
-        <dd className="text-base font-medium leading-tight tabular-nums">
-          {count} <span className="text-muted-foreground">· {share}%</span>
-        </dd>
-      </div>
-    </div>
-  );
-}
-
-/**
- * The same figures per agent, worst first.
- *
- * The workspace number on its own does not say what to do: one agent starved
- * of documents drags the whole rate down and looks, from the total alone, like
- * a knowledge problem everywhere. `0053` orders by the misses, so the agent
- * most in need of somebody writing something down is at the top and this
- * renderer keeps that order rather than imposing its own.
- *
- * **One amber chip at most, and only on the first row.** Every row carries its
- * share; only the worst one — and only if it is past the threshold — carries
- * the accent. Amber is a pointer in this system (DESIGN.md §1), and a pointer
- * aimed at five rows at once is a highlight, which is a different thing and a
- * worse one. The rows below the first are not less true, they are just not
- * where to start.
- */
-function AgentBreakdown({ agents }: { agents: CoverageAgent[] }) {
-  if (agents.length === 0) return null;
-
-  return (
-    <ul className="mt-3 flex flex-col gap-2.5">
-      {agents.map((a, i) => {
-        const missed = a.fallback + a.ungrounded;
-        const share = pct(missed, a.answers);
-        const worthPointingAt = i === 0 && missed / a.answers >= MISS_SHARE_WORTH_POINTING_AT;
-
-        return (
-          <li key={a.agentId}>
-            <DataRow
-              icon={<AgentAvatar emoji={a.emoji ?? "🤖"} className="h-8 w-8 text-sm" />}
-              title={a.name}
-              meta={`${a.answers} ${a.answers === 1 ? "reply" : "replies"} · ${a.covered} stood on a passage`}
-              trailing={<Chip tone={worthPointingAt ? "on" : "neutral"}>{share}% not covered</Chip>}
+      {documents.length > 0 && (
+        <>
+          <SectionLabel
+            action={<span className="font-normal">Old enough to doubt, used enough to matter</span>}
+          >
+            Documents worth revisiting
+          </SectionLabel>
+          <div className="overflow-x-auto">
+            <DataTable
+              label="Documents worth revisiting"
+              rows={documents}
+              rowKey={(d) => d.documentId}
+              columns={[
+                {
+                  key: "doc",
+                  header: "Document",
+                  cell: (d) => <Chip tone="code">{d.name}</Chip>,
+                },
+                {
+                  key: "age",
+                  header: "Age",
+                  cell: (d) => (
+                    <span className="text-muted-foreground">{ageWords(d.createdAt)}</span>
+                  ),
+                },
+                {
+                  key: "uses",
+                  header: `Used in replies, ${days} d`,
+                  num: true,
+                  cell: (d) => d.uses.toLocaleString("en-US"),
+                },
+                {
+                  key: "readBy",
+                  header: "Read by",
+                  hideBelow: "md",
+                  cell: (d) => (
+                    <span className="flex flex-wrap gap-1">
+                      {d.readBy.map((a) => (
+                        <Chip key={a.agentId}>{a.name}</Chip>
+                      ))}
+                    </span>
+                  ),
+                },
+                {
+                  key: "open",
+                  header: <span className="sr-only">Open</span>,
+                  className: "w-20 text-right",
+                  cell: (d) => (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Open ${d.name}`}
+                      onClick={() => setOpened(d)}
+                    >
+                      Open
+                    </Button>
+                  ),
+                },
+              ]}
             />
-          </li>
-        );
-      })}
-    </ul>
+          </div>
+        </>
+      )}
+
+      <p className="mt-4 text-meta text-muted-foreground">
+        Counts come from every thread in the workspace, private ones included. Nothing but the
+        number crosses: not who asked, not what they asked.
+      </p>
+
+      {opened && (
+        <DocumentPreviewDialog
+          documentId={opened.documentId}
+          name={opened.name}
+          onClose={() => setOpened(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/** One agent: its mark and name, the three buckets as one bar, and the count. */
+function AgentBar({ agent, first }: { agent: CoverageAgent; first: boolean }) {
+  const missed = pct(agent.fallback + agent.ungrounded, agent.answers);
+  const shares = BUCKETS.map((b) => ({ ...b, share: pct(agent[b.key], agent.answers) }));
+  return (
+    <li className="grid min-h-11 grid-cols-[150px_minmax(0,1fr)_120px] items-center gap-3.5 border-b border-hairline last:border-b-0">
+      <span className="flex min-w-0 items-center gap-2.5 text-sm font-medium">
+        <AgentMark agent={agent} size={24} />
+        <span className="truncate">{agent.name}</span>
+      </span>
+      <span
+        role="img"
+        aria-label={`${agent.name}: ${shares.map((s) => `${s.share}% ${s.label.toLowerCase()}`).join(", ")}`}
+        className="flex h-4 gap-0.5"
+      >
+        {shares
+          .filter((s) => s.share > 0)
+          .map((s) => (
+            <i
+              key={s.key}
+              className={`block h-4 first:rounded-l-[4px] last:rounded-r-[4px] ${s.swatch}`}
+              style={{ width: `${s.share}%` }}
+            />
+          ))}
+      </span>
+      <span className="text-right text-meta text-muted-foreground tabular-nums">
+        {agent.answers.toLocaleString("en-US")} asked · {missed}%{first ? " not covered" : ""}
+      </span>
+    </li>
   );
 }

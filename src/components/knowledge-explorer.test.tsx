@@ -133,7 +133,7 @@ function renderExplorer({ atRoot = false } = {}) {
 function fileNames(): string[] {
   return screen
     .getAllByLabelText(/^Open .*\.(md|pdf|csv|json|txt)$/i)
-    .map((el) => el.querySelector("span")?.textContent?.trim() ?? "");
+    .map((el) => el.querySelector("[data-part=name]")?.textContent?.trim() ?? "");
 }
 
 describe("the Knowledge explorer, on the workspace page", () => {
@@ -181,7 +181,8 @@ describe("the Knowledge explorer, on the workspace page", () => {
 
     const indexed = screen.getByLabelText(/open zebra-notes\.md/i).closest("div") as HTMLElement;
     const not = screen.getByLabelText(/open annual-report\.pdf/i).closest("div") as HTMLElement;
-    expect(within(indexed).getByText("Indexed")).toBeInTheDocument();
+    // A file that is ready says nothing; one that is not says so (A6).
+    expect(within(indexed).queryByText("Indexed")).toBeNull();
     expect(within(not).getByText("Not indexed")).toBeInTheDocument();
   });
 
@@ -374,14 +375,6 @@ describe("the Knowledge explorer, on the workspace page", () => {
 
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(screen.queryByText("Not attached")).not.toBeInTheDocument();
-  });
-
-  it("counts how many answers stand on a document", async () => {
-    renderExplorer();
-    await screen.findByText("annual-report.pdf");
-
-    const row = screen.getByLabelText(/open annual-report\.pdf/i).closest("div");
-    expect(within(row as HTMLElement).getByTitle(/how many answers cite/i)).toHaveTextContent("4");
   });
 });
 
@@ -724,12 +717,12 @@ describe("attaching the folder a file just went into", () => {
     act(() => press(options));
 
     const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("Attach Old pricing");
+    expect(dialog).toHaveTextContent("Who reads Old pricing");
     expect(
-      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ada" }),
+      within(dialog).getByRole("switch", { name: "Ada reads Old pricing" }),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ops bot" }),
+      within(dialog).getByRole("switch", { name: "Ops bot reads Old pricing" }),
     ).toBeInTheDocument();
   });
 
@@ -766,9 +759,7 @@ describe("attaching a folder from the folder itself", () => {
     await userEvent.click(screen.getByLabelText("Actions for Old pricing"));
     await userEvent.click(await screen.findByRole("menuitem", { name: /attach to agents/i }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.click(
-      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ada" }),
-    );
+    await userEvent.click(within(dialog).getByRole("switch", { name: "Ada reads Old pricing" }));
 
     expect(store.attachBundle).toHaveBeenCalledWith("a1", "bundle-2");
   });
@@ -782,7 +773,7 @@ describe("attaching a folder from the folder itself", () => {
 
     expect(await screen.findByText(/no agent reads this folder yet/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Attach it to an agent" }));
-    expect(await screen.findByRole("dialog")).toHaveTextContent("Attach Old pricing");
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Who reads Old pricing");
   });
 
   it("offers no menu item to somebody who can edit no agent", async () => {

@@ -2,9 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, it, expect } from "vitest";
 import {
-  EMOJIS,
   MODELS,
-  PERSONA_TEMPLATES,
   COST_BANDS,
   costFor,
   costBandIndex,
@@ -41,30 +39,6 @@ import {
  * These are cheap to state and the alternative is finding out from a user.
  */
 
-describe("persona templates", () => {
-  it.each(PERSONA_TEMPLATES)("$id offers an emoji the pickers can show", ({ emoji }) => {
-    expect(EMOJIS).toContain(emoji);
-  });
-
-  it.each(PERSONA_TEMPLATES)("$id offers a model the pickers can show", ({ model }) => {
-    expect(MODELS).toContain(model);
-  });
-
-  it("has no two templates sharing an id", () => {
-    // The dialog finds the picked template by id and toggles on it. Two rows
-    // with one id means the second is unreachable and the first cannot be
-    // deselected without appearing to select the other.
-    const ids = PERSONA_TEMPLATES.map((t) => t.id);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-});
-
-/**
- * The list above is what this build knows; `modelsFor` is what a given install
- * may show. They stopped being the same thing when a second provider arrived:
- * the Claude ids exist only where the server has a key for them, which is a
- * fact the frontend learns from /me rather than one it can hold in a constant.
- */
 describe("modelsFor", () => {
   it("lists what the server says it can serve", () => {
     expect(modelsFor(["gpt-4o", "claude-haiku-4-5"])).toEqual(["gpt-4o", "claude-haiku-4-5"]);
@@ -152,12 +126,6 @@ describe("the model a new agent starts on", () => {
     // statement about what a new agent should cost. Coupling the two made the
     // most expensive model in the list the default by accident.
     expect(DEFAULT_NEW_AGENT_MODEL).not.toBe(MODELS[0]);
-  });
-
-  it("is not more expensive than the templates people pick instead", () => {
-    // A default nobody changes should not cost more than the curated starting
-    // points beside it. gpt-4o is the id this is moving away from.
-    expect(PERSONA_TEMPLATES.some((t) => t.model === "gpt-4o")).toBe(false);
   });
 });
 

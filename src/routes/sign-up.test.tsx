@@ -19,6 +19,7 @@ vi.mock("@/lib/supabase/client", () => ({ supabase: { auth: { signUp } } }));
 vi.mock("@/lib/legal", () => ({
   termsLink: () => ({ href: "/terms", external: false }),
   privacyLink: () => ({ href: "/privacy", external: false }),
+  statusLink: () => null,
 }));
 
 const readSession = vi.fn<() => Promise<SessionAnswer>>(async () => ({ kind: "none" }));
@@ -34,12 +35,10 @@ async function renderSignUp() {
 }
 
 async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>, email = "you@company.com") {
-  await user.type(screen.getByLabelText(/full name/i), "Alex Rivera");
+  await user.type(screen.getByLabelText(/workspace name/i), "Acme");
   await user.type(screen.getByLabelText(/work email/i), email);
   await user.type(screen.getByLabelText(/^password$/i), "hunter2hunter2");
-  await user.type(screen.getByLabelText(/confirm password/i), "hunter2hunter2");
-  await user.click(screen.getByRole("checkbox"));
-  await user.click(screen.getByRole("button", { name: /create account/i }));
+  await user.click(screen.getByRole("button", { name: /create workspace/i }));
 }
 
 // The landing page's only button points here, so this is where a signed-in
@@ -68,7 +67,7 @@ describe("the sign-up page when somebody is already signed in", () => {
 
     await waitFor(() => expect(readSession).toHaveBeenCalled());
     expect(navigate).not.toHaveBeenCalled();
-    expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/workspace name/i)).toBeInTheDocument();
   });
 
   it("still offers the form when the lookup could not complete", async () => {
@@ -78,7 +77,7 @@ describe("the sign-up page when somebody is already signed in", () => {
 
     await waitFor(() => expect(readSession).toHaveBeenCalled());
     expect(navigate).not.toHaveBeenCalled();
-    expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/workspace name/i)).toBeInTheDocument();
   });
 });
 
@@ -114,8 +113,28 @@ describe("signing up", () => {
 
     await fillAndSubmit(user, "someone@example.com");
 
-    expect(screen.getByText(/check your email/i)).toBeInTheDocument();
+    expect(screen.getByText(/confirm your address/i)).toBeInTheDocument();
     expect(screen.getByText("someone@example.com")).toBeInTheDocument();
+    expect(screen.getByText(/waiting for the link to be opened/i)).toBeInTheDocument();
+  });
+
+  it("carries the workspace's name to the first run, and nothing else", async () => {
+    const user = userEvent.setup();
+    await renderSignUp();
+
+    await fillAndSubmit(user);
+
+    expect(signUp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ data: { workspace_name: "Acme" } }),
+      }),
+    );
+  });
+
+  it("says what continuing agrees to, without a box to tick", async () => {
+    await renderSignUp();
+    expect(screen.getByText(/by continuing you agree to the/i)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
   it("goes straight in when the deployment confirms nothing", async () => {

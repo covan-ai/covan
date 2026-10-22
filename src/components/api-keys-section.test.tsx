@@ -49,7 +49,7 @@ describe("ApiKeysSection", () => {
 
     expect(screen.getByText("Nightly report")).toBeInTheDocument();
     expect(screen.getByText(/covan_sk_ab12cd/)).toBeInTheDocument();
-    expect(screen.getByText(/never used/)).toBeInTheDocument();
+    expect(screen.getByText("Never")).toBeInTheDocument();
   });
 
   it("says when a key was last used, once it has been", () => {
@@ -60,18 +60,18 @@ describe("ApiKeysSection", () => {
       keys: [{ ...KEY, lastUsedAt: Date.now() - 60_000 }],
     });
 
-    expect(screen.queryByText(/never used/)).not.toBeInTheDocument();
-    expect(screen.getByText(/last used/)).toBeInTheDocument();
+    expect(screen.queryByText("Never")).not.toBeInTheDocument();
+    expect(screen.getByText("1 min ago")).toBeInTheDocument();
   });
 
-  it("renders nothing at all where the deployment cannot honour a key", () => {
+  it("offers no key where the deployment cannot honour one, and says so", () => {
     // Not an empty list with a create button: minting needs a signing secret,
     // and offering to make a credential nothing would accept is worse than
     // offering nothing.
     renderWith({ available: false, keys: [] });
 
     expect(screen.queryByRole("button", { name: /new key/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/API keys/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/does not issue keys/i)).toBeInTheDocument();
   });
 
   it("says something broke rather than hiding, when the request fails", () => {
@@ -98,8 +98,9 @@ describe("ApiKeysSection", () => {
     renderWith({ available: true, keys: [KEY] });
 
     expect(
-      screen.getByText(/they stop working the moment your own access does/i),
+      screen.getByText(/leave the workspace and your keys stop with you/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/keys belong to people, not to the workspace/i)).toBeInTheDocument();
   });
 
   it("shows the key once when it is created, and says so", async () => {
@@ -114,8 +115,22 @@ describe("ApiKeysSection", () => {
     expect(await screen.findByText("covan_sk_thewholekey")).toBeInTheDocument();
     expect(create).toHaveBeenCalledWith("Nightly report");
     // The promise the interface is making, and the one thing a person has to
-    // act on before closing the dialog.
+    // act on before putting it away.
     expect(screen.getByText(/only time it is shown/i)).toBeInTheDocument();
+    expect(screen.getByText(/your new key, .nightly report./i)).toBeInTheDocument();
+  });
+
+  it("puts the key away once it has been saved", async () => {
+    const user = userEvent.setup();
+    create.mockResolvedValue({ ...KEY, token: "covan_sk_thewholekey" });
+    renderWith({ available: true, keys: [] });
+
+    await user.click(screen.getByRole("button", { name: /new key/i }));
+    await user.type(screen.getByLabelText(/what is it for/i), "Nightly report");
+    await user.click(screen.getByRole("button", { name: /create key/i }));
+    await user.click(await screen.findByRole("button", { name: /i have saved it/i }));
+
+    expect(screen.queryByText("covan_sk_thewholekey")).not.toBeInTheDocument();
   });
 
   it("copies the key rather than making it be retyped", async () => {
@@ -150,7 +165,7 @@ describe("ApiKeysSection", () => {
     revoke.mockResolvedValue({ ok: true });
     renderWith({ available: true, keys: [KEY] });
 
-    await user.click(screen.getByRole("button", { name: /revoke/i }));
+    await user.click(screen.getByRole("button", { name: /revoke nightly report/i }));
 
     await waitFor(() => expect(revoke).toHaveBeenCalledWith("key-1"));
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["api-keys"] });

@@ -139,6 +139,29 @@ describe("values", () => {
     expect(sql).toContain(`'[{"id":"d1"}]'`);
     expect(sql).not.toContain("[object Object]");
   });
+
+  it("writes an array column as a Postgres array, which a jsonb literal is not", () => {
+    const { sql } = renderSql(
+      base({
+        agents: [
+          { id: "a1", name: "Off", connections_off: ["c1", "c2"], created_at: "t" },
+          { id: "a2", name: "None", connections_off: [], created_at: "t" },
+        ],
+      }),
+    );
+    expect(sql).toContain(`'{"c1","c2"}'`);
+    expect(sql).toContain(`'{}'`);
+    expect(sql).not.toContain(`'["c1","c2"]'`);
+  });
+
+  it("does the same for the toolkits a step offered", () => {
+    const { sql } = renderSql(
+      base({
+        message_steps: [{ id: "st1", message_id: "m1", offered: ["gmail", "it's"] }],
+      }),
+    );
+    expect(sql).toContain(`'{"gmail","it''s"}'`);
+  });
 });
 
 describe("references that point outside what the caller could see", () => {
@@ -236,6 +259,30 @@ describe("what the database will not let a restore say honestly", () => {
     // Not the shape `lib/routines/crypto` produces, so nothing can mistake it
     // for a credential.
     expect(MISSING_SECRET.startsWith("v1.")).toBe(false);
+  });
+
+  it("forgets who paused a routine, an account the new install does not have", () => {
+    const { sql } = renderSql(
+      base({
+        delivery_channels: [
+          { id: "c1", workspace_id: "w1", user_id: "u1", kind: "slack_webhook", label: "#ops" },
+        ],
+        routines: [
+          {
+            id: "r1",
+            workspace_id: "w1",
+            user_id: "u1",
+            name: "Paused by a colleague",
+            delivery_channel_id: "c1",
+            status: "paused",
+            paused_reason: null,
+            paused_by: "u7",
+          },
+        ],
+      }),
+    );
+    expect(sql).toContain("paused_by");
+    expect(sql).not.toContain("'u7'");
   });
 
   it("brings the routine back paused, with the reason on its own row", () => {

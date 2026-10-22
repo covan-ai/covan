@@ -13,16 +13,19 @@ import { cn } from "@/lib/utils";
  */
 export function DocsLink({
   page,
+  section,
   children,
   className,
 }: {
   page: DocSlug;
+  /** A heading's anchor on that page. */
+  section?: string;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <a
-      href={docsUrl(page)}
+      href={section ? `${docsUrl(page)}#${section}` : docsUrl(page)}
       target="_blank"
       rel="noreferrer"
       className={cn(

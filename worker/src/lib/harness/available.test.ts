@@ -271,3 +271,52 @@ describe("run_routine", () => {
     expect(await names([], [], "schedule")).not.toContain("watch_event");
   });
 });
+
+/**
+ * Configuration's Tools switches (0136): stored as what is off, read for the
+ * agent the turn is for. The browser goes from the list; a connection goes
+ * from the list and from the manifest that names it.
+ */
+describe("an agent's Tools switches", () => {
+  const BROWSING = { ...FULL, BROWSER_USE_API_KEY: "bu_test" } as ToolEnv;
+  function dbFor(off: { browser_off?: boolean; connections_off?: string[] } | null) {
+    const base = dbWith([CONNECTION], []) as unknown as {
+      from: (t: string) => unknown;
+    };
+    return {
+      from: (table: string) =>
+        table === "agents"
+          ? {
+              select: () => ({
+                eq: () => ({ maybeSingle: async () => ({ data: off, error: null }) }),
+              }),
+            }
+          : base.from(table),
+    } as unknown as SupabaseClient;
+  }
+  const askFor = (db: SupabaseClient) =>
+    capabilitiesFor({ db, env: BROWSING, workspaceId: "ws-1", userId: "user-1", agentId: "a-1" });
+
+  it("offers everything to an agent nobody has switched anything off for", async () => {
+    const { tools, manifest } = await askFor(dbFor({ browser_off: false, connections_off: [] }));
+    expect(tools.map((t) => t.name)).toContain("browse");
+    expect(tools.map((t) => t.name)).toContain("query_database");
+    expect(manifest).toContain("conn-1");
+  });
+
+  it("takes the browser away from an agent told not to use it", async () => {
+    const { tools } = await askFor(dbFor({ browser_off: true, connections_off: [] }));
+    expect(tools.map((t) => t.name)).not.toContain("browse");
+  });
+
+  it("takes a connection out of the list and the manifest", async () => {
+    const { tools, manifest } = await askFor(dbFor({ connections_off: ["conn-1"] }));
+    expect(tools.map((t) => t.name)).not.toContain("query_database");
+    expect(manifest).not.toContain("conn-1");
+  });
+
+  it("turns nothing off when the agent cannot be read", async () => {
+    const { tools } = await askFor(dbFor(null));
+    expect(tools.map((t) => t.name)).toContain("browse");
+  });
+});

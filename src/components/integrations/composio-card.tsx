@@ -1,89 +1,48 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Blocks, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { api, assetSrc } from "@/lib/api-client";
-import type { ToolConnection, ToolConnectionGrant } from "@/lib/connections-api";
+import { scopeWords, type ToolConnection, type ToolConnectionGrant } from "@/lib/connections-api";
 import { canWriteAsRole } from "@/lib/roles";
 import {
   useComposioGrants,
   useComposioStatus,
-  useComposioToolkits,
   useRemoveComposioGrant,
   useRemoveToolConnection,
 } from "@/hooks/use-connections";
-import { AppCatalogue } from "@/components/integrations/app-catalogue";
 import { AppLogo } from "@/components/integrations/app-logo";
-import { Chip, SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ConnectionScope } from "./connection-scope";
+import { IntegrationRow } from "./integration-row";
 
 /**
- * The applications this workspace has connected, and the catalogue it can
- * connect more from.
+ * The applications this workspace has connected, as rows in Connected (A8).
  *
- * WHY THERE ARE LOGOS NOW. The first version of this file argued there could
- * not be, and the argument had three legs. Two were sound and one had stopped
- * being true. The Content Security Policy was never the obstacle — what this
- * app actually sends is `frame-ancestors 'none'` with no `img-src` at all
- * (`src/start.ts`) — so that leg was describing a header we do not have. The
- * two sound ones were that a logo per row is a request to somebody else's CDN
- * on every page view, and that a logo which 404s is worse than no logo. Both
- * are now answered rather than avoided: every mark is fetched through
- * `GET /composio/logo` on our own API, which will fetch from two allowlisted
- * hosts and nothing else, and a bad answer becomes a monogram in `AppLogo`
- * rather than a broken image. The page still speaks to nobody but us.
- *
- * WHY THE SEARCH FIELD LEFT. It was a button that opened a text field that
- * printed forty untitled rows and nothing before you typed — a tool for
- * somebody who already knew the answer. `AppCatalogue` is the replacement and
- * it is a different question: what is on offer.
- *
- * Read `DESIGN.md` before changing any of this. What it constrains here: the
- * 44px tile is the accent ceiling and a mark lives inside it at 22px, chips
- * stay neutral, and the radius ladder runs 4 chip · 8 button · 10 row · 12
- * card.
+ * Each row says what it is, whose it is and how it is doing; Manage holds
+ * the rest — who may use it, the operations it runs without asking, why an
+ * operation is hidden, and the way back out. The catalogue to connect more
+ * from is `AppCatalogue`, in Available.
  */
-export function ComposioCard({
+export function ConnectedApps({
   connections,
   agents,
 }: {
   connections: ToolConnection[];
-  /**
-   * Only to put a name beside a standing permission. Passed in rather than
-   * read from the store, because the page above already holds it and a second
-   * subscription here would be a second thing to keep in step.
-   */
+  /** Only to put a name beside a standing permission. */
   agents: Array<{ id: string; name: string }>;
 }) {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
-  // The house pattern — `Me.workspace` carries no role. See `useWorkspaceRole`
-  // in `lib/workspace-role.ts`.
   const myRole = me?.members.find((m) => m.id === me.user.id)?.role;
-  // False until `me` loads, for the reason the Supabase card gives: a control
-  // that flashes into existence and then locks is worse than one that arrives a
-  // moment late.
   const canWrite = me ? canWriteAsRole(myRole) : false;
 
-  // Asked here only to learn whether this deployment has a key at all. The
-  // catalogue below asks the same question and answers the same way; react-
-  // query gives them one request between them.
-  const catalogue = useComposioToolkits("", "", true);
-
-  const mine = connections.filter((c) => c.transport === "composio");
-  // An application already connected is not offered again. **Only one that is
-  // actually connected**: a row left `pending` by somebody who went to find an
-  // API key and did not come back used to take the application out of the
-  // catalogue entirely, so the one thing they would try next — search for it
-  // again — answered that Covan had never heard of it. Those rows are still
-  // listed above the grid, which is where they get finished or removed.
-  const active = mine.filter((c) => c.status === "active");
-  const already = new Set(active.map((c) => c.toolkitSlug ?? ""));
-
-  // Every standing permission in the workspace, grouped by the connection it
-  // is on. Unconditional rather than per-card, because it is one small read
-  // and the alternative is one per connected app.
   const grants = useComposioGrants();
   const standing = new Map<string, ToolConnectionGrant[]>();
   for (const grant of grants.data?.grants ?? []) {
@@ -94,88 +53,35 @@ export function ComposioCard({
   }
   const agentNames = new Map(agents.map((a) => [a.id, a.name]));
 
-  // Not configured is a state to SHOW, not to hide. A self-hoster reading the
-  // docs for a feature their own build appears not to have is the failure this
-  // pattern exists to avoid — the same call `ConnectSourceCard` makes about
-  // NOTION_CLIENT_ID.
-  if (catalogue.data?.pages[0]?.configured === false) {
-    return (
-      <SectionCard className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3.5">
-          <Tile />
-          <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="text-title font-semibold leading-tight">Connected apps</span>
-            <span className="text-meta leading-tight text-muted-foreground">
-              Set <span className="font-mono text-xs">COMPOSIO_API_KEY</span> to let agents search
-              about 1500 applications and call the ones you connect — Gmail, HubSpot, Linear.
-            </span>
-          </span>
-        </div>
-        <Chip tone="neutral">Not configured</Chip>
-      </SectionCard>
-    );
-  }
-
   return (
-    <SectionCard className="flex flex-col gap-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3.5">
-          <Tile />
-          <span className="flex min-w-0 flex-col gap-[3px]">
-            <span className="text-title font-semibold leading-tight">Connected apps</span>
-            <span className="text-meta leading-tight text-muted-foreground">
-              Gmail, HubSpot, Linear and about fifteen hundred others. Some need only a sign-in,
-              most need a key from the application itself, and the few nobody can connect yet say
-              so. An agent asks before its first action on each.
-            </span>
-          </span>
-        </div>
-        {/* Counted from the active rows only. A sign-in somebody closed halfway
-            leaves a `pending` row, and counting it said "1 connected" about a
-            workspace that had connected nothing. */}
-        {active.length > 0 ? <Chip tone="neutral">{active.length} connected</Chip> : null}
-      </div>
-
-      {mine.length > 0 ? (
-        <ul className="flex flex-col gap-1.5 border-t border-hairline pt-4">
-          {mine.map((c) => (
-            <ConnectedApp
-              key={c.id}
-              connection={c}
-              grants={standing.get(c.id) ?? []}
-              agentNames={agentNames}
-              canWrite={canWrite}
-            />
-          ))}
-        </ul>
-      ) : null}
-
-      {/* A viewer cannot connect anything, so they are not shown a grid of
-          things to click. The list above stays: what the workspace already
-          reaches is worth knowing whether or not you may change it. */}
-      {canWrite ? (
-        <div className="border-t border-hairline pt-4">
-          <AppCatalogue connected={already} />
-        </div>
-      ) : null}
-    </SectionCard>
+    <>
+      {connections
+        .filter((c) => c.transport === "composio")
+        .map((c) => (
+          <ConnectedAppRow
+            key={c.id}
+            connection={c}
+            grants={standing.get(c.id) ?? []}
+            agentNames={agentNames}
+            canWrite={canWrite}
+          />
+        ))}
+    </>
   );
 }
 
 /**
- * One connected application, and the way back out of it.
+ * One connected application.
  *
  * A row that is still `pending` polls, because a person who has just come back
  * from a consent screen should see it settle rather than reload the page to
- * find out. The poll stops the moment it is not pending — the worker writes the
- * row on the first answer, so asking again would be a request to a third party
- * for something that cannot change.
+ * find out. The poll stops the moment it is not pending.
  *
  * Removing it revokes the grant at Composio before the row goes. That is the
  * whole reason removal is a route call rather than a delete: a deleted row with
  * a live grant is an OAuth token nobody in this product can see or take back.
  */
-function ConnectedApp({
+function ConnectedAppRow({
   connection,
   grants,
   agentNames,
@@ -187,127 +93,158 @@ function ConnectedApp({
   canWrite: boolean;
 }) {
   const remove = useRemoveToolConnection();
+  const [managing, setManaging] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const abandoned = isAbandoned(connection);
   useComposioStatus(connection.id, connection.status === "pending" && !abandoned);
 
+  const status = abandoned
+    ? { state: "idle" as const, text: "Not finished" }
+    : connection.status === "pending"
+      ? { state: "running" as const, text: "Finishing…" }
+      : connection.status === "failed"
+        ? { state: "failed" as const, text: "Not connected" }
+        : connection.verifyError
+          ? { state: "failed" as const, text: "Key refused" }
+          : { state: "done" as const, text: "Working" };
+
   return (
-    // The standing permissions live INSIDE the row's box, not under it. Put
-    // outside they read as a third item between two applications, which is
-    // exactly what they are not — each one belongs to the application above
-    // it, and a list where that is ambiguous is worse than no list.
-    <li className="flex flex-col gap-2 rounded-lg border border-hairline bg-background px-3 py-2.5 text-sm">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <span className="flex min-w-0 flex-1 basis-40 items-center gap-3">
-          <AppLogo src={assetSrc(connection.logoPath)} name={connection.label} size={36} />
-          <span className="flex min-w-0 flex-col gap-[2px]">
-            <span className="truncate">{connection.label}</span>
-            <span className="truncate font-mono text-xs text-muted-foreground">
-              {connection.toolkitSlug}
-            </span>
-          </span>
-          {abandoned ? (
-            <Chip tone="neutral">Not finished</Chip>
-          ) : connection.status === "pending" ? (
-            <Chip tone="neutral">Finishing…</Chip>
-          ) : connection.status === "failed" ? (
-            <Chip tone="neutral">Not connected</Chip>
-          ) : connection.verifyError ? (
-            // Composio said active; the provider said no to the key itself
-            // (covan#258). Said here, to whoever typed it, rather than as a
-            // 401 in front of whoever next asks an agent to use it.
-            <Chip tone="neutral">Key refused</Chip>
-          ) : null}
-          {/* Neutral, like every other chip on this row: it is a count, not a
-              verdict. Seven hidden on GitHub is a usable app; one on a
-              browser toolkit may be all it had (covan#276). */}
-          {connection.unavailable ? (
-            <Chip tone="neutral">
-              {connection.unavailable.count} operation
-              {connection.unavailable.count === 1 ? "" : "s"} hidden
-            </Chip>
-          ) : null}
-        </span>
-        <span className="flex shrink-0 items-center gap-2">
-          {connection.status === "active" ? <ConnectionScope connection={connection} /> : null}
-          {canWrite ? (
-            confirming ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    remove.mutate(connection.id, {
-                      onSuccess: () => toast.success(`${connection.label} disconnected.`),
-                      onError: (err) =>
-                        toast.error(err instanceof Error ? err.message : "Could not remove that"),
-                    })
-                  }
-                >
-                  {remove.isPending ? "Removing…" : "Remove"}
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-                  Keep
-                </Button>
-              </>
-            ) : (
-              <Button variant="ghost" size="sm" onClick={() => setConfirming(true)}>
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                Remove
-              </Button>
-            )
-          ) : null}
-        </span>
-      </div>
-      {connection.status === "active" && connection.verifyError ? (
-        <p className="text-meta leading-[1.45] text-muted-foreground">
-          {connection.verifyError} Remove it and connect again with a working one.
-        </p>
-      ) : null}
+    <>
+      <IntegrationRow
+        logo={<AppLogo src={assetSrc(connection.logoPath)} name={connection.label} size={36} />}
+        name={connection.label}
+        description={[
+          connection.toolkitSlug,
+          scopeWords(connection),
+          grants.length > 0
+            ? `${grants.length} ${grants.length === 1 ? "operation runs" : "operations run"} without asking`
+            : null,
+          connection.unavailable
+            ? `${connection.unavailable.count} operation${connection.unavailable.count === 1 ? "" : "s"} hidden`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+        status={status}
+        action={
+          <Button size="sm" variant="secondary" onClick={() => setManaging(true)}>
+            Manage
+          </Button>
+        }
+      />
 
-      {abandoned ? (
-        <p className="text-meta text-muted-foreground">
-          The sign-in for {connection.label} was not finished, so agents cannot use it. Remove this
-          and connect it again from the list below.
-        </p>
-      ) : null}
+      <Dialog
+        open={managing}
+        onOpenChange={(v) => {
+          setManaging(v);
+          if (!v) setConfirming(false);
+        }}
+      >
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>{connection.label}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="flex flex-col gap-4">
+            {connection.status === "active" && connection.verifyError ? (
+              <p className="m-0 text-meta leading-[1.45] text-muted-foreground">
+                {connection.verifyError} Remove it and connect again with a working one.
+              </p>
+            ) : null}
 
-      {/* What the worker already knows and the card used to keep to itself:
-          the service answered "no such operation" for these, so the agent is
-          not offered them, and the thirty days `unavailable_tools` trusts
-          that answer for is when they are tried again. Without this line an
-          app whose only useful operation was refused reads as connected and
-          nothing else for a month. */}
-      {connection.unavailable ? (
-        <p className="text-meta text-muted-foreground">
-          {connection.label} refused{" "}
-          {connection.unavailable.count === 1 ? "an operation" : "some operations"} when an agent
-          tried {connection.unavailable.count === 1 ? "it" : "them"}, so agents are not offered{" "}
-          {connection.unavailable.count === 1 ? "it" : "them"}
-          {connection.unavailable.hiddenUntil !== null
-            ? `. Tried again from ${retryDate(connection.unavailable.hiddenUntil)}.`
-            : "."}
-        </p>
-      ) : null}
+            {abandoned ? (
+              <p className="m-0 text-meta text-muted-foreground">
+                The sign-in for {connection.label} was not finished, so agents cannot use it. Remove
+                this and connect it again from Available.
+              </p>
+            ) : null}
 
-      {/* Only the standing permissions are listed, because only they are a
-          thing somebody granted. Everything else on this app asks, and there
-          is no row saying so — the absence of one IS the asking (0063). A list
-          that printed "asks first" for every operation in a 1500-app catalogue
-          would be a list of everything. */}
-      {grants.length > 0 ? (
-        <ul className="flex flex-col gap-1 border-t border-hairline pt-2">
-          {grants.map((grant) => (
-            <StandingGrant
-              key={`${grant.agentId}:${grant.slug}`}
-              grant={grant}
-              agentName={agentNames.get(grant.agentId) ?? "an agent"}
-              canWrite={canWrite}
-            />
-          ))}
-        </ul>
-      ) : null}
-    </li>
+            {/* The service answered "no such operation" for these, so the
+                agent is not offered them, and the thirty days
+                `unavailable_tools` trusts that answer for is when they are
+                tried again (covan#276). */}
+            {connection.unavailable ? (
+              <p className="m-0 text-meta text-muted-foreground">
+                {connection.label} refused{" "}
+                {connection.unavailable.count === 1 ? "an operation" : "some operations"} when an
+                agent tried {connection.unavailable.count === 1 ? "it" : "them"}, so agents are not
+                offered {connection.unavailable.count === 1 ? "it" : "them"}
+                {connection.unavailable.hiddenUntil !== null
+                  ? `. Tried again from ${retryDate(connection.unavailable.hiddenUntil)}.`
+                  : "."}
+              </p>
+            ) : null}
+
+            {connection.status === "active" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">Who can use it</span>
+                <ConnectionScope connection={connection} />
+              </div>
+            ) : null}
+
+            {/* Only the standing permissions are listed, because only they are
+                a thing somebody granted. Everything else on this app asks, and
+                the absence of a row IS the asking (0063). */}
+            {grants.length > 0 ? (
+              <div>
+                <div className="mb-1 text-sm font-medium">Runs without asking</div>
+                <ul className="m-0 flex list-none flex-col gap-1 p-0">
+                  {grants.map((grant) => (
+                    <StandingGrant
+                      key={`${grant.agentId}:${grant.slug}`}
+                      grant={grant}
+                      agentName={agentNames.get(grant.agentId) ?? "an agent"}
+                      canWrite={canWrite}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {canWrite ? (
+              <div className="flex items-center gap-2 border-t border-hairline pt-3">
+                {confirming ? (
+                  <>
+                    <span className="flex-1 text-meta text-muted-foreground">
+                      Agents lose {connection.label} at once, and the grant at Composio is revoked.
+                    </span>
+                    <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+                      Keep
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() =>
+                        remove.mutate(connection.id, {
+                          onSuccess: () => {
+                            setManaging(false);
+                            toast.success(`${connection.label} disconnected.`);
+                          },
+                          onError: (err) =>
+                            toast.error(
+                              err instanceof Error ? err.message : "Could not remove that",
+                            ),
+                        })
+                      }
+                    >
+                      {remove.isPending ? "Removing…" : "Remove"}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive"
+                    onClick={() => setConfirming(true)}
+                  >
+                    Remove {connection.label}…
+                  </Button>
+                )}
+              </div>
+            ) : null}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -384,14 +321,5 @@ function StandingGrant({
         </Button>
       ) : null}
     </li>
-  );
-}
-
-/** The 44px mark every row on this page carries. See DESIGN.md. */
-function Tile() {
-  return (
-    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-background text-muted-foreground ring-1 ring-inset ring-hairline">
-      <Blocks className="h-[22px] w-[22px]" />
-    </span>
   );
 }

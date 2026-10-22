@@ -7,16 +7,15 @@ export function getInitials(name: string | null | undefined, fallback = "–"): 
   return (parts[0]!.charAt(0) + parts[1]!.charAt(0)).toUpperCase();
 }
 
-/** A tile's letters: one at the smallest sizes, two from 24 up ("Google Drive" -> "GD"). */
-export function monogram(label: string, size = 24): string {
+/** A tile's two letters, at every size the boards draw one ("Google Drive" -> "GD"). */
+export function monogram(label: string): string {
   const trimmed = label.trim();
   const words = trimmed.split(/\s+/).filter(Boolean);
   if (words.length === 0) return "–";
-  if (size < 24) return trimmed.charAt(0).toUpperCase();
   if (trimmed.length <= 2) return trimmed.toUpperCase();
   return words.length > 1
     ? (words[0]!.charAt(0) + words[1]!.charAt(0)).toUpperCase()
-    : words[0]!.charAt(0).toUpperCase();
+    : words[0]!.slice(0, 2).toUpperCase();
 }
 
 /** "Can Bora" -> "Can B.": a teammate's name where a column is narrow (A5). */

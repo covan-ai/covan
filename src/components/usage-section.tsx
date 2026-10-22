@@ -1,180 +1,307 @@
-import { useQuery } from "@tanstack/react-query";
-import { api, type AgentUsage } from "@/lib/api-client";
-import { creditsFrom, approximateReplies, wholeCredits, creditsPhrase } from "@/lib/credits";
-import { SectionHeading } from "@/components/page-container";
-import { SectionCard, DataRow, Disclosure, EmptyState } from "@/components/section-card";
-import { AgentAvatar } from "@/components/avatars";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { AgentMark } from "@/components/agent-mark";
+import { Chip } from "@/components/chip";
 import { CreditsWall } from "@/components/credits-wall";
+import { HBarList } from "@/components/hbar-list";
+import { SectionLabel } from "@/components/section";
+import { StatusDot } from "@/components/status-dot";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import {
+  api,
+  ApiError,
+  type BillingInvoice,
+  type BillingSettings,
+  type BillingSettingsPatch,
+  type UsageMonthByAgent,
+} from "@/lib/api-client";
+import { approximateReplies, useCredits, wholeCredits, type CreditsView } from "@/lib/credits";
+import { cn } from "@/lib/utils";
 
-const compact = (n: number) =>
-  n >= 1_000_000
-    ? `${(n / 1_000_000).toFixed(1)}M`
-    : n >= 1_000
-      ? `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`
-      : String(n);
-
-// `<$0.01` is for an amount too small to print, not for the absence of one: a
-// month or an agent that really spent nothing reads `$0.00`, because "<$0.01"
-// under 0 replies says money moved and none did.
-const usd = (n: number) => (n === 0 ? "$0.00" : n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
+const n = (v: number) => Math.round(v).toLocaleString("en-US");
 
 /**
- * What this workspace has left, and what this person has used.
+ * Settings › Usage and billing, the hosted half (A15): what is left and what
+ * this month has used, the switches around buying more, this month by agent
+ * and the invoices. The ledger follows it (`credit-ledger.tsx`).
  *
- * Two different things, labelled apart on purpose. Credits belong to the
- * workspace — one pool every member spends from — while the per-agent figures
- * below are the caller's own conversations, ever. Putting both under one
- * heading would make the numbers look like they should add up, and they never
- * will.
- *
- * Every per-agent figure is the caller's own, and `workspace_usage` says so in
- * its own join (`0022`). It used to rely on RLS for that instead — sessions
- * were private per user — and when `0008` added shared sessions the totals
- * quietly began including colleagues' conversations while this heading still
- * said "Yours alone". A policy answers "may this person see this row", which
- * stopped being the same question as "is this row theirs" the moment sharing
- * existed.
+ * Credits belong to the workspace — one balance every member spends from —
+ * so every member sees the balance. What it went on, by agent and by entry,
+ * is an admin's (0032, 0124); the reads behind it refuse anybody else, and
+ * the sections are not drawn for them.
  */
-export function UsageSection() {
-  const { data: usage, isLoading } = useQuery({ queryKey: ["usage"], queryFn: api.usage });
-  const credits = creditsFrom(usage);
-  // Rounded the same way the composer's banner rounds it, so the two surfaces
-  // cannot disagree by a digit that neither of them means.
-  const shown = credits ? approximateReplies(credits.repliesLeft) : 0;
-  const agents = usage?.agents ?? [];
-  const used = agents.filter((a) => a.messageCount > 0);
+export function UsageSection({ isAdmin }: { isAdmin: boolean }) {
+  const credits = useCredits();
+  const { data: month } = useQuery({
+    queryKey: ["usage", "month"],
+    queryFn: api.usageMonth,
+    enabled: isAdmin,
+  });
+  const { data: billing } = useQuery({
+    queryKey: ["billing", "settings"],
+    queryFn: api.billing.settings,
+  });
+  const { data: invoices } = useQuery({
+    queryKey: ["billing", "invoices"],
+    queryFn: api.billing.invoices,
+    enabled: isAdmin,
+  });
 
-  // Credits on the hosted service, dollars on an install that has none — one
-  // unit per screen, never both. The server decides which by sending
-  // `estCredits` or not; a hosted row the API has not quoted shows no money
-  // rather than falling back to dollars.
-  const hosted = usage?.credits.metered === true;
-  const money = (a: AgentUsage) =>
-    hosted
-      ? typeof a.estCredits === "number"
-        ? creditsPhrase(a.estCredits)
-        : null
-      : usd(a.estCostUsd);
-
-  // Share of measured input that the provider served from its prompt cache.
-  // The denominator is measuredPromptTokens, not promptTokens: replies stored
-  // before the count existed report nothing, and dividing by every prompt ever
-  // sent would show a rate that rises on its own as those age out rather than
-  // because the cache improved. Null until there is a measured reply, and the
-  // line below renders nothing at all in that window.
-  const measured = usage?.totals.measuredPromptTokens ?? 0;
-  const cacheRate = measured > 0 ? (usage?.totals.cachedTokens ?? 0) / measured : null;
+  const thisMonth = month?.available && month.unit === "credits" ? month : null;
+  const settings = billing?.available ? billing : null;
 
   return (
-    <section className="mt-16">
-      <SectionHeading
-        title="Usage"
-        description="Credits are the workspace's. The figures below them are yours alone."
-      />
-
+    <>
       {credits && (
-        <SectionCard className="mt-6">
-          <div className="flex items-baseline justify-between gap-4">
-            <span className="text-sm text-muted-foreground">Workspace credits</span>
-            <span className="text-sm font-medium">
-              {credits.balance > 0 && credits.balance < 1
-                ? "<1"
-                : wholeCredits(credits.balance).toLocaleString()}{" "}
-              of {wholeCredits(credits.granted).toLocaleString()}
-            </span>
-          </div>
-
-          {/* Squares, not pills — the bar follows the same rule as the rest of
-              the system's marks (DESIGN.md §3). Amber once it is worth a look. */}
-          <div className="mt-3 h-1.5 w-full bg-muted" aria-hidden>
-            <div
-              className={credits.level === "fine" ? "h-full bg-foreground" : "h-full bg-brand"}
-              style={{ width: `${Math.max(2, Math.round(credits.ratio * 100))}%` }}
-            />
-          </div>
-
-          {/* The replies estimate only once it has something to stand on
-              (`repliesKnown`) — or once the balance is low, where even a rough
-              number is what somebody plans around. */}
-          {credits.level === "spent" ? (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Out of credits — new replies are paused until more are added
-            </p>
-          ) : credits.level === "low" || credits.repliesKnown ? (
-            <p className="mt-3 text-xs text-muted-foreground">
-              About {shown.toLocaleString()} {shown === 1 ? "reply" : "replies"} left
-            </p>
-          ) : null}
-
-          {/* The rest of the wall, only once it is actually spent. Somebody
-              with credits left does not need to be told there is somewhere
-              else to go. See `credits-wall.tsx`. */}
-          {credits.level === "spent" && <CreditsWall />}
-
-          <p className="mt-3 border-t border-hairline pt-3 text-xs text-muted-foreground">
-            Credits are what every piece of work here is charged in — a reply, indexing a document,
-            a connected-app call, a browser task. Every member of the workspace spends from the same
-            balance.
-          </p>
-          <Disclosure className="mt-2" label="Where the reply estimate comes from">
-            {!credits.repliesKnown && credits.level === "fine"
-              ? "An estimate of how many replies are left appears once this workspace has sent about ten. Until then the only honest number is the balance: a single cheap question would swing an average of two or three."
-              : credits.repliesSeen === 0
-                ? "It is a starting assumption until this workspace has sent something, and shifts towards what its own replies actually cost as you go."
-                : "It is mostly what this workspace's own replies have cost, weighed against a starting assumption that fades as you send more."}{" "}
-            A long conversation with documents attached costs more than a short question, and a
-            browser task or a connected app costs credits of its own, so the estimate moves.
-          </Disclosure>
-        </SectionCard>
+        <div
+          className={cn(
+            "mt-6 grid gap-4",
+            settings && "md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]",
+          )}
+        >
+          <BalanceCard
+            credits={credits}
+            spentThisMonth={thisMonth?.spent ?? null}
+            byAgent={isAdmin}
+          />
+          {settings && <BillingCard settings={settings} isAdmin={isAdmin} />}
+        </div>
       )}
 
-      <SectionCard padded={false} className="mt-3 overflow-hidden">
-        {isLoading ? (
-          <p className="px-5 py-8 text-center text-sm text-muted-foreground">Loading…</p>
-        ) : used.length === 0 ? (
-          <EmptyState
-            title="Nothing yet"
-            description="Once you start talking to an agent, what it costs shows up here."
-          />
-        ) : (
-          <ul className="divide-y divide-hairline">
-            {used.map((a) => (
-              <li key={a.agentId}>
-                <DataRow
-                  icon={<AgentAvatar emoji={a.emoji ?? "🤖"} className="h-8 w-8 text-sm" />}
-                  title={a.name}
-                  meta={`${a.messageCount} ${a.messageCount === 1 ? "reply" : "replies"} · ${a.model}`}
-                  trailing={
-                    <span className="text-right text-xs text-muted-foreground">
-                      <span className="block font-medium text-foreground">
-                        {compact(a.totalTokens)}
-                      </span>
-                      {money(a)}
-                    </span>
-                  }
-                />
-              </li>
-            ))}
-          </ul>
-        )}
-      </SectionCard>
-      {/* Both sentences stay: the first is why these figures do not reconcile
-          with the credits above, and the second is what backs the money. */}
-      <p className="mt-3 text-xs text-muted-foreground">
-        Per-agent figures cover every conversation you have had, and are estimates from list prices
-        {hosted ? " at today's rate" : ""}.{" "}
-        {hosted
-          ? "The balance above is what was actually charged, to the whole workspace."
-          : "Nothing here is charged to anyone: a self-hosted install pays its providers directly."}
-      </p>
-      {cacheRate !== null && (
-        <Disclosure
-          className="mt-2"
-          label={`${Math.round(cacheRate * 100)}% of your input was cached`}
+      {credits?.level === "spent" && <CreditsWall />}
+
+      {isAdmin && (thisMonth || invoices?.available) && (
+        <div
+          className={cn(
+            "mt-10 grid gap-x-10 gap-y-8",
+            thisMonth && invoices?.available && "md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]",
+          )}
         >
-          Cached input is billed at a reduced rate. Carrying on an existing conversation caches
-          well, while a new one always starts cold.
-        </Disclosure>
+          {thisMonth && <MonthByAgent month={thisMonth} />}
+          {invoices?.available && <Invoices invoices={invoices.invoices} />}
+        </div>
+      )}
+    </>
+  );
+}
+
+function BalanceCard({
+  credits,
+  spentThisMonth,
+  byAgent,
+}: {
+  credits: CreditsView;
+  spentThisMonth: number | null;
+  byAgent: boolean;
+}) {
+  // The bar is what is used of what there was: this month's spend against
+  // it plus what is left where the month is known, everything ever added
+  // otherwise.
+  const used = spentThisMonth ?? Math.max(0, credits.granted - credits.balance);
+  const whole = used + credits.balance;
+  const share = whole > 0 ? used / whole : 0;
+  const left = credits.balance > 0 && credits.balance < 1 ? "<1" : n(wholeCredits(credits.balance));
+
+  return (
+    <div className="rounded-xl border border-border px-[22px] py-5">
+      <div className="text-xs font-medium uppercase tracking-[0.06em] text-micro-foreground">
+        Credits left
+      </div>
+      <div className="mt-1.5 text-2xl font-semibold tabular-nums">{left}</div>
+      <div className="mt-4 h-1.5 rounded-[3px] bg-border" aria-hidden>
+        <div
+          className="h-1.5 rounded-[3px] bg-foreground"
+          style={{ width: `${Math.round(share * 100)}%` }}
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap justify-between gap-x-4 gap-y-1 text-meta text-muted-foreground">
+        <span>
+          {spentThisMonth !== null
+            ? `${n(used)} used this month`
+            : `${n(used)} used of ${n(credits.granted)} added`}
+        </span>
+        {credits.level === "spent" ? (
+          <span className="inline-flex items-center gap-1.5">
+            <StatusDot state="waiting" /> Out of credits, new replies are paused
+          </span>
+        ) : credits.level === "low" ? (
+          <span className="inline-flex items-center gap-1.5">
+            <StatusDot state="waiting" /> Running low
+          </span>
+        ) : credits.repliesKnown ? (
+          <span>About {n(approximateReplies(credits.repliesLeft))} replies left</span>
+        ) : null}
+      </div>
+      {byAgent && (
+        <div className="mt-[18px] flex gap-2">
+          <Button variant="secondary" asChild>
+            <a href="#by-agent">Usage by agent</a>
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BillingCard({ settings, isAdmin }: { settings: BillingSettings; isAdmin: boolean }) {
+  const queryClient = useQueryClient();
+  const [saving, setSaving] = useState(false);
+  const save = async (patch: BillingSettingsPatch) => {
+    setSaving(true);
+    try {
+      const next = await api.billing.updateSettings(patch);
+      queryClient.setQueryData(["billing", "settings"], next);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save that");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const { autoTopUp, lowBalance, card } = settings;
+
+  return (
+    <fieldset
+      disabled={!isAdmin || saving}
+      className="flex min-w-0 flex-col gap-3.5 rounded-xl border border-border px-[22px] py-5"
+    >
+      <SwitchRow
+        label="Auto top-up"
+        checked={autoTopUp.available && autoTopUp.enabled}
+        disabled={!autoTopUp.available}
+        onChange={(on) => void save({ autoTopUp: { enabled: on } })}
+        note={!autoTopUp.available ? <Chip size="sm">Coming soon</Chip> : null}
+      >
+        Buys {n(autoTopUp.amount)} credits when the balance drops below {n(autoTopUp.below)}, with
+        the card on file. Owners get an email each time.
+      </SwitchRow>
+      <SwitchRow
+        label="Low balance warning"
+        checked={lowBalance.enabled}
+        onChange={(on) => void save({ lowBalance: { enabled: on } })}
+      >
+        Tell everyone in the workspace at {n(lowBalance.below)} credits. Agents pause at zero;
+        nothing is lost.
+      </SwitchRow>
+      <div className="border-t border-hairline pt-3 text-meta text-muted-foreground">
+        {card ? `Card ending ${card.last4}` : "No card on file yet — one is kept after a purchase."}
+      </div>
+    </fieldset>
+  );
+}
+
+function SwitchRow({
+  label,
+  checked,
+  disabled,
+  onChange,
+  note,
+  children,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (on: boolean) => void;
+  note?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <Switch
+        aria-label={label}
+        className="mt-0.5"
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onChange}
+      />
+      <div>
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {label}
+          {note}
+        </div>
+        <div className="mt-0.5 text-meta text-muted-foreground">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function MonthByAgent({ month }: { month: UsageMonthByAgent }) {
+  return (
+    <section id="by-agent" className="scroll-mt-20">
+      <SectionLabel>This month by agent</SectionLabel>
+      {month.byAgent.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nothing spent since the 1st.</p>
+      ) : (
+        <HBarList
+          label="Credits this month by agent"
+          rows={month.byAgent.map((a) => ({
+            key: a.agentId,
+            lead: <AgentMark agent={a} size={20} />,
+            label: a.name,
+            value: a.amount,
+            display: n(a.amount),
+          }))}
+        />
+      )}
+      <p className="mt-2 text-meta text-muted-foreground">
+        Replies and routine runs since the 1st, priced from what each model was paid.
+      </p>
+    </section>
+  );
+}
+
+const STATUS_WORD: Record<BillingInvoice["status"], string> = {
+  paid: "Paid",
+  refunded: "Refunded",
+  pending: "Pending",
+};
+
+function Invoices({ invoices }: { invoices: BillingInvoice[] }) {
+  const [opening, setOpening] = useState<string | null>(null);
+  const open = async (id: string) => {
+    setOpening(id);
+    try {
+      const { url } = await api.billing.invoicePdfUrl(id);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't open that invoice");
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  return (
+    <section>
+      <SectionLabel>Invoices</SectionLabel>
+      {invoices.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No purchases yet.</p>
+      ) : (
+        <ul className="m-0 list-none p-0">
+          {invoices.map((inv) => (
+            <li
+              key={inv.id}
+              className="flex min-h-11 items-center gap-3 border-b border-hairline text-sm last:border-b-0"
+            >
+              <span className="font-medium">
+                {new Date(inv.at).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}
+              </span>
+              <span className="text-muted-foreground">
+                {n(inv.credits)} credits{inv.total ? ` · ${inv.total}` : ""}
+              </span>
+              <Chip>{STATUS_WORD[inv.status]}</Chip>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                disabled={opening === inv.id}
+                onClick={() => void open(inv.id)}
+              >
+                {opening === inv.id ? "Opening…" : "Download PDF"}
+              </Button>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );

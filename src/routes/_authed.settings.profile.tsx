@@ -4,6 +4,7 @@ import { api } from "@/lib/api-client";
 import { SectionTitle } from "@/components/section";
 import { ProfileForm } from "@/components/account/profile-form";
 import { EmailCard } from "@/components/account/email-card";
+import { SignInMethods } from "@/components/account/sign-in-methods";
 
 export const Route = createFileRoute("/_authed/settings/profile")({
   component: ProfileSettingsPage,
@@ -19,17 +20,16 @@ function ProfileSettingsPage() {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   return (
     <>
-      <SectionTitle title="Profile" lede="How the people you work with see you." />
-      <section className="mt-8">
+      <SectionTitle title="Profile" lede="Who you are across every workspace you belong to." />
+      <div className="mt-5">
         {/* Keyed so the form is seeded once `me` arrives, and again only
             when the person changes. */}
         <ProfileForm key={me?.user.id ?? "pending"} user={me?.user} />
-      </section>
-      <section className="mt-10">
         {/* Keyed on the address so a confirmed change clears the "we sent a
             link" note along with the input. */}
         <EmailCard key={me?.user.email ?? "pending"} email={me?.user.email} />
-      </section>
+        <SignInMethods />
+      </div>
     </>
   );
 }

@@ -20,18 +20,25 @@ import { toast } from "sonner";
 export function WorkspaceStep({
   formId,
   currentName,
+  suggestion,
   onDone,
   onValidityChange,
   onBusyChange,
 }: {
   formId: string;
   currentName: string | null;
+  /** What to start the field on: the name given at sign-up, when there was one. */
+  suggestion?: string | null;
   onDone: () => void;
   onValidityChange?: (valid: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState(currentName ?? "");
+  // Null until somebody types. Until then the field shows the name given at
+  // sign-up, which is read from the session and can arrive after the step is
+  // on screen, else the workspace's own.
+  const [typed, setTyped] = useState<string | null>(null);
+  const name = typed ?? suggestion ?? currentName ?? "";
   const [saving, setSaving] = useState(false);
 
   const valid = name.trim().length > 0;
@@ -80,16 +87,20 @@ export function WorkspaceStep({
   return (
     <form id={formId} onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-1.5">
-        <Label htmlFor="workspace-name">Workspace name</Label>
+        <Label htmlFor="workspace-name">Name</Label>
         <Input
           id="workspace-name"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => setTyped(e.target.value)}
           maxLength={100}
-          placeholder={currentName === null ? "Acme" : undefined}
+          placeholder="Acme"
+          className="max-w-[360px]"
           required
           autoFocus
         />
+        <p className="m-0 text-meta text-muted-foreground">
+          Your team sees it in the sidebar and in the invitations you send.
+        </p>
       </div>
     </form>
   );

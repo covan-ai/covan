@@ -1,5 +1,6 @@
 /**
- * An agent's face, and what deleting it would take with it (0120).
+ * An agent's face, its Tools switches, and what deleting it would take with
+ * it (0120, 0136).
  *
  * `avatar` is one of eight mark names or null, written through the caller's
  * own client like `name` beside it — so it is held to the same column grant and
@@ -117,6 +118,42 @@ describe("agents.avatar", () => {
       .eq("id", agentId)
       .single();
     expect(row?.avatar).not.toBe("cat");
+  });
+});
+
+/**
+ * The Tools switches (0136), held to the same grant and policy as the face:
+ * whoever may edit the agent turns things off and on; somebody who may only
+ * use it cannot.
+ */
+describe("agents.browser_off and connections_off", () => {
+  const CONNECTION = "00000000-0000-4000-8000-000000000136";
+
+  it("lets whoever may edit the agent switch the browser and a connection off", async () => {
+    const { data, error } = await owner.db
+      .from("agents")
+      .update({ browser_off: true, connections_off: [CONNECTION] })
+      .eq("id", agentId)
+      .select("browser_off, connections_off")
+      .single();
+    expect(error).toBeNull();
+    expect(data).toEqual({ browser_off: true, connections_off: [CONNECTION] });
+  });
+
+  it("does not let somebody who may only use the agent switch them back", async () => {
+    const { data } = await member.db
+      .from("agents")
+      .update({ browser_off: false, connections_off: [] })
+      .eq("id", agentId)
+      .select("id");
+    expect(data ?? []).toEqual([]);
+
+    const { data: row } = await serviceClient()
+      .from("agents")
+      .select("browser_off, connections_off")
+      .eq("id", agentId)
+      .single();
+    expect(row).toEqual({ browser_off: true, connections_off: [CONNECTION] });
   });
 });
 

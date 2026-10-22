@@ -36,6 +36,7 @@ as $$
     join public.chat_sessions s on s.id = m.session_id
    where d.bundle_id = any(p_bundle_ids)
      and s.workspace_id = b.workspace_id
+     and s.deleted_at is null
      and public.is_workspace_member(b.workspace_id)
      and public.bundle_is_visible(b.id)
      and m.role = 'assistant'
@@ -78,7 +79,9 @@ begin
          count(m.id) filter (where m.grounding = 'documents'),
          count(m.id) filter (where m.grounding = 'none')
     from public.agents a
-    left join public.chat_sessions s on s.agent_id = a.id
+    left join public.chat_sessions s
+      on s.agent_id = a.id
+     and s.deleted_at is null
     left join public.messages m
       on m.session_id = s.id
      and m.role = 'assistant'
@@ -112,6 +115,7 @@ begin
     from public.chat_sessions s
     join public.messages m on m.session_id = s.id
    where s.agent_id = p_agent_id
+     and s.deleted_at is null
      and m.role = 'assistant'
      and m.created_at >= now() - make_interval(days => greatest(1, least(coalesce(p_days, 30), 365)));
 end $$;

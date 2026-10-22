@@ -80,6 +80,17 @@ create policy "routine_channels_delete_own"
     )
   );
 
+-- Held to an API key's workspace like every workspace table (0087). The
+-- select policy already reaches the routine through its own RLS, but the
+-- table carries no workspace_id, so the scope is written out here.
+drop policy if exists routine_channels_request_workspace on public.routine_channels;
+create policy routine_channels_request_workspace on public.routine_channels
+  as restrictive for all to authenticated
+  using ((select public.request_workspace()) is null
+         or exists (select 1 from public.routines r
+                     where r.id = routine_channels.routine_id
+                       and r.workspace_id = (select public.request_workspace())));
+
 revoke all on public.routine_channels from anon, authenticated;
 grant select on public.routine_channels to authenticated;
 grant insert (routine_id, delivery_channel_id) on public.routine_channels to authenticated;

@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import { AGENT_ACCESS, AVATAR_MARKS, mapAgent } from "../lib/dto";
 import { callerWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
+import { refusedByPolicy } from "../lib/refused";
 import { REASONING_EFFORTS, MODEL_IDS, ENDPOINT_MODEL_PATTERN } from "../lib/models";
 import { endpointIsVisible } from "../lib/model-endpoints";
 
@@ -224,6 +225,9 @@ agents.post("/agents", async (c) => {
     .select("id")
     .single();
 
+  if (refusedByPolicy(error)) {
+    return c.json({ error: "your role cannot create agents in this workspace" }, 403);
+  }
   if (error || !data) {
     return c.json({ error: "failed to create agent" }, 500);
   }

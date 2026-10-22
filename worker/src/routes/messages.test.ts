@@ -140,3 +140,48 @@ describe("POST /messages/:id/show", () => {
     expect((await show(app)).status).toBe(404);
   });
 });
+
+describe("POST /messages", () => {
+  /** The insert's answer, as PostgREST gives it. */
+  function posting(
+    insert: () => { data: unknown; error: { code: string; message: string } | null },
+  ) {
+    const { db } = fakeDb({ tables: { messages: { insert } } });
+    const app = new Hono<AppEnv>();
+    app.use("/*", async (c, next) => {
+      c.set("user", USER as never);
+      c.set("db", db as never);
+      await next();
+    });
+    app.route("/", messages);
+    return app.request(
+      "/messages",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "7b0c2f5e-1d3a-4c8e-9f60-2a1b3c4d5e6f",
+          role: "user",
+          content: "Can I write here?",
+        }),
+      },
+      {} as never,
+    );
+  }
+
+  // A thread on an agent you cannot use: RLS refuses the row with 42501, which
+  // is "not allowed", not "something broke".
+  it("answers 403 when the database refuses the row", async () => {
+    const res = await posting(() => ({
+      data: null,
+      error: { code: "42501", message: "new row violates row-level security policy" },
+    }));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "you cannot write in this thread" });
+  });
+
+  it("still answers 500 when something did break", async () => {
+    const res = await posting(() => ({ data: null, error: { code: "XX000", message: "boom" } }));
+    expect(res.status).toBe(500);
+  });
+});

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types";
+import { refusedByPolicy } from "../lib/refused";
 
 const favorites = new Hono<AppEnv>();
 
@@ -36,6 +37,9 @@ favorites.post("/agents/:id/favorite", async (c) => {
 
   const { error } = await db.from("favorites").insert({ user_id: user.id, agent_id: agentId });
 
+  if (refusedByPolicy(error)) {
+    return c.json({ error: "you cannot pin this agent" }, 403);
+  }
   if (error) {
     return c.json({ error: "failed to add favorite" }, 500);
   }

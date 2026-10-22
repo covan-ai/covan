@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
+import { refusedByPolicy } from "../lib/refused";
 
 const messages = new Hono<AppEnv>();
 
@@ -38,6 +39,9 @@ messages.post("/messages", async (c) => {
     .select("*")
     .single();
 
+  if (refusedByPolicy(error)) {
+    return c.json({ error: "you cannot write in this thread" }, 403);
+  }
   if (error || !data) {
     return c.json({ error: "failed to create message" }, 500);
   }

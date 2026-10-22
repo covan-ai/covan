@@ -6,6 +6,7 @@ import { pollConversationBrowser } from "../lib/browser/live";
 import { NOT_STARTED } from "../lib/browser/queue";
 import { deferred } from "../lib/defer";
 import { callDeletionFn } from "../lib/deletion";
+import { refusedByPolicy } from "../lib/refused";
 import {
   asSessionState,
   BROWSER_TASK_COLUMNS,
@@ -385,6 +386,9 @@ sessions.post("/sessions", async (c) => {
     .select("*")
     .single();
 
+  if (refusedByPolicy(error)) {
+    return c.json({ error: "you cannot start a thread with this agent" }, 403);
+  }
   if (error || !data) {
     return c.json({ error: "failed to create session" }, 500);
   }

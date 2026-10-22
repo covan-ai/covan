@@ -39,3 +39,33 @@ export function workspaceDeletionEmail(args: {
     }),
   };
 }
+
+/**
+ * The other half of that notice: the deletion was called off. Everybody who
+ * was told the date is told it is not happening, and by whom — otherwise the
+ * last word they had is that everything goes on a given day.
+ */
+export function workspaceDeletionCancelledEmail(args: {
+  email: string;
+  workspaceName: string;
+  cancelledBy: string;
+}) {
+  return {
+    to: args.email,
+    subject: `${args.workspaceName} on Covan will not be deleted`,
+    text: [
+      `${args.cancelledBy} called off the deletion of ${args.workspaceName}.`,
+      "",
+      "Nothing was removed and nothing changes: every agent, thread, routine and",
+      "document is where it was.",
+    ].join("\n"),
+    html: emailShell({
+      preheader: `${args.workspaceName} is staying.`,
+      heading: `${args.workspaceName} will not be deleted`,
+      bodyHtml: paragraphs(
+        `${escapeHtml(args.cancelledBy)} called off the deletion of ${escapeHtml(args.workspaceName)}.`,
+        "Nothing was removed and nothing changes: every agent, thread, routine and document is where it was.",
+      ),
+    }),
+  };
+}

@@ -26,7 +26,7 @@ const PHONE = {
 
 /** The button, once the list of authenticators has arrived and enabled it. */
 async function setUpButton() {
-  const button = await screen.findByRole("button", { name: "Set up" });
+  const button = await screen.findByRole("button", { name: "Turn on" });
   await waitFor(() => expect(button).toBeEnabled());
   return button;
 }

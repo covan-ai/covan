@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, Mail, Plus, RefreshCw, Send, Trash2, Webhook } from "lucide-react";
-import { Chip, SectionCard } from "@/components/section-card";
-import { SectionHeading } from "@/components/page-container";
+import { Chip } from "@/components/chip";
+import { Field } from "@/components/field";
 import { RevealedSecret } from "@/components/revealed-secret";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -158,32 +158,23 @@ export function DeliveryChannelsCard() {
     }
   };
 
+  // A field on Preferences: where your routines send their updates.
   return (
-    <section className="mt-10">
-      <SectionHeading
-        title="Delivery channels"
-        description="Where your routines send their updates."
-        action={
-          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-            <Plus className="mr-1.5 h-4 w-4" /> Add channel
-          </Button>
-        }
-      />
-
-      <SectionCard padded={false} className="mt-3 overflow-hidden">
+    <Field label="Delivery channels" help="Where your routines send their updates.">
+      <div className="max-w-[560px]">
         {isLoading ? (
-          <p className="px-5 py-4 text-sm text-muted-foreground">Loading…</p>
+          <p className="pt-1.5 text-sm text-muted-foreground">Loading…</p>
         ) : channels.length === 0 ? (
-          <p className="px-5 py-4 text-sm text-muted-foreground">
+          <p className="pt-1.5 text-sm text-muted-foreground">
             No delivery channels yet. Add one to send routine updates to Slack, an inbox, or
             anything that can take a webhook.
           </p>
         ) : (
-          <ul className="divide-y divide-hairline">
+          <ul className="m-0 list-none p-0">
             {channels.map((channel) => (
               <li
                 key={channel.id}
-                className="group flex items-center gap-3 px-5 py-3.5 transition-colors duration-200 hover:bg-surface-hover"
+                className="group flex min-h-11 items-center gap-3 border-b border-hairline last:border-b-0"
               >
                 <ChannelIcon kind={channel.kind} />
                 <span className="min-w-0 flex-1 truncate text-sm">{channel.label}</span>
@@ -242,7 +233,10 @@ export function DeliveryChannelsCard() {
             ))}
           </ul>
         )}
-      </SectionCard>
+        <Button variant="secondary" size="sm" className="mt-2" onClick={() => setOpen(true)}>
+          <Plus /> Add channel
+        </Button>
+      </div>
 
       <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : close())}>
         <DialogContent>
@@ -325,7 +319,7 @@ export function DeliveryChannelsCard() {
           )}
         </DialogContent>
       </Dialog>
-    </section>
+    </Field>
   );
 }
 

@@ -21,14 +21,16 @@ function PreferencesSettingsPage() {
   return (
     <>
       <SectionTitle title="Preferences" lede="How Covan looks, and what it tells you about." />
-      <PersonalPreferencesSection me={me ?? undefined} />
-      {/* Where routines deliver is a person's: a channel belongs to whoever
+      <div className="mt-5">
+        <PersonalPreferencesSection me={me ?? undefined} />
+        {/* Where routines deliver is a person's: a channel belongs to whoever
           set it up (0019), so it sits here beside the switches that send
           through it. */}
-      <DeliveryChannelsCard />
-      {/* Last: erasure is the caller's own right, and the way to take your
+        <DeliveryChannelsCard />
+        {/* Last: erasure is the caller's own right, and the way to take your
           work with you first is Export and deletion. */}
-      <CloseAccountSection email={me?.user.email} />
+        <CloseAccountSection email={me?.user.email} />
+      </div>
     </>
   );
 }

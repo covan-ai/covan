@@ -15,7 +15,7 @@ import {
   toEpochMs,
   type SessionState,
 } from "../lib/dto";
-import { availableModels, REASONING_EFFORTS, type ModelEnv } from "../lib/models";
+import { availableModels, REASONING_EFFORTS, type ModelEnv, isEndpointModel } from "../lib/models";
 import { estimateCostUsd } from "../lib/pricing";
 import { quoteOf } from "../lib/entitlements";
 import { callerWorkspaceId } from "../lib/workspace";
@@ -48,7 +48,10 @@ type Dial = {
 /** A model id this deployment cannot answer on, or null when there is none. */
 function unservedModel(dial: Dial, env: ModelEnv | undefined): string | null {
   if (dial.model == null) return null;
-  return (availableModels(env) as string[]).includes(dial.model) ? null : dial.model;
+  // A workspace endpoint (0135) is served once a turn is routed to it.
+  return (availableModels(env) as string[]).includes(dial.model) || isEndpointModel(dial.model)
+    ? null
+    : dial.model;
 }
 
 /**

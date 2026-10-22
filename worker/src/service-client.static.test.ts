@@ -315,6 +315,10 @@ describe("the RLS bypass", () => {
  */
 const RECEIVES_THE_SERVICE_CLIENT = new Map([
   [
+    "lib/model-endpoints.ts",
+    "the chat route, the routine engine and the document engine hand it their service client to open a workspace endpoint's sealed key (0135), which no client role may read. It reads one row, by the id the model column names and the workspace the request already runs in, and writes nothing",
+  ],
+  [
     "lib/composio/verify.ts",
     "POST /composio/complete hands it the service client after it has found the row by its nonce and checked it is the caller's: its one write is verified_at and verify_error, keyed to that row's id, and both columns are granted to no client role for update (0072)",
   ],

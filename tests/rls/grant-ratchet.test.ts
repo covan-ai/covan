@@ -118,6 +118,11 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "webhook_endpoints UPDATE": "disabled_at,events,secret_ciphertext,updated_at,url",
   // 0132: an admin asks for an export in their own name; the engine does the rest.
   "workspace_exports INSERT": "requested_by,workspace_id",
+  // 0135: an admin adds a model endpoint with its key sealed, and can rename
+  // or remove it; the address and the key are never changed after the fact.
+  "workspace_model_endpoints INSERT":
+    "api_key_ciphertext,base_url,created_by,label,model,workspace_id",
+  "workspace_model_endpoints UPDATE": "deleted_at,label",
   "workspaces UPDATE":
     "default_model,gap_report_enabled,icon_url,name,slug,timezone,weekly_usage_email",
 };

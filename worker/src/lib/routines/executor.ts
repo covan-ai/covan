@@ -19,6 +19,7 @@ import {
   type EmailThread,
 } from "./delivery";
 import { deliverToOtherChannels } from "./other-channels";
+import { withModelEndpoint } from "../model-endpoints";
 import { routineFailedEmail } from "../emails/away";
 import { appUrlFrom, mailerFrom, type Mailer } from "../reports/mailer";
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
@@ -1148,6 +1149,14 @@ export async function runRoutine(
     // it always ran. `runWithTools` answers `null` for the second case, so
     // the question is asked once rather than twice.
     const browser = browserFor(routine, deps);
+    // The routine's or its agent's own endpoint (0135): the run's completions
+    // go there; its retrieval above stayed on the install's embeddings.
+    const modelEnv = await withModelEndpoint(
+      runEnv,
+      deps.db,
+      routine.workspace_id,
+      summariseInput.model,
+    );
     const summary =
       (await deps.runWithTools?.(
         {
@@ -1160,8 +1169,8 @@ export async function runRoutine(
           ...(browser ? { browser } : {}),
           ...(trigger?.depth ? { chainDepth: trigger.depth } : {}),
         },
-        runEnv,
-      )) ?? (await deps.summarise(summariseInput, runEnv));
+        modelEnv,
+      )) ?? (await deps.summarise(summariseInput, modelEnv));
 
     // The model read what arrived and judged none of it to be what was asked
     // for. This is a working run, not a failure and not an empty source: the

@@ -1,4 +1,4 @@
-import type { ModelId } from "./models";
+import { isEndpointModel, type ModelId } from "./models";
 
 // Approximate list prices in USD per 1,000,000 tokens, for every model in
 // `lib/models.ts`. Used only for a rough cost estimate in the usage view — not
@@ -107,6 +107,8 @@ export function estimateCostUsd(
   cachedTokens = 0,
   cacheWriteTokens = 0,
 ): number {
+  // A workspace's own endpoint (0135) is the workspace's to pay for.
+  if (isEndpointModel(model)) return 0;
   const p = PRICES[model as ModelId] ?? DEFAULT_PRICE;
   const cached = Math.min(Math.max(cachedTokens, 0), promptTokens);
   const written = Math.min(Math.max(cacheWriteTokens, 0), promptTokens - cached);

@@ -141,6 +141,10 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "re-scopes a stored service credential, changing what agents may do with it from now on",
   "routes/tool-connections.ts DELETE /tool-connections/:id":
     "removes a service credential somebody's agents depend on",
+  "routes/model-endpoints.ts POST /model-endpoints":
+    "stores a credential and an address every later reply on that model is sent to, after the key is revoked",
+  "routes/model-endpoints.ts DELETE /model-endpoints/:id":
+    "takes away a model somebody's agents answer on",
   "routes/webhooks.ts POST /webhooks":
     "hands back a signing secret and points the workspace's events at a URL of the key-holder's choosing, which keeps receiving after the key is revoked",
   "routes/webhooks.ts PATCH /webhooks/:id":
@@ -309,6 +313,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/routines.ts GET /routines/:id/runs",
   "routes/routines.ts GET /routines/stats",
   "routes/webhooks.ts GET /webhooks",
+  "routes/model-endpoints.ts GET /model-endpoints",
   "routes/webhooks.ts DELETE /webhooks/:id",
   "routes/webhooks.ts POST /webhooks/:id/test",
   "routes/webhooks.ts POST /webhooks/deliveries/:id/resend",

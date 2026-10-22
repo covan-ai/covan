@@ -36,8 +36,15 @@ import { maskSecret } from "../lib/routines/crypto";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { siteHostOf } from "../lib/browser/credentials";
 import { createRoutine } from "../lib/routines/create";
-import { MODEL_IDS, REASONING_EFFORTS, providerFor, resolveModel } from "../lib/models";
+import {
+  MODEL_IDS,
+  REASONING_EFFORTS,
+  providerFor,
+  resolveModel,
+  ENDPOINT_MODEL_PATTERN,
+} from "../lib/models";
 import { estimateCostUsd } from "../lib/pricing";
+import { endpointIsVisible } from "../lib/model-endpoints";
 import {
   classifyProviderError,
   explainProviderFailure,
@@ -474,7 +481,7 @@ const ROUTINE_SELECT =
  */
 const runChoices = {
   deliverInbox: z.boolean().optional(),
-  model: z.enum(MODEL_IDS).nullable().optional(),
+  model: z.enum(MODEL_IDS).or(z.string().regex(ENDPOINT_MODEL_PATTERN)).nullable().optional(),
   reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
 };
 
@@ -676,6 +683,9 @@ routines.post("/routines", async (c) => {
   const body = parsed.data;
 
   const db = c.get("db");
+  if (body.model && !(await endpointIsVisible(db, body.model))) {
+    return c.json({ error: "that model endpoint is not in this workspace" }, 400);
+  }
   const { data: agent } = await db
     .from("agents")
     .select("workspace_id")
@@ -838,6 +848,9 @@ routines.patch("/routines/:id", async (c) => {
   const body = parsed.data;
 
   const db = c.get("db");
+  if (body.model && !(await endpointIsVisible(db, body.model))) {
+    return c.json({ error: "that model endpoint is not in this workspace" }, 400);
+  }
   const { data: current, error: loadError } = await db
     .from("routines")
     .select("schedule_cron, timezone, status, browser_site")
@@ -1227,7 +1240,7 @@ const estimateQuery = z.object({
   /** The routine being edited, whose own runs are the best evidence. */
   routineId: z.string().uuid().optional(),
   /** The model the editor has picked, to reprice the evidence at. */
-  model: z.enum(MODEL_IDS).optional(),
+  model: z.enum(MODEL_IDS).or(z.string().regex(ENDPOINT_MODEL_PATTERN)).optional(),
   cron: z.string().max(120).optional(),
   timezone: z.string().max(64).optional(),
 });

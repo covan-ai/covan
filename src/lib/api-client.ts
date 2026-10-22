@@ -339,6 +339,21 @@ export type PendingInvitation = {
 };
 
 /** A shared invite link, as an admin sees it (0129). The URL only on the answer that made it. */
+/**
+ * A workspace's own OpenAI-compatible endpoint (0135): "gpt-5-mini via
+ * acme-openai-proxy · Endpoint · no price" (A10). `modelId` is what a model
+ * field holds to mean it.
+ */
+export type ModelEndpoint = {
+  id: string;
+  modelId: string;
+  label: string;
+  model: string;
+  host: string;
+  createdBy: string | null;
+  createdAt: number;
+};
+
 /** "20 October 2026 · 184 MB · requested by Mina · Download" (A27). */
 export type WorkspaceExport = {
   id: string;
@@ -1309,6 +1324,19 @@ export const api = {
        */
       leave: (): Promise<{ ok: true }> => request("DELETE", "/workspace/members/me"),
     },
+  },
+  modelEndpoints: {
+    /** Every member sees them, so a picker can offer them. */
+    list: (): Promise<ModelEndpoint[]> => request("GET", "/model-endpoints"),
+    /** An admin's. The key is sealed on the server and never comes back. */
+    create: (input: {
+      label: string;
+      model: string;
+      baseUrl: string;
+      apiKey?: string;
+    }): Promise<ModelEndpoint> => request("POST", "/model-endpoints", input),
+    /** Agents on it answer on the default model from then on. */
+    remove: (id: string): Promise<void> => request("DELETE", `/model-endpoints/${id}`),
   },
   exports: {
     /** The workspace's earlier exports, for its admins. */

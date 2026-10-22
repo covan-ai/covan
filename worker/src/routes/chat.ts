@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
+import { withModelEndpoint } from "../lib/model-endpoints";
 import { trackTurn } from "../lib/active-turns";
 import { askOf } from "../lib/harness/tools/ask-person";
 import {
@@ -13,6 +14,7 @@ import {
   providerFor,
   anthropicEnabled,
   REASONING_EFFORTS,
+  isEndpointModel,
 } from "../lib/models";
 import { KICKOFF_ASK, KICKOFF_MAX_TOKENS, onboardingKickoff } from "../lib/onboarding-kickoff";
 import { reportProviderFailure } from "../lib/provider-error";
@@ -472,12 +474,18 @@ chat.post("/chat/stream", async (c) => {
   // something stronger" has no business overwriting it.
   const requested = parsed.data.model;
   const picked =
-    requested && (availableModels(env) as string[]).includes(requested) ? requested : tuning.model;
-  const model = resolveModel(picked, env);
+    requested &&
+    ((availableModels(env) as string[]).includes(requested) || isEndpointModel(requested))
+      ? requested
+      : tuning.model;
 
   const signal = turnSignal(c);
   // On the metered overlay, so the reply's own writes are counted too.
   const service = serviceClient(env);
+  // A workspace's own endpoint (0135): the turn's completions go there, and
+  // only the turn's — the title and the embeddings stay on the install's.
+  const turnEnv = await withModelEndpoint(env, service, session.workspace_id as string, picked);
+  const model = resolveModel(picked, turnEnv);
 
   // What the half being continued already did. Read before the stream opens,
   // like everything else this turn needs — see `stepsOfReply`.
@@ -867,7 +875,7 @@ chat.post("/chat/stream", async (c) => {
         // that asks for none, goes through exactly one pass and behaves as it
         // always did.
         const turn = await runChatTurn({
-          env,
+          env: turnEnv,
           request: {
             model,
             messages,
@@ -1220,6 +1228,8 @@ chat.post("/chat/confirm/:id", async (c) => {
   const loaded = await loadPausedTurn(service, c.req.param("id"));
   if ("error" in loaded) return c.json({ error: loaded.error }, loaded.status);
   const pause = loaded.pause;
+  // The endpoint the first half ran on, if it was one (0135).
+  const turnEnv = await withModelEndpoint(env, service, pause.workspaceId, pause.model);
 
   // Who may answer, which is narrower than who may see. The tool will run
   // with this person's standing — their delivery channels, their RLS — so
@@ -1694,7 +1704,7 @@ chat.post("/chat/confirm/:id", async (c) => {
         }
 
         const turn = await runChatTurn({
-          env,
+          env: turnEnv,
           request: {
             model: pause.model ?? resolveModel(null, env),
             messages,

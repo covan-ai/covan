@@ -4,7 +4,8 @@ import type { AppEnv } from "../types";
 import { AGENT_ACCESS, AVATAR_MARKS, mapAgent } from "../lib/dto";
 import { callerWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
-import { REASONING_EFFORTS, MODEL_IDS } from "../lib/models";
+import { REASONING_EFFORTS, MODEL_IDS, ENDPOINT_MODEL_PATTERN } from "../lib/models";
+import { endpointIsVisible } from "../lib/model-endpoints";
 
 const agents = new Hono<AppEnv>();
 
@@ -80,7 +81,7 @@ const createAgentSchema = z.object({
   emoji: z.string().optional(),
   // One of the eight marks; absent or null is the monogram.
   avatar: z.enum(AVATAR_MARKS).nullable().optional(),
-  model: z.enum(MODEL_IDS).optional(),
+  model: z.enum(MODEL_IDS).or(z.string().regex(ENDPOINT_MODEL_PATTERN)).optional(),
   persona: z.string().optional(),
   mode: z.enum(["normal", "brainstorm"]).optional(),
   ...tuningFields,
@@ -93,7 +94,7 @@ const updateAgentSchema = z
     name: z.string().min(1).optional(),
     emoji: z.string().optional(),
     avatar: z.enum(AVATAR_MARKS).nullable().optional(),
-    model: z.enum(MODEL_IDS).optional(),
+    model: z.enum(MODEL_IDS).or(z.string().regex(ENDPOINT_MODEL_PATTERN)).optional(),
     persona: z.string().optional(),
     mode: z.enum(["normal", "brainstorm"]).optional(),
     ...tuningFields,
@@ -160,6 +161,10 @@ agents.post("/agents", async (c) => {
   const parsed = createAgentSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
+  }
+  // A workspace endpoint (0135) has to be one the caller can see.
+  if (parsed.data.model && !(await endpointIsVisible(db, parsed.data.model))) {
+    return c.json({ error: "that model endpoint is not in this workspace" }, 400);
   }
 
   const workspaceId = await callerWorkspaceId(c);
@@ -255,6 +260,10 @@ agents.patch("/agents/:id", async (c) => {
   const parsed = updateAgentSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
+  }
+  // A workspace endpoint (0135) has to be one the caller can see.
+  if (parsed.data.model && !(await endpointIsVisible(db, parsed.data.model))) {
+    return c.json({ error: "that model endpoint is not in this workspace" }, 400);
   }
 
   // `.select("id")` so a refusal is visible. RLS answers an update it does not

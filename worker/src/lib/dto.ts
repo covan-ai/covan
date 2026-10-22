@@ -671,7 +671,7 @@ export type MeDTO = {
  * served.
  */
 export const ONBOARDING_COLUMNS =
-  "completed_at, role, use_case, team_size, referral_source, assistant_name, assistant_emoji, assistant_role, tools, purpose, mode, last_step, agent_id, session_id";
+  "completed_at, role, use_case, team_size, referral_source, assistant_name, assistant_emoji, assistant_role, assistant_avatar, assistant_jobs, tools, purpose, mode, last_step, agent_id, session_id";
 
 export type OnboardingRow = {
   completed_at: string | null;
@@ -682,6 +682,9 @@ export type OnboardingRow = {
   assistant_name: string | null;
   assistant_emoji: string | null;
   assistant_role: string | null;
+  /** Absent against a database 0137 has not reached. */
+  assistant_avatar?: string | null;
+  assistant_jobs?: string[] | null;
   tools: string[] | null;
   purpose: string | null;
   mode: string | null;
@@ -715,6 +718,8 @@ export type OnboardingDTO = {
     assistantName: string | null;
     assistantEmoji: string | null;
     assistantRole: string | null;
+    assistantAvatar: AvatarMark | null;
+    assistantJobs: string[] | null;
     tools: string[] | null;
     purpose: string | null;
     mode: string | null;
@@ -736,6 +741,8 @@ export function mapOnboarding(row: OnboardingRow | null | undefined): Onboarding
       assistantName: row?.assistant_name ?? null,
       assistantEmoji: row?.assistant_emoji ?? null,
       assistantRole: row?.assistant_role ?? null,
+      assistantAvatar: asAvatarMark(row?.assistant_avatar),
+      assistantJobs: row?.assistant_jobs ?? null,
       tools: row?.tools ?? null,
       purpose: row?.purpose ?? null,
       mode: row?.mode ?? null,

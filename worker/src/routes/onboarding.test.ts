@@ -127,6 +127,8 @@ function dto(
       assistantName: null,
       assistantEmoji: null,
       assistantRole: null,
+      assistantAvatar: null,
+      assistantJobs: null,
       tools: null,
       purpose: null,
       mode: null,
@@ -232,6 +234,37 @@ describe("PATCH /onboarding", () => {
     expect(await res.json()).toEqual(dto({ answers: { role: "engineering" } }));
     expect(upserts).toHaveLength(1);
     expect(upserts[0]).toMatchObject({ user_id: USER.id, role: "engineering" });
+  });
+
+  it("stores the first agent's mark and jobs, repeats dropped (0137)", async () => {
+    const { db, upserts } = fakeDb({
+      row: { assistant_avatar: "owl", assistant_jobs: ["answer-questions", "draft-replies"] },
+      error: null,
+    });
+    const res = await patch(appWithDb(db), {
+      assistantAvatar: "owl",
+      assistantJobs: ["answer-questions", "draft-replies", "answer-questions"],
+    });
+
+    expect(res.status).toBe(200);
+    expect(upserts[0]).toMatchObject({
+      assistant_avatar: "owl",
+      assistant_jobs: ["answer-questions", "draft-replies"],
+    });
+    expect(await res.json()).toEqual(
+      dto({
+        answers: {
+          assistantAvatar: "owl",
+          assistantJobs: ["answer-questions", "draft-replies"],
+        },
+      }),
+    );
+  });
+
+  it("refuses a mark that is not one of the eight", async () => {
+    const { db, upserts } = fakeDb({ row: null, error: null });
+    expect((await patch(appWithDb(db), { assistantAvatar: "unicorn" })).status).toBe(400);
+    expect(upserts).toEqual([]);
   });
 
   it("takes the user id from the token, not the body", async () => {
@@ -409,6 +442,37 @@ describe("POST /onboarding/events", () => {
     });
 
     expect(inserted[0][0].client_id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("stores the first agent's mark and jobs, repeats dropped (0137)", async () => {
+    const { db, upserts } = fakeDb({
+      row: { assistant_avatar: "owl", assistant_jobs: ["answer-questions", "draft-replies"] },
+      error: null,
+    });
+    const res = await patch(appWithDb(db), {
+      assistantAvatar: "owl",
+      assistantJobs: ["answer-questions", "draft-replies", "answer-questions"],
+    });
+
+    expect(res.status).toBe(200);
+    expect(upserts[0]).toMatchObject({
+      assistant_avatar: "owl",
+      assistant_jobs: ["answer-questions", "draft-replies"],
+    });
+    expect(await res.json()).toEqual(
+      dto({
+        answers: {
+          assistantAvatar: "owl",
+          assistantJobs: ["answer-questions", "draft-replies"],
+        },
+      }),
+    );
+  });
+
+  it("refuses a mark that is not one of the eight", async () => {
+    const { db, upserts } = fakeDb({ row: null, error: null });
+    expect((await patch(appWithDb(db), { assistantAvatar: "unicorn" })).status).toBe(400);
+    expect(upserts).toEqual([]);
   });
 
   it("takes the user id from the token, not the body", async () => {

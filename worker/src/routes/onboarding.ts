@@ -15,7 +15,7 @@ import {
   TOOL_SLUG,
   USE_CASES,
 } from "../lib/onboarding";
-import { mapOnboarding, ONBOARDING_COLUMNS, type OnboardingRow } from "../lib/dto";
+import { AVATAR_MARKS, mapOnboarding, ONBOARDING_COLUMNS, type OnboardingRow } from "../lib/dto";
 import { availableModels, MODEL_IDS } from "../lib/models";
 import { callerWorkspaceId } from "../lib/workspace";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
@@ -46,6 +46,14 @@ const updateSchema = z
       .refine((value) => !/\s/.test(value), "not an emoji")
       .optional(),
     assistantRole: z.string().regex(STEP_ID).optional(),
+    // The first run's agent step (0137): one of the eight marks, and the jobs
+    // picked from its chips, order kept and repeats dropped.
+    assistantAvatar: z.enum(AVATAR_MARKS).optional(),
+    assistantJobs: z
+      .array(z.string().regex(STEP_ID))
+      .max(8)
+      .transform((list) => [...new Set(list)])
+      .optional(),
     // Deduplicated with the order kept: `tools[0]` is the one the assistant
     // proposes connecting first, so the order is part of the answer.
     tools: z
@@ -70,6 +78,8 @@ const COLUMN_OF = {
   assistantName: "assistant_name",
   assistantEmoji: "assistant_emoji",
   assistantRole: "assistant_role",
+  assistantAvatar: "assistant_avatar",
+  assistantJobs: "assistant_jobs",
   tools: "tools",
   purpose: "purpose",
   mode: "mode",

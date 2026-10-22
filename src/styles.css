@@ -365,42 +365,6 @@
 }
 
 /*
- * The step that is running, as a square rather than a spinning circle.
- *
- * It used to be lucide's `Loader2` with `animate-spin`, which was the one
- * circle on a screen whose own rule is squares, and which said "busy" in
- * general rather than "this row". The trail's marks are 8px squares and this
- * is one of them, in the state between arriving and being done.
- *
- * TWO AMBERS, AND THEY MUST STAY TELLABLE APART. A filled amber dot means
- * "this one is yours" — a confirmation waiting on a person. This one is an
- * amber OUTLINE with the fill sweeping through it: the machine is busy and
- * nothing is being asked. Outline against fill is the distinction, and it is
- * the distinction that survives with motion switched off, which is why the
- * ring is the resting state and the sweep is the only animated part.
- */
-@keyframes step-sweep {
-  from {
-    background-position: 175% 0;
-  }
-  to {
-    background-position: -75% 0;
-  }
-}
-
-.step-running {
-  box-shadow: inset 0 0 0 1.5px var(--brand);
-  background-image: linear-gradient(90deg, transparent 0%, var(--brand) 50%, transparent 100%);
-  background-size: 250% 100%;
-  background-repeat: no-repeat;
-  /* Parked off the right edge, so the square at rest is the ring alone. This
-     is what a reader with motion switched off sees, and it has to be a state
-     that reads correctly rather than a frame of the animation. */
-  background-position: 175% 0;
-  animation: step-sweep 1.3s ease-in-out infinite;
-}
-
-/*
  * A step arriving in the trail.
  *
  * The offset lives ONLY in the keyframe, and that is the whole care this rule
@@ -472,7 +436,7 @@
  * The browser beside the conversation, while an agent holds it.
  *
  * A 1px amber edge round the panel that breathes between 40% and 100% over
- * 2.4s. It is `.step-running`'s rule at panel scale — the machine is busy and
+ * 2.4s. It is the running dot's rule at panel scale — the machine is busy and
  * nothing is being asked — and it is the ONE amber element DESIGN.md allows
  * over 44px, which is why it is a hairline and not a glow, and why the panel
  * adds the class only while an agent's run is going (`browser-panel.tsx`).
@@ -503,93 +467,13 @@
   animation: browser-breathe 2.4s ease-in-out infinite;
 }
 
-/*
- * The looping demos on the first run's intro screens (`mini-demos.tsx`).
- *
- * A demo is a few layers stacked in one grid cell, each shown for a slice of
- * one period. Opacity only, in the keyframes only, `.step-arrive`'s care: with
- * motion switched off every layer sits in its base state, and the base state
- * is the demo's final frame — the layers that only exist in passing carry
- * `motion-reduce:hidden` themselves. `slot` layers show for one third and go;
- * `hold` layers arrive and stay. No transform anywhere, so a tab in the
- * background pays nothing and comes back mid-loop rather than mid-jump.
- */
-@keyframes demo-slot-1 {
-  0%,
-  30% {
-    opacity: 1;
-  }
-  33%,
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes demo-slot-2 {
-  0%,
-  30% {
-    opacity: 0;
-  }
-  33%,
-  63% {
-    opacity: 1;
-  }
-  66%,
-  100% {
-    opacity: 0;
-  }
-}
-
-@keyframes demo-hold-2 {
-  0%,
-  30% {
-    opacity: 0;
-  }
-  33%,
-  100% {
-    opacity: 1;
-  }
-}
-
-@keyframes demo-hold-3 {
-  0%,
-  63% {
-    opacity: 0;
-  }
-  66%,
-  100% {
-    opacity: 1;
-  }
-}
-
-.demo-slot-1 {
-  animation: demo-slot-1 var(--demo-period, 3.6s) linear infinite;
-}
-
-.demo-slot-2 {
-  animation: demo-slot-2 var(--demo-period, 3.6s) linear infinite;
-}
-
-.demo-hold-2 {
-  animation: demo-hold-2 var(--demo-period, 3.6s) linear infinite;
-}
-
-.demo-hold-3 {
-  animation: demo-hold-3 var(--demo-period, 3.6s) linear infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .typing-dot,
   .dot-live,
   .stream-caret,
   .step-arrive,
-  .step-running,
   .browser-live::after,
-  .stream-live > :last-child::after,
-  .demo-slot-1,
-  .demo-slot-2,
-  .demo-hold-2,
-  .demo-hold-3 {
+  .stream-live > :last-child::after {
     animation: none;
   }
 }

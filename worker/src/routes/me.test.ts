@@ -329,6 +329,8 @@ describe("GET /me onboarding state", () => {
         assistantName: null,
         assistantEmoji: null,
         assistantRole: null,
+        assistantAvatar: null,
+        assistantJobs: null,
         tools: null,
         purpose: null,
         mode: null,

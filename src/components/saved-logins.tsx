@@ -10,10 +10,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Chip } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
+import { AppLogo } from "@/components/integrations/app-logo";
+import { IntegrationRow } from "@/components/integrations/integration-row";
 import { api, type SavedLogin } from "@/lib/api-client";
 import { ApiError } from "@/lib/api-error";
+import { agoShort } from "@/lib/day-groups";
 
 /**
  * Saved logins (0079, Task 2.4): the list on a person's settings and on an
@@ -36,20 +38,23 @@ const savedLoginsKey = (agentId?: string) => ["browser-credentials", agentId ?? 
 
 function lastUsed(at: string | null): string {
   if (!at) return "Not used yet";
-  return `Last used ${new Date(at).toLocaleDateString()}`;
+  return `Last used ${agoShort(Date.parse(at))}`;
 }
 
 export function SavedLoginsList({
   agentId,
+  agentNames,
   empty,
   wrap,
 }: {
   /** One agent's logins; omitted, every login the caller can see. */
   agentId?: string;
+  /** To say which agent each login is for, on a list of every agent's. */
+  agentNames?: Map<string, string>;
   /** What to say when there are none; omitted, the list renders nothing then. */
   empty?: string;
   /** The frame around the list — a settings section — drawn only when there is a list to frame. */
-  wrap?: (list: ReactElement) => ReactElement;
+  wrap?: (list: ReactElement, count: number) => ReactElement;
 }) {
   const queryClient = useQueryClient();
   const [forgetting, setForgetting] = useState<SavedLogin | null>(null);
@@ -78,43 +83,47 @@ export function SavedLoginsList({
   if (logins.length === 0) {
     if (!empty) return null;
     const said = <p className="text-sm leading-[1.5] text-muted-foreground">{empty}</p>;
-    return wrap ? wrap(said) : said;
+    return wrap ? wrap(said, 0) : said;
   }
 
   const list = (
     <>
-      <ul className="space-y-2">
-        {logins.map((login) => (
-          <li
-            key={login.id}
-            className="flex w-full items-center gap-3.5 rounded-lg border border-hairline bg-background px-4 py-3.5"
-          >
-            <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
-              <span className="text-sm font-medium leading-tight [overflow-wrap:anywhere]">
-                {login.label}
-              </span>
-              <span className="flex flex-wrap items-center gap-x-2 text-meta leading-tight text-muted-foreground">
-                <span className="font-mono">{login.siteHost}</span>
-                <span aria-hidden="true">·</span>
-                <span>{lastUsed(login.lastUsedAt)}</span>
-              </span>
-            </span>
-            <Chip>{login.scope === "agent" ? "Everyone using this agent" : "Just you"}</Chip>
-            {login.canForget && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="shrink-0 text-destructive hover:bg-destructive/10"
-                onClick={() => {
-                  setRefusal(null);
-                  setForgetting(login);
-                }}
-              >
-                Forget
-              </Button>
-            )}
-          </li>
-        ))}
+      <ul className="m-0 list-none p-0">
+        {logins.map((login) => {
+          const agent = agentId ? null : agentNames?.get(login.agentId);
+          return (
+            <IntegrationRow
+              key={login.id}
+              compact
+              logo={<AppLogo name={login.label} size={28} />}
+              name={login.label}
+              description={
+                <>
+                  {agent ? <span>{agent} · </span> : null}
+                  <span>{login.siteHost}</span>
+                  {" · "}
+                  <span>{login.scope === "agent" ? "Everyone using this agent" : "Just you"}</span>
+                  {" · "}
+                  <span>{lastUsed(login.lastUsedAt)}</span>
+                </>
+              }
+              action={
+                login.canForget ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setRefusal(null);
+                      setForgetting(login);
+                    }}
+                  >
+                    Forget
+                  </Button>
+                ) : undefined
+              }
+            />
+          );
+        })}
       </ul>
 
       <AlertDialog
@@ -160,5 +169,5 @@ export function SavedLoginsList({
       </AlertDialog>
     </>
   );
-  return wrap ? wrap(list) : list;
+  return wrap ? wrap(list, logins.length) : list;
 }

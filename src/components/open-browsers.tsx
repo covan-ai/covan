@@ -112,7 +112,7 @@ function Square({ tone }: { tone: "agent" | "person" | "idle" }) {
 }
 
 const ROW =
-  "flex w-full items-center gap-3.5 rounded-lg border border-hairline bg-background px-4 py-3.5";
+  "flex min-h-[52px] w-full items-center gap-3.5 border-b border-hairline px-1 py-2 last:border-b-0";
 
 type Ending =
   { kind: "stop"; browser: OpenConversationBrowser } | { kind: "close"; takeover: OpenTakeover };
@@ -183,7 +183,7 @@ export function OpenBrowsersList({
 
   const list = (
     <>
-      <ul className="space-y-2">
+      <ul className="m-0 list-none p-0">
         {takeover && (
           <li key={takeover.id} className={ROW}>
             <Square tone="person" />

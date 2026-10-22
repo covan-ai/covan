@@ -471,3 +471,12 @@ export const CONNECT_ERRORS: Record<string, string> = {
 export function connectErrorMessage(code: string): string {
   return CONNECT_ERRORS[code] ?? `The connection failed: ${code}`;
 }
+
+/** "only you", "shared with the workspace", "personal": whose a connection is (A8). */
+export function scopeWords(connection: ToolConnection): string {
+  return connection.scope === "workspace"
+    ? "shared with the workspace"
+    : connection.mine
+      ? "only you"
+      : "personal";
+}

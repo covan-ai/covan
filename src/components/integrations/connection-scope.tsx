@@ -1,6 +1,6 @@
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/section-card";
+import { Chip } from "@/components/chip";
 import { useUpdateToolConnection } from "@/hooks/use-connections";
 import type { ToolConnection } from "@/lib/connections-api";
 

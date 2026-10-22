@@ -40,7 +40,7 @@ describe("AppLogo", () => {
   it("goes straight to the monogram when the catalogue published no mark", () => {
     render(<AppLogo src="" name="Obscure" />);
     expect(screen.queryByRole("presentation", { hidden: true })).not.toBeInTheDocument();
-    expect(screen.getByText("O")).toBeInTheDocument();
+    expect(screen.getByText("OB")).toBeInTheDocument();
   });
 
   /**
@@ -72,13 +72,22 @@ describe("AppLogo", () => {
     expect(screen.getByRole("presentation", { hidden: true })).toHaveClass("h-[14px]");
   });
 
-  it("keeps one radius at every size, so a chip is never rounder than a row", () => {
-    // Failure mode #4 in `DESIGN.md`: a child rounder than its parent. 8px in a
-    // 28px tile would be that, inside a 10px row.
-    for (const size of [28, 36, 44] as const) {
+  it("steps the radius down with the tile, as the board does", () => {
+    // 6px at 28 (the Available cards), 8px from 32 (the rows), so a tile is
+    // never rounder than the 10px card it sits in.
+    const { container: small } = render(<AppLogo src="" name="Gmail" size={28} />);
+    expect(tile(small)).toHaveClass("rounded-md");
+    for (const size of [32, 36, 44] as const) {
       const { container } = render(<AppLogo src="" name="Gmail" size={size} />);
       expect(tile(container)).toHaveClass("rounded-lg");
     }
+  });
+
+  it("puts a monogram on the grey tile and a drawn mark on white", () => {
+    const { container: plain } = render(<AppLogo src="" name="Gmail" />);
+    expect(tile(plain)).toHaveClass("bg-surface");
+    const { container: drawn } = render(<AppLogo src="https://api.test/logo" name="Gmail" />);
+    expect(tile(drawn)).toHaveClass("bg-background");
   });
 
   it("steps the monogram down with the tile", () => {

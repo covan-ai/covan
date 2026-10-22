@@ -8,7 +8,7 @@ import {
 } from "@/lib/connections-api";
 import { useComposioToolkitDetail, useConnectComposio } from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
-import { Chip } from "@/components/section-card";
+import { Chip } from "@/components/chip";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

@@ -68,7 +68,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useConnections } from "@/hooks/use-connections";
-import { lastActivityLabel } from "@/lib/day-groups";
+import { agoShort, lastActivityLabel } from "@/lib/day-groups";
 import { shortName } from "@/lib/monogram";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -3097,18 +3097,4 @@ function SourceName({ connectionId }: { connectionId: string }) {
       <span className="truncate">{label.replace(/^Google /, "")}</span>
     </>
   );
-}
-
-/** "5 h ago", "Yesterday", "Mon", "2 w ago", "1 mo ago": the Modified column. */
-function agoShort(at: number, now: number = Date.now()): string {
-  const MIN = 60_000;
-  const ago = Math.max(0, now - at);
-  if (ago < 60 * MIN) return `${Math.max(1, Math.floor(ago / MIN))} min ago`;
-  if (ago < 24 * 60 * MIN) return `${Math.floor(ago / (60 * MIN))} h ago`;
-  const days = Math.floor(ago / (24 * 60 * MIN));
-  if (days < 2) return "Yesterday";
-  if (days < 7) return new Date(at).toLocaleDateString("en-GB", { weekday: "short" });
-  if (days < 30) return `${Math.floor(days / 7)} w ago`;
-  if (days < 365) return `${Math.floor(days / 30)} mo ago`;
-  return `${Math.floor(days / 365)} y ago`;
 }

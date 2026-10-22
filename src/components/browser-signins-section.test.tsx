@@ -146,7 +146,7 @@ describe("Saved logins", () => {
     listLogins.mockResolvedValue({ logins: [LOGIN] });
     renderSection();
 
-    expect(await screen.findByText("Saved logins")).toBeTruthy();
+    expect(await screen.findByText(/Saved sign-ins · 1/)).toBeTruthy();
     expect(screen.getByText("Supplier portal — personal")).toBeTruthy();
     expect(listLogins).toHaveBeenCalledWith(undefined);
   });
@@ -160,7 +160,7 @@ describe("Saved logins", () => {
     listLogins.mockResolvedValue({ logins: [LOGIN] });
     const { container } = renderSection();
 
-    await screen.findByText("Saved logins");
+    await screen.findByText(/Saved sign-ins/);
     expect(container.textContent).toContain("Encrypted; Covan's AI model is never given them.");
     expect(container.textContent).not.toContain("the AI model never sees them");
   });

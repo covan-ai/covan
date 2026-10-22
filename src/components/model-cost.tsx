@@ -6,7 +6,7 @@ import {
   formatReplyPrice,
   type ReplyPrice,
 } from "@/lib/agent-meta";
-import { Disclosure } from "@/components/section-card";
+import { Disclosure } from "@/components/disclosure";
 
 /**
  * The price beside a model's name in a picker.

@@ -91,3 +91,24 @@ export function ledgerWhen(at: number, now: number = Date.now()): string {
   const clock = clockTime(at, now);
   return /^\d{2}:\d{2}$/.test(clock) ? `Today, ${clock}` : clock;
 }
+
+/** "5 h ago", "Yesterday", "Mon", "2 w ago", "1 mo ago": the Modified column. */
+export function agoShort(at: number, now: number = Date.now()): string {
+  const MIN = 60_000;
+  const ago = Math.max(0, now - at);
+  if (ago < 60 * MIN) return `${Math.max(1, Math.floor(ago / MIN))} min ago`;
+  if (ago < 24 * 60 * MIN) return `${Math.floor(ago / (60 * MIN))} h ago`;
+  const days = Math.floor(ago / (24 * 60 * MIN));
+  if (days < 2) return "Yesterday";
+  if (days < 7) return new Date(at).toLocaleDateString("en-GB", { weekday: "short" });
+  if (days < 30) return `${Math.floor(days / 7)} w ago`;
+  if (days < 365) return `${Math.floor(days / 30)} mo ago`;
+  return `${Math.floor(days / 365)} y ago`;
+}
+
+/** "Synced 12 min ago", "Synced yesterday", "Synced on Mon" (A8). */
+export function syncedWords(at: number, now: number = Date.now()): string {
+  const ago = agoShort(at, now);
+  if (ago === "Yesterday") return "Synced yesterday";
+  return /ago$/.test(ago) ? `Synced ${ago}` : `Synced on ${ago}`;
+}

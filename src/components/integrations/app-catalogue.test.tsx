@@ -100,19 +100,19 @@ beforeEach(() => {
 
 describe("AppCatalogue", () => {
   it("shows the catalogue before anybody types, which is the whole change", async () => {
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     expect(screen.getByRole("button", { name: /Gmail/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Linear/ })).toBeInTheDocument();
   });
 
   it("leaves out what this workspace already has", async () => {
-    render(<AppCatalogue connected={new Set(["gmail"])} />);
+    render(<AppCatalogue connected={new Set(["gmail"])} query="" />);
     expect(screen.queryByRole("button", { name: /Gmail/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Linear/ })).toBeInTheDocument();
   });
 
   it("fetches each mark from this API rather than from Composio", async () => {
-    render(<AppCatalogue connected={new Set(["linear"])} />);
+    render(<AppCatalogue connected={new Set(["linear"])} query="" />);
     const logo = screen.getByRole("presentation", { hidden: true });
     expect(logo).toHaveAttribute(
       "src",
@@ -122,9 +122,9 @@ describe("AppCatalogue", () => {
 
   it("falls back to a monogram when the catalogue published no mark", async () => {
     withToolkits(toolkit({ logoPath: "" }));
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     expect(screen.queryByRole("presentation", { hidden: true })).not.toBeInTheDocument();
-    expect(screen.getByText("G")).toBeInTheDocument();
+    expect(screen.getByText("GM")).toBeInTheDocument();
   });
 
   it("opens a card instead of connecting, which is the whole of this change", async () => {
@@ -132,7 +132,7 @@ describe("AppCatalogue", () => {
     // name in a grid of fifteen hundred handed the browser to a third party's
     // consent screen, having shown one truncated line of description — so the
     // assertion is now that pressing a tile does NOT connect.
-    render(<AppCatalogue connected={new Set(["linear"])} />);
+    render(<AppCatalogue connected={new Set(["linear"])} query="" />);
     await userEvent.click(screen.getByRole("button", { name: /Gmail/ }));
 
     expect(connect.mutate).not.toHaveBeenCalled();
@@ -140,7 +140,7 @@ describe("AppCatalogue", () => {
   });
 
   it("hands the slug to the consent flow, from inside the card", async () => {
-    render(<AppCatalogue connected={new Set(["linear"])} />);
+    render(<AppCatalogue connected={new Set(["linear"])} query="" />);
     await userEvent.click(screen.getByRole("button", { name: /Gmail/ }));
     await userEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: /Connect/ }),
@@ -165,7 +165,7 @@ describe("AppCatalogue", () => {
         noAuth: true,
       }),
     );
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     await userEvent.click(screen.getByRole("button", { name: /Hacker News/ }));
     await userEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: /Connect/ }),
@@ -194,7 +194,7 @@ describe("AppCatalogue", () => {
         noAuth: false,
       }),
     );
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     expect(screen.getByText("Product analytics")).toBeInTheDocument();
     expect(screen.queryByText("Not available yet")).not.toBeInTheDocument();
 
@@ -224,7 +224,7 @@ describe("AppCatalogue", () => {
         noAuth: false,
       }),
     );
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     expect(screen.getByText("Product analytics")).toBeInTheDocument();
     expect(screen.queryByText("Not available yet")).not.toBeInTheDocument();
   });
@@ -249,7 +249,7 @@ describe("AppCatalogue", () => {
         noAuth: false,
       }),
     );
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
 
     const tile = screen.getByRole("button", { name: /DocuSign/ });
     expect(screen.getByText("Not available yet")).toBeInTheDocument();
@@ -271,7 +271,7 @@ describe("AppCatalogue", () => {
     connect.isPending = true;
     try {
       withToolkits(toolkit(), toolkit({ slug: "linear", name: "Linear" }));
-      render(<AppCatalogue connected={new Set()} />);
+      render(<AppCatalogue connected={new Set()} query="" />);
       for (const name of [/Gmail/, /Linear/]) {
         expect(screen.getByRole("button", { name })).toBeEnabled();
       }
@@ -283,10 +283,12 @@ describe("AppCatalogue", () => {
   it("waits for somebody to stop typing before asking a third party", async () => {
     // The query string is the react-query key, so without the debounce
     // "hubspot" is seven requests to a third party and six thrown answers.
-    render(<AppCatalogue connected={new Set()} />);
+    const { rerender } = render(<AppCatalogue connected={new Set()} query="" />);
     asked = [];
 
-    await userEvent.type(screen.getByLabelText(/search the application catalogue/i), "hub");
+    for (const typed of ["h", "hu", "hub"]) {
+      rerender(<AppCatalogue connected={new Set()} query={typed} />);
+    }
     // Three keystrokes have re-rendered the component and not one of them has
     // reached the query yet.
     expect(asked.length).toBeGreaterThan(0);
@@ -296,7 +298,7 @@ describe("AppCatalogue", () => {
   });
 
   it("filters by a category and lets the same press clear it", async () => {
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     await userEvent.click(screen.getByRole("button", { name: "CRM" }));
     expect(asked.at(-1)?.[1]).toBe("crm");
 
@@ -306,22 +308,41 @@ describe("AppCatalogue", () => {
 
   it("asks for the next page rather than truncating at forty", async () => {
     hasNextPage = true;
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     await userEvent.click(screen.getByRole("button", { name: /show more/i }));
     expect(fetchNextPage).toHaveBeenCalled();
   });
 
-  it("renders nothing at all on a deployment with no key", async () => {
-    // The card above says which variable turns this on. A second copy of that
-    // sentence here would be the page telling a self-hoster twice.
+  it("names the variable on a deployment with no key, beside the cards that need none", async () => {
     pages = [{ configured: false, toolkits: [], nextCursor: "" }];
-    const { container } = render(<AppCatalogue connected={new Set()} />);
-    expect(container).toBeEmptyDOMElement();
+    render(
+      <AppCatalogue
+        connected={new Set()}
+        query=""
+        leading={<li data-testid="leading">Notion</li>}
+      />,
+    );
+    expect(screen.getByTestId("leading")).toBeInTheDocument();
+    expect(screen.getByText("Not configured")).toBeInTheDocument();
+    expect(screen.getByText(/COMPOSIO_API_KEY/)).toBeInTheDocument();
+  });
+
+  it("puts the page's own cards first, and leaves them out of a category", async () => {
+    render(
+      <AppCatalogue
+        connected={new Set()}
+        query=""
+        leading={<li data-testid="leading">Notion</li>}
+      />,
+    );
+    expect(screen.getByTestId("leading")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "CRM" }));
+    expect(screen.queryByTestId("leading")).not.toBeInTheDocument();
   });
 
   it("says the catalogue had nothing, when the catalogue had nothing", async () => {
     withToolkits();
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     await waitFor(() =>
       expect(screen.getByText(/Nothing in this part of the catalogue/i)).toBeInTheDocument(),
     );
@@ -331,7 +352,7 @@ describe("AppCatalogue", () => {
     // The two empty states read identically on screen and are opposite facts.
     // Searching for the application you just connected got the wrong one of
     // them — Covan saying it had never heard of it.
-    render(<AppCatalogue connected={new Set(["gmail", "linear"])} />);
+    render(<AppCatalogue connected={new Set(["gmail", "linear"])} query="" />);
     await waitFor(() => expect(screen.getByText(/already connected/i)).toBeInTheDocument());
     expect(screen.queryByText(/Nothing in the catalogue matches/i)).not.toBeInTheDocument();
   });
@@ -340,7 +361,7 @@ describe("AppCatalogue", () => {
     // "Nothing matches" over a live "Show more" is the page contradicting
     // itself in two lines.
     hasNextPage = true;
-    render(<AppCatalogue connected={new Set(["gmail", "linear"])} />);
+    render(<AppCatalogue connected={new Set(["gmail", "linear"])} query="" />);
     await waitFor(() => expect(screen.getByText(/already connected/i)).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /Show more/i })).not.toBeInTheDocument();
   });
@@ -353,7 +374,7 @@ describe("AppCatalogue", () => {
       { configured: true, toolkits: [toolkit()], nextCursor: "a" },
       { configured: true, toolkits: [toolkit()], nextCursor: "" },
     ];
-    render(<AppCatalogue connected={new Set()} />);
+    render(<AppCatalogue connected={new Set()} query="" />);
     expect(screen.getAllByRole("button", { name: /Gmail/ })).toHaveLength(1);
   });
 });

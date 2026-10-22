@@ -5,7 +5,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Disclosure } from "@/components/section-card";
+import { Disclosure } from "@/components/disclosure";
 import { ModelCost, ModelCostScale } from "@/components/model-cost";
 import { modelTiers, priceFor, tierOf, type ReplyPrices } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Connection } from "@/lib/connections-api";
-import { ConnectionCard, ConnectSourceCard } from "./connection-card";
+import { ConnectionRow, SourceCard } from "./connection-card";
 
 const { update, sync, disconnect, start, reconnect, runs } = vi.hoisted(() => ({
   runs: { data: undefined as unknown },
@@ -71,40 +71,53 @@ function renderCard(ui: React.ReactElement) {
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
+/** The row, then Manage: where everything but the folder step lives (A8). */
+async function manage(c: Connection) {
+  renderCard(
+    <ul>
+      <ConnectionRow connection={c} connectedBy="Mina" />
+    </ul>,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Manage" }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   runs.data = undefined;
 });
 
 describe("a connected source", () => {
-  it("says where it puts things and when it last looked", () => {
-    renderCard(<ConnectionCard connection={connection()} />);
+  it("says where it puts things, how often, for whom, and when it last looked", () => {
+    renderCard(
+      <ul>
+        <ConnectionRow connection={connection()} connectedBy="Mina" />
+      </ul>,
+    );
 
-    expect(screen.getByText(/Covan HQ/)).toBeInTheDocument();
-    expect(screen.getByText(/Handbook · 12 documents/)).toBeInTheDocument();
-    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(
+      screen.getByText("Covan HQ · 12 files in Handbook · every 6 hours · connected by Mina"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Synced 1 h ago")).toBeInTheDocument();
   });
 
   // A paused connection is not an error — grey, never red, and the reason has to
   // be readable where the person is looking rather than in a log.
-  it("shows why the engine stopped it", () => {
-    renderCard(
-      <ConnectionCard
-        connection={connection({
-          status: "paused",
-          pausedReason: "Notion refused the connection (HTTP 401).",
-        })}
-      />,
+  it("shows why the engine stopped it", async () => {
+    await manage(
+      connection({
+        status: "paused",
+        pausedReason: "Notion refused the connection (HTTP 401).",
+      }),
     );
 
-    expect(screen.getByText("Paused")).toBeInTheDocument();
+    expect(screen.getAllByText("Paused")[0]).toBeInTheDocument();
     expect(screen.getByText(/Notion refused the connection/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
   });
 
   // The engine always wrote this sentence; nothing on screen read it, so a
   // folder nothing could import synced as an empty bundle with no word why.
-  it("says which files the last sync could not import", () => {
+  it("says which files the last sync could not import", async () => {
     runs.data = [
       {
         id: "run-1",
@@ -117,7 +130,7 @@ describe("a connected source", () => {
         startedAt: Date.now() - 120_000,
       },
     ];
-    renderCard(<ConnectionCard connection={connection({ provider: "google_drive" })} />);
+    await manage(connection({ provider: "google_drive" }));
 
     expect(
       screen.getByText(/Last sync 2 minutes ago: 1 file was not imported: lyrics\.doc/),
@@ -129,9 +142,11 @@ describe("a connected source", () => {
       options?.onSuccess?.(),
     );
     renderCard(
-      <ConnectionCard
-        connection={connection({ provider: "google_drive", needsFolder: true, status: "paused" })}
-      />,
+      <ul>
+        <ConnectionRow
+          connection={connection({ provider: "google_drive", needsFolder: true, status: "paused" })}
+        />
+      </ul>,
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Choose a folder" }));
@@ -146,9 +161,11 @@ describe("a connected source", () => {
 
   it("offers nothing but a folder until a Drive connection has one", () => {
     renderCard(
-      <ConnectionCard
-        connection={connection({ provider: "google_drive", needsFolder: true, status: "paused" })}
-      />,
+      <ul>
+        <ConnectionRow
+          connection={connection({ provider: "google_drive", needsFolder: true, status: "paused" })}
+        />
+      </ul>,
     );
 
     expect(screen.getByText("Needs a folder")).toBeInTheDocument();
@@ -158,14 +175,14 @@ describe("a connected source", () => {
     expect(screen.queryByRole("button", { name: /Sync now/ })).not.toBeInTheDocument();
   });
 
-  it("cannot be synced by hand while it is paused", () => {
-    renderCard(<ConnectionCard connection={connection({ status: "paused" })} />);
+  it("cannot be synced by hand while it is paused", async () => {
+    await manage(connection({ status: "paused" }));
     expect(screen.getByRole("button", { name: /Sync now/ })).toBeDisabled();
   });
 
   it("keeps the documents unless asked otherwise", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-    renderCard(<ConnectionCard connection={connection()} />);
+    await manage(connection());
 
     await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
 
@@ -178,7 +195,7 @@ describe("a connected source", () => {
 
   it("deletes them when that is what was asked", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    renderCard(<ConnectionCard connection={connection()} />);
+    await manage(connection());
 
     await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
 
@@ -195,22 +212,27 @@ describe("a source that could be connected", () => {
     { id: "bundle-1", name: "Handbook", description: null, documentCount: 3, createdAt: 0 },
   ];
 
-  it("will not start until a bundle has been chosen", () => {
+  it("asks which folder before it starts, and will not start without one", async () => {
     renderCard(
-      <ConnectSourceCard
-        provider={{ id: "notion", label: "Notion", configured: true }}
-        bundles={bundles}
-      />,
+      <ul>
+        <SourceCard
+          provider={{ id: "notion", label: "Notion", configured: true }}
+          bundles={bundles}
+        />
+      </ul>,
     );
 
-    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("button", { name: "Connect" })).toBeDisabled();
+    expect(start.mutate).not.toHaveBeenCalled();
   });
 
   // Hiding an unconfigured provider leaves a self-hoster reading documentation
   // for a feature their own build appears not to have.
   it("names the variables that would turn it on", () => {
     renderCard(
-      <ConnectSourceCard
+      <SourceCard
         provider={{ id: "notion", label: "Notion", configured: false }}
         bundles={bundles}
       />,
@@ -225,14 +247,13 @@ describe("a source that could be connected", () => {
   // that and stops — naming the variables would read as an invitation.
   it("says coming soon for a source that is not being offered yet", () => {
     renderCard(
-      <ConnectSourceCard
+      <SourceCard
         provider={{ id: "google_drive", label: "Google Drive", configured: false }}
         bundles={bundles}
       />,
     );
 
     expect(screen.getByText("Coming soon")).toBeInTheDocument();
-    expect(screen.getByText("Coming soon.")).toBeInTheDocument();
     expect(screen.queryByText(/GOOGLE_CLIENT_ID/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
@@ -242,7 +263,7 @@ describe("a source that could be connected", () => {
   // than about the software.
   it("offers Drive normally to a deployment that configured it", () => {
     renderCard(
-      <ConnectSourceCard
+      <SourceCard
         provider={{ id: "google_drive", label: "Google Drive", configured: true }}
         bundles={bundles}
       />,
@@ -265,8 +286,8 @@ describe("a paused connection", () => {
   const paused = (pausedCode: Connection["pausedCode"], pausedReason = "something happened") =>
     connection({ status: "paused", pausedCode, pausedReason });
 
-  it("offers a new grant, and not Resume, when the old one was revoked", () => {
-    renderCard(<ConnectionCard connection={paused("grant_revoked")} />);
+  it("offers a new grant, and not Resume, when the old one was revoked", async () => {
+    await manage(paused("grant_revoked"));
 
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
@@ -274,18 +295,18 @@ describe("a paused connection", () => {
     expect(screen.queryByRole("button", { name: /sync now/i })).not.toBeInTheDocument();
   });
 
-  it("does the same when nobody holds the grant any more", () => {
+  it("does the same when nobody holds the grant any more", async () => {
     // 0057 let the row survive its grant holder closing their account. A
     // workspace's connection that only an ex-colleague could fix would be the
     // same bug in a different place.
-    renderCard(<ConnectionCard connection={{ ...paused("owner_gone"), userId: null }} />);
+    await manage({ ...paused("owner_gone"), userId: null });
 
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
   });
 
   it("asks the question rather than answering it when access narrowed", async () => {
     const user = userEvent.setup();
-    renderCard(<ConnectionCard connection={paused("access_narrowed")} />);
+    await manage(paused("access_narrowed"));
 
     // Both answers, and the destructive one named for what it does. "Resume"
     // would not say that documents are about to be removed.
@@ -299,24 +320,24 @@ describe("a paused connection", () => {
     });
   });
 
-  it("offers nothing to press when it is the operator's to fix", () => {
-    renderCard(<ConnectionCard connection={paused("provider_unconfigured")} />);
+  it("offers nothing to press when it is the operator's to fix", async () => {
+    await manage(paused("provider_unconfigured"));
 
     expect(screen.queryByRole("button", { name: "Reconnect" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resume" })).not.toBeInTheDocument();
     expect(screen.getByText(/An operator has to set this up again/)).toBeInTheDocument();
   });
 
-  it("still just resumes after a run of ordinary failures", () => {
-    renderCard(<ConnectionCard connection={paused("repeated_failures")} />);
+  it("still just resumes after a run of ordinary failures", async () => {
+    await manage(paused("repeated_failures"));
 
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
   });
 
-  it("resumes a pause somebody pressed themselves", () => {
+  it("resumes a pause somebody pressed themselves", async () => {
     // No code at all, which is what a person pausing it looks like — and is
     // also what every row written before 0057 looks like.
-    renderCard(<ConnectionCard connection={paused(null, "")} />);
+    await manage(paused(null, ""));
 
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
   });
@@ -325,7 +346,7 @@ describe("a paused connection", () => {
 describe("replacing a grant on a working connection", () => {
   it("is offered quietly, without disconnecting first", async () => {
     const user = userEvent.setup();
-    renderCard(<ConnectionCard connection={connection()} />);
+    await manage(connection());
 
     await user.click(screen.getByRole("button", { name: "Reconnect" }));
 

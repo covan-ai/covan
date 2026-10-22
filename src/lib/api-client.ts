@@ -339,6 +339,40 @@ export type PendingInvitation = {
 };
 
 /** A shared invite link, as an admin sees it (0129). The URL only on the answer that made it. */
+/** The events a webhook can be told about (0131). */
+export const WEBHOOK_EVENTS = [
+  "thread.finished",
+  "agent.needs_you",
+  "routine.failed",
+  "document.created",
+] as const;
+export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
+
+/** An endpoint the workspace's events are sent to. The secret is never here. */
+export type WebhookEndpoint = {
+  id: string;
+  url: string;
+  events: WebhookEvent[];
+  createdBy: string | null;
+  createdAt: number;
+  enabled: boolean;
+};
+
+/** One event to one endpoint, and how its last try went. */
+export type WebhookDelivery = {
+  id: string;
+  endpointId: string;
+  event: WebhookEvent | "webhook.test";
+  /** `failed` gave up after its last try; `dropped` met an endpoint turned off. */
+  status: "pending" | "ok" | "failed" | "dropped";
+  attempt: number;
+  statusCode: number | null;
+  latencyMs: number | null;
+  error: string | null;
+  createdAt: number;
+  deliveredAt: number | null;
+};
+
 export type InviteLink = {
   id: string;
   role: "member" | "viewer";
@@ -1246,6 +1280,40 @@ export const api = {
        */
       leave: (): Promise<{ ok: true }> => request("DELETE", "/workspace/members/me"),
     },
+  },
+  webhooks: {
+    /** The endpoints, and the last day of deliveries. Empty for a member. */
+    list: (): Promise<{
+      events: WebhookEvent[];
+      endpoints: WebhookEndpoint[];
+      deliveries: WebhookDelivery[];
+    }> => request("GET", "/webhooks"),
+    /** The signing secret is in this answer and nowhere else. */
+    create: (input: {
+      url: string;
+      events: WebhookEvent[];
+    }): Promise<WebhookEndpoint & { secret: string }> => request("POST", "/webhooks", input),
+    update: (
+      id: string,
+      patch: { url?: string; events?: WebhookEvent[]; enabled?: boolean },
+    ): Promise<WebhookEndpoint> => request("PATCH", `/webhooks/${id}`, patch),
+    remove: (id: string): Promise<void> => request("DELETE", `/webhooks/${id}`),
+    /** A new secret, shown once; the old one stops at once. */
+    rotate: (id: string): Promise<WebhookEndpoint & { secret: string }> =>
+      request("POST", `/webhooks/${id}/rotate`),
+    /** One signed POST now. Resolves with how it went. */
+    test: (
+      id: string,
+    ): Promise<{
+      deliveryId: string;
+      status: WebhookDelivery["status"];
+      statusCode?: number | null;
+      latencyMs?: number | null;
+      error?: string | null;
+    }> => request("POST", `/webhooks/${id}/test`),
+    /** A delivery that gave up, sent again from its first try. */
+    resend: (deliveryId: string): Promise<void> =>
+      request("POST", `/webhooks/deliveries/${deliveryId}/resend`),
   },
   inviteLinks: {
     list: (): Promise<InviteLink[]> => request("GET", "/invite-links"),

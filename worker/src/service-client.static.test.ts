@@ -31,6 +31,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   ],
   ["lib/supabase.ts", "defines it — the one place the service key becomes a client"],
   [
+    "lib/webhooks/dispatcher.ts",
+    "the webhook engine (0131): the background tick has no caller, so no JWT for RLS to resolve, and claim_due_webhook_deliveries is granted to service_role alone because it hands back the sealed secret. Its writes are each try's outcome on the row it claimed. The one send with a caller behind it, a test, is bounded to the id enqueue_webhook_test returned to that caller, which it returns only to an admin of the endpoint's workspace",
+  ],
+  [
     "lib/docs/enqueue.ts",
     "the one insert into document_jobs, which 0102 gives no client role a write on: a client that could write a job could put words in `sources` that every section is then written from, or name another workspace's bundle. It decides nothing a caller sent: before the insert, the bundle is checked writable and in the workspace, and the conversation is read, all through the caller's own client; the row is then written with exactly the workspace, agent, session and user those reads established",
   ],

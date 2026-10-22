@@ -214,6 +214,7 @@ export async function runPurge(env: Bindings): Promise<PurgeResult> {
   await purgeScheduledWorkspaces(env, db, store);
   await sweepDeletedThreadsAndRoutines(db, horizon);
   await sweepStaleTurns(db);
+  await sweepOldWebhookDeliveries(db);
   return result;
 }
 
@@ -250,6 +251,24 @@ export async function sweepStaleTurns(
   const before = new Date(now.getTime() - 30 * 60_000).toISOString();
   const { error } = await db.from("active_turns").delete().lt("updated_at", before);
   if (error) console.error("purge: failed to sweep stale turns", error);
+}
+
+/**
+ * The webhook record (0131) a week on. Settings shows the last day of it;
+ * a week leaves room to look back at a weekend, and a row still waiting for
+ * its next try is never taken.
+ */
+export async function sweepOldWebhookDeliveries(
+  db: ReturnType<typeof serviceClient>,
+  now: Date = new Date(),
+): Promise<void> {
+  const before = new Date(now.getTime() - 7 * 24 * 60 * 60_000).toISOString();
+  const { error } = await db
+    .from("webhook_deliveries")
+    .delete()
+    .neq("status", "pending")
+    .lt("created_at", before);
+  if (error) console.error("purge: failed to sweep old webhook deliveries", error);
 }
 
 /**

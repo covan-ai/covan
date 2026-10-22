@@ -112,6 +112,10 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
     "agent_id,assistant_emoji,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
   "workspace_members UPDATE": "role",
   // 0127: the icon, the clock and the weekly summary; never the deletion columns.
+  // 0131: an admin's own client writes an endpoint; the sealed secret is
+  // writable and never readable, and a delivery is the engine's alone.
+  "webhook_endpoints INSERT": "created_by,events,secret_ciphertext,url,workspace_id",
+  "webhook_endpoints UPDATE": "disabled_at,events,secret_ciphertext,updated_at,url",
   "workspaces UPDATE":
     "default_model,gap_report_enabled,icon_url,name,slug,timezone,weekly_usage_email",
 };

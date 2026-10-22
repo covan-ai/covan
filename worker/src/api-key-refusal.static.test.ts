@@ -141,6 +141,12 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "re-scopes a stored service credential, changing what agents may do with it from now on",
   "routes/tool-connections.ts DELETE /tool-connections/:id":
     "removes a service credential somebody's agents depend on",
+  "routes/webhooks.ts POST /webhooks":
+    "hands back a signing secret and points the workspace's events at a URL of the key-holder's choosing, which keeps receiving after the key is revoked",
+  "routes/webhooks.ts PATCH /webhooks/:id":
+    "re-points where the workspace's events are sent, or turns a webhook back on, and that outlives the key",
+  "routes/webhooks.ts POST /webhooks/:id/rotate":
+    "hands back a fresh signing secret, so whoever holds it can sign payloads as this workspace after the key is revoked",
   "routes/routines.ts POST /delivery-channels/:id/rotate":
     "hands back a fresh webhook signing secret, so whoever holds it can sign payloads to the owner's endpoint after the key is revoked",
   "routes/routines.ts PUT /routines/:id/event":
@@ -298,6 +304,10 @@ const OPEN_TO_A_KEY = new Set([
   "routes/routines.ts DELETE /routines/:id",
   "routes/routines.ts GET /routines/:id/runs",
   "routes/routines.ts GET /routines/stats",
+  "routes/webhooks.ts GET /webhooks",
+  "routes/webhooks.ts DELETE /webhooks/:id",
+  "routes/webhooks.ts POST /webhooks/:id/test",
+  "routes/webhooks.ts POST /webhooks/deliveries/:id/resend",
   "routes/routines.ts GET /routines/estimate",
   "routes/routines.ts PUT /routines/:id/channels",
   "routes/routines.ts POST /routines/:id/test",

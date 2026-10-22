@@ -11,6 +11,7 @@ import { PROVIDERS } from "./connections/registry";
 import { advanceDueDocumentJobs } from "./docs/host";
 import { advanceDueIndexJobs } from "./indexing/host";
 import { syncPassageVectors } from "./passages";
+import { dispatchWebhooks } from "./webhooks/dispatcher";
 
 /**
  * One scheduled tick, for both Workers that have one.
@@ -38,6 +39,13 @@ import { syncPassageVectors } from "./passages";
  * self-hoster's first deploy is the one that has to not need a plan upgrade.
  */
 export async function runScheduledWork(env: RoutineEnv): Promise<void> {
+  // Webhooks first, and without the either/or below: a handful of signed
+  // POSTs per tick (`DELIVERIES_PER_TICK`), bounded so they never take the
+  // tick from the routines, and first so "an agent needs you" reaches the
+  // workspace's own systems within a tick rather than after a busy schedule.
+  // Its failure is logged and the tick goes on.
+  await dispatchWebhooks(env).catch((err) => console.error("webhooks: the stage failed", err));
+
   const routines = await runDueRoutines(env);
   if (routines.claimed > 0) return;
 

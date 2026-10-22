@@ -128,8 +128,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: appCss,
       },
-      // DM Sans (display) + Geist (interface) are the app's two families, per
-      // DESIGN.md §3.2.
+      // Geist is the app's one family, per DESIGN.md §3.
       //
       // Vendored into public/fonts rather than linked from Google's CDN. Two
       // reasons, and for a self-hosted install the second one decides it: the
@@ -141,23 +140,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       //
       // Regenerate with `node scripts/fetch-fonts.mjs`.
       { rel: "stylesheet", href: fontsCss },
-      // The two files an English page renders from. A @font-face is only found
+      // The file an English page renders from. A @font-face is only found
       // once fontsCss above has parsed, and `font-display: swap` makes that
       // delay visible as a flash of the fallback.
       //
-      // Two of six: latin, upright. The latin-ext pair is fetched on demand by
-      // unicode-range and the italics are rare enough not to be worth the
-      // bandwidth. `crossOrigin` is required even same-origin — fonts are
+      // One of two: latin. The latin-ext file is fetched on demand by
+      // unicode-range. `crossOrigin` is required even same-origin — fonts are
       // always fetched in CORS mode, and without it the preload lands in a
       // different cache entry than the one @font-face asks for, so the file
       // comes down twice.
-      {
-        rel: "preload",
-        as: "font",
-        type: "font/woff2",
-        href: "/fonts/dm-sans-400-600-latin.woff2",
-        crossOrigin: "anonymous",
-      },
       {
         rel: "preload",
         as: "font",

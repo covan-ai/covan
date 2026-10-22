@@ -231,7 +231,7 @@ function HomeComposer({
   return (
     <div className={className}>
       {/* The composer floats: white, a line, the one panel shadow. */}
-      <div className="rounded-5xl border border-border bg-popover shadow-card transition-colors duration-200">
+      <div className="rounded-2xl border border-border bg-popover shadow-card transition-colors duration-200">
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}

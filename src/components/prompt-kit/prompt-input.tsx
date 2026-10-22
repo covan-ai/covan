@@ -52,7 +52,7 @@ import React, {
  *    them a line later. A composer that owns Enter outright passes no
  *    `onSubmit` and keeps every key it did not ask about.
  *
- * `rounded-3xl` became `rounded-5xl` (20px, the composer's own step on this
+ * `rounded-3xl` became `rounded-2xl` (20px, the composer's own step on this
  * system's radius ladder — the one object on the chat screen that is held
  * rather than read) and the composer carries the one floating shadow,
  * because it is the one thing on the chat screen that floats.
@@ -187,7 +187,7 @@ function PromptInput({
         <div
           onClick={handleClick}
           className={cn(
-            "cursor-text rounded-5xl border border-input bg-popover p-2 shadow-card",
+            "cursor-text rounded-2xl border border-input bg-popover p-2 shadow-card",
             disabled && "cursor-not-allowed opacity-60",
             className,
           )}

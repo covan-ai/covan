@@ -109,7 +109,7 @@ export function QuestionTurn({
           four-word box instead of a paragraph-sized slab. */}
       <div
         data-part="bubble"
-        className="max-w-[80%] whitespace-pre-wrap rounded-4xl bg-bubble px-4 py-3 text-base leading-[1.6] text-foreground"
+        className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-bubble px-4 py-3 text-base leading-[1.6] text-foreground"
       >
         {message.content}
       </div>

@@ -5,7 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Design system definition.
+ * Design system definition. DESIGN.md is the contract; this file is where its
+ * numbers live.
  *
  * The @theme inline block maps CSS custom properties to Tailwind utility
  * classes (e.g. --color-primary -> bg-primary, text-primary).
@@ -19,51 +20,53 @@
  */
 
 @theme inline {
-  /* Radius is small and tight. A child inside a rounded parent takes one step
-     LARGER, never smaller, so corners stay concentric — but the whole ladder
-     sits low: the biggest floating surface in the app is 14px, not 24. */
-  --radius-sm: 4px; /* chips, keycaps, checkboxes */
-  --radius-md: 6px; /* buttons, inputs, menu items, avatar tiles */
-  --radius-lg: 8px; /* data rows, menus, icon tiles */
-  --radius-xl: 10px; /* cards */
-  --radius-2xl: 12px; /* dialogs */
-  --radius-3xl: 14px; /* floating panels */
-  --radius-4xl: 16px; /* full-bleed painted panels, the question bubble */
-  --radius-5xl: 20px; /* the composer, and nothing else: it is the one object
-                         on the chat screen that is held rather than read */
+  /* Radii 4 · 6 · 8 · 12. A child inside a rounded parent never takes a
+     larger radius than its parent. Nothing in the app is above 14. */
+  --radius-sm: 4px; /* chips, keycaps, checkboxes, the 16px agent tile */
+  --radius-md: 6px; /* buttons, inputs, tiles, nav rows */
+  --radius-lg: 8px; /* rows, menus, the ask bar */
+  --radius-xl: 10px; /* stat and chart cards, the ask card, the 40px tile */
+  --radius-2xl: 12px; /* the composer, dialogs, the question bubble */
+  --radius-3xl: 14px; /* the floating browser panel, and nothing else */
+  --radius-4xl: 16px; /* the public site only */
 
-  /* One family. Geist does every job — display, interface, body — and the
-     roles are told apart by weight and size, never by a second face. */
+  /* One family. Geist does every job and the roles are told apart by weight
+     and size, never by a second face. */
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-dm: var(--font-sans);
 
   /* The type ladder. Pick by ROLE, never by how big the box happens to be,
      and never write a size as a literal at the call site.
 
-       13  text-xs       eyebrows, timestamps, chips, keycaps
-       14  text-meta     supporting text: descriptions, subtitles, row meta
-       15  text-sm       interface: nav, buttons, inputs, list rows
-       16  text-title    card and row titles — semibold
-       16  text-base     reading: chat replies, ledes, legal prose — 1.6 leading
-       18  text-title-lg dialog titles, auth and error card titles — semibold
-       20  text-xl       section headlines — semibold
-       24  text-2xl      page titles — semibold, tight tracking
-
-     Reading text is 16/1.6 rather than the framework's 16/1.5: a chat reply is
-     a paragraph somebody reads, not a label they scan. */
-  --text-xs: 13px;
+       12  text-xs       eyebrows, chips, keycaps, chart labels — the floor
+       13  text-meta     descriptions, timestamps, row detail
+       14  text-sm       interface: nav, buttons, inputs, rows, cells
+       15  text-lead     top-bar title, question bubble, composer, home sentence
+       16  text-title    card, row and thread titles — semibold
+       16  text-base     reading: replies, documents, prose — 1.6 leading
+       18  text-title-lg dialog, auth and error titles — semibold
+       20  text-xl       section and settings-page titles — semibold
+       24  text-2xl      the greeting and stat values — the ceiling */
+  --text-xs: 12px;
   --text-xs--line-height: 1.4;
-  --text-sm: 15px;
-  --text-sm--line-height: 1.45;
-  --text-meta: 14px;
+  --text-meta: 13px;
   --text-meta--line-height: 1.45;
+  --text-sm: 14px;
+  --text-sm--line-height: 1.45;
+  --text-lead: 15px;
+  --text-lead--line-height: 1.5;
+  --text-base: 16px;
   --text-base--line-height: 1.6;
   --text-title: 16px;
   --text-title--line-height: 1.3;
-  --text-title--letter-spacing: -0.005em;
   --text-title-lg: 18px;
   --text-title-lg--line-height: 1.25;
   --text-title-lg--letter-spacing: -0.01em;
+  --text-xl: 20px;
+  --text-xl--line-height: 1.25;
+  --text-xl--letter-spacing: -0.01em;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 1.2;
+  --text-2xl--letter-spacing: -0.02em;
 
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
@@ -90,162 +93,172 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-ring-offset-background: var(--background);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-hover: var(--sidebar-hover);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-nav-foreground: var(--nav-foreground);
 
   --color-surface: var(--surface);
   --color-surface-hover: var(--surface-hover);
   --color-surface-muted: var(--surface-muted);
   --color-bubble: var(--bubble);
   --color-hairline: var(--hairline);
-  --color-card-body: var(--card-body);
   --color-micro-foreground: var(--micro-foreground);
-  --color-display-muted: var(--display-muted);
+  --color-chip-foreground: var(--chip-foreground);
+  --color-tile: var(--tile);
+  --color-tile-foreground: var(--tile-foreground);
+  --color-avatar: var(--avatar);
+  --color-avatar-foreground: var(--avatar-foreground);
+  --color-dot-done: var(--dot-done);
+  --color-bar: var(--bar);
+  --color-bar-prev: var(--bar-prev);
 
   --shadow-xs: var(--shadow-xs);
-  --shadow-elegant: var(--shadow-elegant);
   --shadow-card: var(--shadow-card);
-  --shadow-open: var(--shadow-open);
-  --shadow-glow: var(--shadow-glow);
-
-  --background-image-hero-glow: var(--gradient-hero);
 }
 
 /*
- * The application palette: graphite.
+ * The application palette.
  *
- * Cool, near-neutral greys; one graphite ink; exactly one saturated colour, a
- * deep amber that is a POINTER — a focus ring, a selected mark, a live
- * indicator — and never a surface. The semantic token names are kept so every
- * existing Tailwind class (`bg-card`, `text-muted-foreground`, …) keeps
- * working.
+ * White surfaces with lines between things; one graphite ink; exactly one
+ * saturated colour, an amber that is a POINTER — the 8px status dot, the focus
+ * ring and the breathing edge of the browser an agent holds — and never text,
+ * a fill or a button.
  *
  * `--primary` is the ink, not the amber: the primary button is a graphite fill
- * with white text. Amber on a large fill reads as a warning, not as a brand.
+ * with white text.
  */
 :root {
   --radius: 10px;
 
-  /* Surfaces. The canvas is a quiet grey and a card is WHITE on it — that
-     one step, plus a hairline, is how depth is drawn. */
-  --background: #f6f6f8; /* canvas */
-  --surface: #eeeef1; /* inset wells, code chips, the hover of a menu row */
-  --surface-hover: #e8e8ec; /* the hover state of anything --surface */
-  --surface-muted: #f3f3f5; /* panel title bars, empty wells */
+  /* Surfaces. The page is white; grey is for the sidebar, wells, chips and
+     the question bubble. */
+  --background: #ffffff;
+  --surface: #eeeef1; /* wells, chips, the selected row of a menu */
+  --surface-hover: #e4e5e9; /* the hover state of anything --surface */
+  --surface-muted: #f6f6f8; /* panel title bars, a selected list item */
   /*
    * The fill of a question in a transcript. Its value matches --surface in
    * both themes and it is still its own token, because a coincidence of value
-   * is not a shared role: a bubble is not a well, and retuning what a well
-   * looks like must not silently restyle every question anybody has asked.
+   * is not a shared role: a bubble is not a well.
    */
   --bubble: #eeeef1;
   --card: #ffffff;
   --popover: #ffffff;
 
-  /* Ink — four greys, not interchangeable. */
+  /* Ink — not interchangeable. */
   --foreground: #15171c;
   --card-foreground: #15171c;
   --popover-foreground: #15171c;
-  --card-body: #2b2e36; /* body copy sitting on a painted surface */
   --muted-foreground: #626671; /* the default secondary */
-  --micro-foreground: #8a8e99; /* micro-labels only, never body */
-  --display-muted: #8a8e99; /* the muted half of a two-part headline */
+  --micro-foreground: #6b6f7a; /* eyebrows and axis labels, never body */
+  --chip-foreground: #4b4f59;
 
   /* Primary = ink. */
   --primary: #15171c;
   --primary-foreground: #ffffff;
   --secondary: #ffffff;
   --secondary-foreground: #15171c;
-  --muted: #ececef;
+  --muted: #eeeef1;
   --accent: #eeeef1;
   --accent-foreground: #15171c;
 
   --brand: #f48d16;
   --brand-foreground: #1a1510;
 
-  /* Lines. Borders are how this system separates things. */
-  --border: #e2e3e7; /* a card sitting on the canvas */
-  --hairline: #ebecef; /* a row inside a panel */
-  --input: #d7d9df;
-  --ring: #f48d16; /* focus is amber, on both surfaces */
+  /* Identity: grey monogram tiles for workspaces and apps, round initials for
+     people. Agents are ink marks on --background tiles. */
+  --tile: #e6e7eb;
+  --tile-foreground: #3c3f47;
+  --avatar: #dfe1e6;
+  --avatar-foreground: #3c3f47;
 
-  /* Destructive: muted red, reserved for confirmation actions and failures. */
+  /* The grey dot (done) and the grey ring (idle). */
+  --dot-done: #c9ccd3;
+
+  /* Chart bars: the current period, and the one before it. */
+  --bar: #4b4f59;
+  --bar-prev: #b7bac2;
+
+  /* Lines. Borders are how this system separates things. */
+  --border: #e2e3e7;
+  --hairline: #ebecef; /* between rows */
+  --input: #d7d9df;
+  --ring: #f48d16; /* focus is amber, on both themes */
+
+  /* Destructive: red text, never a fill. */
   --destructive: #b42318;
   --destructive-foreground: #ffffff;
 
-  --chart-1: #f48d16;
-  --chart-2: #15171c;
-  --chart-3: #626671;
-  --chart-4: #8a8e99;
-  --chart-5: #d7d9df;
-
-  --sidebar: #f0f0f3;
+  --sidebar: #f6f6f8;
   --sidebar-foreground: #15171c;
   --sidebar-primary: #15171c;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e4e5e9;
+  --sidebar-accent: #e4e5e9; /* the active nav row */
   --sidebar-accent-foreground: #15171c;
+  --sidebar-hover: #eaeaee;
   --sidebar-border: #e2e3e7;
   --sidebar-ring: #f48d16;
+  --nav-foreground: #3c3f47;
 
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1); /* transform, height */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1); /* opacity, colour */
 
-  /* Shadows are quiet and few. A card gets the hairline one; a panel, a
-     menu or a dialog gets the floating one; nothing glows. */
+  /* One shadow, and only on what floats: the composer and the ask bar take
+     the hairline one, menus, dialogs, toasts and the browser panel the
+     floating one. */
   --shadow-xs: 0 1px 2px rgba(21, 23, 28, 0.04);
   --shadow-card: 0 1px 2px rgba(21, 23, 28, 0.06), 0 12px 32px -12px rgba(21, 23, 28, 0.18);
-  --shadow-elegant: 0 1px 2px rgba(21, 23, 28, 0.06), 0 12px 32px -12px rgba(21, 23, 28, 0.18);
-  --shadow-open: 0 4px 12px -4px rgba(21, 23, 28, 0.12);
-  --shadow-glow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
-
-  --gradient-hero: none;
 }
 
 /*
- * Dark mode derives the same ladder in reverse: near-black greys with the
- * same slight cool cast, the ink inverted to off-white, the same amber one
- * step lighter so it keeps its contrast on dark. The button fill inverts;
- * the amber does not change role.
+ * Dark mode is the same ladder in reverse: near-black greys with the same
+ * slight cool cast, the ink inverted to off-white, the amber one step lighter
+ * so it keeps its contrast. The button fill inverts; the amber does not change
+ * role. Chart bars swap, so the current period is still the stronger one.
  */
 .dark {
   --background: #0f1012;
-  --surface: #17181c;
-  --surface-hover: #1e1f24;
-  --surface-muted: #141518;
-  --bubble: #1c1d22;
+  --surface: #1e1f24;
+  --surface-hover: #222328;
+  --surface-muted: #121316;
+  --bubble: #1e1f24;
   --card: #151619;
   --popover: #1a1b1f;
 
   --foreground: #ececef;
   --card-foreground: #ececef;
   --popover-foreground: #ececef;
-  --card-body: #d2d3d8;
   --muted-foreground: #9a9ca5;
-  --micro-foreground: #6e717b;
-  --display-muted: #6e717b;
+  --micro-foreground: #8a8e99;
+  --chip-foreground: #c9ccd3;
 
   --primary: #ececef;
   --primary-foreground: #0f1012;
   --secondary: #1c1d22;
   --secondary-foreground: #ececef;
   --muted: #222328;
-  --accent: #1f2025;
+  --accent: #1e1f24;
   --accent-foreground: #ececef;
 
   --brand: #f59e2b;
   --brand-foreground: #1a1510;
+
+  --tile: #222328;
+  --tile-foreground: #c9ccd3;
+  --avatar: #2a2b31;
+  --avatar-foreground: #c9ccd3;
+
+  --dot-done: #3a3c44;
+
+  --bar: #b7bac2;
+  --bar-prev: #4b4f59;
 
   --border: #26272d;
   --hairline: #1f2025;
@@ -255,28 +268,19 @@
   --destructive: #f0695a;
   --destructive-foreground: #0f1012;
 
-  --chart-1: #f59e2b;
-  --chart-2: #ececef;
-  --chart-3: #9a9ca5;
-  --chart-4: #6e717b;
-  --chart-5: #2d2e35;
-
   --sidebar: #121316;
   --sidebar-foreground: #ececef;
   --sidebar-primary: #ececef;
   --sidebar-primary-foreground: #0f1012;
-  --sidebar-accent: #1f2025;
+  --sidebar-accent: #222328;
   --sidebar-accent-foreground: #ececef;
-  --sidebar-border: #222328;
+  --sidebar-hover: #1a1b1f;
+  --sidebar-border: #26272d;
   --sidebar-ring: #f59e2b;
+  --nav-foreground: #c9ccd3;
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -12px rgba(0, 0, 0, 0.6);
-  --shadow-elegant: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -12px rgba(0, 0, 0, 0.6);
-  --shadow-open: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 0 2px var(--background), 0 0 0 4px var(--ring);
-
-  --gradient-hero: none;
 }
 
 @layer base {
@@ -338,6 +342,26 @@
 
 .typing-dot {
   animation: typing-bob 1.2s infinite ease-in-out;
+}
+
+/*
+ * The running dot: a filled 8px amber dot that breathes. DESIGN.md §12 has the
+ * five states; this is the only one that moves. The opacity lives ONLY in the
+ * keyframes, so with motion switched off the dot is a steady full amber fill,
+ * which still reads as "running" against the waiting state's ring.
+ */
+@keyframes dot-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.dot-live {
+  animation: dot-breathe 2.4s ease-in-out infinite;
 }
 
 /*
@@ -556,6 +580,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .typing-dot,
+  .dot-live,
   .stream-caret,
   .step-arrive,
   .step-running,

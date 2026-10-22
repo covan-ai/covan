@@ -53,7 +53,7 @@ export function LegalLayout({
   );
 }
 
-/** One numbered-feeling block: a DM Sans heading and its prose. */
+/** One numbered-feeling block: a heading and its prose. */
 export function LegalSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-3">

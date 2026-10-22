@@ -68,7 +68,7 @@ export function Headline({
       {turn ? (
         <>
           {" "}
-          <span className="font-semibold text-display-muted">{turn}</span>
+          <span className="font-semibold text-muted-foreground">{turn}</span>
         </>
       ) : null}
     </As>

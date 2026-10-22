@@ -60,7 +60,7 @@ export function TwoFactorCard() {
   return (
     <SectionCard className="mt-6 space-y-5">
       <div className="space-y-1">
-        <div className="font-dm text-title font-medium">Two-step sign-in</div>
+        <div className="text-title font-medium">Two-step sign-in</div>
         <p className="text-meta text-muted-foreground">
           {on
             ? "On. Signing in asks for a code from one of these after your password."

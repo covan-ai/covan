@@ -65,7 +65,7 @@ const STALE_AFTER_ENDING = [
 function clock(at: string, now: number): string {
   const date = new Date(at);
   return date.toDateString() === new Date(now).toDateString()
-    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    ? date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
     : date.toLocaleDateString();
 }
 

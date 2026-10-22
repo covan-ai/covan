@@ -176,20 +176,20 @@ are letters on a tile, not text.
 
 ## 7. Page grammar
 
-| Primitive                 | File                                        | Use for                                                                                                  |
-| ------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `TopBar` / `TopBarPortal` | `components/top-bar.tsx`                    | the 48px bar every page opens with                                                                       |
-| `PageBody`                | `components/page.tsx`                       | padding 32px 40px; widths home 1120 · table 1160 · list 1000 · settings 800 · form and reading 760       |
-| `SectionLabel`            | `components/section.tsx`                    | the 12px uppercase eyebrow (28px tall) with an optional link on the right                                |
-| `SectionTitle`            | `components/section.tsx`                    | 20/600 page-section title with a 14px muted lede                                                         |
-| `Field` / `FieldStack`    | `components/field.tsx`                      | a settings row: 220px label column (14/500 + 13px help), 24px gap, 20px vertical padding, hairline below |
-| `DataTable`               | `components/data-table.tsx`                 | 36px uppercase header on a border, 44px rows on hairlines, numbers right-aligned and tabular             |
-| `Row`                     | `components/list-row.tsx`                   | the 44px list row: leading mark, title 14/500, meta 13px muted                                           |
-| `Pills`, `Segmented`      | `components/pills.tsx`, `segmented.tsx`     | filters above a list                                                                                     |
-| `StatCard`                | `components/stat-card.tsx`                  | label 13px muted, value 24/600, detail 13px, 10px radius, border                                         |
-| `BarChart`, `HBarList`    | `components/bar-chart.tsx`, `hbar-list.tsx` | the two chart forms; bars in `bar`, previous period in `bar-prev`, 4px data ends, ink tooltip            |
-| `EmptyPage`, `EmptyWell`  | `components/empty-page.tsx`                 | nothing here yet: a sentence and one action; a dashed well for a drop target                             |
-| `Disclosure`              | `components/disclosure.tsx`                 | the sentence somebody needs once: a native `<details>`, closed                                           |
+| Primitive                 | File                                        | Use for                                                                                                                           |
+| ------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `TopBar` / `TopBarPortal` | `components/top-bar.tsx`                    | the 48px bar every page opens with                                                                                                |
+| `PageBody`                | `components/page.tsx`                       | padding 32px 40px; widths home 1120 · table 1160 · list 1000 · settings 800 (880 with a table) · agent 840 · form and reading 760 |
+| `SectionLabel`            | `components/section.tsx`                    | the 12px uppercase eyebrow (28px tall) with an optional link on the right                                                         |
+| `SectionTitle`            | `components/section.tsx`                    | 20/600 page-section title with a 14px muted lede                                                                                  |
+| `Field` / `FieldStack`    | `components/field.tsx`                      | a settings row: 220px label column (14/500 + 13px help), 24px gap, 20px vertical padding, hairline below                          |
+| `DataTable`               | `components/data-table.tsx`                 | 36px uppercase header on a border, 44px rows on hairlines, numbers right-aligned and tabular                                      |
+| `Row`                     | `components/list-row.tsx`                   | the 44px list row: leading mark, title 14/500, meta 13px muted                                                                    |
+| `Pills`, `Segmented`      | `components/pills.tsx`, `segmented.tsx`     | filters above a list                                                                                                              |
+| `StatCard`                | `components/stat-card.tsx`                  | label 13px muted, value 24/600, detail 13px, 10px radius, border                                                                  |
+| `BarChart`, `HBarList`    | `components/bar-chart.tsx`, `hbar-list.tsx` | the two chart forms; bars in `bar`, previous period in `bar-prev`, 4px data ends, ink tooltip                                     |
+| `EmptyPage`, `EmptyWell`  | `components/empty-page.tsx`                 | nothing here yet: a sentence and one action; a dashed well for a drop target                                                      |
+| `Disclosure`              | `components/disclosure.tsx`                 | the sentence somebody needs once: a native `<details>`, closed                                                                    |
 
 Lists are grouped under date eyebrows (Today, Yesterday, a weekday, Earlier).
 A row's title takes `overflow-wrap: anywhere` when it can carry a filename.

@@ -918,6 +918,7 @@ export const api = {
       byBundle: Record<string, { replies: number }>;
       /** Its replies in the window, and the share not grounded in a passage (0134). */
       answers: number;
+      grounding?: { covered: number; fallback: number; ungrounded: number };
       notCoveredPct: number | null;
     }> => request("GET", `/agents/${id}/knowledge-usage?days=${days}`),
     /**

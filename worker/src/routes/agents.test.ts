@@ -446,6 +446,7 @@ describe("GET /agents/:id/knowledge-usage", () => {
     expect(await res.json()).toEqual({
       byBundle: { policies: { replies: 61 }, templates: { replies: 0 } },
       answers: 0,
+      grounding: { covered: 0, fallback: 0, ungrounded: 0 },
       notCoveredPct: null,
     });
     expect(calls[0]!.args).toEqual({ p_agent_id: "agent-1", p_days: 30 });
@@ -456,7 +457,11 @@ describe("GET /agents/:id/knowledge-usage", () => {
       { answers: 312, covered: 181, fallback: 100, ungrounded: 31 },
     ]);
     const res = await appWith(db).request("/agents/agent-1/knowledge-usage?days=30");
-    expect(await res.json()).toMatchObject({ answers: 312, notCoveredPct: 42 });
+    expect(await res.json()).toMatchObject({
+      answers: 312,
+      grounding: { covered: 181, fallback: 100, ungrounded: 31 },
+      notCoveredPct: 42,
+    });
   });
 
   it("answers an agent the caller cannot use as not there", async () => {

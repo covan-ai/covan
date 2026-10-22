@@ -424,6 +424,12 @@ agents.get("/agents/:id/knowledge-usage", async (c) => {
   return c.json({
     byBundle,
     answers,
+    // The three buckets, for A32's bar: what the share below is made of.
+    grounding: {
+      covered: Number(g?.covered) || 0,
+      fallback: Number(g?.fallback) || 0,
+      ungrounded: Number(g?.ungrounded) || 0,
+    },
     // Null with nothing to divide: "0% not covered" of no replies says nothing.
     notCoveredPct: answers > 0 ? Math.round((notCovered / answers) * 100) : null,
   });

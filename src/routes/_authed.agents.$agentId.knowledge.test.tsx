@@ -1,278 +1,185 @@
-import { beforeAll, beforeEach, describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
 
+/**
+ * An agent's Knowledge tab (A32): which of the workspace's folders it reads,
+ * how much each was used, what else it reaches, what is worth revisiting and
+ * how much of what it was asked was not covered.
+ */
+
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: { component: () => React.ReactElement }) => ({
     ...options,
-    useParams: () => ({ agentId: "agent-1" }),
+    useParams: () => ({ agentId: "a1" }),
   }),
-  // The tab links to the workspace Knowledge page; the router is mocked away,
-  // so the link is an anchor.
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
     <a href={to}>{children}</a>
   ),
 }));
+vi.mock("@/components/top-bar", () => ({
+  TopBarPortal: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("@/components/document-preview-dialog", () => ({
+  DocumentPreviewDialog: ({ name }: { name: string }) => <div role="dialog">{name}</div>,
+}));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-const listDocuments = vi.fn();
-
-// `bundles.citations` is here because the tab renders RevisitPanel, and
-// `bundles.documents` because opening a bundle in the explorer asks for its
-// contents. Answering with nothing to revisit keeps these tests about the tab.
+const h = vi.hoisted(() => ({
+  knowledgeUsage: vi.fn(),
+  documents: vi.fn(),
+  isAdmin: true,
+}));
 vi.mock("@/lib/api-client", () => ({
   api: {
-    documents: { download: vi.fn() },
-    bundles: {
-      citations: vi.fn().mockResolvedValue({ since: null, counts: {} }),
-      documents: (id: string) => listDocuments(id),
-    },
+    agents: { knowledgeUsage: h.knowledgeUsage },
+    coverage: { documents: h.documents },
   },
 }));
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
-}));
-
-const store = {
-  agents: [
-    {
-      id: "agent-1",
-      name: "GTM Agent",
-      bundleIds: ["bundle-1"],
-      myAccess: "edit" as "use" | "edit" | "manage",
-      documents: [
-        {
-          id: "doc-1",
-          name: "pitch-deck.pdf",
-          size: 4096,
-          createdAt: Date.parse("2026-09-01T00:00:00.000Z"),
-          chunkCount: 12,
-          indexed: true,
-          bundleId: "bundle-1",
-        },
+vi.mock("@/lib/workspace-role", () => ({ useWorkspaceRole: () => ({ isAdmin: h.isAdmin }) }));
+vi.mock("@/hooks/use-connections", () => ({
+  useConnections: () => ({
+    data: { connections: [{ id: "c1", provider: "google_drive", bundleId: "product" }] },
+  }),
+  useToolConnections: () => ({
+    data: {
+      connections: [
+        { id: "t1", label: "Gmail", transport: "composio", toolkitSlug: "gmail", status: "active" },
       ],
     },
-  ],
-  bundles: [{ id: "bundle-1", name: "GTM knowledge", description: null, documentCount: 1 }],
-  uploadToBundle: vi.fn(),
-  removeDocument: vi.fn(),
-  createBundle: vi.fn(),
-  updateBundle: vi.fn(),
-  attachBundle: vi.fn(),
-  detachBundle: vi.fn(),
-  removeBundle: vi.fn(),
-  reindexDocument: vi.fn(),
-  moveDocument: vi.fn(),
-  canWrite: true,
-};
-
-vi.mock("@/lib/agents-store", () => ({
-  useAgentsStore: () => store,
-  bundleDocumentsKey: (id: string) => ["bundle-documents", id],
+  }),
+}));
+vi.mock("@/hooks/use-routines", () => ({
+  useRoutines: () => ({ data: [{ id: "r1", outputBundleId: "reports" }] }),
 }));
 
-/** Puts the workspace back to one bundle with one document in it. */
-function withKnowledge() {
-  store.bundles = [{ id: "bundle-1", name: "GTM knowledge", description: null, documentCount: 1 }];
-  store.agents[0].bundleIds = ["bundle-1"];
-  store.agents[0].myAccess = "edit";
-  listDocuments.mockReset().mockResolvedValue([]);
-}
+const support = {
+  id: "a1",
+  name: "Support",
+  avatar: "headset",
+  bundleIds: ["policies", "product"],
+  webSearch: true,
+  browserOff: true,
+  connectionsOff: [] as string[],
+  myAccess: "edit" as "use" | "edit" | "manage",
+};
+const research = { ...support, id: "a2", name: "Research", bundleIds: ["contracts"] };
+const store = {
+  agents: [support, research],
+  bundles: [
+    { id: "policies", name: "Policies", documentCount: 9, description: null, createdAt: 0 },
+    { id: "contracts", name: "Contracts", documentCount: 18, description: null, createdAt: 0 },
+    { id: "product", name: "Product", documentCount: 54, description: null, createdAt: 0 },
+    { id: "reports", name: "Reports", documentCount: 31, description: null, createdAt: 0 },
+  ],
+  attachBundle: vi.fn(async () => true),
+  detachBundle: vi.fn(),
+  createBundle: vi.fn(),
+  uploadToBundle: vi.fn(),
+};
+vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
 
-/** A workspace nobody has uploaded anything to yet. */
-function withNothing() {
-  store.bundles = [];
-  store.agents[0].bundleIds = [];
-  listDocuments.mockReset().mockResolvedValue([]);
-}
+const { Route } = await import("./_authed.agents.$agentId.knowledge");
 
-// Imported once rather than per test. The mocks above are hoisted, so the module
-// is safe to pull in from a hook — and on a slow checkout the first import of the
-// route and everything under it costs seconds, which the first test was paying
-// out of its own timeout.
-let Component: () => React.ReactElement;
-
-beforeAll(async () => {
-  const { Route } = await import("./_authed.agents.$agentId.knowledge");
-  Component = (Route as unknown as { component: () => React.ReactElement }).component;
-});
-
-function renderTab(canWrite: boolean) {
-  store.canWrite = canWrite;
+function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const Component = (Route as unknown as { component: () => React.ReactElement }).component;
+  return render(
     <QueryClientProvider client={client}>
       <Component />
     </QueryClientProvider>,
   );
 }
 
-describe("the Knowledge tab", () => {
-  beforeEach(withKnowledge);
-
-  // The tab opens on the one folder only an agent has: every document in every
-  // bundle attached to it. It is the list the tab has always shown.
-  it("opens on everything the agent reads", async () => {
-    renderTab(true);
-
-    expect(screen.getByText("pitch-deck.pdf")).toBeInTheDocument();
-    // A file that is ready says nothing about it (A6).
-    expect(screen.queryByText("Indexed")).toBeNull();
-    // No request for a bundle's contents: this list came with the agent.
-    expect(listDocuments).not.toHaveBeenCalled();
+beforeEach(() => {
+  vi.clearAllMocks();
+  support.myAccess = "edit";
+  h.isAdmin = true;
+  h.knowledgeUsage.mockResolvedValue({
+    byBundle: { policies: { replies: 61 } },
+    answers: 100,
+    grounding: { covered: 58, fallback: 30, ungrounded: 12 },
+    notCoveredPct: 42,
   });
-
-  // A viewer can read every bundle and everything in it, which is what the
-  // read-only notice promises. Uploading, moving and deleting are a member's.
-  it("shows a viewer the documents without the controls that change them", async () => {
-    renderTab(false);
-
-    expect(screen.getByText("pitch-deck.pdf")).toBeInTheDocument();
-    expect(screen.queryByText(/drop files into/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
-  });
-
-  it("gives a member the upload strip and a way to make another folder", async () => {
-    renderTab(true);
-
-    expect(screen.getByRole("button", { name: "New folder" })).toBeInTheDocument();
-    // Uploading needs a folder, and "everything this agent reads" is a view
-    // rather than a place — so the strip says which folder is missing.
-    expect(screen.getByText("Pick a folder to upload into")).toBeInTheDocument();
-  });
-
-  it("offers a member move, reindex and delete on a document, and a viewer none of them", async () => {
-    renderTab(true);
-    await userEvent.click(screen.getByLabelText(/actions for pitch-deck\.pdf/i));
-
-    expect(screen.getByRole("menuitem", { name: /^open$/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /reindex/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /delete/i })).toBeInTheDocument();
-  });
-
-  it("leaves a viewer's menu with only the things reading a document needs", async () => {
-    renderTab(false);
-    await userEvent.click(screen.getByLabelText(/actions for pitch-deck\.pdf/i));
-
-    expect(screen.getByRole("menuitem", { name: /download/i })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /delete/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: /reindex/i })).not.toBeInTheDocument();
-  });
-
-  // The gap the explorer closes. A bundle nobody has attached used to be a name
-  // and a count: its documents came through the agent, and an unattached bundle
-  // reaches no agent. Now it opens.
-  it("opens a bundle no agent has attached", async () => {
-    store.bundles = [
-      ...store.bundles,
-      { id: "bundle-2", name: "Old pricing", description: null, documentCount: 1 },
-    ];
-    listDocuments.mockResolvedValue([
+  h.documents.mockResolvedValue({
+    days: 30,
+    documents: [
       {
-        id: "doc-9",
-        name: "pricing-2024.csv",
-        size: 900,
-        createdAt: Date.parse("2026-01-01T00:00:00.000Z"),
-        chunkCount: 3,
-        indexed: true,
-        bundleId: "bundle-2",
+        documentId: "d1",
+        name: "Refund policy v3.pdf",
+        bundleId: "policies",
+        bundleName: "Policies",
+        createdAt: Date.now() - 425 * 86_400_000,
+        uses: 61,
+        readBy: [],
       },
+    ],
+  });
+});
+
+describe("an agent's Knowledge tab", () => {
+  it("lists every folder, what it reads first, with how each is used", async () => {
+    renderTab();
+    expect(screen.getByRole("heading", { name: "What Support reads" })).toBeInTheDocument();
+    const rows = screen.getAllByRole("listitem").slice(0, 4);
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining("Policies"),
+      expect.stringContaining("Product"),
+      expect.stringContaining("Contracts"),
+      expect.stringContaining("Reports"),
     ]);
-
-    renderTab(true);
-    expect(screen.getByText("Not attached")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /open old pricing/i }));
-
-    expect(listDocuments).toHaveBeenCalledWith("bundle-2");
-    expect(await screen.findByText("pricing-2024.csv")).toBeInTheDocument();
-    // And uploading now knows where it is going.
-    expect(screen.getByText("Drop files into Old pricing")).toBeInTheDocument();
+    expect(await screen.findByText("9 files · used in 61 replies this month")).toBeInTheDocument();
+    expect(screen.getByText("54 files · synced from Google Drive")).toBeInTheDocument();
+    expect(screen.getByText("18 files · read by Research")).toBeInTheDocument();
+    expect(screen.getByText("31 files · written by routines")).toBeInTheDocument();
   });
 
-  it("splits the rail into what this agent reads and what it does not", async () => {
-    store.bundles = [
-      ...store.bundles,
-      { id: "bundle-2", name: "Old pricing", description: null, documentCount: 1 },
-    ];
-    renderTab(true);
-
-    expect(screen.getByText("Attached")).toBeInTheDocument();
-    expect(screen.getByText("Not attached")).toBeInTheDocument();
-    // The switch is how a bundle crosses between the two groups, and it is the
-    // only control on this tab that changes what the agent knows.
-    expect(screen.getByLabelText(/attach old pricing to gtm agent/i)).toBeEnabled();
+  it("switches a folder on and off for this agent", async () => {
+    renderTab();
+    await userEvent.click(screen.getByRole("switch", { name: "Support reads Contracts" }));
+    expect(store.attachBundle).toHaveBeenCalledWith("a1", "contracts");
+    await userEvent.click(screen.getByRole("switch", { name: "Support reads Policies" }));
+    expect(store.detachBundle).toHaveBeenCalledWith("a1", "policies");
   });
 
-  it("shows somebody who can only use the agent what it reads, without the switch to change it", async () => {
-    // 0104: attaching a bundle is an edit to the agent, whatever the caller's
-    // role in the workspace.
-    store.bundles = [
-      ...store.bundles,
-      { id: "bundle-2", name: "Old pricing", description: null, documentCount: 1 },
-    ];
-    store.agents[0].myAccess = "use";
-    renderTab(true);
-
-    expect(screen.getByLabelText(/attach old pricing to gtm agent/i)).toBeDisabled();
-  });
-});
-
-// covan#45: an empty workspace is the one screen where the product looks like a
-// chat window, and the reason is that nobody has told it anything yet. "No
-// bundles yet" is true and useless — there is a specific answer to "what now".
-describe("a workspace with nothing in it", () => {
-  beforeEach(withNothing);
-
-  it("tells a member what to upload first, instead of that there is nothing", async () => {
-    renderTab(true);
-
-    expect(screen.getByText("Start with four files")).toBeInTheDocument();
-    expect(screen.getByText("The handbook")).toBeInTheDocument();
-    expect(screen.getByText("The answer you have typed twice")).toBeInTheDocument();
-    expect(screen.queryByText("No folders yet")).not.toBeInTheDocument();
+  it("shows somebody who may only use the agent what it reads, without the switches", () => {
+    support.myAccess = "use";
+    renderTab();
+    expect(screen.getByRole("switch", { name: "Support reads Policies" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /new folder/i })).not.toBeInTheDocument();
   });
 
-  it("gives a viewer the explorer's own empty rail, because they cannot act on it", async () => {
-    // A checklist you are not allowed to complete is worse than a blank: it
-    // reads as your job until you try, and the upload control is not there.
-    renderTab(false);
-
-    expect(screen.getByText(/no folders yet/i)).toBeInTheDocument();
-    expect(screen.queryByText("Start with four files")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
-  });
-});
-
-// The neighbouring answer to the same question, for the team that does not have
-// the four files above either. "Start with four files" names documents you
-// already wrote; this names six you can fill in when you have written none.
-describe("the starter templates on the Knowledge tab", () => {
-  beforeEach(withKnowledge);
-
-  it("opens itself for the agent that has nothing yet", async () => {
-    const documents = store.agents[0].documents;
-    store.agents[0].documents = [];
-    try {
-      renderTab(true);
-
-      expect(screen.getByLabelText(/download company-overview\.md/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/download faq\.md/i)).toBeInTheDocument();
-    } finally {
-      store.agents[0].documents = documents;
-    }
+  it("names what else it reaches, as the Tools switches leave it", () => {
+    renderTab();
+    expect(screen.getByText("Gmail")).toBeInTheDocument();
+    expect(screen.getByText("The web, when asked")).toBeInTheDocument();
+    // The browser is switched off for this agent.
+    expect(screen.queryByText("Pages in a browser")).not.toBeInTheDocument();
   });
 
-  it("collapses once there are real documents, rather than competing with them", async () => {
-    renderTab(true);
-
-    expect(screen.queryByLabelText(/download company-overview\.md/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /show the six templates/i })).toBeInTheDocument();
+  it("lists what is worth revisiting, and opens it", async () => {
+    renderTab();
+    await userEvent.click(await screen.findByRole("button", { name: "Open Refund policy v3.pdf" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Refund policy v3.pdf");
+    expect(screen.getByText(/13 months · 61 replies/)).toBeInTheDocument();
   });
 
-  it("is not offered to a viewer, who could not upload the result", async () => {
-    renderTab(false);
+  it("says how much of what it was asked was not covered", async () => {
+    renderTab();
+    expect(
+      await screen.findByRole("img", {
+        name: "Support, last 30 days: 58% found a passage, 30% fell back to whole documents, 12% nothing close",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/42% of what Support was asked/)).toBeInTheDocument();
+  });
 
-    expect(screen.queryByText(/nothing to upload yet/i)).not.toBeInTheDocument();
+  it("points a member nowhere they cannot go", async () => {
+    h.isAdmin = false;
+    renderTab();
+    await screen.findByText(/42% of what Support was asked/);
+    expect(within(document.body).queryByRole("link", { name: "Coverage" })).not.toBeInTheDocument();
   });
 });

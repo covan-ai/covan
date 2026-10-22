@@ -45,6 +45,11 @@ import { toast } from "sonner";
  */
 export const Route = createFileRoute("/_authed/team")({
   component: TeamPage,
+  // `?invite=1` opens the invite dialog: the ⌘K palette's "Invite a member".
+  validateSearch: (search: Record<string, unknown>): { invite?: boolean } => ({
+    invite:
+      search.invite === true || search.invite === 1 || search.invite === "1" ? true : undefined,
+  }),
   head: () => ({
     meta: [
       { title: "Team — Covan" },
@@ -111,7 +116,8 @@ function TeamPage() {
         ? "You are the only admin. Make someone else an admin first — a workspace cannot be left without one."
         : null;
 
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const { invite } = Route.useSearch();
+  const [inviteOpen, setInviteOpen] = useState(Boolean(invite));
   const [leaving, setLeaving] = useState(false);
 
   const leaveWorkspace = async () => {

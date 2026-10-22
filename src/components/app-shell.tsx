@@ -4,6 +4,8 @@ import { Sidebar } from "@/components/sidebar/sidebar";
 import { ShellProvider } from "@/components/shell-provider";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { IncomingInvitesBanner } from "@/components/incoming-invites-banner";
+import { CommandPalette } from "@/components/command-palette";
+import { useGoKeys } from "@/hooks/use-go-keys";
 import type { ShellApi } from "@/lib/shell";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +21,7 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  useGoKeys(agentId);
 
   // A page change closes the drawer, however it happened: noticed while
   // rendering, the way React asks for state that follows a prop.
@@ -74,6 +77,7 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
         </main>
       </div>
       <CreateAgentDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CommandPalette agentId={agentId} />
     </ShellProvider>
   );
 }

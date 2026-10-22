@@ -6,7 +6,10 @@ import { meFixture } from "@/test/me-fixture";
 import { renderRoute } from "@/test/settings-route";
 
 vi.mock("@tanstack/react-router", () => ({
-  createFileRoute: () => (options: { component: () => React.ReactElement }) => options,
+  createFileRoute: () => (options: { component: () => React.ReactElement }) => ({
+    ...options,
+    useSearch: () => ({}),
+  }),
 }));
 
 let me: Me;

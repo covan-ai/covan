@@ -15,7 +15,6 @@ import fontsCss from "../fonts.css?url";
 import { AgentsProvider } from "../lib/agents-store";
 import { THEME_INIT_SCRIPT } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
-import { CommandPalette } from "@/components/command-palette";
 import { takeSensitiveParams } from "../lib/sensitive-url";
 
 // Before the router renders and before the first page view is sent: a connect
@@ -196,7 +195,6 @@ function RootComponent() {
       <AgentsProvider>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />
-        <CommandPalette />
         <Toaster />
       </AgentsProvider>
     </QueryClientProvider>

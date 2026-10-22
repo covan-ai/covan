@@ -33,22 +33,30 @@ const CommandDialog = ({
   children,
   footer,
   label = "Search",
+  commandProps,
   ...props
-}: DialogProps & { footer?: React.ReactNode; label?: string }) => {
+}: DialogProps & {
+  footer?: React.ReactNode;
+  label?: string;
+  commandProps?: React.ComponentPropsWithoutRef<typeof CommandPrimitive>;
+}) => {
   return (
     <Dialog {...props}>
       <DialogContent
         size="lg"
         hideClose
         aria-label={label}
-        className="top-[12vh] translate-y-0 gap-0 overflow-hidden p-0"
+        className="top-24 translate-y-0 gap-0 overflow-hidden p-0"
       >
         <DialogTitle className="sr-only">{label}</DialogTitle>
-        <Command className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-[0.06em] [&_[cmdk-group-heading]]:text-micro-foreground [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group]]:px-1.5">
+        <Command
+          {...commandProps}
+          className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-[0.06em] [&_[cmdk-group-heading]]:text-micro-foreground [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group]]:px-1.5"
+        >
           {children}
         </Command>
         {footer && (
-          <div className="flex h-9 items-center gap-4 border-t border-border px-3.5 text-xs text-muted-foreground">
+          <div className="flex h-10 items-center gap-4 border-t border-hairline px-4 text-xs text-micro-foreground">
             {footer}
           </div>
         )}

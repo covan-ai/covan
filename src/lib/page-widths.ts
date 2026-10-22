@@ -6,7 +6,8 @@ export const PAGE_WIDTHS = {
   home: "max-w-[1120px]",
   table: "max-w-[1160px]",
   list: "max-w-[1000px]",
-  settings: "max-w-[800px]",
+  // 800px of content inside the 40px padding (A9).
+  settings: "max-w-[880px]",
   form: "max-w-[760px]",
   reading: "max-w-[760px]",
   // The old tiers, until `page-container.tsx` and `settings-page.tsx` go

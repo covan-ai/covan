@@ -1,53 +1,381 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { SectionTitle } from "@/components/section";
-import { SectionHeading } from "@/components/page-container";
-import { WorkspaceForm } from "@/components/settings/workspace-form";
-import { DefaultModelSection } from "@/components/preferences-section";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { SectionLabel, SectionTitle } from "@/components/section";
+import { Field } from "@/components/field";
+import { Tile } from "@/components/tile";
+import { Chip } from "@/components/chip";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { api, ApiError } from "@/lib/api-client";
 import { useWorkspaceRole } from "@/lib/workspace-role";
+import {
+  formatReplyPrice,
+  modelLabel,
+  modelTiers,
+  modelsFor,
+  priceFor,
+  replyPricesOf,
+} from "@/lib/agent-meta";
+import { listTimeZones } from "@/lib/timezones";
+import { workspaceIconSrc } from "@/lib/workspace-icon-src";
 
 export const Route = createFileRoute("/_authed/settings/general")({
   component: GeneralSettingsPage,
   head: () => ({
     meta: [
       { title: "General — Settings — Covan" },
-      { name: "description", content: "Your workspace's name and default model in Covan." },
+      {
+        name: "description",
+        content: "Your workspace's name, icon, default model, time zone and reports in Covan.",
+      },
     ],
   }),
 });
 
-function GeneralSettingsPage() {
-  const { me, isAdmin: isAdminOnceKnown } = useWorkspaceRole();
+const NO_DEFAULT = "__none";
 
-  // True while `me` loads, unlike the hook's own answer, so the form does not
-  // visibly lock and then unlock on every cold load — mirrors the same choice
-  // in agents-store. Nothing is fetched on the strength of it: the sections
-  // gated below on `isAdmin` ask a server that refuses anybody else anyway.
+/**
+ * Settings › General (A9): what the workspace is called and looks like, what
+ * new agents start on, the clock routines keep, the reports it sends, and its
+ * data — export, or deletion with fourteen days' notice. An admin's to
+ * change; everybody else reads it.
+ */
+function GeneralSettingsPage() {
+  const queryClient = useQueryClient();
+  const { me, isAdmin: isAdminOnceKnown } = useWorkspaceRole();
+  // True while `me` loads, so the page does not visibly lock and unlock on
+  // every cold load. The server refuses anybody else's writes either way.
   const isAdmin = me ? isAdminOnceKnown : true;
+  const ws = me?.workspace;
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ["me"] });
+
+  const [name, setName] = useState<string | null>(null);
+  const shownName = name ?? ws?.name ?? "";
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [typed, setTyped] = useState("");
+  const iconInput = useRef<HTMLInputElement>(null);
+
+  const run = async (key: string, work: () => Promise<unknown>, done?: string) => {
+    if (busy) return;
+    setBusy(key);
+    try {
+      await work();
+      await refresh();
+      if (done) toast.success(done);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't save that");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveName = () => {
+    const next = shownName.trim();
+    if (!ws || !next || next === ws.name) return setName(null);
+    void run("name", () => api.workspace.update({ name: next }), "Name saved").then(() =>
+      setName(null),
+    );
+  };
+
+  const prices = replyPricesOf(me);
+  const models = modelsFor(me?.models, ws?.defaultModel ?? null);
+  const tiers = modelTiers(models);
+  const priceWords = (m: string) => {
+    const p = priceFor(prices, m);
+    return p ? ` · ${formatReplyPrice(p)} per message` : "";
+  };
+  const iconSrc = workspaceIconSrc(ws?.iconUrl ?? null);
+  const deletesAt = ws?.deletesAt ?? null;
 
   return (
     <>
-      <SectionTitle title="General" lede="What the workspace is called, and what it answers on." />
+      <SectionTitle
+        title="General"
+        lede={`The workspace everyone in ${ws?.name ?? "it"} shares. Only owners and admins can change these.`}
+      />
 
-      <section className="mt-8">
-        <SectionHeading
-          title="Workspace"
-          description={isAdmin ? undefined : "The name and slug are an admin's to change."}
-        />
-        {/* Read-only for everybody but an admin. `workspaces_update_admin` has
-            always refused this write, and PATCH /workspace answers 403 — but
-            the form was rendered to everyone, so a member could fill it in,
-            press Save and be told they had done something wrong. `key` seeds
-            it: "pending" while `me` loads, then the id. */}
-        <WorkspaceForm
-          key={me?.workspace.id ?? "pending"}
-          workspace={me?.workspace}
-          isAdmin={isAdmin}
-        />
-      </section>
+      <fieldset disabled={!isAdmin} className="mt-5 min-w-0">
+        <Field label="Workspace name" help="Shown in the sidebar and in invitation emails.">
+          <Input
+            aria-label="Workspace name"
+            className="max-w-[420px]"
+            value={shownName}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={saveName}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveName();
+              if (e.key === "Escape") setName(null);
+            }}
+          />
+        </Field>
 
-      {/* The workspace's default model is an admin's; a member's own
-          preference is under Preferences. */}
-      {isAdmin && <DefaultModelSection me={me} />}
+        <Field label="Icon" help="A letter on a tile. Upload a square image to replace it.">
+          <div className="flex items-center gap-3">
+            <Tile label={ws?.name ?? "W"} size={36} tone="ink" letters={1} imageUrl={iconSrc} />
+            <Button
+              variant="secondary"
+              onClick={() => iconInput.current?.click()}
+              disabled={busy === "icon"}
+            >
+              {busy === "icon" ? "Uploading…" : "Upload image"}
+            </Button>
+            {ws?.iconUrl && (
+              <Button
+                variant="ghost"
+                onClick={() => void run("icon", () => api.workspace.removeIcon(), "Icon removed")}
+              >
+                Remove
+              </Button>
+            )}
+            <input
+              ref={iconInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              aria-label="Choose an icon"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void run("icon", () => api.workspace.setIcon(file), "Icon updated");
+              }}
+            />
+          </div>
+        </Field>
+
+        <Field label="Workspace ID" help="For support requests and the API.">
+          <div className="flex items-center gap-2">
+            <Chip tone="code">{ws?.id ?? "—"}</Chip>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!ws}
+              onClick={() =>
+                ws &&
+                void navigator.clipboard
+                  ?.writeText(ws.id)
+                  .then(() => toast.success("Copied the workspace ID"))
+              }
+            >
+              Copy
+            </Button>
+          </div>
+        </Field>
+
+        <Field
+          label="Default model tier"
+          help="New agents start here. Each agent can pick its own."
+        >
+          <Select
+            value={ws?.defaultModel ?? NO_DEFAULT}
+            onValueChange={(v) =>
+              void run(
+                "model",
+                () => api.workspace.update({ defaultModel: v === NO_DEFAULT ? null : v }),
+                "Default saved",
+              )
+            }
+          >
+            <SelectTrigger aria-label="Default model tier" className="max-w-[420px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_DEFAULT}>No preference</SelectItem>
+              {tiers.map((t) => (
+                <SelectItem key={t.model} value={t.model}>
+                  {t.label}
+                  {priceWords(t.model)}
+                </SelectItem>
+              ))}
+              {models
+                .filter((m) => !tiers.some((t) => t.model === m))
+                .map((m) => (
+                  <SelectItem key={m} value={m}>
+                    {modelLabel(m)}
+                    {priceWords(m)}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        </Field>
+
+        <Field label="Time zone" help="Routines are scheduled in this time zone.">
+          <Select
+            value={ws?.timezone ?? "UTC"}
+            onValueChange={(tz) =>
+              void run("tz", () => api.workspace.update({ timezone: tz }), "Time zone saved")
+            }
+          >
+            <SelectTrigger aria-label="Time zone" className="max-w-[420px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              {[...new Set([ws?.timezone ?? "UTC", ...listTimeZones()])].map((tz) => (
+                <SelectItem key={tz} value={tz}>
+                  {tz}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+
+        <SectionLabel>Reports</SectionLabel>
+        <Field
+          label="Coverage report"
+          help="Once a week, the topics the team asked about that no document covered. Every member is told it is on and can leave their questions out."
+        >
+          <label className="flex items-center gap-3 pt-1 text-sm">
+            <Switch
+              aria-label="Coverage report"
+              checked={ws?.gapReportEnabled ?? false}
+              onCheckedChange={(on) =>
+                void run(
+                  "coverage",
+                  () => api.coverage.setEnabled(on),
+                  on ? "Report on" : "Report off",
+                )
+              }
+            />
+            <span className={ws?.gapReportEnabled ? "" : "text-muted-foreground"}>
+              {ws?.gapReportEnabled ? "On · Mondays" : "Off"}
+            </span>
+          </label>
+        </Field>
+        <Field
+          label="Weekly usage summary"
+          help="Credits and threads per agent, sent to owners and admins by email on Monday morning."
+        >
+          <label className="flex items-center gap-3 pt-1 text-sm">
+            <Switch
+              aria-label="Weekly usage summary"
+              checked={ws?.weeklyUsageEmail ?? false}
+              onCheckedChange={(on) =>
+                void run("weekly", () => api.workspace.update({ weeklyUsageEmail: on }))
+              }
+            />
+            <span className={ws?.weeklyUsageEmail ? "" : "text-muted-foreground"}>
+              {ws?.weeklyUsageEmail ? "On" : "Off"}
+            </span>
+          </label>
+        </Field>
+
+        <SectionLabel>Data</SectionLabel>
+        <Field
+          label="Export workspace"
+          help="Every thread, document and routine as a zip. Prepared in the background and sent to your email."
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              disabled={!ws || busy === "export"}
+              onClick={() =>
+                ws &&
+                void run(
+                  "export",
+                  () => api.exports.request(ws.id),
+                  "Export requested — we'll email you when it's ready",
+                )
+              }
+            >
+              Request export
+            </Button>
+            <Link
+              to="/settings/export"
+              className="text-meta text-muted-foreground hover:text-foreground"
+            >
+              Previous exports
+            </Link>
+          </div>
+        </Field>
+        <Field
+          label="Delete workspace"
+          help="Removes every agent, thread and document for everyone, after 14 days' notice. This cannot be undone."
+        >
+          {deletesAt ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm text-destructive">
+                Deletes on{" "}
+                {new Date(deletesAt).toLocaleDateString("en-GB", {
+                  day: "numeric",
+                  month: "long",
+                })}
+              </span>
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  void run("cancel", () => api.workspace.cancelDeletion(), "Deletion called off")
+                }
+              >
+                Keep the workspace
+              </Button>
+            </div>
+          ) : (
+            <Button variant="danger" onClick={() => setConfirmDelete(true)}>
+              Delete workspace…
+            </Button>
+          )}
+        </Field>
+      </fieldset>
+
+      <AlertDialog
+        open={confirmDelete}
+        onOpenChange={(o) => {
+          setConfirmDelete(o);
+          if (!o) setTyped("");
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {ws?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Every member is told now, and the workspace — its agents, threads, documents and
+              routines — goes in 14 days. Until then one press keeps it. Type its name to go on.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            aria-label="Workspace name, to confirm"
+            placeholder={ws?.name}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="danger"
+              disabled={!ws || typed.trim() !== ws.name}
+              onClick={() =>
+                void run(
+                  "delete",
+                  () => api.workspace.requestDeletion(typed.trim()),
+                  "Deletion scheduled — everyone has been told",
+                )
+              }
+            >
+              Delete in 14 days
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

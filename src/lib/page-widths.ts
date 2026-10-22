@@ -3,7 +3,10 @@
  * takes one of these through `PageBody`; none sets its own.
  */
 export const PAGE_WIDTHS = {
-  home: "max-w-[1120px]",
+  // Home fills the window: its cards and table stretch with the screen.
+  home: "max-w-none",
+  // An agent's Knowledge (A32).
+  wide: "max-w-[1120px]",
   table: "max-w-[1160px]",
   list: "max-w-[1000px]",
   // 800px of content inside the 40px padding (A9, A16).

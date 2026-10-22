@@ -179,7 +179,7 @@ are letters on a tile, not text.
 | Primitive                 | File                                        | Use for                                                                                                                           |
 | ------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `TopBar` / `TopBarPortal` | `components/top-bar.tsx`                    | the 48px bar every page opens with                                                                                                |
-| `PageBody`                | `components/page.tsx`                       | padding 32px 40px; widths home 1120 · table 1160 · list 1000 · settings 800 (880 with a table) · agent 840 · form and reading 760 |
+| `PageBody`                | `components/page.tsx`                       | padding 32px 40px; widths home full · wide 1120 · table 1160 · list 1000 · settings 800 (880 with a table) · agent 840 · form and reading 760 |
 | `SectionLabel`            | `components/section.tsx`                    | the 12px uppercase eyebrow (28px tall) with an optional link on the right                                                         |
 | `SectionTitle`            | `components/section.tsx`                    | 20/600 page-section title with a 14px muted lede                                                                                  |
 | `Field` / `FieldStack`    | `components/field.tsx`                      | a settings row: 220px label column (14/500 + 13px help), 24px gap, 20px vertical padding, hairline below                          |

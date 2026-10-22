@@ -49,7 +49,7 @@ function CheckRow({
         <span className="sr-only">{done ? " (done)" : ""}</span>
       </span>
       {note && <span className="text-xs text-muted-foreground">{note}</span>}
-      {action && <span className="ml-auto">{action}</span>}
+      {action && <span className="ml-2">{action}</span>}
     </li>
   );
 }

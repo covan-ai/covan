@@ -133,7 +133,7 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
         </Button>
       </TopBarPortal>
 
-      <PageBody width="home" className="lg:pt-7">
+      <PageBody width="wide" className="lg:pt-7">
         <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
           <div>
             <h2 className="m-0 text-xl font-semibold">What {agent.name} reads</h2>

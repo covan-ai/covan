@@ -1,7 +1,17 @@
-// Container width tiers by page role. Keeps every in-app page on the same
-// rhythm so screens don't drift apart. All tiers share the same padding.
+/**
+ * Page widths by what a page is (DESIGN.md §7). Every page under the top bar
+ * takes one of these through `PageBody`; none sets its own.
+ */
 export const PAGE_WIDTHS = {
-  dashboard: "max-w-[1200px]",
-  list: "max-w-4xl",
-  form: "max-w-2xl",
+  home: "max-w-[1120px]",
+  table: "max-w-[1160px]",
+  list: "max-w-[1000px]",
+  settings: "max-w-[800px]",
+  form: "max-w-[760px]",
+  reading: "max-w-[760px]",
+  // The old tiers, until `page-container.tsx` and `settings-page.tsx` go
+  // with the screens that still use them (Phase 3).
+  dashboard: "max-w-[1120px]",
 } as const;
+
+export type PageWidth = keyof typeof PAGE_WIDTHS;

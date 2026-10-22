@@ -211,3 +211,129 @@ describe("when a read fails", () => {
     expect(await res.json()).toEqual({ error: "failed to read messages" });
   });
 });
+
+describe("exports prepared in the background (0132)", () => {
+  const ROW = {
+    id: "x1",
+    workspace_id: WORKSPACE,
+    requested_by: USER.id,
+    status: "ready",
+    size_bytes: 184_000_000,
+    error: null,
+    created_at: "2026-10-20T09:00:00Z",
+    finished_at: "2026-10-20T09:20:00Z",
+    expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+  };
+
+  it("lists them with who asked, and which are the caller's to download", async () => {
+    const { app } = appWith({
+      tables: {
+        workspace_exports: {
+          select: () => ({
+            data: [
+              ROW,
+              {
+                ...ROW,
+                id: "x0",
+                requested_by: "user-2",
+                expires_at: "2026-09-09T09:00:00Z",
+              },
+            ],
+            error: null,
+          }),
+        },
+        profiles: {
+          select: () => ({
+            data: [
+              { id: USER.id, name: "Mina" },
+              { id: "user-2", name: "Deniz" },
+            ],
+            error: null,
+          }),
+        },
+      },
+    });
+    const res = await app.request(`/workspaces/${WORKSPACE}/exports`);
+    const body = (await res.json()) as Array<Record<string, unknown>>;
+    expect(body[0]).toMatchObject({
+      status: "ready",
+      sizeBytes: 184_000_000,
+      requestedBy: { id: USER.id, name: "Mina" },
+      mine: true,
+    });
+    // Past its week, though the purge has not been by yet.
+    expect(body[1]).toMatchObject({
+      status: "expired",
+      mine: false,
+      requestedBy: { name: "Deniz" },
+    });
+  });
+
+  it("asks for one through the caller, one at a time, an admin's", async () => {
+    let written: Record<string, unknown> | undefined;
+    const ok = appWith({
+      tables: {
+        workspace_exports: {
+          insert: (ctx) => {
+            written = ctx.values;
+            return { data: { ...ROW, status: "queued", size_bytes: null }, error: null };
+          },
+        },
+      },
+    });
+    const res = await ok.app.request(`/workspaces/${WORKSPACE}/exports`, { method: "POST" });
+    expect(res.status).toBe(201);
+    expect(written).toEqual({ workspace_id: WORKSPACE, requested_by: USER.id });
+
+    const busy = appWith({
+      tables: {
+        workspace_exports: {
+          insert: () => ({ data: null, error: { message: "dup", code: "23505" } }),
+        },
+      },
+    });
+    expect(
+      (await busy.app.request(`/workspaces/${WORKSPACE}/exports`, { method: "POST" })).status,
+    ).toBe(409);
+
+    const member = appWith({
+      tables: {
+        workspace_exports: {
+          insert: () => ({ data: null, error: { message: "no", code: "42501" } }),
+        },
+      },
+    });
+    expect(
+      (await member.app.request(`/workspaces/${WORKSPACE}/exports`, { method: "POST" })).status,
+    ).toBe(403);
+  });
+
+  it("downloads only for whoever asked, and only while it lasts", async () => {
+    docs.get.mockResolvedValueOnce({ body: new Response("zip").body } as never);
+    const mine = appWith({
+      tables: { workspace_exports: { select: () => ({ data: ROW, error: null }) } },
+    });
+    const res = await mine.app.request("/exports/x1/download");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("application/zip");
+    expect(docs.get).toHaveBeenLastCalledWith(`exports/${WORKSPACE}/x1.zip`);
+
+    const theirs = appWith({
+      tables: {
+        workspace_exports: {
+          select: () => ({ data: { ...ROW, requested_by: "user-2" }, error: null }),
+        },
+      },
+    });
+    expect((await theirs.app.request("/exports/x1/download")).status).toBe(403);
+
+    const old = appWith({
+      tables: {
+        workspace_exports: {
+          select: () => ({ data: { ...ROW, expires_at: "2026-01-01T00:00:00Z" }, error: null }),
+        },
+      },
+    });
+    expect((await old.app.request("/exports/x1/download")).status).toBe(410);
+  });
+});

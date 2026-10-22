@@ -108,14 +108,22 @@ export async function storedKeysForWorkspaces(
     return [];
   }
 
+  // The exports somebody asked for (0132), whose files outlive no workspace.
+  const keys: string[] = [];
+  const { data: exports, error: exportsError } = await admin
+    .from("workspace_exports")
+    .select("object_key")
+    .in("workspace_id", workspaceIds);
+  if (exportsError) console.error("workspace deletion: could not list exports", exportsError);
+  for (const x of exports ?? []) if (x.object_key) keys.push(x.object_key as string);
+
   const bundleIds = (bundles ?? []).map((b) => b.id as string);
-  if (bundleIds.length === 0) return [];
+  if (bundleIds.length === 0) return keys;
 
   // In hundreds and page by page (`lib/batch.ts`): one list of every bundle
   // was a URL the gateway refused past a couple of hundred, and one read of
   // every document stopped at a thousand without saying so. Either way the
   // files of an account with that much in it outlived the account.
-  const keys: string[] = [];
   for (const ids of chunked(bundleIds)) {
     const docs = await readAllPages<{ r2_key: string | null }>((from, to) =>
       admin.from("documents").select("r2_key").in("bundle_id", ids).order("id").range(from, to),

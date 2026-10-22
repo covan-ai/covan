@@ -183,6 +183,33 @@ export async function mintUserToken(
   });
 }
 
+/** Long enough to read a large workspace, short enough to be worth nothing after. */
+const DEFERRED_TOKEN_TTL_SECONDS = 30 * 60;
+
+/**
+ * A token for work done later on somebody's behalf — an export they asked
+ * for (0132) — that reads exactly what they could, in the one workspace it
+ * names, as `mintUserToken`'s does. No `covan_key`: no key asked for it, and
+ * nothing done with it starts a row a key would answer for.
+ */
+export async function mintDeferredToken(
+  secret: string,
+  user: { id: string; email?: string | null },
+  workspaceId: string,
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return signHs256(secret, {
+    sub: user.id,
+    email: user.email ?? "",
+    role: "authenticated",
+    aud: "authenticated",
+    aal: "aal2",
+    iat: now,
+    exp: now + DEFERRED_TOKEN_TTL_SECONDS,
+    covan_ws: workspaceId,
+  });
+}
+
 /**
  * Record that a key was used, if it has been long enough to be worth a write.
  *

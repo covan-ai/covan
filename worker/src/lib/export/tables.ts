@@ -268,6 +268,8 @@ export const EXCLUDED: Record<string, string> = {
     "credentials. A key is not a record of what the workspace holds, it is a way to become one of its members, and an archive that carried them would be a key store that people email to each other.",
   passage_vector_changes:
     "the engine's to-do list for the passage index (0116): passage ids deleted or moved since the last tick, and nothing anybody wrote. It is emptied as it is read, and a restore has no index to tell — the passages themselves are rebuilt from the documents, as document_chunks says.",
+  workspace_exports:
+    "the record of earlier exports (0132): when one was asked for, by whom, and where its file was kept for a week. An archive listing the archives made before it describes files the new install never held.",
   webhook_endpoints:
     "an arrangement with somebody else's system, as routine_event_subscriptions is: a URL and a signing secret sealed with this install's key (0131), which a new install could not open and no client may read. An admin adds the endpoint again on the new install and is shown a new secret to give the receiver.",
   webhook_deliveries:

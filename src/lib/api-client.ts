@@ -339,6 +339,20 @@ export type PendingInvitation = {
 };
 
 /** A shared invite link, as an admin sees it (0129). The URL only on the answer that made it. */
+/** "20 October 2026 · 184 MB · requested by Mina · Download" (A27). */
+export type WorkspaceExport = {
+  id: string;
+  status: "queued" | "running" | "ready" | "failed" | "expired";
+  sizeBytes: number | null;
+  error: string | null;
+  requestedBy: { id: string; name: string | null } | null;
+  /** Whether the caller asked for it — only they may download it. */
+  mine: boolean;
+  createdAt: number;
+  finishedAt: number | null;
+  expiresAt: number | null;
+};
+
 /** The events a webhook can be told about (0131). */
 export const WEBHOOK_EVENTS = [
   "thread.finished",
@@ -792,6 +806,40 @@ function uploadWithProgress<T>(
   });
 }
 
+/**
+ * A zip from the API, saved by the browser.
+ *
+ * Fetched with the bearer token and handed over as a blob, the way a document
+ * download is — an `<a href>` cannot carry an Authorization header, and a
+ * token in a query string would be in every log between here and the Worker.
+ * The filename is the server's, which knows the workspace and the date.
+ */
+async function downloadArchive(path: string): Promise<void> {
+  const token = await getAccessToken();
+  const res = await fetch(`${import.meta.env.VITE_API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      message = errorMessage(res.status, await res.json(), res.statusText);
+    } catch {
+      // A failure that is not JSON is still a failure; keep the status text.
+    }
+    throw new ApiError(res.status, message);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filenameFrom(res.headers.get("Content-Disposition")) ?? "covan-export.zip";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   /**
    * A recording from the composer, back as text. Sent through the multipart
@@ -1234,31 +1282,8 @@ export const api = {
      * two files called `export.zip` in a downloads folder are two files nobody
      * can tell apart.
      */
-    exportArchive: async (workspaceId: string): Promise<void> => {
-      const token = await getAccessToken();
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/workspaces/${workspaceId}/export`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) {
-        let message = res.statusText;
-        try {
-          message = errorMessage(res.status, await res.json(), res.statusText);
-        } catch {
-          // A failure that is not JSON is still a failure; keep the status text.
-        }
-        throw new ApiError(res.status, message);
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filenameFrom(res.headers.get("Content-Disposition")) ?? "covan-export.zip";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    },
+    exportArchive: (workspaceId: string): Promise<void> =>
+      downloadArchive(`/workspaces/${workspaceId}/export`),
     members: {
       /** Everybody in the workspace, for the Team table (A3). */
       list: (): Promise<TeamMember[]> => request("GET", "/workspace/members"),
@@ -1280,6 +1305,16 @@ export const api = {
        */
       leave: (): Promise<{ ok: true }> => request("DELETE", "/workspace/members/me"),
     },
+  },
+  exports: {
+    /** The workspace's earlier exports, for its admins. */
+    list: (workspaceId: string): Promise<WorkspaceExport[]> =>
+      request("GET", `/workspaces/${workspaceId}/exports`),
+    /** Prepared in the background; the requester is emailed when it is ready. */
+    request: (workspaceId: string): Promise<WorkspaceExport> =>
+      request("POST", `/workspaces/${workspaceId}/exports`),
+    /** The file, for whoever asked for it, handed to the browser as `exportArchive` is. */
+    download: (exportId: string): Promise<void> => downloadArchive(`/exports/${exportId}/download`),
   },
   webhooks: {
     /** The endpoints, and the last day of deliveries. Empty for a member. */

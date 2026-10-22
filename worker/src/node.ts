@@ -3,6 +3,7 @@ import { app } from "./index";
 import { loadEnv } from "./lib/env";
 import { runScheduledWork } from "./lib/background";
 import { runPurge } from "./lib/purge";
+import { runExportJobs } from "./lib/export/job";
 
 /**
  * The self-hosted entry point.
@@ -69,6 +70,12 @@ const purgeTick = setInterval(() => {
   runPurge(env).catch((err) => console.error("purge tick failed", err));
 }, purgeMs);
 
+// Exports somebody asked for (0132), on the routine tick's clock: "ready
+// within an hour" should not wait for the purge's.
+const exportTick = setInterval(() => {
+  runExportJobs(env).catch((err) => console.error("export tick failed", err));
+}, tickMs);
+
 /**
  * Shut down on a signal instead of waiting to be killed.
  *
@@ -90,6 +97,7 @@ const shutdown = (signal: NodeJS.Signals) => {
   console.log(`${signal} received, shutting down`);
   clearInterval(tick);
   clearInterval(purgeTick);
+  clearInterval(exportTick);
   server.close(() => process.exit(0));
   // Long-lived responses (the SSE chat stream) hold sockets open, and
   // server.close() waits for every one of them. Give them a moment, then go

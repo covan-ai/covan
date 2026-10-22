@@ -40,6 +40,7 @@ import { onboarding } from "./routes/onboarding";
 import { apiKeys } from "./routes/api-keys";
 import { account } from "./routes/account";
 import { exportRoutes } from "./routes/export";
+import { runExportJobs } from "./lib/export/job";
 import { search } from "./routes/search";
 import { feedback } from "./routes/feedback";
 import { trash } from "./routes/trash";
@@ -388,6 +389,14 @@ export default {
     ctx.waitUntil(
       runPurge(env).catch((err) => {
         console.error("purge tick failed", err);
+      }),
+    );
+
+    // Exports somebody asked for (0132), here for the purge's reason: the
+    // archive is written to the document store, which only this Worker binds.
+    ctx.waitUntil(
+      runExportJobs(env).catch((err) => {
+        console.error("export tick failed", err);
       }),
     );
   },

@@ -31,6 +31,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   ],
   ["lib/supabase.ts", "defines it — the one place the service key becomes a client"],
   [
+    "lib/export/job.ts",
+    "the export engine (0132): the tick has no caller, so it claims with claim_due_workspace_exports (service_role only), looks up the requester's address through the admin API, and writes each export's outcome on the row it claimed. It reads nothing of the workspace this way: the archive is collected through userClient with a short token in the requester's own name, held to the workspace by covan_ws, so it holds exactly what they could see",
+  ],
+  [
     "lib/webhooks/dispatcher.ts",
     "the webhook engine (0131): the background tick has no caller, so no JWT for RLS to resolve, and claim_due_webhook_deliveries is granted to service_role alone because it hands back the sealed secret. Its writes are each try's outcome on the row it claimed. The one send with a caller behind it, a test, is bounded to the id enqueue_webhook_test returned to that caller, which it returns only to an admin of the endpoint's workspace",
   ],

@@ -116,6 +116,8 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // writable and never readable, and a delivery is the engine's alone.
   "webhook_endpoints INSERT": "created_by,events,secret_ciphertext,url,workspace_id",
   "webhook_endpoints UPDATE": "disabled_at,events,secret_ciphertext,updated_at,url",
+  // 0132: an admin asks for an export in their own name; the engine does the rest.
+  "workspace_exports INSERT": "requested_by,workspace_id",
   "workspaces UPDATE":
     "default_model,gap_report_enabled,icon_url,name,slug,timezone,weekly_usage_email",
 };

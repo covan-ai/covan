@@ -215,6 +215,7 @@ export async function runPurge(env: Bindings): Promise<PurgeResult> {
   await sweepDeletedThreadsAndRoutines(db, horizon);
   await sweepStaleTurns(db);
   await sweepOldWebhookDeliveries(db);
+  if (store) await expireOldExports(db, store);
   return result;
 }
 
@@ -269,6 +270,41 @@ export async function sweepOldWebhookDeliveries(
     .neq("status", "pending")
     .lt("created_at", before);
   if (error) console.error("purge: failed to sweep old webhook deliveries", error);
+}
+
+/**
+ * Exports past their seven days (0132): the file goes, then the row says
+ * `expired` — the board's "Expired" — so the list still shows it was made.
+ * A file that cannot be deleted leaves its row as it was, to be tried again.
+ */
+export async function expireOldExports(
+  db: ReturnType<typeof serviceClient>,
+  store: DocStore,
+  now: Date = new Date(),
+): Promise<void> {
+  const { data, error } = await db
+    .from("workspace_exports")
+    .select("id, object_key")
+    .eq("status", "ready")
+    .lt("expires_at", now.toISOString())
+    .limit(100);
+  if (error) {
+    console.error("purge: failed to read expired exports", error);
+    return;
+  }
+  for (const row of data ?? []) {
+    try {
+      if (row.object_key) await store.delete(row.object_key as string);
+    } catch (e) {
+      console.error("purge: failed to delete an expired export's file", row.id, e);
+      continue;
+    }
+    const { error: updateError } = await db
+      .from("workspace_exports")
+      .update({ status: "expired", object_key: null })
+      .eq("id", row.id);
+    if (updateError) console.error("purge: failed to mark an export expired", updateError);
+  }
 }
 
 /**

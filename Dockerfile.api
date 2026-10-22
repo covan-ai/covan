@@ -11,7 +11,7 @@
 # `pinnedRequest` in worker/src/lib/routines/source.ts). On an older Bun the
 # guard still checks, and DNS gets a second answer before the connection.
 
-FROM oven/bun:1.3.14-alpine AS deps
+FROM oven/bun:1.4.3-alpine AS deps
 WORKDIR /app
 COPY worker/package.json worker/bun.lock ./
 # --production: wrangler, vitest, TypeScript and the Workers types are for
@@ -20,7 +20,7 @@ COPY worker/package.json worker/bun.lock ./
 # advisories apply to it.
 RUN bun install --frozen-lockfile --production
 
-FROM oven/bun:1.3.14-alpine
+FROM oven/bun:1.4.3-alpine
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY worker/ ./

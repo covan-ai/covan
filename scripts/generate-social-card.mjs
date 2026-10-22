@@ -70,10 +70,10 @@ const MARK = `<polygon points="0,0 150,0 135.42,26.25 14.58,26.25"/>
 /*
  * The card.
  *
- * Colours are src/styles.css's light tokens: the canvas, ink, the muted ladder,
- * and amber spent exactly twice — the eyebrow and the one square bullet, which
- * is within DESIGN.md's budget. Faces follow DESIGN.md §2: DM Sans for the
- * display jobs (wordmark, headline), Geist for everything else.
+ * Colours are the card's own: the canvas, ink, the muted ladder, and amber
+ * spent exactly twice — the eyebrow and the one square bullet. The face is
+ * Geist, the only family in DESIGN.md §3; the display jobs (wordmark,
+ * headline) are told apart by size and weight alone.
  *
  * Positions are absolute, in pixels, because this is a picture with one size
  * and no reflow to plan for; each one was matched against the card it replaced.
@@ -83,18 +83,6 @@ const PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <style>
-  @font-face {
-    font-family: "DM Sans";
-    font-style: normal;
-    font-weight: 400 600;
-    src: url("file://${FONT_DIR}/dm-sans-400-600-latin.woff2") format("woff2");
-  }
-  @font-face {
-    font-family: "DM Sans";
-    font-style: italic;
-    font-weight: 400 600;
-    src: url("file://${FONT_DIR}/dm-sans-400-600-italic-latin.woff2") format("woff2");
-  }
   @font-face {
     font-family: "Geist";
     font-style: normal;
@@ -120,10 +108,8 @@ const PAGE = `<!doctype html>
 
   .abs { position: absolute; white-space: nowrap; }
 
-  /* The display face keeps the platform's default smoothing while Geist is
-     drawn greyscale. That pairing is what the card this replaced was rendered
-     with: greyscale makes DM Sans visibly thinner at 70px than the headline
-     everyone has already seen unfurl. */
+  /* The display lines keep the platform's default smoothing; greyscale makes
+     a 70px headline visibly thinner than it is on screen. */
   .display { -webkit-font-smoothing: auto; }
 
   /* The mark again, at 600px wide and bled off the right edge: a watermark
@@ -140,25 +126,25 @@ const PAGE = `<!doctype html>
 
   .wordmark {
     left: 155px; top: 79px;
-    font-family: "DM Sans", sans-serif;
+    font-family: "Geist", sans-serif;
     font-size: 36px; font-weight: 500;
     letter-spacing: -0.005em;
   }
 
   .eyebrow {
     left: 88px; top: 187px;
-    font-family: "DM Sans", sans-serif;
+    font-family: "Geist", sans-serif;
     font-size: 17px; font-weight: 600;
     color: #f48d16;
   }
 
   h1 {
     left: 88px; top: 223px;
-    font-family: "DM Sans", sans-serif;
+    font-family: "Geist", sans-serif;
     font-size: 70px; font-weight: 500;
     line-height: 78px;
   }
-  h1 em { display: block; font-style: italic; font-weight: 400; letter-spacing: -0.003em; color: #948b81; }
+  h1 em { display: block; font-style: normal; font-weight: 400; letter-spacing: -0.003em; color: #948b81; }
 
   .lede {
     left: 88px; top: 404px;

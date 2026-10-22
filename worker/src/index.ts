@@ -6,11 +6,14 @@ import type { AppEnv, Bindings } from "./types";
 import { authMiddleware } from "./middleware/auth";
 import { entitlementsMiddleware } from "./middleware/entitlements";
 import { rateLimit } from "./middleware/ratelimit";
+import { requestId } from "./middleware/request-id";
 import { runScheduledWork } from "./lib/background";
 import { agents } from "./routes/agents";
 import { browser } from "./routes/browser";
 import { favorites } from "./routes/favorites";
 import { sessions } from "./routes/sessions";
+import { inbox } from "./routes/inbox";
+import { home } from "./routes/home";
 import { ideas } from "./routes/ideas";
 import { brainstorm } from "./routes/brainstorm";
 import { persona } from "./routes/persona";
@@ -27,6 +30,9 @@ import { workspace } from "./routes/workspace";
 import { support } from "./routes/support";
 import { invitations } from "./routes/invitations";
 import { invitationPreview } from "./routes/invitation-preview";
+import { inviteLinks, inviteLinkPreview } from "./routes/invite-links";
+import { webhooks } from "./routes/webhooks";
+import { modelEndpoints } from "./routes/model-endpoints";
 import { usage } from "./routes/usage";
 import { coverage } from "./routes/coverage";
 import { routines } from "./routes/routines";
@@ -35,6 +41,7 @@ import { onboarding } from "./routes/onboarding";
 import { apiKeys } from "./routes/api-keys";
 import { account } from "./routes/account";
 import { exportRoutes } from "./routes/export";
+import { runExportJobs } from "./lib/export/job";
 import { search } from "./routes/search";
 import { feedback } from "./routes/feedback";
 import { trash } from "./routes/trash";
@@ -50,6 +57,7 @@ import { notionEvents } from "./routes/notion-events";
 import { emailInbound } from "./routes/email-inbound";
 import { slack, slackPublic } from "./routes/slack";
 import { avatars, avatarsPublic } from "./routes/avatars";
+import { workspaceIcons, workspaceIconsPublic } from "./routes/workspace-icons";
 import { routineHooks } from "./routes/routine-hooks";
 import { addressConfirmationsPublic } from "./routes/address-confirmations";
 import { turns } from "./routes/turns";
@@ -99,10 +107,16 @@ app.use(
     // told otherwise, and Content-Disposition is not one. The download and the
     // DOCX/PDF export name their file there, so without this every export was
     // saved as "document.docx" whatever the document was called.
-    exposeHeaders: ["Content-Disposition"],
+    //
+    // `X-Request-Id` is what the error page quotes (`middleware/request-id.ts`).
+    exposeHeaders: ["Content-Disposition", "X-Request-Id"],
     credentials: true,
   }),
 );
+
+// Before everything that can answer, so every response — a webhook's 401, the
+// limiter's 429, a route's 500 — names the request it answered.
+app.use("/*", requestId);
 
 // Ahead of the limiter, deliberately. A catalogue
 // grid asks for forty logos in one burst; counted in the `standard` bucket
@@ -163,6 +177,8 @@ app.get("/health", (c) => c.json({ ok: true }));
 // Unauthenticated too: the `/invite` page, before sign-in, asking what the
 // email's id and token are an invitation to. The pair is its own proof.
 app.route("/", invitationPreview);
+// The same, for a shared invite link (0129).
+app.route("/", inviteLinkPreview);
 
 // Authenticated sub-router: Task 3 hangs /agents, /sessions, etc. off `api`.
 // Everything mounted here requires a valid Supabase bearer token, and gets
@@ -212,6 +228,8 @@ api.use("/brainstorm/ideas/suggest", rateLimit("expensive"));
 api.use("/persona/suggest", rateLimit("expensive"));
 api.use("/routines/draft", rateLimit("expensive"));
 api.use("/routines/:id/run", rateLimit("expensive"));
+// "Run a test" (0130) is a run, paid the same way.
+api.use("/routines/:id/test", rateLimit("expensive"));
 // A test event runs the routine on a sample, which is a model call like Run now.
 api.use("/routines/:id/event/test", rateLimit("expensive"));
 // The most expensive of the lot per call: a report is a document written
@@ -237,6 +255,8 @@ api.route("/", agents);
 api.route("/", browser);
 api.route("/", favorites);
 api.route("/", sessions);
+api.route("/", inbox);
+api.route("/", home);
 api.route("/", ideas);
 api.route("/", brainstorm);
 api.route("/", persona);
@@ -251,9 +271,13 @@ api.route("/", reports);
 api.route("/", documentJobs);
 api.route("/", me);
 api.route("/", avatars);
+api.route("/", workspaceIcons);
 api.route("/", workspace);
 api.route("/", support);
 api.route("/", invitations);
+api.route("/", inviteLinks);
+api.route("/", webhooks);
+api.route("/", modelEndpoints);
 api.route("/", usage);
 api.route("/", coverage);
 api.route("/", routines);
@@ -286,6 +310,8 @@ app.route("/", connectionsPublic);
 // a member list is small and paid once: responses are `immutable`, so a
 // browser asks for each photo a single time.
 app.route("/", avatarsPublic);
+// A workspace's icon, for the same reason and behind the same limiter.
+app.route("/", workspaceIconsPublic);
 
 // Unauthenticated for the reason the invite page is public: the person saying
 // yes to routine results at their address may have no Covan account. The
@@ -365,6 +391,14 @@ export default {
     ctx.waitUntil(
       runPurge(env).catch((err) => {
         console.error("purge tick failed", err);
+      }),
+    );
+
+    // Exports somebody asked for (0132), here for the purge's reason: the
+    // archive is written to the document store, which only this Worker binds.
+    ctx.waitUntil(
+      runExportJobs(env).catch((err) => {
+        console.error("export tick failed", err);
       }),
     );
   },

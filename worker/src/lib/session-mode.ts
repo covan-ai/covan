@@ -1,3 +1,4 @@
+import { isEndpointModel } from "./models";
 /**
  * How a conversation's own settings and its agent's combine — the one rule,
  * written once, because four places in `routes/chat.ts` need it and a fifth
@@ -80,7 +81,9 @@ export function effectiveTuning(
   served?: readonly string[],
 ): Tuning {
   const sessionModel =
-    session.model && (!served || served.includes(session.model)) ? session.model : null;
+    session.model && (!served || served.includes(session.model) || isEndpointModel(session.model))
+      ? session.model
+      : null;
   return {
     model: sessionModel ?? agent.model ?? null,
     reasoningEffort: session.reasoning_effort ?? agent.reasoning_effort ?? null,

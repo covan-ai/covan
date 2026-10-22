@@ -66,6 +66,20 @@ describe("what lands in the archive", () => {
     expect(names).toContain("data/workspace_members.json");
   });
 
+  // Found by restoring a real export into an empty install: the script passed
+  // the id already quoted, workspace.sql quoted it again, and the first insert
+  // refused it as not a uuid. The round-trip suite does psql's substitution
+  // itself, so it could not see this.
+  it("hands psql the owner bare, because workspace.sql quotes it", async () => {
+    const entries = await collect(context());
+    const script = entries.find((e) => e.name === "restore.sh")!.text;
+    const sql = entries.find((e) => e.name === "workspace.sql")!.text;
+
+    expect(sql).toContain(":'owner'");
+    expect(script).toContain('-v owner="$OWNER"');
+    expect(script).not.toMatch(/owner="'/);
+  });
+
   it("says whose view it is, in the manifest rather than in a README nobody opens", async () => {
     const [manifest] = await collect(context());
     const parsed = JSON.parse(manifest.text);

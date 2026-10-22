@@ -37,6 +37,15 @@ type EventRow = {
  * while somebody is reading, and an offset page would skip or repeat rows as
  * the log grows underneath it.
  */
+/** What `workspace_activity` reads (0123); kept out of the audit log. */
+export const FEED_ACTIONS = [
+  "session.shared",
+  "routine.run_finished",
+  "routine.run_failed",
+  "document.added",
+  "turn.approved",
+];
+
 events.get("/events", async (c) => {
   const db = c.get("db");
 
@@ -55,6 +64,10 @@ events.get("/events", async (c) => {
       "id,action,subject_type,subject_id,subject_label,detail,created_at,actor:profiles(name,email)",
     )
     .eq("workspace_id", workspaceId)
+    // The feed Home reads (0123) lives in the same table and is not the
+    // admin's audit: a routine running every morning would bury the deletions
+    // and role changes this list exists to show.
+    .not("action", "in", `(${FEED_ACTIONS.join(",")})`)
     .order("created_at", { ascending: false })
     // One more than asked for, so "is there another page" is answered without a
     // second count query against a table that is growing as this runs.

@@ -18,6 +18,7 @@ import { embeddingModel } from "../embeddings";
 import { reportFileName } from "../report";
 import type { HistoryTurn } from "../history";
 import { fileGeneratedDocument as realFile } from "./file";
+import { withModelEndpoint } from "../model-endpoints";
 import {
   assembleDocument,
   parseOutline,
@@ -329,9 +330,11 @@ async function writeOutline(
   deps: EngineDeps,
 ): Promise<void> {
   const agent = await loadAgent(service, job);
-  const model = resolveModel(agent.model, env);
+  // The agent's own endpoint, if it has one (0135).
+  const modelEnv = await withModelEndpoint(env, service, job.workspace_id, agent.model);
+  const model = resolveModel(agent.model, modelEnv);
 
-  const result = await deps.complete(env, {
+  const result = await deps.complete(modelEnv, {
     model,
     json: true,
     maxTokens: OUTLINE_MAX_TOKENS,
@@ -407,7 +410,8 @@ async function writeSection(
   }
 
   const agent = await loadAgent(service, job);
-  const model = resolveModel(agent.model, env);
+  const modelEnv = await withModelEndpoint(env, service, job.workspace_id, agent.model);
+  const model = resolveModel(agent.model, modelEnv);
   const section = sections[job.cursor];
   const base: CompletionMessage[] = [
     ...groundedMessages(job, agent, new Date(deps.now()), await promptOverrides(env)),
@@ -417,7 +421,7 @@ async function writeSection(
   let body = "";
   let messages = base;
   for (let pass = 0; pass <= SECTION_CONTINUATIONS; pass++) {
-    const result = await deps.complete(env, {
+    const result = await deps.complete(modelEnv, {
       model,
       messages,
       maxTokens: SECTION_MAX_TOKENS,

@@ -18,12 +18,25 @@
  */
 export class ApiError extends Error {
   status: number;
+  /**
+   * Which request the server says this was (`X-Request-Id`, or `requestId` in
+   * a 5xx body). The error page quotes it so a report can be matched to a log
+   * line; absent when the request never reached the API.
+   */
+  requestId?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, requestId?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    if (requestId) this.requestId = requestId;
   }
+}
+
+/** The request id a failed response carries, from its header or its body. */
+export function requestIdOf(res: Response, body?: unknown): string | undefined {
+  const fromBody = (body as { requestId?: unknown } | null | undefined)?.requestId;
+  return res.headers.get("X-Request-Id") ?? (typeof fromBody === "string" ? fromBody : undefined);
 }
 
 export function errorMessage(status: number, body: unknown, fallback: string): string {

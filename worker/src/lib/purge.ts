@@ -2,7 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Bindings } from "../types";
 import { serviceClient } from "./supabase";
 import { getDocStore, type DocStore } from "./docstore";
-import { RETENTION_DAYS } from "./deletion";
+import { RETENTION_DAYS, storedKeysForWorkspaces } from "./deletion";
+import { connectedAccountsIn, revokeConnectedAccounts } from "./composio/revoke";
+import { releaseSubscription } from "./routines/events/lifecycle";
+import { workspaceIconKeyFromUrl } from "./avatars";
 import { chunked, readAllPages } from "./batch";
 import { sidecarKey } from "./document-text";
 
@@ -205,5 +208,166 @@ export async function runPurge(env: Bindings): Promise<PurgeResult> {
     console.error("purge: no document store configured; rows only", e);
   }
 
-  return purgeExpired({ db: serviceClient(env), store, horizon: defaultHorizon() });
+  const db = serviceClient(env);
+  const horizon = defaultHorizon();
+  const result = await purgeExpired({ db, store, horizon });
+  await purgeScheduledWorkspaces(env, db, store);
+  await sweepDeletedThreadsAndRoutines(db, horizon);
+  await sweepStaleTurns(db);
+  await sweepOldWebhookDeliveries(db);
+  if (store) await expireOldExports(db, store);
+  return result;
+}
+
+/**
+ * Threads and routines deleted on their own (0125), thirty days on. Neither
+ * owns a stored object — a thread's documents are in folders, a routine's
+ * filings too — so the rows are all there is to take; their messages and runs
+ * go with them by cascade. In hundreds, for `chunked`'s reason.
+ */
+export async function sweepDeletedThreadsAndRoutines(
+  db: ReturnType<typeof serviceClient>,
+  horizon: Date,
+): Promise<void> {
+  const cutoff = horizon.toISOString();
+  for (const table of ["chat_sessions", "routines"] as const) {
+    const ids = await idsOlderThan(db, table, cutoff);
+    for (const batch of chunked(ids)) {
+      const { error } = await db.from(table).delete().in("id", batch);
+      if (error) console.error(`purge: failed to delete expired ${table}`, error);
+    }
+  }
+}
+
+/**
+ * A turn that died without saying so leaves its `active_turns` row behind
+ * (0122). Every reader already ignores a row thirty minutes quiet; this takes
+ * them away so the table holds only what is running. Best-effort, like the
+ * rest of the sweep.
+ */
+export async function sweepStaleTurns(
+  db: ReturnType<typeof serviceClient>,
+  now: Date = new Date(),
+): Promise<void> {
+  const before = new Date(now.getTime() - 30 * 60_000).toISOString();
+  const { error } = await db.from("active_turns").delete().lt("updated_at", before);
+  if (error) console.error("purge: failed to sweep stale turns", error);
+}
+
+/**
+ * The webhook record (0131) a week on. Settings shows the last day of it;
+ * a week leaves room to look back at a weekend, and a row still waiting for
+ * its next try is never taken.
+ */
+export async function sweepOldWebhookDeliveries(
+  db: ReturnType<typeof serviceClient>,
+  now: Date = new Date(),
+): Promise<void> {
+  const before = new Date(now.getTime() - 7 * 24 * 60 * 60_000).toISOString();
+  const { error } = await db
+    .from("webhook_deliveries")
+    .delete()
+    .neq("status", "pending")
+    .lt("created_at", before);
+  if (error) console.error("purge: failed to sweep old webhook deliveries", error);
+}
+
+/**
+ * Exports past their seven days (0132): the file goes, then the row says
+ * `expired` — the board's "Expired" — so the list still shows it was made.
+ * A file that cannot be deleted leaves its row as it was, to be tried again.
+ */
+export async function expireOldExports(
+  db: ReturnType<typeof serviceClient>,
+  store: DocStore,
+  now: Date = new Date(),
+): Promise<void> {
+  const { data, error } = await db
+    .from("workspace_exports")
+    .select("id, object_key")
+    .eq("status", "ready")
+    .lt("expires_at", now.toISOString())
+    .limit(100);
+  if (error) {
+    console.error("purge: failed to read expired exports", error);
+    return;
+  }
+  for (const row of data ?? []) {
+    try {
+      if (row.object_key) await store.delete(row.object_key as string);
+    } catch (e) {
+      console.error("purge: failed to delete an expired export's file", row.id, e);
+      continue;
+    }
+    const { error: updateError } = await db
+      .from("workspace_exports")
+      .update({ status: "expired", object_key: null })
+      .eq("id", row.id);
+    if (updateError) console.error("purge: failed to mark an export expired", updateError);
+  }
+}
+
+/**
+ * Workspaces whose fourteen days' notice has run out (0127).
+ *
+ * The same order closing an account keeps (`routes/account.ts`): what lives
+ * outside the database is handed back first — Composio grants revoked, event
+ * subscriptions released — because the rows are the only record of them;
+ * then the row goes, and its cascade takes everything in it; then the stored
+ * files, once nothing names them. Each workspace on its own, so one that fails
+ * waits for the next tick without holding up the rest. Best-effort at every
+ * third party, for the account's reason: refusing to finish a deletion
+ * somebody asked for over a provider's 500 is the worse outcome.
+ */
+export async function purgeScheduledWorkspaces(
+  env: Bindings,
+  db: ReturnType<typeof serviceClient>,
+  store: DocStore | null,
+  now: Date = new Date(),
+): Promise<number> {
+  const { data, error } = await db
+    .from("workspaces")
+    .select("id, icon_url")
+    .lte("deletes_at", now.toISOString());
+  if (error) {
+    console.error("purge: failed to list workspaces due for deletion", error);
+    return 0;
+  }
+
+  let deleted = 0;
+  for (const ws of (data ?? []) as Array<{ id: string; icon_url: string | null }>) {
+    const keys = await storedKeysForWorkspaces(db, [ws.id]);
+    const icon = workspaceIconKeyFromUrl(ws.icon_url, ws.id);
+    if (icon) keys.push(icon);
+
+    await revokeConnectedAccounts(env, await connectedAccountsIn(db, [ws.id]));
+    const { data: listening } = await db
+      .from("routines")
+      .select("id")
+      .eq("workspace_id", ws.id)
+      .eq("trigger_kind", "event");
+    for (const r of (listening ?? []) as Array<{ id: string }>) {
+      await releaseSubscription(env, r.id).catch((err: unknown) =>
+        console.error("purge: could not release an event subscription", r.id, err),
+      );
+    }
+
+    const { error: deleteError } = await db.from("workspaces").delete().eq("id", ws.id);
+    if (deleteError) {
+      console.error("purge: failed to delete a workspace due for deletion", ws.id, deleteError);
+      continue;
+    }
+    deleted += 1;
+
+    if (store) {
+      for (const key of keys) {
+        await store
+          .delete(key)
+          .catch((e: unknown) =>
+            console.error("purge: stored object left behind by a deleted workspace", key, e),
+          );
+      }
+    }
+  }
+  return deleted;
 }

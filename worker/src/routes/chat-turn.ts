@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { TurnStepEvent } from "../lib/active-turns";
 import type { CompletionRequest, CompletionUsage } from "../lib/completion";
 import {
   runAgentTurn,
@@ -286,6 +287,8 @@ export async function runChatTurn(opts: {
   spend: TurnSpend;
   /** Asked before each pass after the first; see `creditHold`. */
   mayContinue?: () => Promise<boolean>;
+  /** Told each step as it starts and settles, for `active_turns` (0122). */
+  onStepEvent?: (event: TurnStepEvent) => void;
 }): Promise<AgentTurn> {
   const { send, spend } = opts;
   return runAgentTurn({
@@ -319,6 +322,7 @@ export async function runChatTurn(opts: {
           status: event.status,
           label: event.label,
         });
+        opts.onStepEvent?.(event);
       }
     },
     // Kept as well as shown: the only copies that survive this throwing.

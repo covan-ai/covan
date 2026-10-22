@@ -29,6 +29,7 @@ import { fetchSource } from "../lib/routines/source";
 import { ownHostsFrom } from "../lib/routines/url-guard";
 import { kickIndexJob } from "../lib/indexing/host";
 import { callDeletionFn } from "../lib/deletion";
+import { refusedByPolicy } from "../lib/refused";
 
 const bundles = new Hono<AppEnv>();
 
@@ -48,6 +49,10 @@ const BUNDLE_SELECT = "id,name,description,created_at,scope,created_by,documents
 // prettier-ignore
 const DOCUMENT_SELECT =
   "id,name,size,created_at,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count),index_status,index_cursor,index_total,index_error";
+
+/** The explorer's listing also says who put each file there. */
+const LISTING_SELECT =
+  "id,name,size,created_at,created_by,bundle_id,connection_id,external_url,routine_id,routines(name),document_chunks(count),index_status,index_cursor,index_total,index_error";
 
 /** What an upload returns about the document it just made. */
 export const UPLOADED_SELECT =
@@ -197,12 +202,34 @@ bundles.get("/bundles/:id/documents", async (c) => {
 
   const { data, error } = await db
     .from("documents")
-    .select(DOCUMENT_SELECT)
+    .select(LISTING_SELECT)
     .eq("bundle_id", bundleId)
     .order("created_at", { ascending: false });
   if (error) return c.json({ error: "failed to load documents" }, 500);
 
-  return c.json((data ?? []).map(mapDocument));
+  // "Added by" in the Knowledge table (A6). `created_by` (0037) points at
+  // auth.users, which PostgREST cannot embed, so the names are one more read:
+  // profiles the caller shares a workspace with, which an uploader in this
+  // bundle's workspace is. A name that does not come back stays null.
+  const rows = data ?? [];
+  const uploaderIds = [
+    ...new Set(rows.map((r) => r.created_by as string | null).filter(Boolean)),
+  ] as string[];
+  const names = new Map<string, string | null>();
+  if (uploaderIds.length > 0) {
+    const { data: profiles } = await db.from("profiles").select("id, name").in("id", uploaderIds);
+    for (const p of profiles ?? []) names.set(p.id as string, (p.name as string | null) ?? null);
+  }
+
+  return c.json(
+    rows.map((r) => {
+      const by = (r.created_by as string | null) ?? null;
+      return {
+        ...mapDocument(r),
+        createdBy: by ? { id: by, name: names.get(by) ?? null } : null,
+      };
+    }),
+  );
 });
 
 // POST /bundles
@@ -440,6 +467,9 @@ bundles.post("/bundles/:id/documents/upload", async (c) => {
       } catch (e) {
         console.error("r2 rollback failed", e);
       }
+    }
+    if (refusedByPolicy(error)) {
+      return c.json({ error: "you cannot add documents to this folder" }, 403);
     }
     console.error("failed to insert document row", error);
     return c.json({ error: "failed to save document" }, 500);

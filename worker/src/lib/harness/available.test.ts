@@ -60,7 +60,7 @@ const ask = (db: SupabaseClient, env: ToolEnv = FULL) =>
 describe("capabilitiesFor", () => {
   it("offers only the tool that needs nothing when the workspace has nothing", async () => {
     const { tools, manifest } = await ask(dbWith([], []));
-    expect(tools.map((t) => t.name)).toEqual(["search_documents"]);
+    expect(tools.map((t) => t.name)).toEqual(["search_documents", "ask_person"]);
     // No manifest at all, so an agent with no connections and no channels
     // gets exactly the prompt it got before tools existed.
     expect(manifest).toBe("");
@@ -72,7 +72,7 @@ describe("capabilitiesFor", () => {
     // something that can see the unconnected half of the catalogue. Still
     // gated by `isConfigured`, which is why the case above is unaffected.
     const { tools } = await ask(dbWith([], []), { ...FULL, COMPOSIO_API_KEY: "ck" } as ToolEnv);
-    expect(tools.map((t) => t.name)).toEqual(["search_documents", "find_tool"]);
+    expect(tools.map((t) => t.name)).toEqual(["search_documents", "find_tool", "ask_person"]);
   });
 
   it("adds the connection tools, and the ids they take, once there is one", async () => {
@@ -81,6 +81,7 @@ describe("capabilitiesFor", () => {
       "search_documents",
       "describe_connection",
       "query_database",
+      "ask_person",
     ]);
     expect(manifest).toContain("conn-1");
     expect(manifest).toContain("Covan Supabase");
@@ -126,7 +127,7 @@ describe("capabilitiesFor", () => {
   it("offers nothing that needs a connection for one this build does not recognise", async () => {
     const odd = { ...CONNECTION, id: "conn-odd", transport: "unknown" };
     const { tools } = await ask(dbWith([odd], []));
-    expect(tools.map((t) => t.name)).toEqual(["search_documents"]);
+    expect(tools.map((t) => t.name)).toEqual(["search_documents", "ask_person"]);
   });
 
   it("adds the sending tools, and says an address is not an option", async () => {
@@ -183,6 +184,8 @@ describe("capabilitiesFor", () => {
     expect(channelsRead).toBe(false);
     expect(tools.map((t) => t.name)).not.toContain("send_email");
     expect(tools.map((t) => t.name)).not.toContain("schedule_job");
+    // A question nobody would see is not offered either.
+    expect(tools.map((t) => t.name)).not.toContain("ask_person");
     // What it CAN do is still named, because that is what it is there for.
     expect(tools.map((t) => t.name)).toContain("query_database");
     expect(manifest).toContain("Covan Supabase");
@@ -202,7 +205,7 @@ describe("capabilitiesFor", () => {
           : { select: () => ({ eq: async () => ({ data: [], error: null }) }) },
     } as unknown as SupabaseClient;
     const { tools } = await ask(broken);
-    expect(tools.map((t) => t.name)).toEqual(["search_documents"]);
+    expect(tools.map((t) => t.name)).toEqual(["search_documents", "ask_person"]);
   });
 });
 

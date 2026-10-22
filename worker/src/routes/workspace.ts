@@ -8,6 +8,8 @@ import { canSendEmail } from "../lib/email";
 import { removedFromWorkspaceEmail, roleChangedEmail } from "../lib/emails/membership";
 import { notify } from "../lib/emails/send";
 import { refuseIfKeyAuthenticated } from "../lib/api-key-rule";
+import { canonicalTimeZone } from "../lib/profile-fields";
+import { workspaceDeletionCancelledEmail, workspaceDeletionEmail } from "../lib/emails/deletion";
 
 const workspace = new Hono<AppEnv>();
 
@@ -24,6 +26,10 @@ const updateWorkspaceSchema = z
     // in the handler: it depends on the environment, and the schema is built
     // once at import.
     defaultModel: z.union([z.enum(MODEL_IDS), z.null()]).optional(),
+    // 0127: the zone routines are scheduled in and the weekly summary is sent
+    // by; null clears it. Shape here, existence below, as `PATCH /me` does.
+    timezone: z.string().trim().max(64).nullable().optional(),
+    weeklyUsageEmail: z.boolean().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
@@ -49,7 +55,7 @@ workspace.patch("/workspace", async (c) => {
 
   // The column is snake_case; the API is not. Mapped explicitly so a future
   // field cannot be forwarded to PostgREST under a name that silently misses.
-  const { defaultModel, ...rest } = parsed.data;
+  const { defaultModel, timezone, weeklyUsageEmail, ...rest } = parsed.data;
 
   // A model this build knows but this deployment cannot reach — a Claude id
   // with no ANTHROPIC_API_KEY behind it. Storing it would be storing a
@@ -61,6 +67,20 @@ workspace.patch("/workspace", async (c) => {
 
   const patch: Record<string, unknown> = { ...rest };
   if (defaultModel !== undefined) patch.default_model = defaultModel;
+  if (weeklyUsageEmail !== undefined) patch.weekly_usage_email = weeklyUsageEmail;
+  if (timezone !== undefined) {
+    if (timezone === null || timezone === "") patch.timezone = null;
+    else {
+      const zone = canonicalTimeZone(timezone);
+      if (!zone) {
+        return c.json(
+          { error: { formErrors: [], fieldErrors: { timezone: ["not a time zone"] } } },
+          400,
+        );
+      }
+      patch.timezone = zone;
+    }
+  }
 
   // RLS (workspaces_update_admin) permits only admins to change rows. A non-admin
   // caller matches 0 rows — surface that as 403 instead of a false "saved".
@@ -68,7 +88,7 @@ workspace.patch("/workspace", async (c) => {
     .from("workspaces")
     .update(patch)
     .eq("id", workspaceId)
-    .select("id,name,slug,default_model");
+    .select("id,name,slug,default_model,timezone,weekly_usage_email");
 
   if (updateError) {
     return c.json({ error: "failed to update workspace" }, 500);
@@ -83,8 +103,193 @@ workspace.patch("/workspace", async (c) => {
     name: row.name,
     slug: row.slug,
     defaultModel: (row.default_model as string | null) ?? null,
+    timezone: (row.timezone as string | null) ?? null,
+    weeklyUsageEmail: row.weekly_usage_email === true,
   });
 });
+
+// GET /workspace/members — the Team table (A3).
+//
+// Everybody in the workspace with what the table shows: role, how many agents
+// they can use (`member_agent_counts`, 0127), when they were last here (0128)
+// and which of them made the workspace, which the table calls Owner. Owner is
+// a label, not a role — permissions are the admin's (plan §2).
+workspace.get("/workspace/members", async (c) => {
+  const db = c.get("db");
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
+
+  const [members, counts, ws] = await Promise.all([
+    db
+      .from("workspace_members")
+      .select("user_id, role, last_seen_at, created_at")
+      .eq("workspace_id", workspaceId),
+    db.rpc("member_agent_counts", { p_workspace_id: workspaceId }),
+    db.from("workspaces").select("created_by").eq("id", workspaceId).maybeSingle(),
+  ]);
+  if (members.error) {
+    console.error("failed to load members", members.error);
+    return c.json({ error: "failed to load members" }, 500);
+  }
+
+  const rows = (members.data ?? []) as Array<{
+    user_id: string;
+    role: string;
+    last_seen_at: string | null;
+    created_at: string | null;
+  }>;
+  const ids = rows.map((r) => r.user_id);
+  const { data: profiles } =
+    ids.length > 0
+      ? await db.from("profiles").select("id, name, email, avatar_url").in("id", ids)
+      : { data: [] };
+  const byId = new Map(
+    (
+      (profiles ?? []) as Array<{
+        id: string;
+        name: string | null;
+        email: string | null;
+        avatar_url: string | null;
+      }>
+    ).map((p) => [p.id, p]),
+  );
+  const agents = new Map(
+    ((counts.data ?? []) as Array<{ user_id: string; agents: number }>).map((r) => [
+      r.user_id,
+      r.agents,
+    ]),
+  );
+  const owner = (ws.data?.created_by as string | null | undefined) ?? null;
+
+  return c.json(
+    rows
+      .map((r) => {
+        const p = byId.get(r.user_id);
+        return {
+          id: r.user_id,
+          name: p?.name ?? null,
+          email: p?.email ?? null,
+          avatarUrl: p?.avatar_url ?? null,
+          role: r.role,
+          agents: agents.get(r.user_id) ?? 0,
+          lastSeenAt: r.last_seen_at ? Date.parse(r.last_seen_at) : null,
+          joinedAt: r.created_at ? Date.parse(r.created_at) : null,
+          isOwner: owner === r.user_id,
+        };
+      })
+      .sort(
+        (a, b) =>
+          Number(b.isOwner) - Number(a.isOwner) || (a.name ?? "").localeCompare(b.name ?? ""),
+      ),
+  );
+});
+
+const deletionSchema = z.object({ name: z.string().min(1).max(200) });
+
+// POST /workspace/deletion — fourteen days' notice, then it goes (0127).
+//
+// The admin types the name; every member is told by mail who asked and when.
+// Not something a key may do: it outlives the key by a fortnight, and a leaked
+// key that could schedule a workspace's end is exactly what the rule is for.
+workspace.post("/workspace/deletion", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "delete a workspace");
+  if (refusal) return c.json(refusal, 403);
+
+  const parsed = deletionSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const db = c.get("db");
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
+
+  const { data, error } = await db.rpc("request_workspace_deletion", {
+    p_workspace_id: workspaceId,
+    p_name: parsed.data.name,
+  });
+  if (error) {
+    if (error.code === "42501") return c.json({ error: "only admins can delete a workspace" }, 403);
+    if (error.code === "22023") return c.json({ error: error.message }, 400);
+    if (error.code === "P0002") return c.json({ error: "not found" }, 404);
+    console.error("request_workspace_deletion failed", error);
+    return c.json({ error: "failed to schedule the deletion" }, 500);
+  }
+  const deletesAt = typeof data === "string" ? Date.parse(data) : null;
+
+  // Everybody is told, with who asked and the date.
+  if (deletesAt && canSendEmail(c.env)) {
+    const { workspaceName, by, addresses } = await whoToTell(c, workspaceId);
+    const deletesOn = new Date(deletesAt).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+    for (const email of addresses) {
+      notify(c, workspaceDeletionEmail({ email, workspaceName, requestedBy: by, deletesOn }));
+    }
+  }
+
+  return c.json({ deletesAt });
+});
+
+// DELETE /workspace/deletion — keep it after all.
+//
+// Everybody who was told the date is told it is off. Only when a deletion was
+// actually pending: a second press, or one on a workspace nobody meant to
+// delete, mails nobody.
+workspace.delete("/workspace/deletion", async (c) => {
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ error: "no workspace found for user" }, 404);
+  const db = c.get("db");
+  const { data: before } = await db
+    .from("workspaces")
+    .select("deletes_at")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  const { error } = await db.rpc("cancel_workspace_deletion", { p_workspace_id: workspaceId });
+  if (error) {
+    if (error.code === "42501") return c.json({ error: "only admins can keep a workspace" }, 403);
+    if (error.code === "P0002") return c.json({ error: "not found" }, 404);
+    console.error("cancel_workspace_deletion failed", error);
+    return c.json({ error: "failed to cancel the deletion" }, 500);
+  }
+
+  if (before?.deletes_at && canSendEmail(c.env)) {
+    const { workspaceName, by, addresses } = await whoToTell(c, workspaceId);
+    for (const email of addresses) {
+      notify(c, workspaceDeletionCancelledEmail({ email, workspaceName, cancelledBy: by }));
+    }
+  }
+
+  return c.json({ ok: true });
+});
+
+/**
+ * What a notice about the workspace's end needs: its name, who acted, and
+ * every member's address. Read through the caller's client — an admin sees
+ * every member's row and profile, which is the list the mail goes to.
+ */
+async function whoToTell(
+  c: Context<AppEnv>,
+  workspaceId: string,
+): Promise<{ workspaceName: string; by: string; addresses: string[] }> {
+  const db = c.get("db");
+  const [{ data: members }, { data: me }, { data: ws }] = await Promise.all([
+    db.from("workspace_members").select("user_id").eq("workspace_id", workspaceId),
+    db.from("profiles").select("name, email").eq("id", c.get("user").id).maybeSingle(),
+    db.from("workspaces").select("name").eq("id", workspaceId).maybeSingle(),
+  ]);
+  const ids = ((members ?? []) as Array<{ user_id: string }>).map((m) => m.user_id);
+  const { data: people } =
+    ids.length > 0 ? await db.from("profiles").select("email").in("id", ids) : { data: [] };
+  return {
+    workspaceName: (ws?.name as string | undefined) ?? "Your workspace",
+    by: (me?.name as string | null) || (me?.email as string | null) || "An admin",
+    addresses: ((people ?? []) as Array<{ email: string | null }>)
+      .map((p) => p.email)
+      .filter((e): e is string => Boolean(e)),
+  };
+}
 
 // GET /workspaces — all workspaces the caller belongs to (for the switcher).
 workspace.get("/workspaces", async (c) => {

@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
-import { AGENT_ACCESS, mapAgent } from "../lib/dto";
+import { AGENT_ACCESS, AVATAR_MARKS, mapAgent } from "../lib/dto";
 import { callerWorkspaceId } from "../lib/workspace";
 import { callDeletionFn } from "../lib/deletion";
-import { REASONING_EFFORTS, MODEL_IDS } from "../lib/models";
+import { refusedByPolicy } from "../lib/refused";
+import { REASONING_EFFORTS, MODEL_IDS, ENDPOINT_MODEL_PATTERN } from "../lib/models";
+import { endpointIsVisible } from "../lib/model-endpoints";
 
 const agents = new Hono<AppEnv>();
 
@@ -78,7 +80,9 @@ const sharingSchema = z.object({
 const createAgentSchema = z.object({
   name: z.string().min(1),
   emoji: z.string().optional(),
-  model: z.enum(MODEL_IDS).optional(),
+  // One of the eight marks; absent or null is the monogram.
+  avatar: z.enum(AVATAR_MARKS).nullable().optional(),
+  model: z.enum(MODEL_IDS).or(z.string().regex(ENDPOINT_MODEL_PATTERN)).optional(),
   persona: z.string().optional(),
   mode: z.enum(["normal", "brainstorm"]).optional(),
   ...tuningFields,
@@ -90,7 +94,8 @@ const updateAgentSchema = z
   .object({
     name: z.string().min(1).optional(),
     emoji: z.string().optional(),
-    model: z.enum(MODEL_IDS).optional(),
+    avatar: z.enum(AVATAR_MARKS).nullable().optional(),
+    model: z.enum(MODEL_IDS).or(z.string().regex(ENDPOINT_MODEL_PATTERN)).optional(),
     persona: z.string().optional(),
     mode: z.enum(["normal", "brainstorm"]).optional(),
     ...tuningFields,
@@ -117,6 +122,7 @@ function agentColumns(body: z.infer<typeof updateAgentSchema>): Record<string, u
   const patch: Record<string, unknown> = {};
   if ("name" in body) patch.name = body.name;
   if ("emoji" in body) patch.emoji = body.emoji;
+  if ("avatar" in body) patch.avatar = body.avatar;
   if ("model" in body) patch.model = body.model;
   if ("persona" in body) patch.persona = body.persona;
   if ("mode" in body) patch.mode = body.mode;
@@ -157,14 +163,28 @@ agents.post("/agents", async (c) => {
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
   }
+  // A workspace endpoint (0135) has to be one the caller can see.
+  if (parsed.data.model && !(await endpointIsVisible(db, parsed.data.model))) {
+    return c.json({ error: "that model endpoint is not in this workspace" }, 400);
+  }
 
   const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
     return c.json({ error: "no workspace found for user" }, 400);
   }
 
-  const { name, emoji, model, persona, mode, temperature, reasoningEffort, webSearch, sharing } =
-    parsed.data;
+  const {
+    name,
+    emoji,
+    avatar,
+    model,
+    persona,
+    mode,
+    temperature,
+    reasoningEffort,
+    webSearch,
+    sharing,
+  } = parsed.data;
 
   const { data, error } = await db
     .from("agents")
@@ -172,6 +192,7 @@ agents.post("/agents", async (c) => {
       workspace_id: workspaceId,
       name,
       emoji: emoji ?? null,
+      avatar: avatar ?? null,
       model: model ?? null,
       persona: persona ?? null,
       mode: mode ?? "normal",
@@ -204,6 +225,9 @@ agents.post("/agents", async (c) => {
     .select("id")
     .single();
 
+  if (refusedByPolicy(error)) {
+    return c.json({ error: "your role cannot create agents in this workspace" }, 403);
+  }
   if (error || !data) {
     return c.json({ error: "failed to create agent" }, 500);
   }
@@ -240,6 +264,10 @@ agents.patch("/agents/:id", async (c) => {
   const parsed = updateAgentSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) {
     return c.json({ error: parsed.error.flatten() }, 400);
+  }
+  // A workspace endpoint (0135) has to be one the caller can see.
+  if (parsed.data.model && !(await endpointIsVisible(db, parsed.data.model))) {
+    return c.json({ error: "that model endpoint is not in this workspace" }, 400);
   }
 
   // `.select("id")` so a refusal is visible. RLS answers an update it does not
@@ -331,6 +359,73 @@ async function saveSharing(
   console.error("set_agent_sharing failed", error);
   return { status: 500, message: "failed to save who can use this agent" };
 }
+
+// GET /agents/:id/delete-summary
+//
+// What a delete takes with it, for the sentence in the dialog (A25): "Its 19
+// threads stay readable for 30 days under Recently deleted, then go. The 2
+// routines pointed at it stop now. The 3 folders it reads are not touched."
+// Counts only, and only for somebody who could press the button — the
+// function asks the same `manage` question `soft_delete_agent` does.
+agents.get("/agents/:id/delete-summary", async (c) => {
+  const { data, error } = await c
+    .get("db")
+    .rpc("agent_delete_summary", { p_agent_id: c.req.param("id") })
+    .maybeSingle<{ threads: number; routines: number; folders: number }>();
+
+  if (error) {
+    if (error.code === "P0002") return c.json({ error: "not found" }, 404);
+    if (error.code === "42501") {
+      return c.json({ error: "only people with full access can delete this agent" }, 403);
+    }
+    console.error("agent_delete_summary failed", error);
+    return c.json({ error: "failed to count what the agent holds" }, 500);
+  }
+  return c.json({
+    threads: data?.threads ?? 0,
+    routines: data?.routines ?? 0,
+    folders: data?.folders ?? 0,
+  });
+});
+
+// GET /agents/:id/knowledge-usage
+//
+// For each folder the agent reads, how many of its replies in the window cited
+// something in it — "9 files · used in 61 replies this month" (A32). Counted
+// by `agent_knowledge_usage` (0124) for anybody who can use the agent.
+const usageQuery = z.object({ days: z.coerce.number().int().min(1).max(365).optional() });
+
+agents.get("/agents/:id/knowledge-usage", async (c) => {
+  const parsed = usageQuery.safeParse(c.req.query());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const args = { p_agent_id: c.req.param("id"), p_days: parsed.data.days ?? 30 };
+  const db = c.get("db");
+  const [usage, grounding] = await Promise.all([
+    db.rpc("agent_knowledge_usage", args),
+    // "Asked, not covered" (A32, 0134): how its replies were grounded.
+    db.rpc("agent_coverage", args),
+  ]);
+  const error = usage.error ?? grounding.error;
+  if (error) {
+    if (error.code === "P0002") return c.json({ error: "not found" }, 404);
+    console.error("agent knowledge usage failed", error);
+    return c.json({ error: "failed to count what the agent read" }, 500);
+  }
+  const byBundle: Record<string, { replies: number }> = {};
+  for (const row of (usage.data ?? []) as Array<{ bundle_id: string; replies: number }>) {
+    byBundle[row.bundle_id] = { replies: row.replies ?? 0 };
+  }
+  const g = ((grounding.data ?? []) as Array<Record<string, number | string>>)[0];
+  const answers = Number(g?.answers) || 0;
+  const notCovered = (Number(g?.fallback) || 0) + (Number(g?.ungrounded) || 0);
+  return c.json({
+    byBundle,
+    answers,
+    // Null with nothing to divide: "0% not covered" of no replies says nothing.
+    notCoveredPct: answers > 0 ? Math.round((notCovered / answers) * 100) : null,
+  });
+});
 
 // DELETE /agents/:id
 //

@@ -17,7 +17,8 @@ import {
   readyForDelivery,
   type ConfirmableChannel,
 } from "./address-confirmation";
-import { deliver, deliveryDepsFrom } from "./delivery";
+import { deliver, deliveryDepsFrom, type DeliveryContext } from "./delivery";
+import { deliverToOtherChannels } from "./other-channels";
 import { fileRoutineOutput, NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER } from "./filing";
 import { EVENT_DELIVERED } from "./webhook";
 
@@ -323,9 +324,11 @@ async function finishHeld(
   const durationMs = finishedAt.getTime() - new Date(run.started_at).getTime();
 
   let sendError: string | null = null;
+  let deliveryNote: string | undefined;
   try {
     const channel = await channelOf(env, deps.db, routine);
-    await deliver(channel, { subject: routine.name, body: report }, deliveryDepsFrom(env), {
+    const message = { subject: routine.name, body: report };
+    const context: DeliveryContext = {
       event: EVENT_DELIVERED,
       routine: { id: routine.id, name: routine.name, agentId: routine.agent_id },
       // What the run read, from its own row. `triggeredBy` is the schedule's
@@ -336,7 +339,17 @@ async function finishHeld(
         itemsOverflow: run.items_overflow ?? 0,
         triggeredBy: "schedule",
       },
-    });
+    };
+    await deliver(channel, message, deliveryDepsFrom(env), context);
+    // And the routine's other channels (0130), after the primary, best-effort.
+    deliveryNote = await deliverToOtherChannels(
+      env,
+      deps.db,
+      routine,
+      message,
+      deliveryDepsFrom(env),
+      context,
+    );
   } catch (err) {
     sendError = err instanceof Error ? err.message : String(err);
   }
@@ -354,6 +367,7 @@ async function finishHeld(
       duration_ms: durationMs,
       ...(filing.documentId ? { document_id: filing.documentId } : {}),
       ...(filing.note ? { filing_note: filing.note } : {}),
+      ...(deliveryNote ? { delivery_note: deliveryNote } : {}),
     })
     .eq("id", run.id)
     .eq("status", "waiting");

@@ -69,8 +69,18 @@ export const EXPORTED: TableSpec[] = [
     table: "workspaces",
     scope: { kind: "workspace", column: "id" },
     order: "created_at",
-    columns: "id,name,slug,created_by,created_at,default_model",
+    columns: "id,name,slug,created_by,created_at,default_model,timezone,weekly_usage_email",
     withheld: {
+      icon_url:
+        "a path to an image this deployment stores (0127), keyed by the workspace's id. The archive carries rows, not the store's objects, and a restored workspace has a new id the path would not match; it comes back with its letter tile and an admin uploads the icon again.",
+      weekly_usage_sent_for:
+        "the engine's note of which Monday it last mailed the summary for. A restore that carried it would skip the first summary the new install owes.",
+      deletion_requested_at:
+        "a pending deletion is a decision about this install's copy (0127). An archive taken during the notice must not restore a workspace that deletes itself a fortnight later.",
+      deletion_requested_by:
+        "who asked for a pending deletion; deletion_requested_at's reason applies, and the person may not exist in the new install.",
+      deletes_at:
+        "when a pending deletion takes the workspace; deletion_requested_at's reason applies, since a restored copy must not delete itself.",
       gap_report_enabled:
         "a consent control, and its other half cannot travel. 0076's report is off until a workspace turns it on, and the member opt-outs that make turning it on acceptable are in coverage_opt_outs, which is excluded below because its SELECT policy is self-only even for admins. Exporting the switch without them would bring a workspace back with the report on and every opt-out gone. Left out, a restored workspace starts with the switch at its default of false and somebody has to choose again, which is what the column's default exists to guarantee.",
     },
@@ -246,12 +256,28 @@ export const EXPORTED: TableSpec[] = [
  * wanted the thing that is missing.
  */
 export const EXCLUDED: Record<string, string> = {
+  invite_links:
+    "in flight, like invitations: a link is a SHA-256 of a token somebody pasted into a chat, and a restore into a new install would carry a door nobody holds the key to — and a week of life it has already spent. An admin makes a new one in one press.",
+  session_reads:
+    "when each person last opened each thread (0121): a per-person reading position, not workspace content. A restore starts everybody with nothing unread, which is the honest state of a fresh install.",
+  active_turns:
+    "a turn in progress right now (0122), deleted when it ends. An export is a still picture of finished work; a running turn in it would be a dot that never stops breathing.",
   document_chunks:
     "derived, and enormous. Every chunk carries a 1536-dimension vector, so a workspace with ten thousand of them is tens of megabytes of numbers that say nothing a human can read. The documents themselves are in this archive; running POST /admin/backfill-embeddings after a restore rebuilds the chunks from them — with whatever embedding model the new install is configured for, which is more useful than replaying the old one's.",
   api_keys:
     "credentials. A key is not a record of what the workspace holds, it is a way to become one of its members, and an archive that carried them would be a key store that people email to each other.",
   passage_vector_changes:
     "the engine's to-do list for the passage index (0116): passage ids deleted or moved since the last tick, and nothing anybody wrote. It is emptied as it is read, and a restore has no index to tell — the passages themselves are rebuilt from the documents, as document_chunks says.",
+  workspace_exports:
+    "the record of earlier exports (0132): when one was asked for, by whom, and where its file was kept for a week. An archive listing the archives made before it describes files the new install never held.",
+  workspace_model_endpoints:
+    "an address and a key sealed with this install's own (0135), which a new install could not open and no client may read. Restored, an agent that named one answers on the default model until an admin adds the endpoint again.",
+  webhook_endpoints:
+    "an arrangement with somebody else's system, as routine_event_subscriptions is: a URL and a signing secret sealed with this install's key (0131), which a new install could not open and no client may read. An admin adds the endpoint again on the new install and is shown a new secret to give the receiver.",
+  webhook_deliveries:
+    "the engine's own week-long record of what it sent where (0131), and nothing anybody wrote: the ids and labels of events whose threads, routines and files the archive carries in full.",
+  routine_channels:
+    "the channels a routine delivers to after its first (0130). The archive carries a routine's primary channel, with its address withheld, and no others; a list naming channels the archive does not hold would fail its foreign keys on restore, and a restored channel has no address to send to anyway. The routine comes back paused with its primary, and its other destinations are picked again on the new install.",
   routine_deliveries:
     "not readable by a client at all, by design since 0012: it is the engine's own log of what it sent where. Nothing in it is workspace content.",
   routine_triggers:

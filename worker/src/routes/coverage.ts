@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { callerWorkspaceId } from "../lib/workspace";
+import { asAvatarMark, toEpochMs, type AvatarMark } from "../lib/dto";
 
 const coverage = new Hono<AppEnv>();
 
@@ -38,6 +39,7 @@ type AgentRow = {
   agent_id: string;
   agent_name: string;
   agent_emoji: string | null;
+  agent_avatar?: string | null;
   answers: number | string;
   covered: number | string;
   fallback: number | string;
@@ -94,6 +96,8 @@ function isNotAdmin(error: { code?: string }): boolean {
 coverage.get("/coverage/workspace", async (c) => {
   const db = c.get("db");
   const days = windowDays(c.req.query("days"));
+  // A18's "All agents" select (0134): one agent's bar, and its counts as the totals.
+  const agentId = c.req.query("agentId") || null;
 
   const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) {
@@ -121,29 +125,152 @@ coverage.get("/coverage/workspace", async (c) => {
   // rather than for that case — an RPC that answered with an empty array would
   // otherwise crash the map below on a screen that exists to be reassuring.
   const row = ((totals.data ?? []) as CoverageRow[])[0];
-
-  return c.json({
-    available: true,
-    days,
-    totals: row
-      ? {
-          answers: count(row.answers),
-          covered: count(row.covered),
-          fallback: count(row.fallback),
-          ungrounded: count(row.ungrounded),
-          unrecorded: count(row.unrecorded),
-        }
-      : emptyTotals,
-    agents: ((agents.data ?? []) as AgentRow[]).map((a) => ({
+  const agentRows = ((agents.data ?? []) as AgentRow[])
+    .filter((a) => !agentId || a.agent_id === agentId)
+    .map((a) => ({
       agentId: a.agent_id,
       name: a.agent_name,
       emoji: a.agent_emoji,
+      avatar: asAvatarMark(a.agent_avatar ?? null),
       answers: count(a.answers),
       covered: count(a.covered),
       fallback: count(a.fallback),
       ungrounded: count(a.ungrounded),
-    })),
+    }));
+  const one = agentId ? agentRows[0] : undefined;
+
+  return c.json({
+    available: true,
+    days,
+    agentId,
+    totals: agentId
+      ? one
+        ? {
+            answers: one.answers,
+            covered: one.covered,
+            fallback: one.fallback,
+            ungrounded: one.ungrounded,
+            // Not counted per agent: a reply from before grounding was
+            // recorded says nothing about which bucket it was in.
+            unrecorded: 0,
+          }
+        : emptyTotals
+      : row
+        ? {
+            answers: count(row.answers),
+            covered: count(row.covered),
+            fallback: count(row.fallback),
+            ungrounded: count(row.ungrounded),
+            unrecorded: count(row.unrecorded),
+          }
+        : emptyTotals,
+    agents: agentRows,
   });
+});
+
+/** "Old enough to doubt": three months, as `STALE_AFTER_DAYS` on the client says. */
+const STALE_AFTER_DAYS = 90;
+
+const documentsQuery = z.object({
+  days: z.coerce.number().int().min(1).max(365).default(30),
+  agentId: z.string().uuid().optional(),
+  minAgeDays: z.coerce.number().int().min(0).max(3650).default(STALE_AFTER_DAYS),
+});
+
+export type RevisitDocumentDTO = {
+  documentId: string;
+  name: string;
+  bundleId: string;
+  bundleName: string;
+  createdAt: number;
+  /** Replies that cited it in the window. */
+  uses: number;
+  readBy: Array<{ agentId: string; name: string; avatar: AvatarMark | null }>;
+};
+
+// GET /coverage/documents — "Documents worth revisiting: old enough to doubt,
+// used enough to matter" (A18; A32 with an agent). Cited in the window, and
+// older than `minAgeDays`, most used first. The counts cross private threads,
+// as 0038's always have, and carry nothing but the number; the documents,
+// folders and agents named are only ever the ones the caller can see.
+coverage.get("/coverage/documents", async (c) => {
+  const parsed = documentsQuery.safeParse(c.req.query());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const q = parsed.data;
+  const db = c.get("db");
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ days: q.days, documents: [] });
+
+  let bundleQuery = db.from("knowledge_bundles").select("id, name").eq("workspace_id", workspaceId);
+  if (q.agentId) {
+    const { data: links, error } = await db
+      .from("agent_bundles")
+      .select("bundle_id")
+      .eq("agent_id", q.agentId);
+    if (error) return c.json({ error: "failed to load the agent's folders" }, 500);
+    const ids = (links ?? []).map((l) => l.bundle_id as string);
+    if (ids.length === 0) return c.json({ days: q.days, documents: [] });
+    bundleQuery = bundleQuery.in("id", ids);
+  }
+  const { data: bundles, error: bundlesError } = await bundleQuery;
+  if (bundlesError) return c.json({ error: "failed to load folders" }, 500);
+  const bundleNames = new Map((bundles ?? []).map((b) => [b.id as string, b.name as string]));
+  if (bundleNames.size === 0) return c.json({ days: q.days, documents: [] });
+
+  const { data: counted, error: countError } = await db.rpc("document_citation_counts_since", {
+    p_bundle_ids: [...bundleNames.keys()],
+    p_days: q.days,
+  });
+  if (countError) return c.json({ error: "failed to count citations" }, 500);
+  const uses = new Map(
+    ((counted ?? []) as Array<{ document_id: string; citations: number }>).map(
+      (r) => [r.document_id, Number(r.citations) || 0] as const,
+    ),
+  );
+  if (uses.size === 0) return c.json({ days: q.days, documents: [] });
+
+  const before = new Date(Date.now() - q.minAgeDays * 86_400_000).toISOString();
+  const [docs, readers] = await Promise.all([
+    db
+      .from("documents")
+      .select("id, name, bundle_id, created_at")
+      .in("id", [...uses.keys()])
+      .lt("created_at", before),
+    db
+      .from("agent_bundles")
+      .select("bundle_id, agent:agents(id, name, avatar, deleted_at)")
+      .in("bundle_id", [...bundleNames.keys()]),
+  ]);
+  if (docs.error || readers.error) return c.json({ error: "failed to load documents" }, 500);
+
+  const readBy = new Map<string, RevisitDocumentDTO["readBy"]>();
+  for (const r of (readers.data ?? []) as Array<{ bundle_id: string; agent: unknown }>) {
+    const a = (Array.isArray(r.agent) ? r.agent[0] : r.agent) as {
+      id: string;
+      name: string;
+      avatar: string | null;
+      deleted_at: string | null;
+    } | null;
+    if (!a || a.deleted_at) continue;
+    readBy.set(r.bundle_id, [
+      ...(readBy.get(r.bundle_id) ?? []),
+      { agentId: a.id, name: a.name, avatar: asAvatarMark(a.avatar) },
+    ]);
+  }
+
+  const documents: RevisitDocumentDTO[] = (docs.data ?? [])
+    .map((d) => ({
+      documentId: d.id as string,
+      name: d.name as string,
+      bundleId: d.bundle_id as string,
+      bundleName: bundleNames.get(d.bundle_id as string) ?? "",
+      createdAt: toEpochMs(d.created_at as string),
+      uses: uses.get(d.id as string) ?? 0,
+      readBy: readBy.get(d.bundle_id as string) ?? [],
+    }))
+    .sort((a, b) => b.uses - a.uses || a.name.localeCompare(b.name))
+    .slice(0, 20);
+  return c.json({ days: q.days, documents });
 });
 
 const updateSettingsSchema = z.object({ enabled: z.boolean() });

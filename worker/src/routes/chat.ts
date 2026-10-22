@@ -3,6 +3,9 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { serviceClient } from "../lib/supabase";
+import { withModelEndpoint } from "../lib/model-endpoints";
+import { trackTurn } from "../lib/active-turns";
+import { askOf } from "../lib/harness/tools/ask-person";
 import {
   resolveModel,
   modelSpec,
@@ -10,6 +13,8 @@ import {
   availableModels,
   providerFor,
   anthropicEnabled,
+  REASONING_EFFORTS,
+  isEndpointModel,
 } from "../lib/models";
 import { KICKOFF_ASK, KICKOFF_MAX_TOKENS, onboardingKickoff } from "../lib/onboarding-kickoff";
 import { reportProviderFailure } from "../lib/provider-error";
@@ -118,6 +123,13 @@ const streamChatSchema = z.object({
    * does for an agent carrying a model whose key has been rotated out.
    */
   model: z.string().optional(),
+  /**
+   * How hard this reply thinks, for this reply only — the composer's Thinking
+   * chip beside the Model chip, which says "Applies to this message" (A2).
+   * Absent means the conversation's own setting; null means the agent's.
+   * Ignored by a model that does not reason, as the session setting is.
+   */
+  reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
   /**
    * Open the conversation, rather than answering a message in it.
    *
@@ -462,12 +474,18 @@ chat.post("/chat/stream", async (c) => {
   // something stronger" has no business overwriting it.
   const requested = parsed.data.model;
   const picked =
-    requested && (availableModels(env) as string[]).includes(requested) ? requested : tuning.model;
-  const model = resolveModel(picked, env);
+    requested &&
+    ((availableModels(env) as string[]).includes(requested) || isEndpointModel(requested))
+      ? requested
+      : tuning.model;
 
   const signal = turnSignal(c);
   // On the metered overlay, so the reply's own writes are counted too.
   const service = serviceClient(env);
+  // A workspace's own endpoint (0135): the turn's completions go there, and
+  // only the turn's — the title and the embeddings stay on the install's.
+  const turnEnv = await withModelEndpoint(env, service, session.workspace_id as string, picked);
+  const model = resolveModel(picked, turnEnv);
 
   // What the half being continued already did. Read before the stream opens,
   // like everything else this turn needs — see `stepsOfReply`.
@@ -713,6 +731,9 @@ chat.post("/chat/stream", async (c) => {
                 ...usageColumns(addUsage(usageOfRow(before), delta)),
                 model,
                 outcome: opts.outcome,
+                // A continuation that ends on a question asks it; one that
+                // does not leaves whatever the first half asked.
+                ...(askOf(steps) ? { ask: askOf(steps) } : {}),
               })
               .eq("id", before.id)
               .select("*")
@@ -727,6 +748,9 @@ chat.post("/chat/stream", async (c) => {
                 sources: sources.length > 0 ? sources : null,
                 grounding,
                 ...usageColumns(delta),
+                // What the reply asks the person, when it ended on
+                // `ask_person` (0122): drawn as the ask card under it.
+                ask: askOf(steps),
                 // Insert only. A continuation's row already describes the
                 // request that produced its first half, which is the rule
                 // `sources` and `grounding` follow a few lines up.
@@ -834,7 +858,16 @@ chat.post("/chat/stream", async (c) => {
         if (error) console.error("failed to correct the reply's outcome", error);
       };
 
+      // The sidebar, the Inbox and Home show the turn while it runs (0122).
+      const tracker = trackTurn(service, {
+        sessionId,
+        workspaceId: session.workspace_id as string,
+        agentId: session.agent_id as string,
+        userId: c.get("user").id,
+      });
+
       try {
+        await tracker.start();
         // `runAgentTurn` rather than `streamCompletion` directly, which is the
         // one structural change on this path: the model may now ask for a
         // tool, and the loop that runs it and asks again lives in
@@ -842,14 +875,18 @@ chat.post("/chat/stream", async (c) => {
         // that asks for none, goes through exactly one pass and behaves as it
         // always did.
         const turn = await runChatTurn({
-          env,
+          env: turnEnv,
           request: {
             model,
             messages,
             // An opening is a greeting with a cap to match, not an answer.
             maxTokens: intro ? KICKOFF_MAX_TOKENS : maxTokensFor(mode),
             temperature: temperatureFor(mode, agent.temperature),
-            reasoningEffort: reasoningEffortFor(tuning.reasoningEffort),
+            reasoningEffort: reasoningEffortFor(
+              parsed.data.reasoningEffort === undefined
+                ? tuning.reasoningEffort
+                : (parsed.data.reasoningEffort ?? agent.reasoning_effort ?? null),
+            ),
             // The one caller that shows it. On a model and an effort that
             // deliberate, the alternative is a long pause with nothing on
             // screen, which reads as a product that has stopped working.
@@ -887,6 +924,7 @@ chat.post("/chat/stream", async (c) => {
           send,
           spend,
           mayContinue: hold.mayContinue,
+          onStepEvent: (event) => tracker.step(event),
         });
 
         steps = turn.steps;
@@ -1112,6 +1150,8 @@ chat.post("/chat/stream", async (c) => {
           retryable: failed.retryable,
         });
         controller.close();
+      } finally {
+        await tracker.end();
       }
     },
   });
@@ -1188,6 +1228,8 @@ chat.post("/chat/confirm/:id", async (c) => {
   const loaded = await loadPausedTurn(service, c.req.param("id"));
   if ("error" in loaded) return c.json({ error: loaded.error }, loaded.status);
   const pause = loaded.pause;
+  // The endpoint the first half ran on, if it was one (0135).
+  const turnEnv = await withModelEndpoint(env, service, pause.workspaceId, pause.model);
 
   // Who may answer, which is narrower than who may see. The tool will run
   // with this person's standing — their delivery channels, their RLS — so
@@ -1396,7 +1438,16 @@ chat.post("/chat/confirm/:id", async (c) => {
         return data ?? null;
       };
 
+      // Running again, now that somebody answered (0122).
+      const tracker = trackTurn(service, {
+        sessionId: pause.sessionId,
+        workspaceId: pause.workspaceId,
+        agentId: pause.agentId,
+        userId: pause.userId,
+      });
+
       try {
+        await tracker.start();
         const tool = approve ? toolByName(pause.toolCall.name) : null;
         const started = Date.now();
         const parsedArgs = parseArguments(pause.toolCall.arguments);
@@ -1653,7 +1704,7 @@ chat.post("/chat/confirm/:id", async (c) => {
         }
 
         const turn = await runChatTurn({
-          env,
+          env: turnEnv,
           request: {
             model: pause.model ?? resolveModel(null, env),
             messages,
@@ -1673,6 +1724,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           send,
           spend,
           mayContinue: hold.mayContinue,
+          onStepEvent: (event) => tracker.step(event),
         });
 
         await recordSpend();
@@ -1706,6 +1758,16 @@ chat.post("/chat/confirm/:id", async (c) => {
         }
 
         await writeSteps(service, inserted.id, turn.steps);
+        // A resumed turn can end on a question too (0122).
+        const question = askOf(turn.steps);
+        if (question) {
+          const { error: askError } = await service
+            .from("messages")
+            .update({ ask: question })
+            .eq("id", inserted.id);
+          if (askError) console.error("failed to record what the reply asks", askError);
+          inserted.ask = question;
+        }
         await service
           .from("chat_sessions")
           .update({ updated_at: new Date().toISOString() })
@@ -1802,6 +1864,8 @@ chat.post("/chat/confirm/:id", async (c) => {
           retryable: failed.retryable,
         });
         controller.close();
+      } finally {
+        await tracker.end();
       }
     },
   });

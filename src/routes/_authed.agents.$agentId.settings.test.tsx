@@ -288,14 +288,14 @@ describe("the model, as three words", () => {
     try {
       renderSettings();
 
-      const balanced = await screen.findByRole("radio", { name: /Balanced/ });
+      const balanced = await screen.findByRole("radio", { name: /Standard/ });
       expect(balanced).toHaveAttribute("aria-checked", "false");
       // gpt-4o is no tier, so the state the chips cannot stand for is shown as Custom.
       expect(screen.getByRole("radio", { name: /Custom/ })).toHaveAttribute("aria-checked", "true");
       expect(screen.getByText("All models")).toBeInTheDocument();
 
       await userEvent.click(balanced);
-      expect(screen.getByRole("radio", { name: /Balanced/ })).toHaveAttribute(
+      expect(screen.getByRole("radio", { name: /Standard/ })).toHaveAttribute(
         "aria-checked",
         "true",
       );

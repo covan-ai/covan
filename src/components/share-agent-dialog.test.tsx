@@ -52,6 +52,7 @@ function agent(sharing: Partial<Sharing> = {}) {
     emoji: "📈",
     model: "gpt-4o",
     persona: "",
+    avatar: null,
     mode: "normal" as const,
     temperature: null,
     reasoningEffort: null,

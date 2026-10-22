@@ -5,8 +5,20 @@ import { savedLogin, tasksThatCarriedALogin } from "../lib/browser/credentials";
 import { pollConversationBrowser } from "../lib/browser/live";
 import { NOT_STARTED } from "../lib/browser/queue";
 import { deferred } from "../lib/defer";
-import { BROWSER_TASK_COLUMNS, mapBrowserTask, mapChatSession, mapMessage } from "../lib/dto";
-import { availableModels, REASONING_EFFORTS, type ModelEnv } from "../lib/models";
+import { callDeletionFn } from "../lib/deletion";
+import { refusedByPolicy } from "../lib/refused";
+import {
+  asSessionState,
+  BROWSER_TASK_COLUMNS,
+  mapBrowserTask,
+  mapChatSession,
+  mapMessage,
+  toEpochMs,
+  type SessionState,
+} from "../lib/dto";
+import { availableModels, REASONING_EFFORTS, type ModelEnv, isEndpointModel } from "../lib/models";
+import { estimateCostUsd } from "../lib/pricing";
+import { quoteOf } from "../lib/entitlements";
 import { callerWorkspaceId } from "../lib/workspace";
 
 const sessions = new Hono<AppEnv>();
@@ -37,7 +49,10 @@ type Dial = {
 /** A model id this deployment cannot answer on, or null when there is none. */
 function unservedModel(dial: Dial, env: ModelEnv | undefined): string | null {
   if (dial.model == null) return null;
-  return (availableModels(env) as string[]).includes(dial.model) ? null : dial.model;
+  // A workspace endpoint (0135) is served once a turn is routed to it.
+  return (availableModels(env) as string[]).includes(dial.model) || isEndpointModel(dial.model)
+    ? null
+    : dial.model;
 }
 
 /**
@@ -98,7 +113,232 @@ sessions.get("/sessions", async (c) => {
     return c.json({ error: "failed to load sessions" }, 500);
   }
 
-  return c.json((data ?? []).map((row) => mapChatSession(row, [])));
+  // The dot beside each thread in the sidebar (0122): waiting on you, running,
+  // or done. Best-effort — a list without dots is still the list.
+  const rows = data ?? [];
+  const states = new Map<string, { state: SessionState; unread: number }>();
+  if (rows.length > 0) {
+    const { data: found, error: stateError } = await db.rpc("session_states", {
+      p_workspace_id: workspaceId,
+      p_session_ids: rows.map((r) => r.id as string),
+    });
+    if (stateError) console.error("session_states failed", stateError);
+    for (const s of (found ?? []) as Array<{ session_id: string; state: string; unread: number }>) {
+      states.set(s.session_id, { state: asSessionState(s.state), unread: s.unread ?? 0 });
+    }
+  }
+
+  return c.json(
+    rows.map((row) => {
+      const known = states.get(row.id as string);
+      return {
+        ...mapChatSession(row, []),
+        ...(known ? { state: known.state, unread: known.unread } : {}),
+      };
+    }),
+  );
+});
+
+// GET /sessions/table — the Threads page (A5).
+//
+// One page of the threads the caller can see, newest activity first unless
+// asked otherwise, with what each needs (the dot), who started it, the
+// routine that wrote it and what it cost. Every read is the caller's own
+// client: the page is what RLS shows, the dots and the costs are invoker
+// functions over the same rows (0122, 0126), and the "this week · all time"
+// counts are counts of what the caller can see — not the team's, which is
+// Home's to say.
+const TABLE_FILTERS = ["all", "mine", "shared", "waiting", "running"] as const;
+const tableQuery = z.object({
+  filter: z.enum(TABLE_FILTERS).optional(),
+  agent: z.string().uuid().optional(),
+  q: z.string().trim().max(200).optional(),
+  sort: z.enum(["activity", "created", "title"]).optional(),
+  page: z.coerce.number().int().min(1).max(10_000).optional(),
+  pageSize: z.coerce.number().int().min(5).max(100).optional(),
+});
+
+/** `%` and `_` are wildcards to `ilike`; somebody searching for "50%" means the character. */
+export function ilikePattern(q: string): string {
+  return `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+}
+
+sessions.get("/sessions/table", async (c) => {
+  const parsed = tableQuery.safeParse(c.req.query());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const { filter = "all", agent, q, sort = "activity", page = 1, pageSize = 25 } = parsed.data;
+
+  const workspaceId = await callerWorkspaceId(c);
+  const empty = { rows: [], total: 0, thisWeek: 0, allTime: 0, page, pageSize, unit: null };
+  if (!workspaceId) return c.json(empty);
+
+  const db = c.get("db");
+  const userId = c.get("user").id;
+
+  // Waiting and Running are states, not columns: the ids come from the
+  // Inbox's own read, then the page is cut from those.
+  let only: string[] | null = null;
+  if (filter === "waiting" || filter === "running") {
+    const { data, error } = await db.rpc("inbox_rows", {
+      p_workspace_id: workspaceId,
+      p_filter: filter === "waiting" ? "needs_you" : "running",
+      p_agent_id: agent ?? null,
+      p_before: null,
+      p_limit: 200,
+      p_session_ids: null,
+    });
+    if (error) {
+      console.error("inbox_rows failed for the threads table", error);
+      return c.json({ error: "failed to load threads" }, 500);
+    }
+    only = ((data ?? []) as Array<{ session_id: string }>).map((r) => r.session_id);
+  }
+
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  let pageQuery = db
+    .from("chat_sessions")
+    .select("id, agent_id, user_id, title, visibility, kind, routine_id, updated_at, created_at", {
+      count: "exact",
+    })
+    .eq("workspace_id", workspaceId);
+  if (filter === "mine") pageQuery = pageQuery.eq("user_id", userId);
+  if (filter === "shared") pageQuery = pageQuery.eq("visibility", "shared").neq("user_id", userId);
+  if (only)
+    pageQuery = pageQuery.in(
+      "id",
+      only.length > 0 ? only : ["00000000-0000-0000-0000-000000000000"],
+    );
+  if (agent) pageQuery = pageQuery.eq("agent_id", agent);
+  if (q) pageQuery = pageQuery.ilike("title", ilikePattern(q));
+  pageQuery =
+    sort === "title"
+      ? pageQuery.order("title", { ascending: true })
+      : pageQuery.order(sort === "created" ? "created_at" : "updated_at", { ascending: false });
+  const from = (page - 1) * pageSize;
+
+  const [pageRes, weekRes, allRes] = await Promise.all([
+    pageQuery.range(from, from + pageSize - 1),
+    db
+      .from("chat_sessions")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId)
+      .gte("created_at", weekAgo),
+    db
+      .from("chat_sessions")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", workspaceId),
+  ]);
+  if (pageRes.error) {
+    console.error("failed to load the threads table", pageRes.error);
+    return c.json({ error: "failed to load threads" }, 500);
+  }
+
+  type Row = {
+    id: string;
+    agent_id: string;
+    user_id: string | null;
+    title: string | null;
+    visibility: string;
+    kind: string;
+    routine_id: string | null;
+    updated_at: string;
+    created_at: string;
+  };
+  const rows = (pageRes.data ?? []) as Row[];
+  const ids = rows.map((r) => r.id);
+  const ownerIds = [...new Set(rows.map((r) => r.user_id).filter(Boolean))] as string[];
+  const routineIds = [...new Set(rows.map((r) => r.routine_id).filter(Boolean))] as string[];
+
+  const [statesRes, ownersRes, routinesRes, costsRes] = await Promise.all([
+    ids.length > 0
+      ? db.rpc("session_states", { p_workspace_id: workspaceId, p_session_ids: ids })
+      : Promise.resolve({ data: [], error: null }),
+    ownerIds.length > 0
+      ? db.from("profiles").select("id, name, avatar_url").in("id", ownerIds)
+      : Promise.resolve({ data: [], error: null }),
+    routineIds.length > 0
+      ? db.from("routines").select("id, name").in("id", routineIds)
+      : Promise.resolve({ data: [], error: null }),
+    ids.length > 0
+      ? db.rpc("session_token_totals", { p_session_ids: ids })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  const states = new Map(
+    (
+      (statesRes.data ?? []) as Array<{
+        session_id: string;
+        state: string;
+        unread: number;
+        running_steps: number | null;
+      }>
+    ).map((s) => [s.session_id, s]),
+  );
+  const owners = new Map(
+    (
+      (ownersRes.data ?? []) as Array<{
+        id: string;
+        name: string | null;
+        avatar_url: string | null;
+      }>
+    ).map((p) => [p.id, p]),
+  );
+  const routineNames = new Map(
+    ((routinesRes.data ?? []) as Array<{ id: string; name: string }>).map((r) => [r.id, r.name]),
+  );
+  const quote = quoteOf(c.get("entitlements"));
+  const costs = new Map<string, number>();
+  for (const t of (costsRes.data ?? []) as Array<{
+    session_id: string;
+    model: string | null;
+    prompt_tokens: number | string;
+    completion_tokens: number | string;
+    cached_tokens: number | string;
+    cache_write_tokens: number | string;
+  }>) {
+    const usd = estimateCostUsd(
+      t.model ?? "",
+      Number(t.prompt_tokens) || 0,
+      Number(t.completion_tokens) || 0,
+      Number(t.cached_tokens) || 0,
+      Number(t.cache_write_tokens) || 0,
+    );
+    costs.set(t.session_id, (costs.get(t.session_id) ?? 0) + usd);
+  }
+  const amount = (usd: number) => (quote ? Math.round(quote(usd)) : Math.round(usd * 1000) / 1000);
+
+  return c.json({
+    rows: rows.map((r) => {
+      const state = states.get(r.id);
+      const owner = r.user_id ? owners.get(r.user_id) : undefined;
+      return {
+        id: r.id,
+        agentId: r.agent_id,
+        title: r.title,
+        kind: r.kind,
+        visibility: r.visibility === "shared" ? "shared" : "private",
+        ownerId: r.user_id,
+        ownerName: owner?.name ?? null,
+        ownerAvatarUrl: owner?.avatar_url ?? null,
+        isMine: r.user_id === userId,
+        routine: r.routine_id
+          ? { id: r.routine_id, name: routineNames.get(r.routine_id) ?? null }
+          : null,
+        state: asSessionState(state?.state),
+        runningStep: state?.running_steps ?? null,
+        unread: state?.unread ?? 0,
+        lastActivityAt: toEpochMs(r.updated_at),
+        createdAt: toEpochMs(r.created_at),
+        cost: costs.has(r.id) ? amount(costs.get(r.id)!) : 0,
+      };
+    }),
+    total: pageRes.count ?? rows.length,
+    thisWeek: weekRes.count ?? 0,
+    allTime: allRes.count ?? 0,
+    page,
+    pageSize,
+    unit: quote ? "credits" : "usd",
+  });
 });
 
 // POST /sessions
@@ -146,6 +386,9 @@ sessions.post("/sessions", async (c) => {
     .select("*")
     .single();
 
+  if (refusedByPolicy(error)) {
+    return c.json({ error: "you cannot start a thread with this agent" }, 403);
+  }
   if (error || !data) {
     return c.json({ error: "failed to create session" }, 500);
   }
@@ -197,14 +440,20 @@ sessions.patch("/sessions/:id", async (c) => {
 });
 
 // DELETE /sessions/:id
+//
+// Into the thirty-day trash (0125) rather than gone: Recently deleted lists
+// it with Restore. The starter's alone, and refused out loud otherwise.
 sessions.delete("/sessions/:id", async (c) => {
-  const db = c.get("db");
-  const id = c.req.param("id");
-
-  const { error } = await db.from("chat_sessions").delete().eq("id", id);
-
-  if (error) {
-    return c.json({ error: "failed to delete session" }, 500);
+  const failure = await callDeletionFn(
+    c.get("db"),
+    "soft_delete_session",
+    { p_session_id: c.req.param("id") },
+    "failed to delete session",
+  );
+  if (failure) {
+    const message =
+      failure.status === 403 ? "only whoever started a thread can delete it" : failure.message;
+    return c.json({ error: message }, failure.status);
   }
 
   return c.json({ ok: true });

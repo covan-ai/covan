@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 /**
  * The model, as three words and a list.
  *
- * Fast / Balanced / Smartest are the choice (`MODEL_TIERS`), the full list of
+ * Fast / Standard / Best are the choice (`MODEL_TIERS`), the full list of
  * ids sits under "All models" for anyone who wants one, and an agent on a
  * model that is no tier shows as Custom with its id, so a value the three
  * chips cannot stand for is never drawn as nothing.

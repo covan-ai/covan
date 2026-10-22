@@ -41,6 +41,8 @@ function fakeDb(
     updated?: unknown[];
     /** What `set_agent_sharing` answers. */
     sharingError?: { code: string; message: string } | null;
+    /** What an insert answers instead of the row; 42501 is RLS refusing it. */
+    insertError?: { code: string; message: string };
   } = {},
 ) {
   const writes: Record<string, unknown>[] = [];
@@ -75,6 +77,10 @@ function fakeDb(
           resolve({ data: opts.updated ?? [{ id: AGENT_ROW.id }], error: null }),
         insert(row: Record<string, unknown>) {
           writes.push(row);
+          if (opts.insertError) {
+            const refused = { data: null, error: opts.insertError };
+            return { select: () => ({ single: async () => refused }) };
+          }
           return chain;
         },
       };
@@ -208,6 +214,22 @@ describe("PATCH /agents/:id", () => {
 });
 
 describe("POST /agents", () => {
+  // A viewer, whose role may not create agents: RLS refuses the row.
+  it("answers 403, not 500, when the database refuses the agent", async () => {
+    const { db } = fakeDb({
+      insertError: { code: "42501", message: "new row violates row-level security policy" },
+    });
+
+    const res = await appWith(db).request("/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "GTM" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "your role cannot create agents in this workspace" });
+  });
+
   it("creates an agent on Auto when nothing was asked for", async () => {
     const { db, writes } = fakeDb();
 
@@ -347,5 +369,120 @@ describe("PUT /agents/:id/sharing", () => {
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "that person is not a member of this workspace" });
+  });
+});
+
+describe("the agent's face (0120)", () => {
+  it("writes the mark on create and on edit, and null puts the monogram back", async () => {
+    const { db, writes } = fakeDb();
+    const app = appWith(db);
+
+    const created = await app.request("/agents", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Support", avatar: "headset" }),
+    });
+    expect(created.status).toBe(201);
+    expect(writes[0]).toMatchObject({ name: "Support", avatar: "headset" });
+
+    expect((await patch(app, { avatar: "owl" })).status).toBe(200);
+    expect(writes[1]).toEqual({ avatar: "owl" });
+
+    expect((await patch(app, { avatar: null })).status).toBe(200);
+    expect(writes[2]).toEqual({ avatar: null });
+  });
+
+  it("refuses a mark that is not one of the eight", async () => {
+    const { db, writes } = fakeDb();
+    const res = await patch(appWith(db), { avatar: "unicorn" });
+    expect(res.status).toBe(400);
+    expect(writes).toEqual([]);
+  });
+
+  it("sends the mark back on the agent, and nothing for a name it does not know", async () => {
+    const { mapAgent } = await import("../lib/dto");
+    expect(mapAgent({ ...AGENT_ROW, avatar: "fox" }).avatar).toBe("fox");
+    expect(mapAgent({ ...AGENT_ROW, avatar: "dragon" }).avatar).toBeNull();
+    expect(mapAgent(AGENT_ROW).avatar).toBeNull();
+  });
+});
+
+describe("GET /agents/:id/delete-summary", () => {
+  function summaryDb(answer: { data?: unknown; error?: { code: string; message: string } }) {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    return {
+      calls,
+      db: {
+        rpc(name: string, args: Record<string, unknown>) {
+          calls.push({ name, args });
+          return {
+            maybeSingle: async () => ({ data: answer.data ?? null, error: answer.error ?? null }),
+          };
+        },
+      },
+    };
+  }
+
+  it("says what a delete takes with it", async () => {
+    const { db, calls } = summaryDb({ data: { threads: 19, routines: 2, folders: 3 } });
+    const res = await appWith(db).request("/agents/agent-1/delete-summary");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ threads: 19, routines: 2, folders: 3 });
+    expect(calls).toEqual([{ name: "agent_delete_summary", args: { p_agent_id: "agent-1" } }]);
+  });
+
+  it("answers somebody who could not delete it as the button would", async () => {
+    const refused = summaryDb({ error: { code: "42501", message: "no" } });
+    expect((await appWith(refused.db).request("/agents/agent-1/delete-summary")).status).toBe(403);
+    const missing = summaryDb({ error: { code: "P0002", message: "no" } });
+    expect((await appWith(missing.db).request("/agents/agent-1/delete-summary")).status).toBe(404);
+  });
+});
+
+describe("GET /agents/:id/knowledge-usage", () => {
+  function usageDb(
+    answer: { data?: unknown; error?: { code: string; message: string } },
+    grounding: unknown = [],
+  ) {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    return {
+      calls,
+      db: {
+        async rpc(name: string, args: Record<string, unknown>) {
+          calls.push({ name, args });
+          if (name === "agent_coverage") return { data: grounding, error: answer.error ?? null };
+          return { data: answer.data ?? null, error: answer.error ?? null };
+        },
+      },
+    };
+  }
+
+  it("answers the replies each folder grounded, over thirty days unless asked", async () => {
+    const { db, calls } = usageDb({
+      data: [
+        { bundle_id: "policies", replies: 61 },
+        { bundle_id: "templates", replies: 0 },
+      ],
+    });
+    const res = await appWith(db).request("/agents/agent-1/knowledge-usage");
+    expect(await res.json()).toEqual({
+      byBundle: { policies: { replies: 61 }, templates: { replies: 0 } },
+      answers: 0,
+      notCoveredPct: null,
+    });
+    expect(calls[0]!.args).toEqual({ p_agent_id: "agent-1", p_days: 30 });
+  });
+
+  it("says how much of what it was asked was not covered (0134)", async () => {
+    const { db } = usageDb({ data: [] }, [
+      { answers: 312, covered: 181, fallback: 100, ungrounded: 31 },
+    ]);
+    const res = await appWith(db).request("/agents/agent-1/knowledge-usage?days=30");
+    expect(await res.json()).toMatchObject({ answers: 312, notCoveredPct: 42 });
+  });
+
+  it("answers an agent the caller cannot use as not there", async () => {
+    const { db } = usageDb({ error: { code: "P0002", message: "no" } });
+    expect((await appWith(db).request("/agents/agent-1/knowledge-usage")).status).toBe(404);
   });
 });

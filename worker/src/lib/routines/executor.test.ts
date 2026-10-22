@@ -2550,3 +2550,169 @@ describe("a routine that reads its own workspace", () => {
     expect(run.status).toBe("failed");
   });
 });
+
+/** Answers `routine_channels` with `rows`, and every other table as `db` does. */
+function withOtherChannels(db: any, rows: any[]) {
+  const from = db.from;
+  db.from = (table: string) =>
+    table === "routine_channels"
+      ? { select: () => ({ eq: async () => ({ data: rows, error: null }) }) }
+      : from(table);
+  return db;
+}
+
+describe("a run with more than one destination (0130)", () => {
+  const seenA = { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null };
+
+  it("delivers to the primary first and then to each other channel of the owner's", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const slack = {
+      id: "c2",
+      user_id: "u1",
+      kind: "slack_webhook",
+      secret_ciphertext: await encryptSecret("https://hooks.slack.com/services/T/B/C", SECRET_KEY),
+      confirmed_at: null,
+      confirmation_sent_at: null,
+      disabled_at: null,
+    };
+    const { db, inserts } = makeDb();
+    withOtherChannels(db, [
+      { delivery_channel_id: "c2", channel: slack },
+      // Somebody else's, and a turned-off one: neither is sent to.
+      { delivery_channel_id: "c3", channel: { ...slack, id: "c3", user_id: "u2" } },
+      { delivery_channel_id: "c4", channel: { ...slack, id: "c4", disabled_at: "2026-08-01" } },
+    ]);
+
+    const out = await runRoutine(routine({ cursor: seenA }), makeDeps(db) as any);
+
+    expect(out.status).toBe("ok");
+    expect(deliverCalls).toHaveLength(2);
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run.delivery_note).toBeNull();
+  });
+
+  it("writes down a channel it could not reach, and still counts the run delivered", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db, inserts } = makeDb();
+    withOtherChannels(db, [
+      {
+        delivery_channel_id: "c2",
+        channel: {
+          id: "c2",
+          user_id: "u1",
+          kind: "slack_webhook",
+          secret_ciphertext: await encryptSecret(
+            "https://hooks.slack.com/services/X/Y/Z",
+            SECRET_KEY,
+          ),
+          confirmed_at: null,
+          confirmation_sent_at: null,
+          disabled_at: null,
+        },
+      },
+    ]);
+    const deps = makeDeps(db) as any;
+    let call = 0;
+    deps.deliveryDeps.fetchImpl = vi.fn(async () =>
+      ++call === 1 ? new Response("{}", { status: 200 }) : new Response("gone", { status: 404 }),
+    );
+
+    const out = await runRoutine(routine({ cursor: seenA }), deps);
+
+    expect(out.status).toBe("ok");
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run.status).toBe("ok");
+    expect(run.delivery_note).toMatch(/^Not sent to a Slack channel/);
+    // The kind, never the address.
+    expect(run.delivery_note).not.toContain("hooks.slack.com");
+  });
+
+  it("runs on the routine's own model and thinking before the agent's", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const { db } = makeDb();
+    await runRoutine(
+      routine({ cursor: seenA, model: "gpt-4.1", reasoning_effort: "high" }),
+      makeDeps(db) as any,
+    );
+    expect(summarise.mock.calls[0][0].model).toBe("gpt-4.1");
+    expect(summarise.mock.calls[0][0].reasoningEffort).toBe("high");
+  });
+});
+
+describe("a test run (0130)", () => {
+  it("reads everything, sends nothing, claims nothing and leaves the routine as it was", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b", "c"]), { status: 200 }));
+    const { db, updates, inserts, claimed } = makeDb();
+    const r = routine({
+      visibility: "shared",
+      // Everything in the feed was already delivered: a real run would skip.
+      cursor: { seenKeys: ["a", "b", "c"], lastPublishedAt: null, etag: "W/1", contentHash: null },
+    });
+
+    const out = await runRoutine(r, { ...makeDeps(db), trigger: "test" } as any);
+
+    expect(out.status).toBe("ok");
+    expect(summarise.mock.calls[0][0].items).toHaveLength(3);
+    // No ETag sent, so the page is read whole.
+    const sent = new Headers(fetchImpl.mock.calls[0][1]?.headers ?? {});
+    expect(sent.get("If-None-Match")).toBeNull();
+    expect(deliverCalls).toHaveLength(0);
+    expect(claimed).toEqual([]);
+    expect(updates.filter((u) => u.table === "routines")).toEqual([]);
+
+    const run = inserts.find((i) => i.table === "routine_runs")!.values;
+    expect(run.triggered_by).toBe("test");
+    // Paid like any run.
+    expect(recorded).toHaveLength(1);
+    // Its only destination: a private thread for its owner.
+    const thread = inserts.find((i) => i.table === "chat_sessions")!.values;
+    expect(thread).toMatchObject({ visibility: "private", user_id: "u1", title: "r/saas · test" });
+  });
+
+  it("writes a thread even when it had nothing to report, and even with the Inbox off", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM([]), { status: 200 }));
+    const { db, inserts } = makeDb();
+    const out = await runRoutine(
+      routine({
+        deliver_inbox: false,
+        cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+      }),
+      { ...makeDeps(db), trigger: "test" } as any,
+    );
+    expect(out.status).toBe("skipped");
+    expect(inserts.find((i) => i.table === "chat_sessions")).toBeDefined();
+  });
+});
+
+describe("telling the owner a routine failed (0133)", () => {
+  async function failOnce(over: Partial<RoutineRow>, prefs: Record<string, unknown> | null = null) {
+    fetchImpl = vi.fn(async () => new Response("down", { status: 500 }));
+    const { db } = makeDb({ rows: { notification_preferences: prefs } });
+    db.auth = {
+      admin: { getUserById: async () => ({ data: { user: { email: "ada@acme.test" } } }) },
+    };
+    const mail = vi.fn(async () => {});
+    await runRoutine(
+      routine({
+        cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+        ...over,
+      }),
+      { ...makeDeps(db), mail, env: { ALLOWED_ORIGIN: "https://app.covan.test" } } as any,
+    );
+    return mail;
+  }
+
+  it("emails on the first failure in a row, with a link to the routine", async () => {
+    const mail = await failOnce({});
+    expect(mail).toHaveBeenCalledOnce();
+    const email = (mail.mock.calls[0] as any)[0];
+    expect(email.to).toBe("ada@acme.test");
+    expect(email.subject).toBe("“r/saas” failed");
+    expect(email.text).toContain("https://app.covan.test/routines/r1");
+  });
+
+  it("does not again while it keeps failing, nor when the owner said no", async () => {
+    expect(await failOnce({ consecutive_failures: 1 })).not.toHaveBeenCalled();
+    expect(await failOnce({}, { routine_failed: false })).not.toHaveBeenCalled();
+  });
+});

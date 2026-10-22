@@ -24,6 +24,11 @@ export type Agent = {
   id: string;
   name: string;
   emoji: string;
+  /**
+   * The agent's mark (DESIGN.md §5): one of the eight names in
+   * `components/agent-mark.tsx`, or null for its monogram.
+   */
+  avatar: string | null;
   model: string;
   persona: string;
   mode: "normal" | "brainstorm";
@@ -91,6 +96,8 @@ export type Agent = {
     indexStatus?: "queued" | "indexing" | "ready" | "partial" | "failed" | null;
     indexProgress?: { done: number; total: number } | null;
     indexError?: string | null;
+    /** Who uploaded it; on a bundle's listing only, null for a synced or written file. */
+    createdBy?: { id: string; name: string | null } | null;
   }[];
   bundleIds: string[];
   createdAt: number;
@@ -189,6 +196,11 @@ export type Message = {
    * stream that said so live is gone by then.
    */
   outcome?: string;
+  /**
+   * What the reply asks the person, when it ended on a question (0122): the
+   * thread draws it as the ask card, with the answers as buttons.
+   */
+  ask?: { question: string; replies: string[] };
 };
 
 export type ChatSession = {
@@ -200,7 +212,7 @@ export type ChatSession = {
   updatedAt: number;
   visibility: "private" | "shared";
   ownerId: string;
-  kind: "chat" | "brainstorm";
+  kind: "chat" | "brainstorm" | "routine";
   /*
    * How THIS conversation is answered, where it differs from its agent: the
    * dial in the composer. Every one is null until somebody turns it, and null
@@ -220,6 +232,13 @@ export type ChatSession = {
   reasoningEffort?: ReasoningEffort | null;
   webSearch?: boolean | null;
   mode?: "normal" | "brainstorm" | null;
+  /**
+   * The dot beside the thread (0122): waiting on you, running, or done; and
+   * how many messages are unread. On the list only, and absent when the server
+   * could not say.
+   */
+  state?: "needs_you" | "running" | "done";
+  unread?: number;
 };
 
 /** What the composer's dial may change about a conversation. Null clears. */

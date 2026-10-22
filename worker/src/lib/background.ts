@@ -11,6 +11,9 @@ import { PROVIDERS } from "./connections/registry";
 import { advanceDueDocumentJobs } from "./docs/host";
 import { advanceDueIndexJobs } from "./indexing/host";
 import { syncPassageVectors } from "./passages";
+import { dispatchWebhooks } from "./webhooks/dispatcher";
+import { sendNeedsYouReminders } from "./reports/needs-you";
+import { runWeeklySummaries } from "./reports/weekly-summary";
 
 /**
  * One scheduled tick, for both Workers that have one.
@@ -38,6 +41,20 @@ import { syncPassageVectors } from "./passages";
  * self-hoster's first deploy is the one that has to not need a plan upgrade.
  */
 export async function runScheduledWork(env: RoutineEnv): Promise<void> {
+  // Webhooks first, and without the either/or below: a handful of signed
+  // POSTs per tick (`DELIVERIES_PER_TICK`), bounded so they never take the
+  // tick from the routines, and first so "an agent needs you" reaches the
+  // workspace's own systems within a tick rather than after a busy schedule.
+  // Its failure is logged and the tick goes on.
+  await dispatchWebhooks(env).catch((err) => console.error("webhooks: the stage failed", err));
+  // The two emails sent while somebody is away (0133), for the same reasons:
+  // a handful per tick, and a person waiting on an email should not wait on
+  // a busy schedule. Each claims nothing on a deployment that cannot send.
+  await sendNeedsYouReminders(env).catch((err) =>
+    console.error("reminders: the stage failed", err),
+  );
+  await runWeeklySummaries(env).catch((err) => console.error("weekly: the stage failed", err));
+
   const routines = await runDueRoutines(env);
   if (routines.claimed > 0) return;
 

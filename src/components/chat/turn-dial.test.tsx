@@ -67,8 +67,8 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
       agent: { model: "gpt-4.1", reasoningEffort: null, webSearch: true, mode: "brainstorm" },
     });
 
-    expect(screen.getByLabelText("Model: Smartest")).toBeInTheDocument();
-    expect(screen.getByLabelText("Thinking: High")).toBeInTheDocument();
+    expect(screen.getByLabelText("Model: Best")).toBeInTheDocument();
+    expect(screen.getByLabelText("Thinking: Extended")).toBeInTheDocument();
     expect(screen.getByLabelText("Web search: On")).toBeInTheDocument();
     expect(screen.getByLabelText("Mode: Brainstorm")).toBeInTheDocument();
   });
@@ -96,7 +96,7 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
     open("Model: gpt-4.1");
     expect(screen.getByText("$0.030")).toBeInTheDocument();
     // The tier by its word; the id is in the line under it.
-    pick(screen.getByRole("menuitemcheckbox", { name: /Smartest/ }));
+    pick(screen.getByRole("menuitemcheckbox", { name: /Best/ }));
 
     expect(onChange).toHaveBeenCalledWith({ model: "claude-opus-5" });
   });
@@ -120,7 +120,7 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
       },
     });
 
-    open("Model: Smartest");
+    open("Model: Best");
     expect(screen.getByText("(agent's)")).toBeInTheDocument();
     pick(screen.getByText("gpt-4.1"));
 
@@ -135,8 +135,8 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
     open("Model: gpt-4.1");
     const rows = screen.getAllByRole("menuitemcheckbox").map((r) => r.textContent ?? "");
     expect(rows[0]).toMatch(/^Fast/);
-    expect(rows[1]).toMatch(/^Balanced/);
-    expect(rows[2]).toMatch(/^Smartest/);
+    expect(rows[1]).toMatch(/^Standard/);
+    expect(rows[2]).toMatch(/^Best/);
     expect(rows[3]).toMatch(/^gpt-4\.1/);
     expect(screen.getByText("All models")).toBeInTheDocument();
     // The id is still there to read, under the word.
@@ -161,12 +161,12 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
       },
     });
 
-    open("Thinking: Medium");
+    open("Thinking: Standard");
     pick(screen.getByRole("menuitemcheckbox", { name: "Off" }));
     expect(onChange).toHaveBeenLastCalledWith({ reasoningEffort: "minimal" });
 
-    open("Thinking: Medium");
-    pick(screen.getByRole("menuitemcheckbox", { name: /^High/ }));
+    open("Thinking: Standard");
+    pick(screen.getByRole("menuitemcheckbox", { name: /^Extended/ }));
     expect(onChange).toHaveBeenLastCalledWith({ reasoningEffort: "high" });
   });
 

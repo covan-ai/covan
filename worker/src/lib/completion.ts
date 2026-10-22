@@ -4,6 +4,7 @@ import { createOpenAI } from "./openai";
 import { createAnthropic } from "./anthropic";
 import type { SubrequestMeter } from "./subrequests";
 import {
+  isEndpointModel,
   providerFor,
   acceptsTemperature,
   reasonsBeforeAnswering,
@@ -146,9 +147,21 @@ export type CompletionUsage = {
   webSearches: number | null;
 };
 
+/** A workspace endpoint a request was routed to (0135), opened for this request only. */
+export type ModelEndpointRoute = {
+  /** `endpoint:<id>`, the model's id inside Covan. */
+  id: string;
+  /** The model's name at the endpoint. */
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+};
+
 export type CompletionEnv = {
   OPENAI_API_KEY: string;
   OPENAI_BASE_URL?: string;
+  /** Set by `withModelEndpoint` when the request's model is a workspace endpoint. */
+  MODEL_ENDPOINT?: ModelEndpointRoute;
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_BASE_URL?: string;
   /**
@@ -412,6 +425,30 @@ function toOpenAITools(tools: ToolSpec[]): OpenAI.Chat.Completions.ChatCompletio
     type: "function" as const,
     function: { name: tool.name, description: tool.description, parameters: tool.input },
   }));
+}
+
+/**
+ * The client and the model name to send, for a request on the OpenAI wire.
+ *
+ * A workspace endpoint's id goes to that endpoint, with its key, under the
+ * model's own name there; everything else to the install's. An endpoint id
+ * that reaches here unrouted is refused rather than sent to the install's
+ * provider as a model name nobody there has heard of.
+ */
+function openaiFor(env: CompletionEnv, model: string): { client: OpenAI; wireModel: string } {
+  if (isEndpointModel(model)) {
+    const route = env.MODEL_ENDPOINT;
+    if (!route || route.id !== model) throw new Error("this model's endpoint is not available");
+    return {
+      client: createOpenAI({
+        OPENAI_API_KEY: route.apiKey,
+        OPENAI_BASE_URL: route.baseUrl,
+        SUBREQUESTS: env.SUBREQUESTS,
+      }),
+      wireModel: route.model,
+    };
+  }
+  return { client: createOpenAI(env), wireModel: model };
 }
 
 function openaiParams(req: CompletionRequest): OpenAI.Chat.Completions.ChatCompletionCreateParams {
@@ -1077,9 +1114,9 @@ export async function complete(
     };
   }
 
-  const client = createOpenAI(env);
+  const { client, wireModel } = openaiFor(env, req.model);
   const completion = await client.chat.completions.create(
-    { ...openaiParams(req), stream: false },
+    { ...openaiParams(req), model: wireModel, stream: false },
     { signal: opts.signal },
   );
   const choice = completion.choices[0]?.message;
@@ -1269,10 +1306,11 @@ export async function* streamCompletion(
     return;
   }
 
-  const client = createOpenAI(env);
+  const { client, wireModel } = openaiFor(env, req.model);
   const completion = await client.chat.completions.create(
     {
       ...openaiParams(req),
+      model: wireModel,
       stream: true,
       // Without this the usage-only final chunk is never sent, and every reply
       // is recorded as having cost nothing.

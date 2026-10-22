@@ -81,7 +81,7 @@ function paidRouteFiles(): string[] {
 /**
  * Which of those files' endpoints actually spend, stated rather than inferred.
  *
- * routes/routines.ts registers eleven endpoints and two of them buy a
+ * routes/routines.ts registers some thirty endpoints and four of them buy a
  * completion, so "every POST in a paid file" would be wrong in the expensive
  * direction — it would put the routine list behind a 20/min limit. The tripwire
  * below is what keeps this honest: the file list is derived, so a new file
@@ -179,7 +179,12 @@ const PAID_ENDPOINTS: Record<string, string[]> = {
   "transcribe.ts": ["/transcribe"],
   "brainstorm.ts": ["/brainstorm/ideas/suggest"],
   "persona.ts": ["/persona/suggest"],
-  "routines.ts": ["/routines/draft", "/routines/:id/run", "/routines/:id/event/test"],
+  "routines.ts": [
+    "/routines/draft",
+    "/routines/:id/run",
+    "/routines/:id/test",
+    "/routines/:id/event/test",
+  ],
   "reports.ts": ["/sessions/:id/report"],
   "document-jobs.ts": ["/document-jobs/:id/retry"],
 };

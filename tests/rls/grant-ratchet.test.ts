@@ -39,9 +39,10 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // 0104: `workspace_access` is chosen when the agent is made and is INSERT
   // only. Changing it afterwards is `set_agent_sharing`'s, which checks for
   // `manage`; an UPDATE grant here would let anybody with `edit` reshare it.
+  // 0120: the agent's mark, chosen when it is made and changed in Configuration.
   "agents INSERT":
-    "created_by,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search,workspace_access,workspace_id",
-  "agents UPDATE": "emoji,mode,model,name,persona,reasoning_effort,temperature,web_search",
+    "avatar,created_by,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search,workspace_access,workspace_id",
+  "agents UPDATE": "avatar,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search",
   "api_keys INSERT": "name,prefix,token_hash,user_id,workspace_id",
   "api_keys UPDATE": "name,revoked_at",
   "capability_calls UPDATE": "status",
@@ -70,6 +71,9 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
     "created_by,detail,position,session_id,source_message_id,stage,title,workspace_id",
   "ideas UPDATE": "detail,position,stage,title,updated_at",
   // 0090: the token's hash added; status, expiry and acceptance taken away.
+  // 0129: an admin makes a link with its hash and turns it off; nothing else.
+  "invite_links INSERT": "created_by,role,token_hash,workspace_id",
+  "invite_links UPDATE": "revoked_at",
   "invitations INSERT": "email,invited_by,role,token_hash,workspace_id",
   // 0106: private until shared.
   "knowledge_bundles INSERT": "created_by,description,name,scope,workspace_id",
@@ -77,15 +81,22 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // 0094 onwards: each table the columns the API writes with a caller's client.
   "messages INSERT": "content,role,sender_id,session_id",
   "messages UPDATE": "content",
+  // 0128: the three "Email me when" switches.
   "notification_preferences INSERT":
-    "quota_exhausted,quota_warned_for,routine_paused,updated_at,user_id",
+    "needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
   "notification_preferences UPDATE":
-    "quota_exhausted,quota_warned_for,routine_paused,updated_at,user_id",
+    "needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
   "profiles UPDATE": "active_workspace_id,avatar_url,bio,locale,name,timezone",
+  // 0123: whether runs land in the Inbox, and the model and thinking they run on.
+  // 0130: the channels a routine delivers to after its primary.
+  "routine_channels INSERT": "delivery_channel_id,routine_id",
   "routines INSERT":
-    "agent_id,delivery_channel_id,ends_after_runs,instruction,name,next_run_at,output_bundle_id,output_retention,schedule_cron,source_config,source_kind,timezone,trigger_kind,user_id,visibility,workspace_id",
+    "agent_id,delivery_channel_id,deliver_inbox,ends_after_runs,instruction,model,name,next_run_at,output_bundle_id,output_retention,reasoning_effort,schedule_cron,source_config,source_kind,timezone,trigger_kind,user_id,visibility,workspace_id",
   "routines UPDATE":
-    "browser_access,browser_site,consecutive_failures,delivery_channel_id,instruction,name,next_run_at,output_bundle_id,output_retention,paused_reason,schedule_cron,status,timezone,trigger_kind,updated_at,visibility",
+    "browser_access,browser_site,consecutive_failures,delivery_channel_id,deliver_inbox,instruction,model,name,next_run_at,output_bundle_id,output_retention,paused_reason,reasoning_effort,schedule_cron,status,timezone,trigger_kind,updated_at,visibility",
+  // 0121: when the caller last read a thread, upserted on (session_id, user_id).
+  "session_reads INSERT": "last_read_at,session_id,user_id,workspace_id",
+  "session_reads UPDATE": "last_read_at,session_id,user_id,workspace_id",
   "slack_installations UPDATE": "agent_id",
   "tool_connection_grants INSERT": "agent_id,granted_by,mode,slug,tool_connection_id,workspace_id",
   "tool_connection_grants UPDATE": "agent_id,mode,slug,tool_connection_id,workspace_id",
@@ -100,7 +111,20 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "user_onboarding UPDATE":
     "agent_id,assistant_emoji,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
   "workspace_members UPDATE": "role",
-  "workspaces UPDATE": "default_model,gap_report_enabled,name,slug",
+  // 0127: the icon, the clock and the weekly summary; never the deletion columns.
+  // 0131: an admin's own client writes an endpoint; the sealed secret is
+  // writable and never readable, and a delivery is the engine's alone.
+  "webhook_endpoints INSERT": "created_by,events,secret_ciphertext,url,workspace_id",
+  "webhook_endpoints UPDATE": "disabled_at,events,secret_ciphertext,updated_at,url",
+  // 0132: an admin asks for an export in their own name; the engine does the rest.
+  "workspace_exports INSERT": "requested_by,workspace_id",
+  // 0135: an admin adds a model endpoint with its key sealed, and can rename
+  // or remove it; the address and the key are never changed after the fact.
+  "workspace_model_endpoints INSERT":
+    "api_key_ciphertext,base_url,created_by,label,model,workspace_id",
+  "workspace_model_endpoints UPDATE": "deleted_at,label",
+  "workspaces UPDATE":
+    "default_model,gap_report_enabled,icon_url,name,slug,timezone,weekly_usage_email",
 };
 
 afterAll(async () => {

@@ -91,6 +91,14 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "removes somebody from the workspace, taking their access, their keys and their seat with it — not undone by revoking anything",
   "routes/workspace.ts DELETE /workspace/members/me":
     "takes the owner out of the workspace, which a revoked key cannot give back",
+  "routes/workspace.ts POST /workspace/deletion":
+    "schedules the end of a workspace a fortnight out, which outlives any revocation of the key that asked for it",
+  "routes/account.ts DELETE /account/sessions/:id":
+    "signs one of the owner's own browsers out; a key that could do it could lock the owner out of every session but the leaked one",
+  "routes/invite-links.ts POST /invite-links":
+    "mints a link anybody holding it can join with for a week, which outlives any revocation of the key that made it",
+  "routes/invite-links.ts POST /invite-links/accept":
+    "joins the owner to another workspace, access that outlives the key",
   "routes/workspace.ts POST /workspaces":
     "creates a workspace, somewhere new for the owner's data to go that the key's own workspace lock does not reach",
   "routes/workspace.ts POST /workspace/active":
@@ -133,6 +141,16 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "re-scopes a stored service credential, changing what agents may do with it from now on",
   "routes/tool-connections.ts DELETE /tool-connections/:id":
     "removes a service credential somebody's agents depend on",
+  "routes/model-endpoints.ts POST /model-endpoints":
+    "stores a credential and an address every later reply on that model is sent to, after the key is revoked",
+  "routes/model-endpoints.ts DELETE /model-endpoints/:id":
+    "takes away a model somebody's agents answer on",
+  "routes/webhooks.ts POST /webhooks":
+    "hands back a signing secret and points the workspace's events at a URL of the key-holder's choosing, which keeps receiving after the key is revoked",
+  "routes/webhooks.ts PATCH /webhooks/:id":
+    "re-points where the workspace's events are sent, or turns a webhook back on, and that outlives the key",
+  "routes/webhooks.ts POST /webhooks/:id/rotate":
+    "hands back a fresh signing secret, so whoever holds it can sign payloads as this workspace after the key is revoked",
   "routes/routines.ts POST /delivery-channels/:id/rotate":
     "hands back a fresh webhook signing secret, so whoever holds it can sign payloads to the owner's endpoint after the key is revoked",
   "routes/routines.ts PUT /routines/:id/event":
@@ -188,6 +206,21 @@ const OPEN_TO_A_KEY = new Set([
   "routes/agents.ts POST /agents",
   "routes/agents.ts PATCH /agents/:id",
   "routes/agents.ts DELETE /agents/:id",
+  "routes/agents.ts GET /agents/:id/delete-summary",
+  "routes/agents.ts GET /agents/:id/knowledge-usage",
+  "routes/home.ts GET /home/overview",
+  "routes/invite-links.ts GET /invite-links",
+  "routes/invite-links.ts DELETE /invite-links/:id",
+  "routes/account.ts GET /account/sessions",
+  "routes/account.ts GET /account/identities",
+  "routes/workspace-icons.ts PUT /workspace/icon",
+  "routes/workspace-icons.ts DELETE /workspace/icon",
+  "routes/workspace.ts GET /workspace/members",
+  "routes/workspace.ts DELETE /workspace/deletion",
+  "routes/inbox.ts GET /inbox",
+  "routes/inbox.ts GET /inbox/counts",
+  "routes/inbox.ts POST /inbox/read",
+  "routes/inbox.ts POST /inbox/read-all",
   // Changing who can use an agent is a write the owner's own policies answer
   // (only full access gets past `set_agent_sharing`), and nothing it does runs
   // on after the key is gone: a share is a row, not a job.
@@ -225,6 +258,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/connections.ts GET /connections/:id/runs",
   "routes/connections.ts POST /connections/:id/sync",
   "routes/coverage.ts GET /coverage/workspace",
+  "routes/coverage.ts GET /coverage/documents",
   "routes/coverage.ts PATCH /coverage/settings",
   "routes/coverage.ts PUT /coverage/preference",
   "routes/coverage.ts GET /coverage/preference",
@@ -236,6 +270,9 @@ const OPEN_TO_A_KEY = new Set([
   "routes/documents.ts POST /documents/:id/reindex",
   "routes/events.ts GET /events",
   "routes/export.ts GET /workspaces/:id/export",
+  "routes/export.ts GET /workspaces/:id/exports",
+  "routes/export.ts POST /workspaces/:id/exports",
+  "routes/export.ts GET /exports/:id/download",
   "routes/favorites.ts POST /agents/:id/favorite",
   "routes/favorites.ts GET /favorites",
   "routes/feedback.ts POST /feedback",
@@ -274,6 +311,15 @@ const OPEN_TO_A_KEY = new Set([
   "routes/routines.ts POST /routines/:id/run",
   "routes/routines.ts DELETE /routines/:id",
   "routes/routines.ts GET /routines/:id/runs",
+  "routes/routines.ts GET /routines/stats",
+  "routes/webhooks.ts GET /webhooks",
+  "routes/model-endpoints.ts GET /model-endpoints",
+  "routes/webhooks.ts DELETE /webhooks/:id",
+  "routes/webhooks.ts POST /webhooks/:id/test",
+  "routes/webhooks.ts POST /webhooks/deliveries/:id/resend",
+  "routes/routines.ts GET /routines/estimate",
+  "routes/routines.ts PUT /routines/:id/channels",
+  "routes/routines.ts POST /routines/:id/test",
   "routes/routines.ts GET /routines/:id/trigger",
   "routes/routines.ts POST /routines/:id/trigger",
   "routes/routines.ts DELETE /routines/:id/trigger",
@@ -284,6 +330,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/routines.ts POST /routines/:id/event/test",
   "routes/search.ts GET /search/messages",
   "routes/sessions.ts GET /sessions",
+  "routes/sessions.ts GET /sessions/table",
   "routes/sessions.ts POST /sessions",
   "routes/sessions.ts PATCH /sessions/:id",
   "routes/sessions.ts DELETE /sessions/:id",
@@ -319,6 +366,10 @@ const OUTSIDE_THE_SESSION: Record<string, string> = {
   connectionsPublic: "the OAuth provider's redirect back, which carries no bearer token",
   slackPublic: "Slack's own redirect and event deliveries, verified by signature",
   avatarsPublic: "an <img> fetching a profile photo, whose unguessable URL is the capability",
+  inviteLinkPreview:
+    "the invite page before sign-in, holding the link's token, which is the credential",
+  workspaceIconsPublic:
+    "an <img> fetching a workspace's icon, whose unguessable URL is the capability",
   composioPublic: "a logo proxy for <img> tags, serving nothing about anybody",
   routineHooks: "a third-party sender holding an ingest token, which is the credential",
   composioEvents: "Composio's trigger deliveries, verified by the webhook signature",

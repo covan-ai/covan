@@ -252,6 +252,7 @@ describe("GET /coverage/workspace", () => {
         agentId: "agent-1",
         name: "Handbook",
         emoji: "📘",
+        avatar: null,
         answers: 40,
         covered: 20,
         fallback: 18,

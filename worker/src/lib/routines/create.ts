@@ -38,6 +38,10 @@ export type CreateRoutineInput = {
   outputRetention?: number;
   /** After how many delivered runs this routine ends itself, or null for never. */
   endsAfterRuns?: number | null;
+  /** The editor's Inbox switch, model and thinking (0123). Absent is the column's default. */
+  deliverInbox?: boolean;
+  model?: string | null;
+  reasoningEffort?: string | null;
 };
 
 export type CreateRoutineResult =
@@ -130,6 +134,9 @@ export async function createRoutine(
       output_bundle_id: input.outputBundleId ?? null,
       ...(input.outputRetention !== undefined ? { output_retention: input.outputRetention } : {}),
       ends_after_runs: input.endsAfterRuns ?? null,
+      ...(input.deliverInbox !== undefined ? { deliver_inbox: input.deliverInbox } : {}),
+      model: input.model ?? null,
+      reasoning_effort: input.reasoningEffort ?? null,
       // The first run is scheduled, not immediate. Creating "every day at
       // 09:00" used to send a real message within one 5-minute tick, because
       // claim_due_routines claims anything already due and `now()` is. Use

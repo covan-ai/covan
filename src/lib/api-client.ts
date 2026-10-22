@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { ApiError, errorMessage, isNoWorkspace } from "./api-error";
+import { ApiError, errorMessage, isNoWorkspace, requestIdOf } from "./api-error";
 import { assetSrc } from "./asset-src";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message, SessionTuning } from "./agents-store";
@@ -24,6 +24,9 @@ import type {
 import type {
   Routine,
   RoutineRun,
+  RoutineListItem,
+  RoutineStats,
+  RoutineEstimate,
   DeliveryChannel,
   DeliveryChannelKind,
   CreatedDeliveryChannel,
@@ -56,6 +59,13 @@ export type Workspace = {
    * the engine would refuse.
    */
   gapReportEnabled?: boolean;
+  /** An uploaded icon (0127), or absent/null for the letter tile. */
+  iconUrl?: string | null;
+  /** The zone routines run in by default and the weekly summary is sent by. */
+  timezone?: string | null;
+  weeklyUsageEmail?: boolean;
+  /** When a requested deletion takes the workspace (epoch ms), or null. */
+  deletesAt?: number | null;
 };
 
 export type WorkspaceMember = {
@@ -158,6 +168,151 @@ export type OnboardingEvent = {
 
 export type WorkspaceSummary = { id: string; name: string; slug: string; role: string };
 
+/** What a thread in the Inbox wants from the caller (A4). */
+export type InboxNeedsYou = {
+  kind: "approval" | "question" | "login" | "routine_failed";
+  pausedTurnId?: string;
+  summary: string;
+  replies?: string[];
+  since: number;
+};
+
+/** One thread in the Inbox, as `GET /inbox` shapes it. */
+export type InboxItem = {
+  sessionId: string;
+  agentId: string;
+  title: string | null;
+  kind: string;
+  visibility: "private" | "shared";
+  ownerId: string | null;
+  ownerName: string | null;
+  /** The owner's name when the thread is somebody else's, shared with you. */
+  sharedBy: string | null;
+  preview: {
+    role: "user" | "assistant";
+    senderName: string | null;
+    text: string;
+    at: number;
+  } | null;
+  unread: boolean;
+  unreadCount: number;
+  needsYou: InboxNeedsYou | null;
+  running: {
+    stepsDone: number;
+    lastTool: string | null;
+    note: string | null;
+    since: number;
+  } | null;
+  lastActivityAt: number;
+};
+
+export type InboxFilter = "all" | "unread" | "needs_you" | "running" | "mine";
+
+export type ThreadsFilter = "all" | "mine" | "shared" | "waiting" | "running";
+
+/** One row of the Threads table. */
+export type ThreadRow = {
+  id: string;
+  agentId: string;
+  title: string | null;
+  kind: string;
+  visibility: "private" | "shared";
+  ownerId: string | null;
+  ownerName: string | null;
+  ownerAvatarUrl: string | null;
+  isMine: boolean;
+  /** The routine whose run this thread is, when it is one. */
+  routine: { id: string; name: string | null } | null;
+  state: "needs_you" | "running" | "done";
+  runningStep: number | null;
+  unread: number;
+  lastActivityAt: number;
+  createdAt: number;
+  /** What it has spent so far, in `unit`. */
+  cost: number;
+};
+
+export type ThreadsPage = {
+  rows: ThreadRow[];
+  total: number;
+  thisWeek: number;
+  allTime: number;
+  page: number;
+  pageSize: number;
+  unit: "credits" | "usd" | null;
+};
+
+/** One agent on Home's "Right now" table. */
+export type HomeAgent = {
+  agentId: string;
+  name: string;
+  avatar: string | null;
+  status: "running" | "needs_you" | "idle";
+  workingOn: {
+    sessionId: string | null;
+    title: string;
+    kind: "running" | "question" | "approval" | "login" | "routine_failed" | "last";
+    stepsDone?: number;
+    note?: string | null;
+    since: number;
+  } | null;
+  threadsWindow: number;
+  /** Admins only, in `spend.unit`. */
+  spendWindow?: number;
+};
+
+/** One row of Home's Recent activity. */
+export type ActivityItem = {
+  id: string;
+  action: string;
+  actor: { kind: "agent" | "person"; id: string | null; name: string; avatar?: string | null };
+  subjectType: string;
+  subjectId: string | null;
+  subjectLabel: string;
+  /** How many events the row stands for — three files added at once is one row. */
+  count: number;
+  detail: Record<string, unknown> | null;
+  createdAt: number;
+};
+
+/** Everything Home shows, in one read (`GET /home/overview`). */
+export type HomeOverview = {
+  user: { name: string | null; timezone: string | null };
+  workspace: { name: string | null };
+  isAdmin: boolean;
+  needsYou: { total: number; questions: number; approvals: number; other: number };
+  threads: { window: number; previous: number };
+  routineRuns: { total: number; done: number; failed: number };
+  /** Hosted only: what the workspace has left. */
+  credits?: { balance: number };
+  /** Admins only. Credits where the deployment can quote them, else dollars. */
+  spend?: {
+    unit: "credits" | "usd";
+    window: number;
+    previousWindow: number;
+    daily: Array<{ day: string; total: number; byAgent: Record<string, number> }>;
+    byAgent: Array<{ agentId: string; amount: number }>;
+  };
+  agents: HomeAgent[];
+  /** Admins only: threads each member started, counts only. */
+  team?: Array<{ userId: string; name: string | null; avatarUrl: string | null; threads: number }>;
+  activity: ActivityItem[];
+};
+
+export type InboxPage = {
+  items: InboxItem[];
+  counts: { unread: number; needsYou: number; running: number };
+  perAgentUnread: Record<string, number>;
+  hasMore: boolean;
+};
+
+export type InboxCounts = {
+  unread: number;
+  needsYou: number;
+  running: number;
+  byAgent: Record<string, { unread: number; needsYou: number; running: number }>;
+};
+
 export type PendingInvitation = {
   id: string;
   email: string;
@@ -177,6 +332,95 @@ export type PendingInvitation = {
   inviteUrl?: string;
   /** Its link ran out, or it predates links: it needs Resend to be accepted. */
   needsResend: boolean;
+  /** Who sent it — on the pending list; null when their account is gone. */
+  invitedBy?: { id: string; name: string | null } | null;
+  /** When its link runs out, on the pending list. */
+  expiresAt?: number | null;
+};
+
+/** A shared invite link, as an admin sees it (0129). The URL only on the answer that made it. */
+/**
+ * A workspace's own OpenAI-compatible endpoint (0135): "gpt-5-mini via
+ * acme-openai-proxy · Endpoint · no price" (A10). `modelId` is what a model
+ * field holds to mean it.
+ */
+export type ModelEndpoint = {
+  id: string;
+  modelId: string;
+  label: string;
+  model: string;
+  host: string;
+  createdBy: string | null;
+  createdAt: number;
+};
+
+/** "20 October 2026 · 184 MB · requested by Mina · Download" (A27). */
+export type WorkspaceExport = {
+  id: string;
+  status: "queued" | "running" | "ready" | "failed" | "expired";
+  sizeBytes: number | null;
+  error: string | null;
+  requestedBy: { id: string; name: string | null } | null;
+  /** Whether the caller asked for it — only they may download it. */
+  mine: boolean;
+  createdAt: number;
+  finishedAt: number | null;
+  expiresAt: number | null;
+};
+
+/** The events a webhook can be told about (0131). */
+export const WEBHOOK_EVENTS = [
+  "thread.finished",
+  "agent.needs_you",
+  "routine.failed",
+  "document.created",
+] as const;
+export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
+
+/** An endpoint the workspace's events are sent to. The secret is never here. */
+export type WebhookEndpoint = {
+  id: string;
+  url: string;
+  events: WebhookEvent[];
+  createdBy: string | null;
+  createdAt: number;
+  enabled: boolean;
+};
+
+/** One event to one endpoint, and how its last try went. */
+export type WebhookDelivery = {
+  id: string;
+  endpointId: string;
+  event: WebhookEvent | "webhook.test";
+  /** `failed` gave up after its last try; `dropped` met an endpoint turned off. */
+  status: "pending" | "ok" | "failed" | "dropped";
+  attempt: number;
+  statusCode: number | null;
+  latencyMs: number | null;
+  error: string | null;
+  createdAt: number;
+  deliveredAt: number | null;
+};
+
+export type InviteLink = {
+  id: string;
+  role: "member" | "viewer";
+  createdBy: string | null;
+  createdAt: number;
+  expiresAt: number;
+  uses: number;
+  url?: string;
+};
+
+/** What an invite link opens, before sign-in. */
+export type InviteLinkPreview = {
+  workspaceName: string;
+  inviterName: string | null;
+  role: string;
+  memberCount: number;
+  agentCount: number;
+  expiresAt: number;
+  open: boolean;
 };
 
 export type InvitationPreview = {
@@ -187,6 +431,10 @@ export type InvitationPreview = {
   role: string;
   /** False once it has expired or been revoked. */
   open: boolean;
+  /** 0129: what the invitation card says about the workspace (A23). */
+  memberCount?: number | null;
+  agentCount?: number | null;
+  expiresAt?: number | null;
 };
 
 export type IncomingInvitation = {
@@ -354,12 +602,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      message = errorMessage(res.status, await res.json(), res.statusText);
+      body = await res.json();
+      message = errorMessage(res.status, body, res.statusText);
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, requestIdOf(res, body));
   }
 
   if (res.status === 204) {
@@ -392,12 +642,14 @@ async function sendForm<T>(method: string, path: string, file: Blob): Promise<T>
   });
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      message = errorMessage(res.status, await res.json(), res.statusText);
+      body = await res.json();
+      message = errorMessage(res.status, body, res.statusText);
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, requestIdOf(res, body));
   }
   return (await res.json()) as T;
 }
@@ -569,6 +821,40 @@ function uploadWithProgress<T>(
   });
 }
 
+/**
+ * A zip from the API, saved by the browser.
+ *
+ * Fetched with the bearer token and handed over as a blob, the way a document
+ * download is — an `<a href>` cannot carry an Authorization header, and a
+ * token in a query string would be in every log between here and the Worker.
+ * The filename is the server's, which knows the workspace and the date.
+ */
+async function downloadArchive(path: string): Promise<void> {
+  const token = await getAccessToken();
+  const res = await fetch(`${import.meta.env.VITE_API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      message = errorMessage(res.status, await res.json(), res.statusText);
+    } catch {
+      // A failure that is not JSON is still a failure; keep the status text.
+    }
+    throw new ApiError(res.status, message);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filenameFrom(res.headers.get("Content-Disposition")) ?? "covan-export.zip";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   /**
    * A recording from the composer, back as text. Sent through the multipart
@@ -583,6 +869,8 @@ export const api = {
     create: (input: {
       name: string;
       emoji?: string;
+      /** One of the eight marks; left out, the agent wears its monogram. */
+      avatar?: string | null;
       model?: string;
       persona?: string;
       mode?: "normal" | "brainstorm";
@@ -594,11 +882,34 @@ export const api = {
       patch: Partial<
         Pick<
           Agent,
-          "name" | "emoji" | "model" | "persona" | "mode" | "temperature" | "reasoningEffort"
+          | "name"
+          | "emoji"
+          | "avatar"
+          | "model"
+          | "persona"
+          | "mode"
+          | "temperature"
+          | "reasoningEffort"
         >
       >,
     ): Promise<Agent> => request("PATCH", `/agents/${id}`, patch),
     remove: (id: string): Promise<void> => request("DELETE", `/agents/${id}`),
+    /**
+     * What a delete takes with it, for the delete dialog's sentence (A25).
+     * 403 for anyone who could not delete it.
+     */
+    deleteSummary: (id: string): Promise<{ threads: number; routines: number; folders: number }> =>
+      request("GET", `/agents/${id}/delete-summary`),
+    /** For each folder the agent reads, the replies in the window that cited it (A32). */
+    knowledgeUsage: (
+      id: string,
+      days = 30,
+    ): Promise<{
+      byBundle: Record<string, { replies: number }>;
+      /** Its replies in the window, and the share not grounded in a passage (0134). */
+      answers: number;
+      notCoveredPct: number | null;
+    }> => request("GET", `/agents/${id}/knowledge-usage?days=${days}`),
     /**
      * Who can reach the agent, and how far. The list is the whole list: anybody
      * left out of `shares` loses their row. 403 for anyone short of Full access.
@@ -751,8 +1062,55 @@ export const api = {
   favorites: {
     list: (): Promise<string[]> => request("GET", "/favorites"),
   },
+  home: {
+    overview: (days = 7): Promise<HomeOverview> =>
+      request("GET", days === 7 ? "/home/overview" : `/home/overview?days=${days}`),
+  },
+  inbox: {
+    list: (
+      opts: {
+        filter?: InboxFilter;
+        agentId?: string;
+        before?: number;
+        limit?: number;
+      } = {},
+    ): Promise<InboxPage> => {
+      const q = new URLSearchParams();
+      if (opts.filter && opts.filter !== "all") q.set("filter", opts.filter);
+      if (opts.agentId) q.set("agent", opts.agentId);
+      if (opts.before) q.set("before", String(opts.before));
+      if (opts.limit) q.set("limit", String(opts.limit));
+      const qs = q.toString();
+      return request("GET", qs ? `/inbox?${qs}` : "/inbox");
+    },
+    counts: (): Promise<InboxCounts> => request("GET", "/inbox/counts"),
+    markRead: (sessionId: string): Promise<{ ok: true }> =>
+      request("POST", "/inbox/read", { sessionId }),
+    markAllRead: (): Promise<{ ok: true; marked: number }> => request("POST", "/inbox/read-all"),
+  },
   sessions: {
     list: (): Promise<ChatSession[]> => request("GET", "/sessions"),
+    /** One page of the Threads table (A5), with each thread's dot, owner and cost. */
+    table: (
+      opts: {
+        filter?: ThreadsFilter;
+        agentId?: string;
+        q?: string;
+        sort?: "activity" | "created" | "title";
+        page?: number;
+        pageSize?: number;
+      } = {},
+    ): Promise<ThreadsPage> => {
+      const q = new URLSearchParams();
+      if (opts.filter && opts.filter !== "all") q.set("filter", opts.filter);
+      if (opts.agentId) q.set("agent", opts.agentId);
+      if (opts.q) q.set("q", opts.q);
+      if (opts.sort && opts.sort !== "activity") q.set("sort", opts.sort);
+      if (opts.page) q.set("page", String(opts.page));
+      if (opts.pageSize) q.set("pageSize", String(opts.pageSize));
+      const qs = q.toString();
+      return request("GET", qs ? `/sessions/table?${qs}` : "/sessions/table");
+    },
     create: (input: {
       agentId: string;
       title?: string;
@@ -918,7 +1276,16 @@ export const api = {
       name?: string;
       slug?: string;
       defaultModel?: string | null;
+      timezone?: string | null;
+      weeklyUsageEmail?: boolean;
     }): Promise<Workspace> => request("PATCH", "/workspace", patch),
+    /** PNG, JPEG or WebP, at most 2 MB. Admins only. */
+    setIcon: (file: Blob): Promise<{ iconUrl: string }> => sendForm("PUT", "/workspace/icon", file),
+    removeIcon: (): Promise<{ iconUrl: null }> => request("DELETE", "/workspace/icon"),
+    /** Fourteen days' notice; every member is told. The name must match exactly. */
+    requestDeletion: (name: string): Promise<{ deletesAt: number | null }> =>
+      request("POST", "/workspace/deletion", { name }),
+    cancelDeletion: (): Promise<{ ok: true }> => request("DELETE", "/workspace/deletion"),
     setActive: (workspaceId: string): Promise<{ ok: true }> =>
       request("POST", "/workspace/active", { workspaceId }),
     /**
@@ -934,32 +1301,11 @@ export const api = {
      * two files called `export.zip` in a downloads folder are two files nobody
      * can tell apart.
      */
-    exportArchive: async (workspaceId: string): Promise<void> => {
-      const token = await getAccessToken();
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/workspaces/${workspaceId}/export`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) {
-        let message = res.statusText;
-        try {
-          message = errorMessage(res.status, await res.json(), res.statusText);
-        } catch {
-          // A failure that is not JSON is still a failure; keep the status text.
-        }
-        throw new ApiError(res.status, message);
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filenameFrom(res.headers.get("Content-Disposition")) ?? "covan-export.zip";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    },
+    exportArchive: (workspaceId: string): Promise<void> =>
+      downloadArchive(`/workspaces/${workspaceId}/export`),
     members: {
+      /** Everybody in the workspace, for the Team table (A3). */
+      list: (): Promise<TeamMember[]> => request("GET", "/workspace/members"),
       updateRole: (userId: string, role: WorkspaceRole): Promise<{ ok: true }> =>
         request("PATCH", `/workspace/members/${userId}`, { role }),
       remove: (userId: string): Promise<{ ok: true }> =>
@@ -978,6 +1324,75 @@ export const api = {
        */
       leave: (): Promise<{ ok: true }> => request("DELETE", "/workspace/members/me"),
     },
+  },
+  modelEndpoints: {
+    /** Every member sees them, so a picker can offer them. */
+    list: (): Promise<ModelEndpoint[]> => request("GET", "/model-endpoints"),
+    /** An admin's. The key is sealed on the server and never comes back. */
+    create: (input: {
+      label: string;
+      model: string;
+      baseUrl: string;
+      apiKey?: string;
+    }): Promise<ModelEndpoint> => request("POST", "/model-endpoints", input),
+    /** Agents on it answer on the default model from then on. */
+    remove: (id: string): Promise<void> => request("DELETE", `/model-endpoints/${id}`),
+  },
+  exports: {
+    /** The workspace's earlier exports, for its admins. */
+    list: (workspaceId: string): Promise<WorkspaceExport[]> =>
+      request("GET", `/workspaces/${workspaceId}/exports`),
+    /** Prepared in the background; the requester is emailed when it is ready. */
+    request: (workspaceId: string): Promise<WorkspaceExport> =>
+      request("POST", `/workspaces/${workspaceId}/exports`),
+    /** The file, for whoever asked for it, handed to the browser as `exportArchive` is. */
+    download: (exportId: string): Promise<void> => downloadArchive(`/exports/${exportId}/download`),
+  },
+  webhooks: {
+    /** The endpoints, and the last day of deliveries. Empty for a member. */
+    list: (): Promise<{
+      events: WebhookEvent[];
+      endpoints: WebhookEndpoint[];
+      deliveries: WebhookDelivery[];
+    }> => request("GET", "/webhooks"),
+    /** The signing secret is in this answer and nowhere else. */
+    create: (input: {
+      url: string;
+      events: WebhookEvent[];
+    }): Promise<WebhookEndpoint & { secret: string }> => request("POST", "/webhooks", input),
+    update: (
+      id: string,
+      patch: { url?: string; events?: WebhookEvent[]; enabled?: boolean },
+    ): Promise<WebhookEndpoint> => request("PATCH", `/webhooks/${id}`, patch),
+    remove: (id: string): Promise<void> => request("DELETE", `/webhooks/${id}`),
+    /** A new secret, shown once; the old one stops at once. */
+    rotate: (id: string): Promise<WebhookEndpoint & { secret: string }> =>
+      request("POST", `/webhooks/${id}/rotate`),
+    /** One signed POST now. Resolves with how it went. */
+    test: (
+      id: string,
+    ): Promise<{
+      deliveryId: string;
+      status: WebhookDelivery["status"];
+      statusCode?: number | null;
+      latencyMs?: number | null;
+      error?: string | null;
+    }> => request("POST", `/webhooks/${id}/test`),
+    /** A delivery that gave up, sent again from its first try. */
+    resend: (deliveryId: string): Promise<void> =>
+      request("POST", `/webhooks/deliveries/${deliveryId}/resend`),
+  },
+  inviteLinks: {
+    list: (): Promise<InviteLink[]> => request("GET", "/invite-links"),
+    /** A new link; its URL is in this answer and nowhere else. */
+    create: (role: "member" | "viewer" = "member"): Promise<InviteLink & { url: string }> =>
+      request("POST", "/invite-links", { role }),
+    remove: (id: string): Promise<{ ok: true }> => request("DELETE", `/invite-links/${id}`),
+    /** Before sign-in: the link's token is the proof. */
+    preview: (token: string): Promise<InviteLinkPreview> =>
+      request("POST", "/invite-links/preview", { token }),
+    accept: (token: string): Promise<{ workspaceId: string }> =>
+      request("POST", "/invite-links/accept", { token }),
   },
   invitations: {
     list: (): Promise<PendingInvitation[]> => request("GET", "/invitations"),
@@ -1155,7 +1570,38 @@ export const api = {
     remove: (): Promise<void> => request("DELETE", "/slack/installation"),
   },
   routines: {
-    list: (): Promise<Routine[]> => request("GET", "/routines"),
+    list: (): Promise<RoutineListItem[]> => request("GET", "/routines"),
+    /** The list's footer, over the runs the caller can see. */
+    stats: (days = 7): Promise<RoutineStats> => request("GET", `/routines/stats?days=${days}`),
+    /** What a run would cost, from the agent's own work, priced at `model` if given. */
+    estimate: (q: {
+      agentId: string;
+      routineId?: string;
+      model?: string;
+      cron?: string;
+      timezone?: string;
+    }): Promise<RoutineEstimate> => {
+      const params = new URLSearchParams({ agentId: q.agentId });
+      for (const key of ["routineId", "model", "cron", "timezone"] as const) {
+        const value = q[key];
+        if (value) params.set(key, value);
+      }
+      return request("GET", `/routines/estimate?${params}`);
+    },
+    /** Where it delivers after its primary channel; the whole list, replaced. */
+    setChannels: (id: string, channelIds: string[]): Promise<{ channelIds: string[] }> =>
+      request("PUT", `/routines/${id}/channels`, { channelIds }),
+    /**
+     * "Run a test": a run that goes only to its owner, as a private thread.
+     * Resolves when it ends, with the run it wrote.
+     */
+    test: (
+      id: string,
+    ): Promise<{
+      status: "ok" | "skipped" | "failed" | "waiting";
+      itemsNew: number;
+      run: RoutineRun | null;
+    }> => request("POST", `/routines/${id}/test`),
     /**
      * `confirmation` is there when the routine brought a new address with it
      * that is not the caller's own: it has been mailed a link, and nothing is
@@ -1232,9 +1678,27 @@ export const api = {
     request("GET", `/usage/credits/ledger?limit=${limit}`),
   workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
   coverage: {
-    /** Admin only; 403 otherwise. `days` is clamped to 1–365 on both sides. */
-    workspace: (days = 30): Promise<CoverageResponse> =>
-      request("GET", `/coverage/workspace?days=${days}`),
+    /**
+     * Admin only; 403 otherwise. `days` is clamped to 1–365 on both sides. With
+     * `agentId`, that agent's bar alone and its counts as the totals.
+     */
+    workspace: (days = 30, agentId?: string): Promise<CoverageResponse> =>
+      request(
+        "GET",
+        `/coverage/workspace?days=${days}${agentId ? `&agentId=${encodeURIComponent(agentId)}` : ""}`,
+      ),
+    /**
+     * "Documents worth revisiting": older than three months and cited in the
+     * window, most used first. Numbers only cross private threads.
+     */
+    documents: (
+      days = 30,
+      agentId?: string,
+    ): Promise<{ days: number; documents: RevisitDocument[] }> =>
+      request(
+        "GET",
+        `/coverage/documents?days=${days}${agentId ? `&agentId=${encodeURIComponent(agentId)}` : ""}`,
+      ),
     /** The workspace's own switch. Admin only; 403 otherwise. */
     setEnabled: (enabled: boolean): Promise<{ ok: true }> =>
       request("PATCH", "/coverage/settings", { enabled }),
@@ -1409,6 +1873,13 @@ export const api = {
      * when it arrives.
      */
     close: (): Promise<{ ok: true }> => request("DELETE", "/account"),
+    /** Where this account is signed in. */
+    sessions: (): Promise<AccountSession[]> => request("GET", "/account/sessions"),
+    /** Signs another browser out; refuses the one asking. */
+    revokeSession: (id: string): Promise<{ ok: true }> =>
+      request("DELETE", `/account/sessions/${id}`),
+    /** The providers this account signs in with. */
+    identities: (): Promise<AccountIdentity[]> => request("GET", "/account/identities"),
   },
   notifications: {
     get: (): Promise<NotificationPreferences> => request("GET", "/notification-preferences"),
@@ -1505,7 +1976,8 @@ export type FeedbackDraft = {
   messageId?: string;
 };
 
-export type TrashKind = "agent" | "bundle" | "document";
+/** What can sit in Recently deleted: 0040's three, and threads and routines since 0125. */
+export type TrashKind = "agent" | "bundle" | "document" | "session" | "routine";
 
 export type TrashItem = {
   kind: TrashKind;
@@ -1551,6 +2023,43 @@ export type EventPage = {
 export type NotificationPreferences = {
   routinePaused: boolean;
   quotaExhausted: boolean;
+  /** 0128: "Email me when" — an agent needs me and I have been away an hour. */
+  needsMeAway: boolean;
+  routineFailed: boolean;
+  /** The Monday-morning summary; off until somebody turns it on. */
+  weeklySummary: boolean;
+};
+
+/** One member as the Team table shows them (A3). */
+export type TeamMember = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  role: WorkspaceRole;
+  /** How many agents they can use. */
+  agents: number;
+  lastSeenAt: number | null;
+  joinedAt: number | null;
+  /** Made the workspace. A label, not a role. */
+  isOwner: boolean;
+};
+
+/** A browser this account is signed in on (A16 › Security). */
+export type AccountSession = {
+  id: string;
+  device: string;
+  browser: string;
+  current: boolean;
+  createdAt: number;
+  lastSeenAt: number | null;
+};
+
+export type AccountIdentity = {
+  provider: string;
+  email: string | null;
+  connectedAt: number;
+  lastSignInAt: number | null;
 };
 
 export type AgentUsage = {
@@ -1721,6 +2230,8 @@ export type CoverageAgent = {
   agentId: string;
   name: string;
   emoji: string | null;
+  /** The agent's mark (0120), or null for its monogram. */
+  avatar: string | null;
   answers: number;
   covered: number;
   fallback: number;
@@ -1742,8 +2253,22 @@ export type CoverageResponse = {
   available: boolean;
   /** The window these figures cover, in days, after clamping. */
   days: number;
+  /** The one agent asked for, or null for all of them. */
+  agentId?: string | null;
   totals: CoverageTotals;
   agents: CoverageAgent[];
+};
+
+/** A row of "Documents worth revisiting" (A18, A32). */
+export type RevisitDocument = {
+  documentId: string;
+  name: string;
+  bundleId: string;
+  bundleName: string;
+  createdAt: number;
+  /** Replies that cited it in the window. */
+  uses: number;
+  readBy: Array<{ agentId: string; name: string; avatar: string | null }>;
 };
 
 export type ApiKey = {

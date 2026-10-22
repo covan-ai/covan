@@ -17,6 +17,7 @@ import { runRoutineTool } from "./tools/run-routine";
 import { findToolTool } from "./tools/find-tool";
 import { runToolTool } from "./tools/run-tool";
 import { writeDocumentTool } from "./tools/write-document";
+import { askPersonTool } from "./tools/ask-person";
 
 /**
  * Every tool an agent can be given, in one list.
@@ -446,6 +447,7 @@ export const TOOLS: AgentTool[] = [
   watchEventTool,
   runRoutineTool,
   writeDocumentTool,
+  askPersonTool,
 ];
 
 export function toolByName(name: string): AgentTool | null {

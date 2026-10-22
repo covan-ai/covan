@@ -25,7 +25,27 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "routes/invitation-preview.ts",
     "the /invite page asks before anybody has signed in, so there is no auth.uid() for RLS to resolve, and invitation_preview (0114) is granted to service_role only because no definer function answers the anon key (0084). The route makes that one call and nothing else; the function answers only when the invitation's id and the hash of the mailed token match together, and returns two names, a role, the invited address and whether it is open",
   ],
+  [
+    "routes/invite-links.ts",
+    "invite_link_preview (0129), for invitation-preview.ts' reason: /invite asks before anybody has signed in, so there is no auth.uid() for RLS to resolve, and the function is granted to service_role only. The preview route makes that one call and nothing else; the function answers only for the hash of the token the visitor holds, and returns the workspace's name, two counts, the link's maker's name, a role and when it runs out. Every other route in the file uses the caller's own client",
+  ],
   ["lib/supabase.ts", "defines it — the one place the service key becomes a client"],
+  [
+    "lib/reports/needs-you.ts",
+    "the away-for-an-hour reminder (0133): the tick has no caller. claim_needs_you_reminders (service_role only) decides who is away and who said yes, and hands back for each person only their own thread's title, its agent's name and what waits on them, which goes to that person's own address, looked up through the admin API. Nothing else is read",
+  ],
+  [
+    "lib/reports/weekly-summary.ts",
+    "Monday's summary (0133): the tick has no caller. With the service role it only claims the week (claim_weekly_summaries, service_role only), lists the workspace's members and their weekly_summary switch, and looks up addresses; every number in an email is read through userClient with a short token in its recipient's own name, so it is what their Home would show them",
+  ],
+  [
+    "lib/export/job.ts",
+    "the export engine (0132): the tick has no caller, so it claims with claim_due_workspace_exports (service_role only), looks up the requester's address through the admin API, and writes each export's outcome on the row it claimed. It reads nothing of the workspace this way: the archive is collected through userClient with a short token in the requester's own name, held to the workspace by covan_ws, so it holds exactly what they could see",
+  ],
+  [
+    "lib/webhooks/dispatcher.ts",
+    "the webhook engine (0131): the background tick has no caller, so no JWT for RLS to resolve, and claim_due_webhook_deliveries is granted to service_role alone because it hands back the sealed secret. Its writes are each try's outcome on the row it claimed. The one send with a caller behind it, a test, is bounded to the id enqueue_webhook_test returned to that caller, which it returns only to an admin of the endpoint's workspace",
+  ],
   [
     "lib/docs/enqueue.ts",
     "the one insert into document_jobs, which 0102 gives no client role a write on: a client that could write a job could put words in `sources` that every section is then written from, or name another workspace's bundle. It decides nothing a caller sent: before the insert, the bundle is checked writable and in the workspace, and the conversation is read, all through the caller's own client; the row is then written with exactly the workspace, agent, session and user those reads established",
@@ -295,6 +315,10 @@ describe("the RLS bypass", () => {
  */
 const RECEIVES_THE_SERVICE_CLIENT = new Map([
   [
+    "lib/model-endpoints.ts",
+    "the chat route, the routine engine and the document engine hand it their service client to open a workspace endpoint's sealed key (0135), which no client role may read. It reads one row, by the id the model column names and the workspace the request already runs in, and writes nothing",
+  ],
+  [
     "lib/composio/verify.ts",
     "POST /composio/complete hands it the service client after it has found the row by its nonce and checked it is the caller's: its one write is verified_at and verify_error, keyed to that row's id, and both columns are granted to no client role for update (0072)",
   ],
@@ -361,6 +385,14 @@ const RECEIVES_THE_SERVICE_CLIENT = new Map([
   [
     "lib/harness/turn.ts",
     "parks and resumes a turn: paused_turns has no client write grant, and every row is keyed to a message and session the route resolved through the caller's own client",
+  ],
+  [
+    "lib/deletion.ts",
+    "lists the stored files of workspaces that are about to be deleted — the caller's own when they close their account (routes/account.ts, which has already decided which workspaces are theirs alone to delete) and those whose fourteen days' notice ran out (lib/purge.ts, on the cron with no caller). It reads knowledge_bundles and documents keyed to those workspace ids, writes nothing, and returns storage keys",
+  ],
+  [
+    "lib/active-turns.ts",
+    "says a turn is running where the rest of the workspace can see it (0122): active_turns has no client write grant, for paused_turns' reason, and every write is keyed to the one session the route already resolved through the caller's own client — upserted when the turn starts, moved along by its own steps, deleted when it ends",
   ],
   [
     "routes/chat-turn.ts",

@@ -85,9 +85,9 @@ export type TurnDialProps = {
   onChange: (patch: SessionTuning) => void;
 };
 
-/** "medium" → "Medium", "minimal" → "Off": what the Thinking chip says. */
+/** "medium" → "Standard", "minimal" → "Off": what the Thinking chip says. */
 const thinkingWord = (effort: ReasoningEffort | null) =>
-  effort == null ? "Auto" : effort === "minimal" ? "Off" : effortWord(effort);
+  effort == null ? "Auto" : effortWord(effort);
 
 const modeWord = (mode: "normal" | "brainstorm") =>
   mode === "brainstorm" ? "Brainstorm" : "Normal";

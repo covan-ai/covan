@@ -389,6 +389,23 @@ export async function runOneRoutine(
 }
 
 /**
+ * Try a routine once, for its owner alone — "Run a test" (0130).
+ *
+ * `runOneRoutine` with the executor told it is a test: the same source, model
+ * and charge, and a result that goes to a private thread and nowhere else.
+ * What a test leaves alone is listed on the executor's `isTest`.
+ */
+export async function runTestRoutine(
+  env: RoutineEnv,
+  routine: RoutineRow,
+  overrides: Partial<DispatcherDeps> = {},
+): Promise<RunResult> {
+  const db = overrides.db ?? serviceClient(env);
+  const runRoutine = overrides.runRoutine ?? defaultRunRoutine;
+  return runRoutine(routine, { ...executorDeps(env, db), trigger: "test" });
+}
+
+/**
  * Run one routine because something poked it.
  *
  * Separate from `runOneRoutine` because the two differ in what they may not

@@ -31,17 +31,17 @@ describe("ModelTierPicker", () => {
 
     const group = screen.getByRole("radiogroup", { name: "Model" });
     expect(group).toHaveTextContent("Fast");
-    expect(group).toHaveTextContent("Quick answers, lowest cost");
-    expect(group).toHaveTextContent("Balanced");
-    expect(group).toHaveTextContent("Smartest");
-    expect(screen.getByRole("radio", { name: /Balanced/ })).toHaveAttribute("aria-checked", "true");
+    expect(group).toHaveTextContent("Short answers, simple lookups.");
+    expect(group).toHaveTextContent("Standard");
+    expect(group).toHaveTextContent("Best");
+    expect(screen.getByRole("radio", { name: /Standard/ })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("radio", { name: /Fast/ })).toHaveAttribute("aria-checked", "false");
   });
 
   it("hands back the model behind the word", async () => {
     const { onChange } = renderPicker("claude-sonnet-5");
 
-    await userEvent.click(screen.getByRole("radio", { name: /Smartest/ }));
+    await userEvent.click(screen.getByRole("radio", { name: /Best/ }));
     expect(onChange).toHaveBeenCalledWith("claude-opus-5");
   });
 
@@ -49,8 +49,8 @@ describe("ModelTierPicker", () => {
     renderPicker("claude-haiku-4-5", ["gpt-4.1", "claude-haiku-4-5"]);
 
     expect(screen.getByRole("radio", { name: /Fast/ })).toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: /Balanced/ })).toBeNull();
-    expect(screen.queryByRole("radio", { name: /Smartest/ })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /Standard/ })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /Best/ })).toBeNull();
   });
 
   it("shows a model that is no tier as Custom, with its id, rather than as nothing", () => {
@@ -59,7 +59,7 @@ describe("ModelTierPicker", () => {
     const custom = screen.getByRole("radio", { name: /Custom/ });
     expect(custom).toHaveAttribute("aria-checked", "true");
     expect(custom).toHaveTextContent("gpt-4.1");
-    for (const word of ["Fast", "Balanced", "Smartest"]) {
+    for (const word of ["Fast", "Standard", "Best"]) {
       expect(screen.getByRole("radio", { name: new RegExp(word) })).toHaveAttribute(
         "aria-checked",
         "false",

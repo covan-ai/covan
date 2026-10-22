@@ -677,6 +677,7 @@ function listingDb(opts: {
   bundle: { id: string } | null;
   documents?: Array<Record<string, unknown>>;
   documentsError?: boolean;
+  people?: Array<{ id: string; name: string | null }>;
 }) {
   const calls = { ordered: [] as Array<{ column: string; ascending?: boolean }> };
   const db = {
@@ -685,6 +686,16 @@ function listingDb(opts: {
         return {
           select: () => ({
             eq: () => ({ maybeSingle: async () => ({ data: opts.bundle, error: null }) }),
+          }),
+        };
+      }
+      if (table === "profiles") {
+        return {
+          select: () => ({
+            in: async (_column: string, ids: string[]) => ({
+              data: (opts.people ?? []).filter((p) => ids.includes(p.id)),
+              error: null,
+            }),
           }),
         };
       }
@@ -738,9 +749,26 @@ describe("GET /bundles/:id/documents", () => {
         bundleId: "bundle-1",
         connectionId: null,
         externalUrl: null,
+        createdBy: null,
       },
     ]);
     expect(calls.ordered).toEqual([{ column: "created_at", ascending: false }]);
+  });
+
+  it("names who put each file there", async () => {
+    const { db } = listingDb({
+      bundle: { id: "bundle-1" },
+      documents: [row({ created_by: "user-2" }), row({ id: "doc-2", created_by: "user-gone" })],
+      people: [{ id: "user-2", name: "Elif" }],
+    });
+
+    const res = await appWithDb(db).request("/bundles/bundle-1/documents");
+    const body = (await res.json()) as Array<{ createdBy: unknown }>;
+
+    expect(body.map((d) => d.createdBy)).toEqual([
+      { id: "user-2", name: "Elif" },
+      { id: "user-gone", name: null },
+    ]);
   });
 
   // The whole point of the endpoint: a bundle nobody has attached has contents,

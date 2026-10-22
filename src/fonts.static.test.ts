@@ -27,10 +27,10 @@ describe("web fonts", () => {
   it("are declared locally, with a weight range per family", () => {
     const css = source("src/fonts.css");
 
-    // Two families. The range is what makes one variable file serve 400–600
+    // One family. The range is what makes one variable file serve 400–600
     // rather than three copies of itself.
-    expect(css).toMatch(/font-family:\s*"DM Sans"/);
     expect(css).toMatch(/font-family:\s*"Geist"/);
+    expect(css).not.toMatch(/font-family:\s*"DM Sans"/);
     expect(css).toMatch(/font-weight:\s*400 600/);
 
     // Without swap, the fallback is invisible text while the file arrives.

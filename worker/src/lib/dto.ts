@@ -82,14 +82,44 @@ export type DocumentDTO = {
   /** Passages embedded so far, and how many there will be, while it runs. */
   indexProgress?: { done: number; total: number } | null;
   indexError?: string | null;
+  /**
+   * Who uploaded it (0037), on the explorer's listing only: null for a file a
+   * source synced or a routine wrote, or whose uploader's account is gone.
+   */
+  createdBy?: { id: string; name: string | null } | null;
 };
 
 export type IndexStatus = "queued" | "indexing" | "ready" | "partial" | "failed";
+
+/**
+ * The eight marks an agent's face can be (0120, DESIGN.md §5). The same list
+ * as the column's check and as `AGENT_MARKS` in src/components/agent-mark.tsx.
+ */
+export const AVATAR_MARKS = [
+  "headset",
+  "fox",
+  "owl",
+  "bear",
+  "cat",
+  "robot",
+  "penguin",
+  "blob",
+] as const;
+
+export type AvatarMark = (typeof AVATAR_MARKS)[number];
+
+export function asAvatarMark(value: unknown): AvatarMark | null {
+  return typeof value === "string" && (AVATAR_MARKS as readonly string[]).includes(value)
+    ? (value as AvatarMark)
+    : null;
+}
 
 export type AgentDTO = {
   id: string;
   name: string;
   emoji: string | null;
+  /** The agent's mark (0120); null draws its monogram. */
+  avatar: AvatarMark | null;
   model: string | null;
   persona: string | null;
   mode: "normal" | "brainstorm";
@@ -389,6 +419,11 @@ export type MessageDTO = {
    */
   outcome?: string;
   /**
+   * What the reply asks the person (0122): a question and up to three answers
+   * to press. Present only on a reply that ended on `ask_person`.
+   */
+  ask?: { question: string; replies: string[] };
+  /**
    * What the reply did before it wrote, when it did anything.
    *
    * Absent on every reply that ran no tool, which is most of them and all of
@@ -397,6 +432,13 @@ export type MessageDTO = {
    */
   steps?: MessageStepDTO[];
 };
+
+/** The dot beside a thread (0122): waiting on you, running, or neither. */
+export type SessionState = "needs_you" | "running" | "done";
+
+export function asSessionState(value: unknown): SessionState {
+  return value === "needs_you" || value === "running" ? value : "done";
+}
 
 export type ChatSessionDTO = {
   id: string;
@@ -417,6 +459,9 @@ export type ChatSessionDTO = {
   reasoningEffort: ReasoningEffort | null;
   webSearch: boolean | null;
   mode: "normal" | "brainstorm" | null;
+  /** On `GET /sessions` only: the thread's dot, and how many messages are unread. */
+  state?: SessionState;
+  unread?: number;
 };
 
 export type WorkspaceSummaryDTO = { id: string; name: string; slug: string; role: string };
@@ -445,6 +490,12 @@ export type PendingInvitationDTO = {
    * Accepting needs a new one: `POST /invitations/:id/resend`.
    */
   needsResend: boolean;
+  /**
+   * Who sent it and when it runs out, for the Invitations tab (A3). On the
+   * pending list only; null when the inviter's account is gone.
+   */
+  invitedBy?: { id: string; name: string | null } | null;
+  expiresAt?: number | null;
 };
 
 export type ApiKeyDTO = {
@@ -533,6 +584,13 @@ export type MeDTO = {
     defaultModel: string | null;
     /** Whether this workspace has turned the coverage gap report on. */
     gapReportEnabled: boolean;
+    /** The icon an admin uploaded (0127), or null for the letter tile. */
+    iconUrl: string | null;
+    /** The zone routines run in by default and the summary is sent by. */
+    timezone: string | null;
+    weeklyUsageEmail: boolean;
+    /** When a requested deletion takes the workspace, or null. */
+    deletesAt: number | null;
   };
   members: Array<{
     id: string;
@@ -741,6 +799,7 @@ export function mapAgent(row: {
   id: string;
   name: string;
   emoji: string | null;
+  avatar?: string | null;
   model: string | null;
   persona: string | null;
   mode?: string | null;
@@ -779,6 +838,7 @@ export function mapAgent(row: {
     id: row.id,
     name: row.name,
     emoji: row.emoji,
+    avatar: asAvatarMark(row.avatar),
     model: row.model,
     persona: row.persona,
     mode: row.mode === "brainstorm" ? "brainstorm" : "normal",
@@ -840,6 +900,7 @@ export function mapMessage(row: {
   reasoning_tokens?: number | null;
   model?: string | null;
   outcome?: string | null;
+  ask?: unknown;
   /** The embedded `message_steps` rows, when the caller asked for them. */
   message_steps?: unknown;
 }): MessageDTO {
@@ -866,7 +927,18 @@ export function mapMessage(row: {
     ...(row.model ? { model: row.model } : {}),
     ...(row.outcome ? { outcome: row.outcome } : {}),
     ...(steps.length > 0 ? { steps } : {}),
+    ...askField(row.ask),
   };
+}
+
+/** `messages.ask` as the DTO carries it, or nothing when it is absent or misshapen. */
+function askField(value: unknown): { ask?: { question: string; replies: string[] } } {
+  const a = value as { question?: unknown; replies?: unknown } | null | undefined;
+  if (!a || typeof a.question !== "string") return {};
+  const replies = Array.isArray(a.replies)
+    ? a.replies.filter((r): r is string => typeof r === "string")
+    : [];
+  return { ask: { question: a.question, replies } };
 }
 
 /**
@@ -1128,6 +1200,19 @@ export type RoutineDTO = {
   browserConversationId: string | null;
   status: "active" | "paused" | "completed";
   pausedReason: string | null;
+  /** Who paused it, by hand (0123) — null for a pause the engine made. */
+  pausedBy: string | null;
+  pausedAt: number | null;
+  /** Whether each run is also a thread in the Inbox (0123). */
+  deliverInbox: boolean;
+  /** The model and thinking it runs on (0123); null is its agent's. */
+  model: string | null;
+  reasoningEffort: ReasoningEffort | null;
+  /**
+   * The channels it delivers to after `deliveryChannelId` (0130). Ids only:
+   * a channel is its owner's to read, so a colleague sees how many, not where.
+   */
+  channelIds: string[];
   nextRunAt: number | null;
   lastRunAt: number | null;
   createdAt: number;
@@ -1162,6 +1247,13 @@ export function mapRoutine(row: {
   browser_conversation_id?: string | null;
   status: string;
   paused_reason: string | null;
+  paused_by?: string | null;
+  paused_at?: string | null;
+  deliver_inbox?: boolean | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  /** The `routine_channels` embed `ROUTINE_SELECT` asks for. */
+  channels?: Array<{ delivery_channel_id: string }> | null;
   next_run_at: string | null;
   last_run_at: string | null;
   created_at: string;
@@ -1205,6 +1297,16 @@ export function mapRoutine(row: {
     status:
       row.status === "paused" ? "paused" : row.status === "completed" ? "completed" : "active",
     pausedReason: row.paused_reason ?? null,
+    pausedBy: row.paused_by ?? null,
+    pausedAt: row.paused_at ? toEpochMs(row.paused_at) : null,
+    // On unless it says off: the column's default, and what a row read
+    // without it was.
+    deliverInbox: row.deliver_inbox !== false,
+    model: row.model || null,
+    reasoningEffort: (REASONING_EFFORTS as readonly string[]).includes(row.reasoning_effort ?? "")
+      ? (row.reasoning_effort as ReasoningEffort)
+      : null,
+    channelIds: (row.channels ?? []).map((c) => c.delivery_channel_id),
     nextRunAt: row.next_run_at ? toEpochMs(row.next_run_at) : null,
     lastRunAt: row.last_run_at ? toEpochMs(row.last_run_at) : null,
     createdAt: toEpochMs(row.created_at),
@@ -1266,15 +1368,20 @@ export type RoutineRunDTO = {
   model: string | null;
   /**
    * What started this run (0109): the cron, Run now, a webhook, an event, a
-   * reply. Null for runs recorded before the column existed.
+   * reply, or "Run a test" (0130). Null for runs recorded before the column
+   * existed.
    */
-  triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply" | null;
+  triggeredBy: "schedule" | "manual" | "webhook" | "event" | "reply" | "test" | null;
   /** "Gmail · New mail", for an event run. Null for the rest. */
   triggerLabel: string | null;
+  /** The thread this run is shown in (0123), when it has one. */
+  sessionId: string | null;
+  /** What the routine's other channels missed (0130). */
+  deliveryNote: string | null;
   startedAt: number;
 };
 
-const TRIGGER_SOURCES = ["schedule", "manual", "webhook", "event", "reply"] as const;
+const TRIGGER_SOURCES = ["schedule", "manual", "webhook", "event", "reply", "test"] as const;
 
 export function mapRoutineRun(row: {
   id: string;
@@ -1290,6 +1397,8 @@ export function mapRoutineRun(row: {
   model?: string | null;
   triggered_by?: string | null;
   trigger_label?: string | null;
+  session_id?: string | null;
+  delivery_note?: string | null;
   started_at: string;
 }): RoutineRunDTO {
   return {
@@ -1318,6 +1427,8 @@ export function mapRoutineRun(row: {
       ? (row.triggered_by as RoutineRunDTO["triggeredBy"])
       : null,
     triggerLabel: row.trigger_label || null,
+    sessionId: row.session_id ?? null,
+    deliveryNote: row.delivery_note || null,
     startedAt: toEpochMs(row.started_at),
   };
 }

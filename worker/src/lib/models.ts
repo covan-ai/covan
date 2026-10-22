@@ -290,10 +290,48 @@ export const DEFAULT_MODEL = "gpt-4.1";
 export type ModelEnv = {
   OPENAI_MODEL?: string;
   ANTHROPIC_API_KEY?: string;
+  /** The workspace endpoint this request was routed to, if any (0135). */
+  MODEL_ENDPOINT?: { id: string };
+};
+
+/**
+ * A workspace's own endpoint (0135), named in a model column as
+ * `endpoint:<id>`. Internally that is the model's id everywhere — the
+ * reply's `model`, the spend, the picker — and only the completion call
+ * itself swaps in the endpoint's address and the model's name there
+ * (`lib/completion.ts`).
+ */
+export const ENDPOINT_PREFIX = "endpoint:";
+const ENDPOINT_ID = /^endpoint:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** For a request schema: an id this build serves, or a workspace endpoint's. */
+export const ENDPOINT_MODEL_PATTERN = ENDPOINT_ID;
+
+export function isEndpointModel(model: string | null | undefined): boolean {
+  return typeof model === "string" && ENDPOINT_ID.test(model);
+}
+
+export function endpointModelId(endpointId: string): string {
+  return `${ENDPOINT_PREFIX}${endpointId}`;
+}
+
+/**
+ * What a model behind somebody's own OpenAI-compatible endpoint is taken to
+ * do: answer the OpenAI way, with tools — which vLLM, LiteLLM, OpenRouter and
+ * Ollama's tool-capable models all do — and without a separate thinking step
+ * or a hosted search, which none of them promise.
+ */
+const ENDPOINT_SPEC: ModelSpec = {
+  provider: "openai",
+  temperature: true,
+  reasoning: false,
+  tools: true,
+  webSearchTool: null,
 };
 
 /** What this build knows about `model`, or undefined if it is not one of ours. */
 export function modelSpec(model: string | null | undefined): ModelSpec | undefined {
+  if (isEndpointModel(model)) return ENDPOINT_SPEC;
   return model ? SPECS[model as ModelId] : undefined;
 }
 
@@ -471,6 +509,13 @@ export function titleModelFor(model: string, env?: ModelEnv): string {
 }
 
 export function resolveModel(model: string | null | undefined, env?: ModelEnv): string {
+  // An endpoint is served only once the request has been routed to it
+  // (`withModelEndpoint`); unrouted — or gone — it is an unserveable pick,
+  // and gets the default below like any other.
+  if (isEndpointModel(model)) {
+    if (model && env?.MODEL_ENDPOINT?.id === model) return model;
+    return env?.OPENAI_MODEL || DEFAULT_MODEL;
+  }
   const spec = modelSpec(model);
   if (spec?.provider === "anthropic" && anthropicEnabled(env)) return model as string;
   // A Claude pick with no key for it falls through from here rather than

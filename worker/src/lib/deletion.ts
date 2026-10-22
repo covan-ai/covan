@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { chunked, readAllPages } from "./batch";
+import { storedKeysOf } from "./document-text";
 
 /**
  * Calling the soft-delete and restore functions, and turning their refusals
@@ -44,6 +46,9 @@ export async function callDeletionFn(
   if (error.code === "42501") return { status: 403, message: FALLBACK["42501"] };
   if (error.code === "P0002") return { status: 404, message: FALLBACK.P0002 };
   if (error.code === "P0001") return { status: 400, message: error.message };
+  // A restore that cannot happen yet — a thread whose agent is still in the
+  // trash (0125). The database's sentence says what to do first.
+  if (error.code === "22023") return { status: 400, message: error.message };
 
   console.error(`${fn} failed`, error);
   return { status: 500, message: whenBroken };
@@ -63,6 +68,9 @@ export const RESTORABLE = {
     restore: "restore_document",
     arg: "p_document_id",
   },
+  // 0125: a thread or a routine deleted on its own, its owner's to restore.
+  session: { del: "soft_delete_session", restore: "restore_session", arg: "p_session_id" },
+  routine: { del: "soft_delete_routine", restore: "restore_routine", arg: "p_routine_id" },
 } as const;
 
 export type Restorable = keyof typeof RESTORABLE;
@@ -73,3 +81,58 @@ export function isRestorable(kind: string): kind is Restorable {
 
 /** How long a deleted thing waits before the sweeper takes it for real. */
 export const RETENTION_DAYS = 30;
+
+/**
+ * Every stored object about to lose the row that names it: the documents of
+ * these workspaces, for closing an account (`routes/account.ts`) and for a
+ * workspace whose notice ran out (`lib/purge.ts`).
+ *
+ * Best-effort on the read as well as the write: a workspace whose bundles or
+ * documents cannot be listed still gets deleted, because refusing to close an
+ * account over a storage bookkeeping problem would be the worse failure. What
+ * it costs is bytes nobody can reach, and the log line says which.
+ */
+export async function storedKeysForWorkspaces(
+  admin: SupabaseClient,
+  workspaceIds: string[],
+): Promise<string[]> {
+  if (workspaceIds.length === 0) return [];
+
+  const { data: bundles, error: bundlesError } = await admin
+    .from("knowledge_bundles")
+    .select("id")
+    .in("workspace_id", workspaceIds);
+
+  if (bundlesError) {
+    console.error("workspace deletion: could not list bundles to clean up", bundlesError);
+    return [];
+  }
+
+  // The exports somebody asked for (0132), whose files outlive no workspace.
+  const keys: string[] = [];
+  const { data: exports, error: exportsError } = await admin
+    .from("workspace_exports")
+    .select("object_key")
+    .in("workspace_id", workspaceIds);
+  if (exportsError) console.error("workspace deletion: could not list exports", exportsError);
+  for (const x of exports ?? []) if (x.object_key) keys.push(x.object_key as string);
+
+  const bundleIds = (bundles ?? []).map((b) => b.id as string);
+  if (bundleIds.length === 0) return keys;
+
+  // In hundreds and page by page (`lib/batch.ts`): one list of every bundle
+  // was a URL the gateway refused past a couple of hundred, and one read of
+  // every document stopped at a thousand without saying so. Either way the
+  // files of an account with that much in it outlived the account.
+  for (const ids of chunked(bundleIds)) {
+    const docs = await readAllPages<{ r2_key: string | null }>((from, to) =>
+      admin.from("documents").select("r2_key").in("bundle_id", ids).order("id").range(from, to),
+    );
+    if (docs === null) {
+      console.error("workspace deletion: could not list documents to clean up");
+      continue;
+    }
+    for (const d of docs) if (d.r2_key) keys.push(...storedKeysOf(d.r2_key));
+  }
+  return keys;
+}

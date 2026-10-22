@@ -52,6 +52,9 @@ invitationPreview.post("/invitations/preview", async (c) => {
       email: string;
       role: string;
       open: boolean;
+      member_count?: number;
+      agent_count?: number;
+      expires_at?: string;
     }[]
   )[0];
   if (!row) return c.json({ error: "not an invitation" }, 404);
@@ -62,6 +65,10 @@ invitationPreview.post("/invitations/preview", async (c) => {
     email: row.email,
     role: row.role,
     open: row.open,
+    // 0129: what the invitation card says about the workspace (A23).
+    memberCount: row.member_count ?? null,
+    agentCount: row.agent_count ?? null,
+    expiresAt: row.expires_at ? Date.parse(row.expires_at) : null,
   });
 });
 

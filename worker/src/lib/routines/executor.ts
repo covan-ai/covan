@@ -19,6 +19,8 @@ import {
   type EmailThread,
 } from "./delivery";
 import { deliverToOtherChannels } from "./other-channels";
+import { routineFailedEmail } from "../emails/away";
+import { appUrlFrom, mailerFrom, type Mailer } from "../reports/mailer";
 import { EVENT_DELIVERED, EVENT_PAUSED, EVENT_QUOTA_EXHAUSTED } from "./webhook";
 import { NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER, type FilingInput, type FilingResult } from "./filing";
 import type { CoverageRunInput, CoverageRunResult } from "./coverage-source";
@@ -413,6 +415,11 @@ export type ExecutorDeps = {
   trigger?: string;
   /** What the routine's owner may spend. Unmetered on a self-hosted install. */
   entitlements: Entitlements;
+  /**
+   * How "A routine fails" reaches its owner's inbox (0133). Absent means the
+   * deployment's own mail, if it has any; null means none.
+   */
+  mail?: Mailer | null;
   now: () => Date;
 };
 
@@ -1730,6 +1737,39 @@ async function finish(
 
   if (pausedByFailures) {
     await announcePause(routine, deps, String(patch.paused_reason));
+  } else if (outcome.status === "failed" && routine.consecutive_failures === 0) {
+    // The first failure in a row, and only that one: a routine that keeps
+    // failing is one email, and pausing is announced on its own above.
+    await announceFailure(routine, deps, outcome.error ?? "something went wrong");
+  }
+}
+
+/**
+ * "A routine fails" (A16): an email to the owner's own address, if they
+ * have not turned it off. Best-effort, for `notifyOwner`'s reason.
+ */
+async function announceFailure(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  error: string,
+): Promise<void> {
+  try {
+    const mail = deps.mail === undefined ? mailerFrom(deps.env) : deps.mail;
+    if (!mail) return;
+    if (!(await wantsNotice(deps.db, routine.user_id, "routine_failed"))) return;
+    const { data } = await deps.db.auth.admin.getUserById(routine.user_id);
+    const email = data?.user?.email;
+    if (!email) return;
+    await mail(
+      routineFailedEmail({
+        email,
+        routineName: routine.name,
+        error,
+        url: `${appUrlFrom(deps.env as { ALLOWED_ORIGIN?: string })}/routines/${routine.id}`,
+      }),
+    );
+  } catch (err) {
+    console.error("routine: the failure email did not go", err);
   }
 }
 
@@ -2045,18 +2085,20 @@ async function notifyOwner(
 async function wantsNotice(
   db: SupabaseClient,
   userId: string,
-  kind: "routine_paused" | "quota_exhausted",
+  kind: "routine_paused" | "quota_exhausted" | "routine_failed",
 ): Promise<boolean> {
   try {
     const { data, error } = await db
       .from("notification_preferences")
-      .select("routine_paused, quota_exhausted")
+      .select("routine_paused, quota_exhausted, routine_failed")
       .eq("user_id", userId)
       .maybeSingle();
     if (error || !data) return true;
     return kind === "routine_paused"
       ? data.routine_paused !== false
-      : data.quota_exhausted !== false;
+      : kind === "quota_exhausted"
+        ? data.quota_exhausted !== false
+        : data.routine_failed !== false;
   } catch {
     return true;
   }

@@ -31,6 +31,14 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
   ],
   ["lib/supabase.ts", "defines it — the one place the service key becomes a client"],
   [
+    "lib/reports/needs-you.ts",
+    "the away-for-an-hour reminder (0133): the tick has no caller. claim_needs_you_reminders (service_role only) decides who is away and who said yes, and hands back for each person only their own thread's title, its agent's name and what waits on them, which goes to that person's own address, looked up through the admin API. Nothing else is read",
+  ],
+  [
+    "lib/reports/weekly-summary.ts",
+    "Monday's summary (0133): the tick has no caller. With the service role it only claims the week (claim_weekly_summaries, service_role only), lists the workspace's members and their weekly_summary switch, and looks up addresses; every number in an email is read through userClient with a short token in its recipient's own name, so it is what their Home would show them",
+  ],
+  [
     "lib/export/job.ts",
     "the export engine (0132): the tick has no caller, so it claims with claim_due_workspace_exports (service_role only), looks up the requester's address through the admin API, and writes each export's outcome on the row it claimed. It reads nothing of the workspace this way: the archive is collected through userClient with a short token in the requester's own name, held to the workspace by covan_ws, so it holds exactly what they could see",
   ],

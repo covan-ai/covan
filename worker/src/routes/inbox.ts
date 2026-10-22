@@ -4,6 +4,7 @@ import type { AppEnv } from "../types";
 import { callerWorkspaceId } from "../lib/workspace";
 import { toEpochMs } from "../lib/dto";
 import { deferred } from "../lib/defer";
+import { apiKeyIdOf } from "../lib/api-key-rule";
 
 /**
  * The Inbox (A4, A20): every thread the caller can see, newest activity first,
@@ -249,6 +250,10 @@ inbox.get("/inbox", async (c) => {
 inbox.get("/inbox/counts", async (c) => {
   const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ unread: 0, needsYou: 0, running: 0, byAgent: {} });
+  // The sidebar asks every thirty seconds while the app is in view, which is
+  // what "away" is measured against (0133). A key polling for a script is
+  // not somebody being here.
+  if (!apiKeyIdOf(c)) deferred(c, touchPresence(c.get("db"), workspaceId));
   const counts = await readCounts(c.get("db"), workspaceId);
   if (!counts) return c.json({ error: "failed to count the inbox" }, 500);
   return c.json(counts);

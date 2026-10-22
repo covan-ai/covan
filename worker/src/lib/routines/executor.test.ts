@@ -2683,3 +2683,36 @@ describe("a test run (0130)", () => {
     expect(inserts.find((i) => i.table === "chat_sessions")).toBeDefined();
   });
 });
+
+describe("telling the owner a routine failed (0133)", () => {
+  async function failOnce(over: Partial<RoutineRow>, prefs: Record<string, unknown> | null = null) {
+    fetchImpl = vi.fn(async () => new Response("down", { status: 500 }));
+    const { db } = makeDb({ rows: { notification_preferences: prefs } });
+    db.auth = {
+      admin: { getUserById: async () => ({ data: { user: { email: "ada@acme.test" } } }) },
+    };
+    const mail = vi.fn(async () => {});
+    await runRoutine(
+      routine({
+        cursor: { seenKeys: [], lastPublishedAt: null, etag: null, contentHash: null },
+        ...over,
+      }),
+      { ...makeDeps(db), mail, env: { ALLOWED_ORIGIN: "https://app.covan.test" } } as any,
+    );
+    return mail;
+  }
+
+  it("emails on the first failure in a row, with a link to the routine", async () => {
+    const mail = await failOnce({});
+    expect(mail).toHaveBeenCalledOnce();
+    const email = (mail.mock.calls[0] as any)[0];
+    expect(email.to).toBe("ada@acme.test");
+    expect(email.subject).toBe("“r/saas” failed");
+    expect(email.text).toContain("https://app.covan.test/routines/r1");
+  });
+
+  it("does not again while it keeps failing, nor when the owner said no", async () => {
+    expect(await failOnce({ consecutive_failures: 1 })).not.toHaveBeenCalled();
+    expect(await failOnce({}, { routine_failed: false })).not.toHaveBeenCalled();
+  });
+});

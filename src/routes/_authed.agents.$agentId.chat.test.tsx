@@ -1891,10 +1891,10 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
       await renderChat();
 
       // By its tier's word, on the chip and under the composer alike.
-      expect(await screen.findByLabelText("Model: Smartest")).toBeInTheDocument();
-      expect(await screen.findByLabelText("Thinking: High")).toBeInTheDocument();
+      expect(await screen.findByLabelText("Model: Best")).toBeInTheDocument();
+      expect(await screen.findByLabelText("Thinking: Extended")).toBeInTheDocument();
       expect(screen.getByLabelText("Web search: Off")).toBeInTheDocument();
-      expect(screen.getByText(/GTM Agent · Smartest · High ·/)).toBeInTheDocument();
+      expect(screen.getByText(/GTM Agent · Best · Extended ·/)).toBeInTheDocument();
     } finally {
       Object.assign(session, { model: null, reasoningEffort: null });
     }
@@ -1905,7 +1905,7 @@ describe("the dial beside the question", { timeout: 20_000 }, () => {
     await renderChat();
 
     fireEvent.keyDown(screen.getByLabelText("Model: gpt-4.1"), { key: "Enter" });
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /Smartest/ }));
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: /Best/ }));
 
     await waitFor(() =>
       expect(tuneSession).toHaveBeenCalledWith("session-1", { model: "claude-opus-5" }),

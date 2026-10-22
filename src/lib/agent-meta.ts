@@ -76,7 +76,7 @@ export const MODELS = [
  * available (`gpt-4o-mini`) and one Select away for anyone who wants it.
  *
  * Since the picker grew tiers this is the *fallback*, not the usual answer:
- * `startingModelFor` seeds the Balanced tier wherever the install serves it,
+ * `startingModelFor` seeds the Standard tier wherever the install serves it,
  * and lands here on an install without an Anthropic key — which is why this
  * must stay an OpenAI id, and why `agent-meta.test.ts` pins that.
  */
@@ -86,35 +86,35 @@ export const DEFAULT_NEW_AGENT_MODEL = "gpt-4.1-mini";
  * The three choices a person who does not know the model names is offered.
  *
  * Thirteen ids in a Select is a question most people cannot answer; a tester
- * who was not an engineer said as much. Three words they can — fast, balanced,
- * smartest — each standing for one model this build is confident in, with the
+ * who was not an engineer said as much. Three words they can — fast, standard,
+ * best — each standing for one model this build is confident in, with the
  * full list a disclosure away for anyone who wants an id.
  *
- * The descriptions are the pricing table in words (haiku < sonnet < opus per
- * reply), not a promise about any one answer. Absolute, like `COST_BANDS`:
+ * The descriptions say what each tier is for, in the words of the agent's
+ * Configuration page; the price beside them comes from the server. Absolute, like `COST_BANDS`:
  * adding a model to the catalogue moves none of these.
  *
  * One provider for all three on purpose. Mixing providers across tiers would
  * mean tool use, thinking and web search behaving differently between "fast"
- * and "balanced" for reasons the words do not explain.
+ * and "standard" for reasons the words do not explain.
  */
 export const MODEL_TIERS = [
   {
     id: "fast",
     label: "Fast",
-    description: "Quick answers, lowest cost",
+    description: "Short answers, simple lookups.",
     model: "claude-haiku-4-5",
   },
   {
-    id: "balanced",
-    label: "Balanced",
-    description: "Good at most things",
+    id: "standard",
+    label: "Standard",
+    description: "Reads documents, drafts replies, follows multi-step instructions.",
     model: "claude-sonnet-5",
   },
   {
-    id: "smartest",
-    label: "Smartest",
-    description: "Hardest questions, highest cost",
+    id: "best",
+    label: "Best",
+    description: "Long research, careful writing, browser work.",
     model: "claude-opus-5",
   },
 ] as const;
@@ -143,8 +143,8 @@ export function modelLabel(model: string): string {
 
 /**
  * Where a new agent starts: the workspace's own default when it has named
- * one, else the Balanced tier wherever this install serves it, else
- * `DEFAULT_NEW_AGENT_MODEL`. Balanced rather than Fast because most people
+ * one, else the Standard tier wherever this install serves it, else
+ * `DEFAULT_NEW_AGENT_MODEL`. Standard rather than Fast because most people
  * accept the default, and the default decides what the product feels like;
  * the cheaper tier is one press away.
  */
@@ -153,8 +153,8 @@ export function startingModelFor(
   workspaceDefault: string | null | undefined,
 ): string {
   if (workspaceDefault) return workspaceDefault;
-  const balanced = MODEL_TIERS[1].model;
-  return available?.includes(balanced) ? balanced : DEFAULT_NEW_AGENT_MODEL;
+  const standard = MODEL_TIERS[1].model;
+  return available?.includes(standard) ? standard : DEFAULT_NEW_AGENT_MODEL;
 }
 
 /**
@@ -240,14 +240,26 @@ export function effortLevelOf(effort: ReasoningEffort | null | undefined): DialE
   return effort === "low" || effort === "medium" || effort === "high" ? effort : null;
 }
 
-/** "medium" → "Medium", for a chip and a sentence. */
+/**
+ * The word the Thinking chip and the agent's Configuration use for an effort:
+ * Off, Brief, Standard, Extended. The stored values stay the API's
+ * (`minimal`…`high`); only what a person reads changes.
+ */
+export const EFFORT_WORDS: Record<ReasoningEffort, string> = {
+  minimal: "Off",
+  low: "Brief",
+  medium: "Standard",
+  high: "Extended",
+};
+
+/** "medium" → "Standard", for a chip and a sentence. */
 export function effortWord(effort: ReasoningEffort): string {
-  return effort === "minimal" ? "Thinking off" : effort[0].toUpperCase() + effort.slice(1);
+  return EFFORT_WORDS[effort];
 }
 
 /**
  * What a conversation is answered with, in the few words a chip has room for:
- * `Smartest · Medium`, or `gpt-4.1` alone — the tier's word where the model
+ * `Best · Standard`, or `gpt-4.1` alone — the tier's word where the model
  * is a tier (`modelLabel`), the id where it is not.
  *
  * The effort is dropped on a model that does not reason, and not because it

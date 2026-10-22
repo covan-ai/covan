@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, FileText, Library, Undo2 } from "lucide-react";
+import { Bot, FileText, Library, MessageSquare, Repeat, Undo2 } from "lucide-react";
 import { SectionHeading } from "@/components/page-container";
 import { DataRow, EmptyState } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,8 @@ const ICONS: Record<TrashKind, typeof Bot> = {
   agent: Bot,
   bundle: Library,
   document: FileText,
+  session: MessageSquare,
+  routine: Repeat,
 };
 
 /**

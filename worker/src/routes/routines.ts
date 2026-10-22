@@ -1,4 +1,5 @@
 import { Hono, type Context } from "hono";
+import { callDeletionFn } from "../lib/deletion";
 import { z } from "zod";
 import type { AppEnv } from "../types";
 import { serviceClient } from "../lib/supabase";
@@ -955,8 +956,18 @@ routines.delete("/routines/:id", async (c) => {
       console.error("could not release a deleted routine's event subscription", err);
     }
   }
-  const { error } = await db.from("routines").delete().eq("id", c.req.param("id"));
-  if (error) return c.json({ error: "failed to delete routine" }, 500);
+  // Into the thirty-day trash (0125); it comes back paused if restored.
+  const failure = await callDeletionFn(
+    db,
+    "soft_delete_routine",
+    { p_routine_id: c.req.param("id") },
+    "failed to delete routine",
+  );
+  if (failure) {
+    const message =
+      failure.status === 403 ? "only whoever made a routine can delete it" : failure.message;
+    return c.json({ error: message }, failure.status);
+  }
   return c.body(null, 204);
 });
 

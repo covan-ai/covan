@@ -206,9 +206,31 @@ export async function runPurge(env: Bindings): Promise<PurgeResult> {
   }
 
   const db = serviceClient(env);
-  const result = await purgeExpired({ db, store, horizon: defaultHorizon() });
+  const horizon = defaultHorizon();
+  const result = await purgeExpired({ db, store, horizon });
+  await sweepDeletedThreadsAndRoutines(db, horizon);
   await sweepStaleTurns(db);
   return result;
+}
+
+/**
+ * Threads and routines deleted on their own (0125), thirty days on. Neither
+ * owns a stored object — a thread's documents are in folders, a routine's
+ * filings too — so the rows are all there is to take; their messages and runs
+ * go with them by cascade. In hundreds, for `chunked`'s reason.
+ */
+export async function sweepDeletedThreadsAndRoutines(
+  db: ReturnType<typeof serviceClient>,
+  horizon: Date,
+): Promise<void> {
+  const cutoff = horizon.toISOString();
+  for (const table of ["chat_sessions", "routines"] as const) {
+    const ids = await idsOlderThan(db, table, cutoff);
+    for (const batch of chunked(ids)) {
+      const { error } = await db.from(table).delete().in("id", batch);
+      if (error) console.error(`purge: failed to delete expired ${table}`, error);
+    }
+  }
 }
 
 /**

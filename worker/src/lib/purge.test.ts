@@ -254,3 +254,39 @@ describe("the horizon", () => {
     expect(log).not.toContain("store delete inside/1");
   });
 });
+
+describe("threads and routines deleted on their own (0125)", () => {
+  it("are taken for good once they are older than the horizon", async () => {
+    const { sweepDeletedThreadsAndRoutines } = await import("./purge");
+    const listed: string[] = [];
+    const deleted: Array<{ table: string; ids: string[] }> = [];
+    const db = {
+      from(table: string) {
+        return {
+          select: () => ({
+            lt: async (column: string, cutoff: string) => {
+              listed.push(`${table}.${column}<${cutoff}`);
+              return {
+                data: table === "chat_sessions" ? [{ id: "s1" }, { id: "s2" }] : [],
+                error: null,
+              };
+            },
+          }),
+          delete: () => ({
+            in: async (_c: string, ids: string[]) => {
+              deleted.push({ table, ids });
+              return { error: null };
+            },
+          }),
+        };
+      },
+    };
+    const horizon = new Date("2026-09-22T00:00:00.000Z");
+    await sweepDeletedThreadsAndRoutines(db as never, horizon);
+    expect(listed).toEqual([
+      "chat_sessions.deleted_at<2026-09-22T00:00:00.000Z",
+      "routines.deleted_at<2026-09-22T00:00:00.000Z",
+    ]);
+    expect(deleted).toEqual([{ table: "chat_sessions", ids: ["s1", "s2"] }]);
+  });
+});

@@ -291,6 +291,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/routines.ts POST /routines/:id/event/test",
   "routes/search.ts GET /search/messages",
   "routes/sessions.ts GET /sessions",
+  "routes/sessions.ts GET /sessions/table",
   "routes/sessions.ts POST /sessions",
   "routes/sessions.ts PATCH /sessions/:id",
   "routes/sessions.ts DELETE /sessions/:id",

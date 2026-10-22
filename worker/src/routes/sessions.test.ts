@@ -822,3 +822,142 @@ describe("GET /sessions — the dot beside each thread (0122)", () => {
     expect(body[0]!.state).toBeUndefined();
   });
 });
+
+describe("DELETE /sessions/:id — into the trash (0125)", () => {
+  function deleting(answer: { error: { code: string; message: string } | null }) {
+    const asked: Array<Record<string, unknown>> = [];
+    const { app } = appWith({
+      rpc: {
+        soft_delete_session: (args) => {
+          asked.push(args);
+          return { data: null, error: answer.error };
+        },
+      },
+    });
+    return { app, asked };
+  }
+
+  it("puts the starter's thread in Recently deleted", async () => {
+    const { app, asked } = deleting({ error: null });
+    const res = await app.request("/sessions/session-1", { method: "DELETE" });
+    expect(res.status).toBe(200);
+    expect(asked).toEqual([{ p_session_id: "session-1" }]);
+  });
+
+  it("tells anybody else that only the starter may", async () => {
+    const { app } = deleting({ error: { code: "42501", message: "no" } });
+    const res = await app.request("/sessions/session-1", { method: "DELETE" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "only whoever started a thread can delete it" });
+  });
+});
+
+describe("GET /sessions/table — the Threads page (A5)", () => {
+  const ROW = {
+    id: "s1",
+    agent_id: "a1",
+    user_id: "user-1",
+    title: "Refund policy for EU orders",
+    visibility: "private",
+    kind: "chat",
+    routine_id: null,
+    updated_at: "2026-10-22T09:00:00.000Z",
+    created_at: "2026-10-22T08:00:00.000Z",
+  };
+
+  function table(over: { rows?: unknown[]; inbox?: unknown[] } = {}) {
+    const asked: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const { app, fake } = appWith({
+      tables: {
+        profiles: {
+          select: (ctx) =>
+            ctx.filters.some((f) => f.kind === "in")
+              ? { data: [{ id: "user-1", name: "Mina Kaya", avatar_url: null }], error: null }
+              : { data: { active_workspace_id: "ws-1" }, error: null },
+        },
+        workspace_members: { select: () => ({ data: { workspace_id: "ws-1" }, error: null }) },
+        chat_sessions: {
+          select: (ctx) =>
+            ctx.range
+              ? { data: over.rows ?? [ROW], error: null, count: 312 }
+              : {
+                  data: null,
+                  error: null,
+                  count: ctx.filters.some((f) => f.column === "created_at") ? 48 : 312,
+                },
+        },
+        routines: { select: () => ({ data: [{ id: "r1", name: "Daily digest" }], error: null }) },
+      },
+      rpc: {
+        session_states: (args) => {
+          asked.push({ name: "session_states", args });
+          return {
+            data: [{ session_id: "s1", state: "needs_you", unread: 1, running_steps: null }],
+            error: null,
+          };
+        },
+        session_token_totals: (args) => {
+          asked.push({ name: "session_token_totals", args });
+          return {
+            data: [
+              {
+                session_id: "s1",
+                model: "gpt-4.1",
+                prompt_tokens: 1000,
+                completion_tokens: 100,
+                cached_tokens: 0,
+                cache_write_tokens: 0,
+              },
+            ],
+            error: null,
+          };
+        },
+        inbox_rows: (args) => {
+          asked.push({ name: "inbox_rows", args });
+          return { data: over.inbox ?? [], error: null };
+        },
+      },
+    });
+    return { app, fake, asked };
+  }
+
+  it("answers a page with each thread's dot, owner and cost, and the two counts", async () => {
+    const { app } = table();
+    const res = await app.request("/sessions/table?page=1&pageSize=25");
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ total: 312, thisWeek: 48, allTime: 312, unit: "usd" });
+    expect((body.rows as unknown[])[0]).toMatchObject({
+      id: "s1",
+      ownerName: "Mina Kaya",
+      isMine: true,
+      state: "needs_you",
+      unread: 1,
+      routine: null,
+    });
+    expect((body.rows as Array<{ cost: number }>)[0]!.cost).toBeGreaterThan(0);
+  });
+
+  it("filters Mine and Shared with me by owner, and searches titles literally", async () => {
+    const { app, fake } = table();
+    await app.request("/sessions/table?filter=shared&q=50%25_off");
+    const page = fake.callsTo("chat_sessions").find((c) => c.range)!;
+    expect(page.filters).toEqual(
+      expect.arrayContaining([
+        { column: "visibility", value: "shared", kind: "eq" },
+        { column: "user_id", value: "user-1", kind: "neq" },
+        { column: "title", value: "%50\\%\\_off%", kind: "ilike" },
+      ]),
+    );
+  });
+
+  it("cuts Waiting from the Inbox's own read, and answers an empty page when nothing waits", async () => {
+    const { app, fake, asked } = table({ inbox: [] });
+    const res = await app.request("/sessions/table?filter=waiting");
+    expect(asked[0]).toMatchObject({ name: "inbox_rows", args: { p_filter: "needs_you" } });
+    const page = fake.callsTo("chat_sessions").find((c) => c.range)!;
+    expect(page.filters.find((f) => f.kind === "in")?.value).toEqual([
+      "00000000-0000-0000-0000-000000000000",
+    ]);
+    expect(res.status).toBe(200);
+  });
+});

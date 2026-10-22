@@ -44,6 +44,9 @@ export async function callDeletionFn(
   if (error.code === "42501") return { status: 403, message: FALLBACK["42501"] };
   if (error.code === "P0002") return { status: 404, message: FALLBACK.P0002 };
   if (error.code === "P0001") return { status: 400, message: error.message };
+  // A restore that cannot happen yet — a thread whose agent is still in the
+  // trash (0125). The database's sentence says what to do first.
+  if (error.code === "22023") return { status: 400, message: error.message };
 
   console.error(`${fn} failed`, error);
   return { status: 500, message: whenBroken };
@@ -63,6 +66,9 @@ export const RESTORABLE = {
     restore: "restore_document",
     arg: "p_document_id",
   },
+  // 0125: a thread or a routine deleted on its own, its owner's to restore.
+  session: { del: "soft_delete_session", restore: "restore_session", arg: "p_session_id" },
+  routine: { del: "soft_delete_routine", restore: "restore_routine", arg: "p_routine_id" },
 } as const;
 
 export type Restorable = keyof typeof RESTORABLE;

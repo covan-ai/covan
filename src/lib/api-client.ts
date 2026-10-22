@@ -198,6 +198,40 @@ export type InboxItem = {
 
 export type InboxFilter = "all" | "unread" | "needs_you" | "running" | "mine";
 
+export type ThreadsFilter = "all" | "mine" | "shared" | "waiting" | "running";
+
+/** One row of the Threads table. */
+export type ThreadRow = {
+  id: string;
+  agentId: string;
+  title: string | null;
+  kind: string;
+  visibility: "private" | "shared";
+  ownerId: string | null;
+  ownerName: string | null;
+  ownerAvatarUrl: string | null;
+  isMine: boolean;
+  /** The routine whose run this thread is, when it is one. */
+  routine: { id: string; name: string | null } | null;
+  state: "needs_you" | "running" | "done";
+  runningStep: number | null;
+  unread: number;
+  lastActivityAt: number;
+  createdAt: number;
+  /** What it has spent so far, in `unit`. */
+  cost: number;
+};
+
+export type ThreadsPage = {
+  rows: ThreadRow[];
+  total: number;
+  thisWeek: number;
+  allTime: number;
+  page: number;
+  pageSize: number;
+  unit: "credits" | "usd" | null;
+};
+
 /** One agent on Home's "Right now" table. */
 export type HomeAgent = {
   agentId: string;
@@ -919,6 +953,27 @@ export const api = {
   },
   sessions: {
     list: (): Promise<ChatSession[]> => request("GET", "/sessions"),
+    /** One page of the Threads table (A5), with each thread's dot, owner and cost. */
+    table: (
+      opts: {
+        filter?: ThreadsFilter;
+        agentId?: string;
+        q?: string;
+        sort?: "activity" | "created" | "title";
+        page?: number;
+        pageSize?: number;
+      } = {},
+    ): Promise<ThreadsPage> => {
+      const q = new URLSearchParams();
+      if (opts.filter && opts.filter !== "all") q.set("filter", opts.filter);
+      if (opts.agentId) q.set("agent", opts.agentId);
+      if (opts.q) q.set("q", opts.q);
+      if (opts.sort && opts.sort !== "activity") q.set("sort", opts.sort);
+      if (opts.page) q.set("page", String(opts.page));
+      if (opts.pageSize) q.set("pageSize", String(opts.pageSize));
+      const qs = q.toString();
+      return request("GET", qs ? `/sessions/table?${qs}` : "/sessions/table");
+    },
     create: (input: {
       agentId: string;
       title?: string;
@@ -1671,7 +1726,8 @@ export type FeedbackDraft = {
   messageId?: string;
 };
 
-export type TrashKind = "agent" | "bundle" | "document";
+/** What can sit in Recently deleted: 0040's three, and threads and routines since 0125. */
+export type TrashKind = "agent" | "bundle" | "document" | "session" | "routine";
 
 export type TrashItem = {
   kind: TrashKind;

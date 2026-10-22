@@ -1181,12 +1181,16 @@ describe("event triggers (0109)", () => {
         tables: {
           routines: {
             select: async () => ({ data: routine, error: null }),
-            delete: async (ctx) => {
-              deleted.push(String(ctx.filters.find((f) => f.column === "id")?.value));
-              return { data: null, error: null };
-            },
           },
           ...extra,
+        },
+        // A delete is the thirty-day trash now (0125), so what is recorded is
+        // the call that puts it there.
+        rpc: {
+          soft_delete_routine: async (args) => {
+            deleted.push(String(args.p_routine_id));
+            return { data: null, error: null };
+          },
         },
       },
       env as never,

@@ -73,14 +73,37 @@ const OPTIONAL_REFS: Record<string, string> = {
   // entry had been describing nothing for some time.
 };
 
+/**
+ * Columns that are Postgres arrays, not jsonb. PostgREST hands both back as a
+ * JSON array, and `literal` writes a JSON array as a jsonb literal, which an
+ * array column refuses ("malformed array literal") and takes the whole restore
+ * down with it. So these are written in Postgres's own array syntax.
+ *
+ * `message_steps.offered` (0066) was written the jsonb way from the start, so
+ * any archive with a find_tool step in it failed to restore. `agents.
+ * connections_off` (0136) lists connections an agent may not use; on another
+ * install those ids name nothing, which leaves the agent with every connection
+ * it is given there, the same as an empty list.
+ */
+const ARRAY_COLUMNS = new Set(["agents.connections_off", "message_steps.offered"]);
+
+/** `{"a","b"}`, as a quoted literal. */
+function arrayLiteral(values: unknown[]): string {
+  const items = values.map((v) =>
+    v === null || v === undefined ? "NULL" : `"${String(v).replace(/(["\\])/g, "\\$1")}"`,
+  );
+  return literal(`{${items.join(",")}}`);
+}
+
 /** A Postgres literal. `standard_conforming_strings` is on, so doubling `'` is enough. */
 function literal(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
   // Objects and arrays are the three jsonb columns — messages.sources,
-  // routines.source_config, routines.cursor. Postgres coerces the string
-  // literal to jsonb because the target column's type is known.
+  // routines.source_config, routines.cursor — or, for an array column, already
+  // turned into `{…}` by `arrayLiteral`. Postgres coerces the string literal to
+  // the target column's type because that type is known.
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return `'${text.replace(/'/g, "''")}'`;
 }
@@ -185,6 +208,10 @@ export function renderSql(tables: Collected): RenderedSql {
           const key = `${spec.table}.${column}`;
           dropped[key] = (dropped[key] ?? 0) + 1;
           return "NULL";
+        }
+
+        if (ARRAY_COLUMNS.has(`${spec.table}.${column}`) && Array.isArray(value)) {
+          return arrayLiteral(value);
         }
 
         return literal(value);
@@ -302,7 +329,15 @@ function rewriteForRestore(table: string, rows: Row[]): Row[] {
     return rows.map((r) => ({ ...r, secret_ciphertext: MISSING_SECRET }));
   }
   if (table === "routines") {
-    return rows.map((r) => ({ ...r, status: "paused", paused_reason: PAUSED_ON_RESTORE }));
+    // `paused_by` (0123) names whoever paused it on the old install, an account
+    // the new one does not have, so it would fail the restore's foreign key;
+    // this pause is the restore's, not a person's.
+    return rows.map((r) => ({
+      ...r,
+      status: "paused",
+      paused_reason: PAUSED_ON_RESTORE,
+      ...("paused_by" in r ? { paused_by: null } : {}),
+    }));
   }
   // Connections are both cases at once: the OAuth token is `not null` and
   // cannot be exported, and a connection that tried to sync without one would

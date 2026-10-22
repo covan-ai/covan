@@ -40,9 +40,12 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // only. Changing it afterwards is `set_agent_sharing`'s, which checks for
   // `manage`; an UPDATE grant here would let anybody with `edit` reshare it.
   // 0120: the agent's mark, chosen when it is made and changed in Configuration.
+  // 0136: what the agent may not use (the browser, given connections), set
+  // from Configuration's Tools switches by whoever may edit the agent.
   "agents INSERT":
-    "avatar,created_by,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search,workspace_access,workspace_id",
-  "agents UPDATE": "avatar,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search",
+    "avatar,browser_off,connections_off,created_by,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search,workspace_access,workspace_id",
+  "agents UPDATE":
+    "avatar,browser_off,connections_off,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search",
   "api_keys INSERT": "name,prefix,token_hash,user_id,workspace_id",
   "api_keys UPDATE": "name,revoked_at",
   "capability_calls UPDATE": "status",
@@ -106,10 +109,11 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // 0119: the new first run's answers, the screen it was on, and what the
   // finish made — `finish_onboarding` is security invoker, so the caller's
   // own grant is what writes agent_id and session_id.
+  // 0137: the first agent's mark and the jobs picked for it, the person's own row.
   "user_onboarding INSERT":
-    "agent_id,assistant_emoji,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
+    "agent_id,assistant_avatar,assistant_emoji,assistant_jobs,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
   "user_onboarding UPDATE":
-    "agent_id,assistant_emoji,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
+    "agent_id,assistant_avatar,assistant_emoji,assistant_jobs,assistant_name,assistant_role,completed_at,last_step,mode,purpose,referral_source,role,session_id,team_size,tools,updated_at,use_case,user_id",
   "workspace_members UPDATE": "role",
   // 0127: the icon, the clock and the weekly summary; never the deletion columns.
   // 0131: an admin's own client writes an endpoint; the sealed secret is

@@ -133,7 +133,7 @@ function renderExplorer({ atRoot = false } = {}) {
 function fileNames(): string[] {
   return screen
     .getAllByLabelText(/^Open .*\.(md|pdf|csv|json|txt)$/i)
-    .map((el) => el.querySelector("span")?.textContent?.trim() ?? "");
+    .map((el) => el.querySelector("[data-part=name]")?.textContent?.trim() ?? "");
 }
 
 describe("the Knowledge explorer, on the workspace page", () => {
@@ -181,7 +181,8 @@ describe("the Knowledge explorer, on the workspace page", () => {
 
     const indexed = screen.getByLabelText(/open zebra-notes\.md/i).closest("div") as HTMLElement;
     const not = screen.getByLabelText(/open annual-report\.pdf/i).closest("div") as HTMLElement;
-    expect(within(indexed).getByText("Indexed")).toBeInTheDocument();
+    // A file that is ready says nothing; one that is not says so (A6).
+    expect(within(indexed).queryByText("Indexed")).toBeNull();
     expect(within(not).getByText("Not indexed")).toBeInTheDocument();
   });
 
@@ -374,14 +375,6 @@ describe("the Knowledge explorer, on the workspace page", () => {
 
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(screen.queryByText("Not attached")).not.toBeInTheDocument();
-  });
-
-  it("counts how many answers stand on a document", async () => {
-    renderExplorer();
-    await screen.findByText("annual-report.pdf");
-
-    const row = screen.getByLabelText(/open annual-report\.pdf/i).closest("div");
-    expect(within(row as HTMLElement).getByTitle(/how many answers cite/i)).toHaveTextContent("4");
   });
 });
 

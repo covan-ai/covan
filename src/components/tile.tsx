@@ -48,7 +48,7 @@ export function Tile({
         className,
       )}
     >
-      {letters === 1 ? label.trim().charAt(0).toUpperCase() || "–" : monogram(label, size)}
+      {letters === 1 ? label.trim().charAt(0).toUpperCase() || "–" : monogram(label)}
     </span>
   );
 }

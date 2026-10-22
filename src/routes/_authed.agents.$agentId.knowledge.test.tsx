@@ -117,7 +117,8 @@ describe("the Knowledge tab", () => {
     renderTab(true);
 
     expect(screen.getByText("pitch-deck.pdf")).toBeInTheDocument();
-    expect(screen.getByText("Indexed")).toBeInTheDocument();
+    // A file that is ready says nothing about it (A6).
+    expect(screen.queryByText("Indexed")).toBeNull();
     // No request for a bundle's contents: this list came with the agent.
     expect(listDocuments).not.toHaveBeenCalled();
   });

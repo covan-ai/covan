@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, ExternalLink, FileText } from "lucide-react";
+import { Download, ExternalLink, X } from "lucide-react";
 
 import { api } from "@/lib/api-client";
 import { Markdown } from "@/components/markdown";
-import { Chip } from "@/components/section-card";
+import { Chip } from "@/components/chip";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { parseCsv } from "@/lib/csv-preview";
@@ -104,58 +104,52 @@ export function DocumentPreviewDialog({
     staleTime: Infinity,
   });
 
+  // The A22 box: a 56px bar with the title, what it is and what can be done
+  // with it; the two views of it as tabs; the page white on the well.
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="flex h-[min(85vh,52rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0">
-        <div className="flex items-start gap-3 border-b border-hairline px-5 py-4 pr-12">
-          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <DialogTitle className="truncate text-title">{name}</DialogTitle>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              {preview.data ? (
-                <>
-                  <span>{formatFileSize(preview.data.size)}</span>
-                  <span aria-hidden>·</span>
-                  <AgeLabel createdAt={preview.data.createdAt} />
-                  <span aria-hidden>·</span>
-                  {preview.data.indexed ? (
-                    <span>
-                      {preview.data.chunkCount}{" "}
-                      {preview.data.chunkCount === 1 ? "passage" : "passages"}
-                    </span>
-                  ) : (
-                    <Chip tone="neutral">Not indexed</Chip>
-                  )}
-                </>
-              ) : (
-                <span>Loading…</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1 border-b border-hairline px-5 py-2">
-          <TabButton active={tab === "file"} onClick={() => setTab("file")}>
-            File
-          </TabButton>
-          <TabButton active={tab === "indexed"} onClick={() => setTab("indexed")}>
-            What the agent reads
-          </TabButton>
-          <div className="ml-auto flex items-center gap-1">
+      <DialogContent
+        hideClose
+        aria-describedby={undefined}
+        className="h-[min(820px,calc(100dvh-4.5rem))] max-w-[960px] gap-0 overflow-hidden p-0"
+      >
+        <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-hairline pr-3 pl-5">
+          <DialogTitle className="min-w-0 truncate text-lead font-semibold">{name}</DialogTitle>
+          <span className="hidden shrink-0 items-center gap-x-2 text-meta text-muted-foreground md:flex">
+            {preview.data ? (
+              <>
+                <span>{formatFileSize(preview.data.size)}</span>
+                <span aria-hidden>·</span>
+                <AgeLabel createdAt={preview.data.createdAt} />
+                <span aria-hidden>·</span>
+                {preview.data.indexed ? (
+                  <span>
+                    {preview.data.chunkCount}{" "}
+                    {preview.data.chunkCount === 1 ? "passage" : "passages"}
+                  </span>
+                ) : (
+                  <Chip>Not indexed</Chip>
+                )}
+              </>
+            ) : (
+              <span>Loading…</span>
+            )}
+          </span>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {preview.data?.externalUrl ? (
-              <Button variant="ghost" size="sm" asChild>
+              <Button variant="secondary" size="sm" asChild>
                 <a href={preview.data.externalUrl} target="_blank" rel="noreferrer noopener">
-                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                  <ExternalLink />
                   Source
                 </a>
               </Button>
             ) : null}
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={() => void api.documents.download(documentId, name)}
             >
-              <Download className="mr-1.5 h-3.5 w-3.5" />
+              <Download />
               Download
             </Button>
             {/* A Markdown document — every report and filed summary is one —
@@ -163,14 +157,14 @@ export function DocumentPreviewDialog({
             {isMarkdownName(name) ? (
               <>
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   onClick={() => void saveDocument(documentId, name, "docx")}
                 >
                   Word
                 </Button>
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   onClick={() => void saveDocument(documentId, name, "pdf")}
                 >
@@ -178,32 +172,52 @@ export function DocumentPreviewDialog({
                 </Button>
               </>
             ) : null}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Close"
+              className="text-muted-foreground"
+              onClick={onClose}
+            >
+              <X />
+            </Button>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
-          {tab === "file" ? (
-            !drawable ? (
-              <Note>
-                A .{ext} file can't be shown here. Download it to open it, or see what the agent
-                reads of it in the next tab.
-              </Note>
-            ) : preview.data && preview.data.size > MAX_DRAWN_BYTES ? (
-              <Note>
-                This file is too large to show here. Download it to open it, or see what the agent
-                reads of it in the next tab.
-              </Note>
+        <div className="flex h-10 shrink-0 items-stretch gap-4 border-b border-hairline px-5">
+          <TabButton active={tab === "file"} onClick={() => setTab("file")}>
+            File
+          </TabButton>
+          <TabButton active={tab === "indexed"} onClick={() => setTab("indexed")}>
+            What the agent reads
+          </TabButton>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto bg-surface px-3 pt-6 sm:px-6">
+          <div className="mx-auto min-h-full w-full max-w-[720px] rounded-t-sm border border-b-0 border-border bg-background px-6 pt-8 pb-10 shadow-xs sm:px-12">
+            {tab === "file" ? (
+              !drawable ? (
+                <Note>
+                  A .{ext} file can't be shown here. Download it to open it, or see what the agent
+                  reads of it in the next tab.
+                </Note>
+              ) : preview.data && preview.data.size > MAX_DRAWN_BYTES ? (
+                <Note>
+                  This file is too large to show here. Download it to open it, or see what the agent
+                  reads of it in the next tab.
+                </Note>
+              ) : (
+                <FileTab
+                  ext={ext}
+                  blob={bytes.data?.blob}
+                  loading={bytes.isPending}
+                  failed={bytes.isError}
+                />
+              )
             ) : (
-              <FileTab
-                ext={ext}
-                blob={bytes.data?.blob}
-                loading={bytes.isPending}
-                failed={bytes.isError}
-              />
-            )
-          ) : (
-            <IndexedTab preview={preview.data} loading={preview.isPending} />
-          )}
+              <IndexedTab preview={preview.data} loading={preview.isPending} />
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -213,8 +227,9 @@ export function DocumentPreviewDialog({
 function AgeLabel({ createdAt }: { createdAt: number }) {
   const age = documentAge(createdAt);
   return (
-    <span className={cn(age.stale && "text-amber-700 dark:text-amber-400")}>
+    <span className={cn(age.stale && "text-foreground")}>
       uploaded {age.label}
+      {age.stale ? " · worth checking" : ""}
     </span>
   );
 }
@@ -234,10 +249,10 @@ function TabButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "rounded-sm px-2.5 py-1 text-meta font-medium transition-colors",
+        "-mb-px border-b-2 text-meta font-medium transition-colors",
         active
-          ? "bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+          ? "border-foreground text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground",
       )}
     >
       {children}

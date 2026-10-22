@@ -147,10 +147,7 @@ function AuthenticatorRow({ factor, last }: { factor: Factor; last: boolean }) {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={() => void remove()}
-              >
+              <AlertDialogAction variant="danger" onClick={() => void remove()}>
                 Remove
               </AlertDialogAction>
             </AlertDialogFooter>

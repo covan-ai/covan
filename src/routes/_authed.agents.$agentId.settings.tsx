@@ -371,7 +371,7 @@ function AgentSettingsForm({ agent }: { agent: Agent }) {
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    variant="danger"
                     onClick={() => {
                       deleteAgent(agent.id);
                       toast.success("Agent deleted");

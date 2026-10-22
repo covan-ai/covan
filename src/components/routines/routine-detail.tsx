@@ -334,10 +334,7 @@ export function RoutineDetail({
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    onClick={onDelete}
-                  >
+                  <AlertDialogAction variant="danger" onClick={onDelete}>
                     Delete
                   </AlertDialogAction>
                 </AlertDialogFooter>

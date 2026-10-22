@@ -588,7 +588,7 @@ describe("the sign-in prompt", () => {
 
     expect(await screen.findByText("linkedin.com needs you to sign in.")).toBeInTheDocument();
     // The ink fill: the primary button, per DESIGN.md — not amber.
-    expect(screen.getByRole("button", { name: "Take over" })).toHaveClass("bg-brand");
+    expect(screen.getByRole("button", { name: "Take over" })).toHaveClass("bg-primary");
   });
 
   it("says the same with no host when the run named none", async () => {

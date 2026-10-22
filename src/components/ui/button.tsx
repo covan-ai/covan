@@ -7,12 +7,12 @@ import { cn } from "@/lib/utils";
 /*
  * The button, per DESIGN.md §4.
  *
- * Plain, solid, and the same shape at every size: a 6px radius, a 14px
- * medium label, and nothing inside it that moves. `default` is the ink fill
- * and the one button a screen should lead with; `secondary` is the raised
- * white one beside it; `outline` and `ghost` are the quiet ones that live in
- * toolbars and rows. `destructive` is the muted red, for the confirming
- * action in a dialog and nowhere else.
+ * 32px, a 6px radius, a 14px medium label, and nothing inside it that moves.
+ * `default` is the ink fill and the one button a screen leads with;
+ * `secondary` is white with the input border; `ghost` is the quiet one for
+ * toolbars and rows; `danger` is red text on white, for the confirming
+ * action of something that cannot be taken back. `lg` (36px) is for the auth
+ * cards alone.
  *
  * There used to be a 36px amber chip with a sliding chevron and a two-line
  * label roller in here. It was a marketing flourish and it made every call
@@ -20,23 +20,26 @@ import { cn } from "@/lib/utils";
  * existed.
  */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium cursor-pointer transition-colors duration-150 ease-[cubic-bezier(0.2,0,0,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-sm font-medium cursor-pointer transition-colors duration-150 ease-[cubic-bezier(0.2,0,0,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default: "bg-brand text-brand-foreground shadow-xs hover:bg-brand/90",
-        destructive: "bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90",
-        outline: "border border-input bg-card shadow-xs hover:bg-surface",
-        secondary:
-          "bg-secondary text-secondary-foreground border border-border shadow-xs hover:bg-surface",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
-        link: "text-foreground underline-offset-4 hover:underline",
+        default: "bg-primary text-primary-foreground border border-primary hover:bg-primary/90",
+        // Red text on a white button: a destructive action is never a red fill.
+        danger: "border border-input bg-card text-destructive hover:bg-surface-muted",
+        secondary: "border border-input bg-card text-foreground hover:bg-surface-muted",
+        // The same white bordered button, under its old name until every
+        // caller says `secondary` (Phase 3's polish step).
+        outline: "border border-input bg-card text-foreground hover:bg-surface-muted",
+        ghost: "text-muted-foreground hover:bg-surface hover:text-foreground",
+        link: "h-auto px-0 text-foreground underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-9 px-3.5 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-5",
-        icon: "h-9 w-9",
+        default: "h-8 px-3",
+        sm: "h-7 px-2.5 text-meta",
+        lg: "h-9 px-4",
+        icon: "size-8",
+        "icon-sm": "size-7",
       },
     },
     defaultVariants: {

@@ -45,6 +45,9 @@ describe("POST /invitations/preview", () => {
       email: "bob@acme.com",
       role: "member",
       open: true,
+      memberCount: null,
+      agentCount: null,
+      expiresAt: null,
     });
     // The token goes to the function as it came; the function hashes it.
     expect(rpc).toHaveBeenCalledWith("invitation_preview", { p_invite_id: ID, p_token: "tok" });

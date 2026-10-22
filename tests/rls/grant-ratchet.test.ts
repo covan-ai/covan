@@ -71,6 +71,9 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
     "created_by,detail,position,session_id,source_message_id,stage,title,workspace_id",
   "ideas UPDATE": "detail,position,stage,title,updated_at",
   // 0090: the token's hash added; status, expiry and acceptance taken away.
+  // 0129: an admin makes a link with its hash and turns it off; nothing else.
+  "invite_links INSERT": "created_by,role,token_hash,workspace_id",
+  "invite_links UPDATE": "revoked_at",
   "invitations INSERT": "email,invited_by,role,token_hash,workspace_id",
   // 0106: private until shared.
   "knowledge_bundles INSERT": "created_by,description,name,scope,workspace_id",

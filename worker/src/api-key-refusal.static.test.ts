@@ -95,6 +95,10 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "schedules the end of a workspace a fortnight out, which outlives any revocation of the key that asked for it",
   "routes/account.ts DELETE /account/sessions/:id":
     "signs one of the owner's own browsers out; a key that could do it could lock the owner out of every session but the leaked one",
+  "routes/invite-links.ts POST /invite-links":
+    "mints a link anybody holding it can join with for a week, which outlives any revocation of the key that made it",
+  "routes/invite-links.ts POST /invite-links/accept":
+    "joins the owner to another workspace, access that outlives the key",
   "routes/workspace.ts POST /workspaces":
     "creates a workspace, somewhere new for the owner's data to go that the key's own workspace lock does not reach",
   "routes/workspace.ts POST /workspace/active":
@@ -195,6 +199,8 @@ const OPEN_TO_A_KEY = new Set([
   "routes/agents.ts GET /agents/:id/delete-summary",
   "routes/agents.ts GET /agents/:id/knowledge-usage",
   "routes/home.ts GET /home/overview",
+  "routes/invite-links.ts GET /invite-links",
+  "routes/invite-links.ts DELETE /invite-links/:id",
   "routes/account.ts GET /account/sessions",
   "routes/account.ts GET /account/identities",
   "routes/workspace-icons.ts PUT /workspace/icon",
@@ -337,6 +343,8 @@ const OUTSIDE_THE_SESSION: Record<string, string> = {
   connectionsPublic: "the OAuth provider's redirect back, which carries no bearer token",
   slackPublic: "Slack's own redirect and event deliveries, verified by signature",
   avatarsPublic: "an <img> fetching a profile photo, whose unguessable URL is the capability",
+  inviteLinkPreview:
+    "the invite page before sign-in, holding the link's token, which is the credential",
   workspaceIconsPublic:
     "an <img> fetching a workspace's icon, whose unguessable URL is the capability",
   composioPublic: "a logo proxy for <img> tags, serving nothing about anybody",

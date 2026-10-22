@@ -38,3 +38,11 @@ export async function hashInviteToken(token: string): Promise<string> {
 export function inviteUrl(appUrl: string, inviteId: string, token: string): string {
   return `${appUrl}/invite#id=${encodeURIComponent(inviteId)}&token=${encodeURIComponent(token)}`;
 }
+
+/**
+ * Where a shared invite link goes (0129): the token alone, in the fragment
+ * for `inviteUrl`'s reason. `/invite` tells the two apart by `link=`.
+ */
+export function inviteLinkUrl(appUrl: string, token: string): string {
+  return `${appUrl}/invite#link=${encodeURIComponent(token)}`;
+}

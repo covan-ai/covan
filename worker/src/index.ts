@@ -30,6 +30,7 @@ import { workspace } from "./routes/workspace";
 import { support } from "./routes/support";
 import { invitations } from "./routes/invitations";
 import { invitationPreview } from "./routes/invitation-preview";
+import { inviteLinks, inviteLinkPreview } from "./routes/invite-links";
 import { usage } from "./routes/usage";
 import { coverage } from "./routes/coverage";
 import { routines } from "./routes/routines";
@@ -173,6 +174,8 @@ app.get("/health", (c) => c.json({ ok: true }));
 // Unauthenticated too: the `/invite` page, before sign-in, asking what the
 // email's id and token are an invitation to. The pair is its own proof.
 app.route("/", invitationPreview);
+// The same, for a shared invite link (0129).
+app.route("/", inviteLinkPreview);
 
 // Authenticated sub-router: Task 3 hangs /agents, /sessions, etc. off `api`.
 // Everything mounted here requires a valid Supabase bearer token, and gets
@@ -267,6 +270,7 @@ api.route("/", workspaceIcons);
 api.route("/", workspace);
 api.route("/", support);
 api.route("/", invitations);
+api.route("/", inviteLinks);
 api.route("/", usage);
 api.route("/", coverage);
 api.route("/", routines);

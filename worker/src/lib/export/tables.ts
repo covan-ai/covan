@@ -256,6 +256,8 @@ export const EXPORTED: TableSpec[] = [
  * wanted the thing that is missing.
  */
 export const EXCLUDED: Record<string, string> = {
+  invite_links:
+    "in flight, like invitations: a link is a SHA-256 of a token somebody pasted into a chat, and a restore into a new install would carry a door nobody holds the key to — and a week of life it has already spent. An admin makes a new one in one press.",
   session_reads:
     "when each person last opened each thread (0121): a per-person reading position, not workspace content. A restore starts everybody with nothing unread, which is the honest state of a fresh install.",
   active_turns:

@@ -335,6 +335,28 @@ export type PendingInvitation = {
   expiresAt?: number | null;
 };
 
+/** A shared invite link, as an admin sees it (0129). The URL only on the answer that made it. */
+export type InviteLink = {
+  id: string;
+  role: "member" | "viewer";
+  createdBy: string | null;
+  createdAt: number;
+  expiresAt: number;
+  uses: number;
+  url?: string;
+};
+
+/** What an invite link opens, before sign-in. */
+export type InviteLinkPreview = {
+  workspaceName: string;
+  inviterName: string | null;
+  role: string;
+  memberCount: number;
+  agentCount: number;
+  expiresAt: number;
+  open: boolean;
+};
+
 export type InvitationPreview = {
   workspaceName: string;
   inviterName: string | null;
@@ -343,6 +365,10 @@ export type InvitationPreview = {
   role: string;
   /** False once it has expired or been revoked. */
   open: boolean;
+  /** 0129: what the invitation card says about the workspace (A23). */
+  memberCount?: number | null;
+  agentCount?: number | null;
+  expiresAt?: number | null;
 };
 
 export type IncomingInvitation = {
@@ -1217,6 +1243,18 @@ export const api = {
        */
       leave: (): Promise<{ ok: true }> => request("DELETE", "/workspace/members/me"),
     },
+  },
+  inviteLinks: {
+    list: (): Promise<InviteLink[]> => request("GET", "/invite-links"),
+    /** A new link; its URL is in this answer and nowhere else. */
+    create: (role: "member" | "viewer" = "member"): Promise<InviteLink & { url: string }> =>
+      request("POST", "/invite-links", { role }),
+    remove: (id: string): Promise<{ ok: true }> => request("DELETE", `/invite-links/${id}`),
+    /** Before sign-in: the link's token is the proof. */
+    preview: (token: string): Promise<InviteLinkPreview> =>
+      request("POST", "/invite-links/preview", { token }),
+    accept: (token: string): Promise<{ workspaceId: string }> =>
+      request("POST", "/invite-links/accept", { token }),
   },
   invitations: {
     list: (): Promise<PendingInvitation[]> => request("GET", "/invitations"),

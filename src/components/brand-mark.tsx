@@ -27,28 +27,43 @@ export function BrandMark({ className }: { className?: string }) {
         // and the tip disappears at that size. Bigger is legible, not louder.
         className="h-[82%] w-[82%]"
       >
-        <polygon points="0,0 150,0 135.42,26.25 14.58,26.25" />
-        <polygon points="20.14,36.25 129.86,36.25 115.28,62.5 34.72,62.5" />
-        <polygon points="40.28,72.5 109.72,72.5 95.14,98.75 54.86,98.75" />
-        <polygon points="60.42,108.75 89.58,108.75 75,135" />
+        <Courses />
       </svg>
     </div>
   );
 }
 
+/** The logo's four courses, in a 150×135 box. One copy, for both components. */
+function Courses() {
+  return (
+    <>
+      <polygon points="0,0 150,0 135.42,26.25 14.58,26.25" />
+      <polygon points="20.14,36.25 129.86,36.25 115.28,62.5 34.72,62.5" />
+      <polygon points="40.28,72.5 109.72,72.5 95.14,98.75 54.86,98.75" />
+      <polygon points="60.42,108.75 89.58,108.75 75,135" />
+    </>
+  );
+}
+
 /**
- * The lockup the pages outside the shell wear: a 28px ink tile with a "C" and
- * the word "Covan" beside it (DESIGN.md §5). The auth pages, the welcome flow
- * and the legal pages; never the sidebar, which shows the workspace's tile.
+ * The lockup the pages outside the shell wear: a 28px ink tile with the logo
+ * in it — the same tile the favicon and the touch icon are — and the word
+ * "Covan" beside it (DESIGN.md §5). The auth pages, the welcome flow and the
+ * legal pages; never the sidebar, which shows the workspace's tile.
+ *
+ * The board drew a "C" in the tile as a stand-in; the mark is the logo.
  */
 export function BrandLockup({ className }: { className?: string }) {
   return (
     <span className={cn("flex items-center gap-2.5 text-lead font-semibold", className)}>
-      <span
-        aria-hidden
-        className="grid h-7 w-7 place-items-center rounded-md bg-primary text-meta text-primary-foreground"
-      >
-        C
+      <span aria-hidden className="grid h-7 w-7 place-items-center rounded-md bg-primary">
+        <svg
+          viewBox="0 0 150 135"
+          fill="currentColor"
+          className="h-4 w-[18px] text-primary-foreground"
+        >
+          <Courses />
+        </svg>
       </span>
       Covan
     </span>

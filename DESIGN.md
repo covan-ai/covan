@@ -140,8 +140,8 @@ are letters on a tile, not text.
 - **`AppLogo`** renders a third party's own mark at half the width of the
   neutral tile it sits in (22 in 44, 18 in 36, 14 in 28); a mark that fails to
   load becomes a monogram, never a broken image.
-- **`BrandLockup`** (`components/brand-mark.tsx`) is the ink "C" tile and the
-  word "Covan". It appears on the auth pages, the welcome flow, the legal
+- **`BrandLockup`** (`components/brand-mark.tsx`) is the ink tile with the
+  logo in it — the favicon's tile — and the word "Covan". It appears on the auth pages, the welcome flow, the legal
   pages and nowhere inside the shell: inside the app the sidebar shows the
   workspace's tile, not ours.
 

@@ -12,8 +12,7 @@ import {
   UserPlus,
   Trash2,
 } from "lucide-react";
-import { SectionHeading } from "@/components/page-container";
-import { DataRow, EmptyState } from "@/components/section-card";
+import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { api, type WorkspaceEvent } from "@/lib/api-client";
 import { formatRelative } from "@/lib/relative-time";
@@ -48,51 +47,54 @@ export function WorkspaceActivitySection({ isAdmin }: { isAdmin: boolean }) {
 
   const events = data?.events ?? [];
 
+  // "Recent activity" on Team (A3): one 40px row per event — what, who, when.
   return (
-    <section className="mt-16">
-      <SectionHeading
-        title="What happened."
-        turn="And who."
-        description="Deletions, restores, roles and invitations — written by the database, so nothing that skips the app can skip this."
-      />
-
-      <div className="mt-6">
-        {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : events.length === 0 ? (
-          <EmptyState
-            title="Nothing yet"
-            description="Once somebody deletes an agent, changes a role or sends an invitation, it lands here with their name on it."
-          />
-        ) : (
-          <>
-            <ul className="flex flex-col gap-2.5">
-              {events.map((e) => (
-                <li key={e.id}>
-                  <DataRow
-                    icon={
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-hairline text-muted-foreground">
-                        <EventIcon action={e.action} />
-                      </span>
-                    }
-                    title={describe(e)}
-                    meta={`${e.actor ?? "Someone no longer here"} · ${formatRelative(e.createdAt)}`}
-                  />
-                </li>
-              ))}
-            </ul>
-            {(data?.hasMore || expanded) && (
-              <div className="mt-4">
-                <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
-                  {expanded ? "Show less" : "Show more"}
-                </Button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+    <section className="mt-10">
+      <SectionLabel as="h2">Recent activity</SectionLabel>
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : events.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Once somebody deletes an agent, changes a role or sends an invitation, it lands here with
+          their name on it — written by the database, so nothing that skips the app can skip it.
+        </p>
+      ) : (
+        <>
+          <ul className="m-0 list-none p-0">
+            {events.map((e) => (
+              <li
+                key={e.id}
+                className="flex min-h-10 items-center gap-3 border-b border-hairline px-1 text-sm"
+              >
+                <span className="grid size-6 shrink-0 place-items-center text-muted-foreground">
+                  <EventIcon action={e.action} />
+                </span>
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium">{e.actor ?? "Someone no longer here"}</span>{" "}
+                  {lowerFirst(describe(e))}
+                </span>
+                <span className="shrink-0 text-meta text-muted-foreground">
+                  {formatRelative(e.createdAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {(data?.hasMore || expanded) && (
+            <div className="mt-3">
+              <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
+                {expanded ? "Show less" : "Show more"}
+              </Button>
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
+}
+
+/** "Deleted the agent …" after a name reads "Ada deleted the agent …". */
+function lowerFirst(s: string): string {
+  return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s;
 }
 
 function EventIcon({ action }: { action: string }) {

@@ -34,6 +34,8 @@ const h = vi.hoisted(() => ({
   events: vi.fn(),
   workspaceUpdate: vi.fn(),
   metadata: {} as Record<string, unknown>,
+  /** What the session read waits on: the app reads it after /me is cached. */
+  sessionRead: Promise.resolve() as Promise<unknown>,
 }));
 vi.mock("@/lib/api-client", () => ({
   api: {
@@ -55,7 +57,10 @@ vi.mock("@/lib/api-client", () => ({
 vi.mock("@/lib/supabase/client", () => ({
   supabase: {
     auth: {
-      getSession: async () => ({ data: { session: { user: { user_metadata: h.metadata } } } }),
+      getSession: async () => {
+        await h.sessionRead;
+        return { data: { session: { user: { user_metadata: h.metadata } } } };
+      },
     },
   },
 }));
@@ -106,6 +111,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   search = {};
   h.metadata = {};
+  h.sessionRead = Promise.resolve();
   sessionStorage.clear();
   h.me.mockResolvedValue(meWith(EMPTY));
   h.incoming.mockResolvedValue([]);
@@ -122,6 +128,19 @@ describe("the first run", () => {
 
     expect(await screen.findByRole("heading", { name: "Name your workspace" })).toBeInTheDocument();
     expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Acme Robotics"));
+  });
+
+  // In the app /me is already cached when the step mounts, so the name from
+  // the session arrives after the field is on screen; it was ignored.
+  it("takes the sign-up name even when it arrives after the field is on screen", async () => {
+    h.metadata = { workspace_name: "Acme Robotics" };
+    let release!: () => void;
+    h.sessionRead = new Promise<void>((r) => (release = r));
+    await renderWelcome();
+
+    expect(await screen.findByLabelText("Name")).toHaveValue("Acme");
+    release();
     await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Acme Robotics"));
   });
 

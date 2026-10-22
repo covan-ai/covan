@@ -34,7 +34,11 @@ export function WorkspaceStep({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [name, setName] = useState(suggestion ?? currentName ?? "");
+  // Null until somebody types. Until then the field shows the name given at
+  // sign-up, which is read from the session and can arrive after the step is
+  // on screen, else the workspace's own.
+  const [typed, setTyped] = useState<string | null>(null);
+  const name = typed ?? suggestion ?? currentName ?? "";
   const [saving, setSaving] = useState(false);
 
   const valid = name.trim().length > 0;
@@ -87,7 +91,7 @@ export function WorkspaceStep({
         <Input
           id="workspace-name"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => setTyped(e.target.value)}
           maxLength={100}
           placeholder="Acme"
           className="max-w-[360px]"

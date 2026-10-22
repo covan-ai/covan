@@ -48,18 +48,20 @@ begin
   select
     (select count(*)::integer from public.chat_sessions s
       where s.workspace_id = p_workspace_id and s.kind in ('chat', 'brainstorm')
+        and s.deleted_at is null
         and s.created_at >= now() - v_days),
     (select count(*)::integer from public.chat_sessions s
       where s.workspace_id = p_workspace_id and s.kind in ('chat', 'brainstorm')
+        and s.deleted_at is null
         and s.created_at >= now() - 2 * v_days and s.created_at < now() - v_days),
     (select count(*)::integer from public.routine_runs r join public.routines ro on ro.id = r.routine_id
-      where ro.workspace_id = p_workspace_id and r.status in ('ok', 'failed')
+      where ro.workspace_id = p_workspace_id and ro.deleted_at is null and r.status in ('ok', 'failed')
         and r.started_at >= now() - v_days),
     (select count(*)::integer from public.routine_runs r join public.routines ro on ro.id = r.routine_id
-      where ro.workspace_id = p_workspace_id and r.status = 'ok'
+      where ro.workspace_id = p_workspace_id and ro.deleted_at is null and r.status = 'ok'
         and r.started_at >= now() - v_days),
     (select count(*)::integer from public.routine_runs r join public.routines ro on ro.id = r.routine_id
-      where ro.workspace_id = p_workspace_id and r.status = 'failed'
+      where ro.workspace_id = p_workspace_id and ro.deleted_at is null and r.status = 'failed'
         and r.started_at >= now() - v_days);
 end $$;
 
@@ -123,6 +125,9 @@ begin
     from public.messages m
     join public.chat_sessions s on s.id = m.session_id
    where s.workspace_id = p_workspace_id
+     -- Deleted threads stay in: the work was done and paid for, the credit
+     -- ledger keeps it too, and per-day per-agent sums name no thread. The
+     -- one definer read here that does not apply 0084's deleted_at filter.
      and m.role = 'assistant'
      and m.created_at >= (now() at time zone 'UTC')::date - (greatest(1, least(coalesce(p_days, 14), 90)) - 1)
      and (m.prompt_tokens is not null or m.completion_tokens is not null)
@@ -151,6 +156,7 @@ begin
     left join public.chat_sessions s
       on s.user_id = wm.user_id and s.workspace_id = p_workspace_id
      and s.kind in ('chat', 'brainstorm') and s.created_at >= now() - v_days
+     and s.deleted_at is null
    where wm.workspace_id = p_workspace_id
    group by wm.user_id, p.name, p.avatar_url;
 end $$;
@@ -176,6 +182,7 @@ begin
             from public.chat_sessions s
             join public.messages m on m.session_id = s.id
            where s.agent_id = p_agent_id
+             and s.deleted_at is null
              and m.role = 'assistant'
              and m.created_at >= now() - v_days
              and m.sources is not null

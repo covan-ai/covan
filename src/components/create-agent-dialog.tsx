@@ -58,7 +58,7 @@ export function CreateAgentDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="md">
+      <DialogContent size="lg">
         <CreateAgentForm onDone={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
@@ -120,11 +120,13 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
   return (
     <>
       <DialogHeader>
-        <DialogTitle>New agent</DialogTitle>
-        <span className="text-meta text-muted-foreground">
-          {sharing === "only"
-            ? "Only you can use it until you share it."
-            : "The whole workspace can use it."}
+        <span className="flex flex-wrap items-baseline gap-x-3">
+          <DialogTitle>New agent</DialogTitle>
+          <span className="text-meta text-muted-foreground">
+            {sharing === "only"
+              ? "Only you can use it until you share it."
+              : "The whole workspace can use it."}
+          </span>
         </span>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-[18px]">

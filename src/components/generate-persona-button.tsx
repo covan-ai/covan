@@ -71,7 +71,7 @@ export function GeneratePersonaButton({
         ) : (
           <Sparkles className="h-3.5 w-3.5" />
         )}
-        {busy ? "Writing…" : hasPersona ? "Rewrite from name" : "Write from name"}
+        {busy ? "Writing…" : hasPersona ? "Rewrite it for me" : "Write it for me"}
       </Button>
 
       <AlertDialog open={confirming} onOpenChange={setConfirming}>

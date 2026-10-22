@@ -55,12 +55,23 @@ describe("fromCron", () => {
   });
 
   it("returns null for shapes the picker cannot express", () => {
-    expect(fromCron("0 9 * * 1")).toBeNull(); // a single weekday
     expect(fromCron("0 9 * * 1-6")).toBeNull(); // not Monday to Friday
     expect(fromCron("0 */2 * * 1-5")).toBeNull(); // a stepped hour on weekdays
     expect(fromCron("0 9 1 * *")).toBeNull(); // monthly
     expect(fromCron("0 9 * 3 *")).toBeNull(); // a specific month
     expect(fromCron("*/15 9 * * *")).toBeNull(); // stepped minutes within an hour
+  });
+
+  it("reads and writes some days of the week, Monday first (A28)", () => {
+    expect(fromCron("30 8 * * 1")).toEqual({ mode: "weekly", days: [1], hour: 8, minute: 30 });
+    expect(fromCron("0 9 * * 0,3,1")).toEqual({
+      mode: "weekly",
+      days: [1, 3, 0],
+      hour: 9,
+      minute: 0,
+    });
+    expect(toCron({ mode: "weekly", days: [0, 5, 1], hour: 7, minute: 5 })).toBe("5 7 * * 1,5,0");
+    expect(fromCron("0 9 * * 7")).toBeNull(); // cron's other Sunday
   });
 
   it("returns null for anything that is not a five-field expression", () => {

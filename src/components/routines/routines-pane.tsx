@@ -24,12 +24,13 @@ export function RoutinesPane({
   agentId,
   selectedId,
   hrefFor,
-  newHref,
+  canCreate = true,
 }: {
   agentId?: string;
   selectedId?: string;
   hrefFor: (routine: RoutineListItem) => string;
-  newHref?: string;
+  /** The "+" to the editor (A28); off for a viewer. */
+  canCreate?: boolean;
 }) {
   const { agents } = useAgentsStore();
   const [filter, setFilter] = useState<PaneFilter>("all");
@@ -61,10 +62,12 @@ export function RoutinesPane({
       <div className="flex h-12 items-center gap-2 border-b border-border pr-3 pl-4">
         <h2 className="m-0 text-lead font-semibold">Routines</h2>
         <span className="text-meta text-muted-foreground">{mine.length}</span>
-        {newHref && (
+        {canCreate && (
           <Link
-            to={newHref}
+            to="/routines/new"
+            search={agentId ? { agent: agentId } : {}}
             aria-label="New routine"
+            data-coach="new-routine"
             className="ml-auto grid size-8 place-items-center rounded-md text-foreground hover:bg-surface"
           >
             <Plus className="size-4" strokeWidth={1.75} />

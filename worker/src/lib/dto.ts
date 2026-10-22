@@ -131,6 +131,9 @@ export type AgentDTO = {
   temperature: number | null;
   reasoningEffort: string | null;
   webSearch: boolean;
+  /** The Tools switches (0136): stored as what is off, so a new agent reaches everything. */
+  browserOff: boolean;
+  connectionsOff: string[];
   documents: DocumentDTO[];
   bundleIds: string[];
   createdAt: number;
@@ -806,6 +809,8 @@ export function mapAgent(row: {
   temperature?: number | null;
   reasoning_effort?: string | null;
   web_search?: boolean | null;
+  browser_off?: boolean | null;
+  connections_off?: string[] | null;
   created_at: string;
   created_by?: string | null;
   workspace_access?: string | null;
@@ -845,6 +850,8 @@ export function mapAgent(row: {
     temperature: row.temperature ?? null,
     reasoningEffort: row.reasoning_effort ?? null,
     webSearch: row.web_search ?? false,
+    browserOff: row.browser_off === true,
+    connectionsOff: Array.isArray(row.connections_off) ? row.connections_off : [],
     documents: agentBundles.flatMap((ab) => ab.knowledge_bundles?.documents ?? []).map(mapDocument),
     bundleIds: agentBundles.map((ab) => ab.bundle_id),
     createdAt: toEpochMs(row.created_at),

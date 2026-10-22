@@ -717,12 +717,12 @@ describe("attaching the folder a file just went into", () => {
     act(() => press(options));
 
     const dialog = await screen.findByRole("dialog");
-    expect(dialog).toHaveTextContent("Attach Old pricing");
+    expect(dialog).toHaveTextContent("Who reads Old pricing");
     expect(
-      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ada" }),
+      within(dialog).getByRole("switch", { name: "Ada reads Old pricing" }),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ops bot" }),
+      within(dialog).getByRole("switch", { name: "Ops bot reads Old pricing" }),
     ).toBeInTheDocument();
   });
 
@@ -759,9 +759,7 @@ describe("attaching a folder from the folder itself", () => {
     await userEvent.click(screen.getByLabelText("Actions for Old pricing"));
     await userEvent.click(await screen.findByRole("menuitem", { name: /attach to agents/i }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.click(
-      within(dialog).getByRole("switch", { name: "Attach Old pricing to Ada" }),
-    );
+    await userEvent.click(within(dialog).getByRole("switch", { name: "Ada reads Old pricing" }));
 
     expect(store.attachBundle).toHaveBeenCalledWith("a1", "bundle-2");
   });
@@ -775,7 +773,7 @@ describe("attaching a folder from the folder itself", () => {
 
     expect(await screen.findByText(/no agent reads this folder yet/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Attach it to an agent" }));
-    expect(await screen.findByRole("dialog")).toHaveTextContent("Attach Old pricing");
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Who reads Old pricing");
   });
 
   it("offers no menu item to somebody who can edit no agent", async () => {

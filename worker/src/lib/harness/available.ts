@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { configuredTools, type AgentTool, type ToolEnv } from "./registry";
-import { connectionsManifest, listConnections } from "./connections";
+import { agentToolsOff, connectionsManifest, listConnections } from "./connections";
 import { promptOverrides, withToolDescriptions } from "../prompt-overrides";
 
 /**
@@ -61,22 +61,31 @@ export async function capabilitiesFor(input: {
    * tool that can only refuse is tokens on every run and an invitation to try.
    */
   browser?: boolean;
+  /**
+   * The agent the turn is for, whose Tools switches (0136) take the browser
+   * and any connection it was told not to use out of what is offered.
+   */
+  agentId?: string;
 }): Promise<AgentCapabilities> {
   const scheduled = input.surface === "schedule";
+  const off = input.agentId
+    ? await agentToolsOff(input.db, input.agentId)
+    : { browser: false, connections: new Set<string>() };
 
   // Best-effort. A tool the agent cannot see is a worse turn; a turn that
   // fails because a lookup failed is no turn at all.
   // The caller's own connections and the shared ones (0098): on a scheduled
   // run `input.db` is the service role, and the routine's owner is the caller.
-  const connections = await listConnections(input.db, input.workspaceId, input.userId).catch(
-    (err: unknown) => {
+  const connections = (
+    await listConnections(input.db, input.workspaceId, input.userId).catch((err: unknown) => {
       console.error("could not list tool connections", err);
       return [];
-    },
-  );
+    })
+  ).filter((c) => !off.connections.has(c.id));
   const channels = scheduled ? [] : await ownChannels(input.db, input.userId);
 
   const tools = configuredTools(input.env).filter((tool) => {
+    if (tool.name === "browse" && off.browser) return false;
     if (tool.name === "browse" && scheduled && !input.browser) return false;
     // A document is written for somebody in a conversation, who watches it
     // fill in; a scheduled run files its own output (`routines/filing.ts`).

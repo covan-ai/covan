@@ -51,7 +51,7 @@ import type { UploadPhase } from "@/lib/api-client";
 import { canEditAgent } from "@/lib/agent-access";
 import { Chip, EmptyState } from "@/components/section-card";
 import { DocumentPreviewDialog } from "@/components/document-preview-dialog";
-import { AttachBundleDialog } from "@/components/attach-bundle-dialog";
+import { FolderReadersDialog } from "@/components/folder-readers-dialog";
 import { TextPromptDialog } from "@/components/text-prompt-dialog";
 import { TopBar } from "@/components/top-bar";
 import { StatusDot } from "@/components/status-dot";
@@ -890,7 +890,7 @@ export function KnowledgeExplorer({
           </section>
         </div>
 
-        <AttachBundleDialog
+        <FolderReadersDialog
           bundle={attaching}
           onOpenChange={(open) => {
             if (!open) setAttaching(null);

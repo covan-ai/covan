@@ -259,3 +259,57 @@ describe("loadConnection", () => {
     expect(out?.auth_kind).toBe("unknown");
   });
 });
+
+/**
+ * An agent told not to use a connection (0136) is told it does not exist, so
+ * an id the model remembered from elsewhere cannot be called anyway.
+ */
+describe("loadConnection, for an agent with the connection switched off", () => {
+  function ctxWith(off: string[]) {
+    const row = {
+      id: "conn-1",
+      workspace_id: "ws-1",
+      label: "Orders",
+      transport: "http",
+      base_url: "https://orders.acme.test",
+      allowed_methods: ["GET"],
+      config: {},
+      status: "active",
+    };
+    return {
+      db: {
+        from: (table: string) =>
+          table === "agents"
+            ? {
+                select: () => ({
+                  eq: () => ({
+                    maybeSingle: async () => ({
+                      data: { browser_off: false, connections_off: off },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }
+            : {
+                select: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      or: () => ({ maybeSingle: async () => ({ data: row, error: null }) }),
+                    }),
+                  }),
+                }),
+              },
+      },
+      workspaceId: "ws-1",
+      agentId: "agent-1",
+    } as unknown as Parameters<typeof loadConnection>[0];
+  }
+
+  it("answers as if there were no such connection", async () => {
+    expect(await loadConnection(ctxWith(["conn-1"]), "conn-1")).toBeNull();
+  });
+
+  it("loads it for an agent that may use it", async () => {
+    expect((await loadConnection(ctxWith([]), "conn-1"))?.label).toBe("Orders");
+  });
+});

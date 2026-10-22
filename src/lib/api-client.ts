@@ -897,6 +897,9 @@ export const api = {
           | "mode"
           | "temperature"
           | "reasoningEffort"
+          | "webSearch"
+          | "browserOff"
+          | "connectionsOff"
         >
       >,
     ): Promise<Agent> => request("PATCH", `/agents/${id}`, patch),

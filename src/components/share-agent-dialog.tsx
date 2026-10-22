@@ -17,13 +17,14 @@ import {
   type SharingMode,
 } from "@/lib/agent-access";
 import { isAdminRole } from "@/lib/roles";
-import { cn } from "@/lib/utils";
-import { UserAvatar } from "@/components/avatars";
+import { AgentMark } from "@/components/agent-mark";
+import { Avatar } from "@/components/avatar";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -65,7 +66,7 @@ export function ShareAgentDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+      <DialogContent size="md" className="max-h-[90vh] overflow-y-auto">
         <ShareAgentForm agent={agent} onDone={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
@@ -143,139 +144,118 @@ function ShareAgentForm({ agent, onDone }: { agent: Agent; onDone: () => void })
     { key: "people", label: "Specific people", hint: "Only the people you add below." },
     {
       key: "workspace",
-      label: "Whole workspace",
-      hint: `Everyone in ${me?.workspace.name ?? "the workspace"}, including people who join later.`,
+      label: `Everyone in ${me?.workspace.name ?? "the workspace"}`,
+      hint: "Including people who join later.",
     },
   ];
+
+  const chosen = options.find((o) => o.key === mode)!;
 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Share {agent.name}</DialogTitle>
-        <DialogDescription>
-          Who can see it and what they can do with it. Conversations stay private either way.
-        </DialogDescription>
+        <span className="flex items-center gap-2.5">
+          <AgentMark agent={agent} size={24} />
+          <DialogTitle>Share {agent.name}</DialogTitle>
+        </span>
       </DialogHeader>
 
-      <div role="group" aria-label="Who can use it" className="grid gap-2">
-        {options.map((option) => {
-          const selected = mode === option.key;
-          return (
-            <div
-              key={option.key}
-              className={cn(
-                "rounded-lg border transition-colors duration-200",
-                selected ? "border-border bg-surface" : "border-hairline hover:bg-surface-hover",
-              )}
-            >
-              <button
-                type="button"
-                aria-pressed={selected}
-                onClick={() => setMode(option.key)}
-                className="flex w-full items-start gap-3 rounded-lg px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              >
-                {/* The system's selection marker: a dot, amber when on. */}
-                <span
-                  aria-hidden
-                  className={cn(
-                    "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                    selected ? "bg-brand" : "bg-border",
-                  )}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium">{option.label}</span>
-                  <span className="block text-meta text-muted-foreground">{option.hint}</span>
-                </span>
-              </button>
-              {option.key === "workspace" && selected ? (
-                <div className="flex items-center gap-2 pb-3 pl-9 pr-4">
-                  <span className="text-meta text-muted-foreground">Everyone</span>
-                  <LevelSelect
-                    value={workspaceLevel}
-                    onChange={setWorkspaceLevel}
-                    label="What everyone in the workspace can do"
-                  />
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-
-      <div>
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
-            People with access
+      <DialogBody className="flex flex-col gap-4">
+        <div className="space-y-1.5">
+          <Label>Who can use it</Label>
+          <div className="flex gap-2">
+            <Select value={mode} onValueChange={(v) => setMode(v as SharingMode)}>
+              <SelectTrigger aria-label="Who can use it" className="flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map((o) => (
+                  <SelectItem key={o.key} value={o.key}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {mode === "workspace" ? (
+              <LevelSelect
+                value={workspaceLevel}
+                onChange={setWorkspaceLevel}
+                label="What everyone in the workspace can do"
+              />
+            ) : null}
+          </div>
+          <p className="m-0 text-meta text-muted-foreground">
+            {chosen.hint} Threads stay private to whoever starts them, shared or not.
           </p>
-          {canAdd && candidates.length > 0 ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              onClick={() => setPicking(true)}
-            >
-              <UserPlus className="h-4 w-4" /> Add people
-            </Button>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-medium">People with access</span>
+            {canAdd && candidates.length > 0 ? (
+              <Button type="button" variant="ghost" size="sm" onClick={() => setPicking(true)}>
+                <UserPlus /> Add a person
+              </Button>
+            ) : null}
+          </div>
+
+          <ul className="m-0 mt-1 list-none p-0">
+            <FixedRow
+              member={owner}
+              fallbackName={agent.createdBy ? "The owner" : null}
+              you={ownerIsMe}
+              note="Owner"
+            />
+            {admins.map((m) => (
+              <FixedRow
+                key={m.id}
+                member={m}
+                you={m.id === myId}
+                note="Admin · always has full access"
+              />
+            ))}
+            {mode === "only"
+              ? null
+              : shares.map((share) => (
+                  <ShareRow
+                    key={share.userId}
+                    share={share}
+                    member={byId.get(share.userId)}
+                    you={share.userId === myId}
+                    floor={floor}
+                    onChange={(access) =>
+                      setShares((prev) =>
+                        prev.map((s) => (s.userId === share.userId ? { ...s, access } : s)),
+                      )
+                    }
+                    onRemove={() =>
+                      setShares((prev) => prev.filter((s) => s.userId !== share.userId))
+                    }
+                  />
+                ))}
+          </ul>
+
+          {mode === "people" && shares.length === 0 ? (
+            <p className="mt-2 mb-0 text-meta text-muted-foreground">
+              Nobody added yet, so for now this is the same as{" "}
+              {ownerIsMe ? "Only me" : "Only the owner"}.
+            </p>
+          ) : null}
+          {canAdd && candidates.length === 0 && members.length > 0 ? (
+            <p className="mt-2 mb-0 text-meta text-muted-foreground">
+              Everybody else in the workspace is already listed.
+            </p>
           ) : null}
         </div>
 
-        <ul className="mt-2 divide-y divide-hairline">
-          <FixedRow
-            member={owner}
-            fallbackName={agent.createdBy ? "The owner" : null}
-            you={ownerIsMe}
-            note="Owner"
-          />
-          {admins.map((m) => (
-            <FixedRow
-              key={m.id}
-              member={m}
-              you={m.id === myId}
-              note="Admin · always has full access"
-            />
-          ))}
-          {mode === "only"
-            ? null
-            : shares.map((share) => (
-                <ShareRow
-                  key={share.userId}
-                  share={share}
-                  member={byId.get(share.userId)}
-                  you={share.userId === myId}
-                  floor={floor}
-                  onChange={(access) =>
-                    setShares((prev) =>
-                      prev.map((s) => (s.userId === share.userId ? { ...s, access } : s)),
-                    )
-                  }
-                  onRemove={() =>
-                    setShares((prev) => prev.filter((s) => s.userId !== share.userId))
-                  }
-                />
-              ))}
-        </ul>
+        <p className="m-0 text-meta text-muted-foreground">
+          Taking someone off hides the agent from them, with their threads and routines on it.
+          Nothing is deleted, and it all comes back if you share it again.
+        </p>
+      </DialogBody>
 
-        {mode === "people" && shares.length === 0 ? (
-          <p className="mt-2 text-meta text-muted-foreground">
-            Nobody added yet, so for now this is the same as{" "}
-            {ownerIsMe ? "Only me" : "Only the owner"}.
-          </p>
-        ) : null}
-        {canAdd && candidates.length === 0 && members.length > 0 ? (
-          <p className="mt-2 text-meta text-muted-foreground">
-            Everybody else in the workspace is already listed.
-          </p>
-        ) : null}
-      </div>
-
-      <p className="text-meta text-muted-foreground">
-        Taking someone off hides the agent from them, with their chats and routines on it. Nothing
-        is deleted, and it all comes back if you share it again.
-      </p>
-
-      <DialogFooter className="gap-2 sm:gap-0">
-        <Button type="button" variant="ghost" onClick={onDone} disabled={saving}>
+      <DialogFooter>
+        <Button type="button" variant="secondary" onClick={onDone} disabled={saving}>
           Cancel
         </Button>
         <Button type="button" onClick={() => void save()} disabled={saving}>
@@ -297,11 +277,7 @@ function ShareAgentForm({ agent, onDone }: { agent: Agent; onDone: () => void })
                 value={`${m.name ?? ""} ${m.email ?? ""} ${m.id}`}
                 onSelect={() => add(m)}
               >
-                <UserAvatar
-                  name={m.name ?? m.email}
-                  url={m.avatarUrl}
-                  className="h-7 w-7 text-[10px]"
-                />
+                <Avatar name={m.name ?? m.email} url={m.avatarUrl} size={24} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{m.name ?? m.email ?? "Unnamed member"}</span>
                   {m.name && m.email ? (
@@ -337,7 +313,7 @@ function FixedRow({
 }) {
   if (!member && !fallbackName) return null;
   return (
-    <li className="flex items-center gap-3 py-2.5">
+    <li className="flex min-h-11 items-center gap-3 border-b border-hairline py-1.5 last:border-b-0">
       <PersonLabel member={member} fallbackName={fallbackName ?? null} you={you} />
       <span className="shrink-0 text-right text-meta text-muted-foreground">{note}</span>
     </li>
@@ -364,7 +340,7 @@ function ShareRow({
   const redundant = !capped && floor > 0 && accessRank(share.access) <= floor;
   const name = member?.name ?? member?.email ?? "A former member";
   return (
-    <li className="flex items-center gap-3 py-2.5">
+    <li className="flex min-h-11 items-center gap-3 border-b border-hairline py-1.5 last:border-b-0">
       <PersonLabel
         member={member}
         fallbackName="A former member"
@@ -408,7 +384,7 @@ function PersonLabel({
   const second = note ?? (member?.name && member.email ? member.email : null);
   return (
     <>
-      <UserAvatar name={name} url={member?.avatarUrl} className="h-7 w-7 text-[10px]" />
+      <Avatar name={name} url={member?.avatarUrl} size={24} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">
           {name}

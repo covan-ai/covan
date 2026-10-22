@@ -45,6 +45,12 @@ export type Agent = {
   reasoningEffort: ReasoningEffort | null;
   /** Whether the agent can search the web to answer questions. */
   webSearch: boolean;
+  /**
+   * Configuration's Tools switches (0136), stored as what is off: the browser,
+   * and connections by id. Absent from an API older than the switches.
+   */
+  browserOff?: boolean;
+  connectionsOff?: string[];
   documents: {
     id: string;
     name: string;
@@ -120,10 +126,10 @@ export type Agent = {
 };
 
 /** What creating an agent takes. Sharing left out means Only me. */
-export type NewAgent = Pick<
-  Agent,
-  "name" | "emoji" | "model" | "persona" | "mode" | "webSearch"
-> & {
+export type NewAgent = Pick<Agent, "name" | "model" | "persona" | "mode" | "webSearch"> & {
+  /** Left out by the new dialog: the face is a mark now, and `emoji` is unread. */
+  emoji?: string;
+  avatar?: string | null;
   sharing?: AgentSharing;
 };
 

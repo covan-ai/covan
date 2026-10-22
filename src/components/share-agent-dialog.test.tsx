@@ -81,7 +81,14 @@ async function renderDialog(sharing: Partial<Sharing> = {}) {
   await screen.findByText("Ada Lovelace");
 }
 
-const option = (name: RegExp) => screen.getByRole("button", { name });
+/** "Who can use it" says this, now. */
+const usingIs = (text: string | RegExp) =>
+  expect(screen.getByRole("combobox", { name: "Who can use it" })).toHaveTextContent(text);
+
+async function choose(name: RegExp) {
+  await userEvent.click(screen.getByRole("combobox", { name: "Who can use it" }));
+  await userEvent.click(await screen.findByRole("option", { name }));
+}
 
 beforeEach(() => {
   setSharing.mockReset().mockResolvedValue({});
@@ -93,8 +100,7 @@ describe("ShareAgentDialog", () => {
   it("opens on the choice the agent is already on", async () => {
     await renderDialog({ workspaceAccess: "edit" });
 
-    expect(option(/^Whole workspace/)).toHaveAttribute("aria-pressed", "true");
-    expect(option(/^Only me/)).toHaveAttribute("aria-pressed", "false");
+    usingIs(/^Everyone in /);
     expect(screen.getByLabelText("What everyone in the workspace can do")).toHaveTextContent(
       "Can edit",
     );
@@ -113,10 +119,10 @@ describe("ShareAgentDialog", () => {
   it("sends nobody when it is switched to Only me, whoever was on the list", async () => {
     await renderDialog({ shares: [{ userId: "u2", access: "edit" }] });
 
-    expect(option(/^Specific people/)).toHaveAttribute("aria-pressed", "true");
+    usingIs("Specific people");
     expect(screen.getByText("Grace Hopper")).toBeInTheDocument();
 
-    await userEvent.click(option(/^Only me/));
+    await choose(/^Only me/);
     expect(screen.queryByText("Grace Hopper")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -127,8 +133,8 @@ describe("ShareAgentDialog", () => {
   it("adds somebody from the picker, which offers neither the owner nor an admin", async () => {
     await renderDialog();
 
-    await userEvent.click(option(/^Specific people/));
-    await userEvent.click(screen.getByRole("button", { name: /add people/i }));
+    await choose(/^Specific people/);
+    await userEvent.click(screen.getByRole("button", { name: /add a person/i }));
 
     const picker = await screen.findByRole("listbox");
     expect(within(picker).queryByText("Ada Lovelace")).not.toBeInTheDocument();
@@ -160,7 +166,7 @@ describe("ShareAgentDialog", () => {
     // Adding a person at the level everybody already has would do nothing.
     await renderDialog({ workspaceAccess: "use" });
 
-    await userEvent.click(screen.getByRole("button", { name: /add people/i }));
+    await userEvent.click(screen.getByRole("button", { name: /add a person/i }));
     await userEvent.click(within(await screen.findByRole("listbox")).getByText("Grace Hopper"));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
@@ -183,7 +189,7 @@ describe("ShareAgentDialog", () => {
     );
     await renderDialog();
 
-    await userEvent.click(option(/^Whole workspace/));
+    await choose(/^Everyone in /);
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(setSharing).toHaveBeenCalledWith("agent-1", { workspaceAccess: "use", shares: [] });

@@ -50,6 +50,10 @@ const tuningFields = {
   temperature: z.number().min(0).max(2).nullable().optional(),
   reasoningEffort: z.enum(REASONING_EFFORTS).nullable().optional(),
   webSearch: z.boolean().optional(),
+  // The Tools switches (0136). Ids are not checked against the workspace's
+  // connections: one that is not there matches nothing, which is "off" anyway.
+  browserOff: z.boolean().optional(),
+  connectionsOff: z.array(z.string().uuid()).max(500).optional(),
 };
 
 /**
@@ -128,6 +132,8 @@ function agentColumns(body: z.infer<typeof updateAgentSchema>): Record<string, u
   if ("temperature" in body) patch.temperature = body.temperature;
   if ("reasoningEffort" in body) patch.reasoning_effort = body.reasoningEffort;
   if ("webSearch" in body) patch.web_search = body.webSearch;
+  if ("browserOff" in body) patch.browser_off = body.browserOff;
+  if ("connectionsOff" in body) patch.connections_off = body.connectionsOff;
   return patch;
 }
 

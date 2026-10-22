@@ -344,6 +344,7 @@ chat.post("/chat/stream", async (c) => {
     env,
     workspaceId: session.workspace_id as string,
     userId: c.get("user").id,
+    agentId: session.agent_id as string,
   });
 
   /**
@@ -1568,6 +1569,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           env,
           workspaceId: pause.workspaceId,
           userId: pause.userId,
+          agentId: pause.agentId,
         });
 
         /**

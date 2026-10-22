@@ -3,7 +3,7 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import { spend } from "../spend";
 import { embeddingSpend, spends } from "../../entitlements";
 import { embeddingModel } from "../../embeddings";
-import { listConnections } from "../connections";
+import { connectionsOffFor, listConnections } from "../connections";
 
 /**
  * The first tool, and the one that proves the loop without taking any risk.
@@ -78,7 +78,10 @@ export function noPassageMatched(apps: string[]): string {
  */
 async function connectedApps(ctx: ToolContext): Promise<string[]> {
   try {
-    const connections = await listConnections(ctx.db, ctx.workspaceId, ctx.userId);
+    const off = await connectionsOffFor(ctx);
+    const connections = (await listConnections(ctx.db, ctx.workspaceId, ctx.userId)).filter(
+      (c) => !off.has(c.id),
+    );
     return connections.filter((c) => c.transport === "composio").map((c) => c.label);
   } catch {
     return [];

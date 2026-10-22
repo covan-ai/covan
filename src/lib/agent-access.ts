@@ -141,3 +141,67 @@ export function sharingWords(agent: AgentSharing): string {
   }
   return "Private";
 }
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * What a delete takes with it, in the delete dialog's words (A25): "Its 19
+ * threads stay readable for 30 days under Recently deleted, then go. The 2
+ * routines pointed at it stop now. The 3 folders it reads are not touched."
+ */
+export function deleteSummarySentence(s: {
+  threads: number;
+  routines: number;
+  folders: number;
+}): string {
+  const parts = [
+    s.threads > 0
+      ? `Its ${plural(s.threads, "thread stays", "threads stay")} readable for 30 days under Recently deleted, then ${s.threads === 1 ? "goes" : "go"}.`
+      : "It waits 30 days under Recently deleted, then goes.",
+    s.routines > 0
+      ? `The ${plural(s.routines, "routine", "routines")} pointed at it stop${s.routines === 1 ? "s" : ""} now.`
+      : null,
+    s.folders > 0
+      ? `The ${plural(s.folders, "folder", "folders")} it reads ${s.folders === 1 ? "is" : "are"} not touched.`
+      : null,
+  ];
+  return parts.filter(Boolean).join(" ");
+}
+
+/** "Everyone in Acme", "Mina and 2 others", "Only you" — Configuration's Who can use it. */
+export function whoCanUse(
+  agent: AgentSharing & { createdBy: string | null },
+  workspaceName: string,
+  myId: string | undefined,
+): string {
+  if (agent.workspaceAccess) return `Everyone in ${workspaceName}`;
+  const n = agent.shares.length;
+  const owner = agent.createdBy && agent.createdBy === myId ? "you" : "its owner";
+  if (n === 0) return owner === "you" ? "Only you" : "Only its owner";
+  return `${owner === "you" ? "You" : "Its owner"} and ${plural(n, "person", "people")}`;
+}
+
+/**
+ * "Admins and Mina", "Everyone in Acme" — Configuration's Who can edit it.
+ * Admins always can (0104), and so can whoever made it.
+ */
+export function whoCanEdit(
+  agent: AgentSharing & { createdBy: string | null },
+  workspaceName: string,
+  nameOf: (userId: string) => string | null,
+  myId: string | undefined,
+): string {
+  if (accessRank(agent.workspaceAccess) >= accessRank("edit"))
+    return `Everyone in ${workspaceName}`;
+  const ids = [
+    ...(agent.createdBy ? [agent.createdBy] : []),
+    ...agent.shares.filter((s) => accessRank(s.access) >= accessRank("edit")).map((s) => s.userId),
+  ];
+  const names = [...new Set(ids)].map((id) =>
+    id === myId ? "you" : (nameOf(id)?.split(/\s+/)[0] ?? null),
+  );
+  const known = names.filter((n): n is string => !!n);
+  if (known.length === 0) return "Admins";
+  if (known.length <= 2) return `Admins and ${known.join(" and ")}`;
+  return `Admins, ${known[0]} and ${plural(known.length - 1, "other", "others")}`;
+}

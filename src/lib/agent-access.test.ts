@@ -8,6 +8,10 @@ import {
   sharingFor,
   sharingMode,
   sharingSummary,
+  deleteSummarySentence,
+  whoCanEdit,
+  whoCanUse,
+  type AgentSharing,
 } from "./agent-access";
 
 describe("the levels", () => {
@@ -72,5 +76,44 @@ describe("sharingSummary", () => {
     expect(sharingSummary({ ...base, workspaceAccess: "edit" }, "u1").label).toBe(
       "Everyone · Can edit",
     );
+  });
+});
+
+describe("deleteSummarySentence", () => {
+  it("says what goes, what stops and what stays", () => {
+    expect(deleteSummarySentence({ threads: 19, routines: 2, folders: 3 })).toBe(
+      "Its 19 threads stay readable for 30 days under Recently deleted, then go. The 2 routines pointed at it stop now. The 3 folders it reads are not touched.",
+    );
+    expect(deleteSummarySentence({ threads: 1, routines: 1, folders: 0 })).toBe(
+      "Its 1 thread stays readable for 30 days under Recently deleted, then goes. The 1 routine pointed at it stops now.",
+    );
+    expect(deleteSummarySentence({ threads: 0, routines: 0, folders: 0 })).toBe(
+      "It waits 30 days under Recently deleted, then goes.",
+    );
+  });
+});
+
+describe("whoCanUse and whoCanEdit", () => {
+  const base: AgentSharing & { createdBy: string | null } = {
+    createdBy: "u1",
+    workspaceAccess: null,
+    shares: [],
+  };
+  const names: Record<string, string> = { u1: "Mina Kaya", u2: "Deniz Arslan" };
+  const nameOf = (id: string) => names[id] ?? null;
+
+  it("names the workspace when everyone may", () => {
+    expect(whoCanUse({ ...base, workspaceAccess: "use" }, "Acme", "u1")).toBe("Everyone in Acme");
+    expect(whoCanEdit({ ...base, workspaceAccess: "edit" }, "Acme", nameOf, "u2")).toBe(
+      "Everyone in Acme",
+    );
+  });
+
+  it("says admins and who else may edit", () => {
+    expect(whoCanEdit({ ...base }, "Acme", nameOf, "u2")).toBe("Admins and Mina");
+    expect(
+      whoCanEdit({ ...base, shares: [{ userId: "u2", access: "edit" }] }, "Acme", nameOf, "u1"),
+    ).toBe("Admins and you and Deniz");
+    expect(whoCanUse({ ...base }, "Acme", "u1")).toBe("Only you");
   });
 });

@@ -1,6 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, SquarePen } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +26,7 @@ export function NewThreadButton({
 }: {
   /** Start with this agent, without asking. */
   agentId?: string;
-  variant?: "default" | "secondary";
+  variant?: "default" | "secondary" | "ghost";
   iconOnly?: boolean;
 }) {
   const { agents, startSession, canWrite } = useAgentsStore();
@@ -52,7 +52,7 @@ export function NewThreadButton({
   };
 
   const label = iconOnly ? (
-    <Plus aria-label="New thread" />
+    <SquarePen aria-label="New thread" />
   ) : (
     <>
       <Plus /> New thread

@@ -62,6 +62,7 @@ function InboxPage() {
       <TopBar
         title="Inbox"
         meta={meta || undefined}
+        phoneMeta={counts.unread > 0 ? counts.unread : undefined}
         actions={
           <>
             <Button
@@ -84,7 +85,7 @@ function InboxPage() {
             >
               <Search />
             </Button>
-            <NewThreadButton variant="secondary" iconOnly />
+            <NewThreadButton variant="ghost" iconOnly />
           </>
         }
       />
@@ -108,7 +109,7 @@ function InboxPage() {
               value={agent ?? "all"}
               onValueChange={(v) => set({ agent: v === "all" ? undefined : v })}
             >
-              <SelectTrigger size="sm" aria-label="Agent" className="w-auto min-w-32">
+              <SelectTrigger size="sm" aria-label="Agent" className="w-auto min-w-32 max-lg:hidden">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="end">

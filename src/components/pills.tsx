@@ -22,7 +22,10 @@ export function Pills<T extends string>({
     <div
       role="group"
       aria-label={label}
-      className={cn("flex flex-wrap items-center gap-1", className)}
+      className={cn(
+        "flex items-center gap-1 max-lg:-mx-4 max-lg:flex-nowrap max-lg:overflow-x-auto max-lg:px-4 lg:flex-wrap",
+        className,
+      )}
     >
       {options.map((o) => {
         const on = o.value === value;

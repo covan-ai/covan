@@ -16,6 +16,7 @@ export function TopBar({
   title,
   leading,
   meta,
+  phoneMeta,
   tabs,
   actions,
   phoneActions,
@@ -25,6 +26,8 @@ export function TopBar({
   title: ReactNode;
   leading?: ReactNode;
   meta?: ReactNode;
+  /** The phone's shorter meta beside the title (A20: "Inbox 3"). */
+  phoneMeta?: ReactNode;
   tabs?: ReactNode;
   actions?: ReactNode;
   phoneActions?: ReactNode;
@@ -47,6 +50,11 @@ export function TopBar({
         <h1 className="flex min-w-0 items-center gap-2 text-lead font-semibold">
           {leading}
           <span className="truncate">{title}</span>
+          {phoneMeta !== undefined && (
+            <span className="text-meta font-medium text-muted-foreground lg:hidden">
+              {phoneMeta}
+            </span>
+          )}
         </h1>
         {meta && (
           <span className="hidden truncate text-meta text-muted-foreground lg:inline">{meta}</span>

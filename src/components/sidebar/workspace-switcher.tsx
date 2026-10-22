@@ -86,6 +86,7 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
             <Tile
               label={current?.name ?? "…"}
               tone="ink"
+              letters={1}
               imageUrl={workspaceIconSrc(current?.iconUrl)}
             />
             <span className="min-w-0 flex-1 truncate text-sm font-semibold">
@@ -100,7 +101,7 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
           </DropdownMenuLabel>
           {workspaces.map((w) => (
             <DropdownMenuItem key={w.id} onClick={() => void switchTo(w.id)}>
-              <Tile label={w.name} tone={w.id === current?.id ? "ink" : "neutral"} />
+              <Tile label={w.name} tone={w.id === current?.id ? "ink" : "neutral"} letters={1} />
               <span className="flex-1 truncate">{w.name}</span>
               {w.id === current?.id && <Check className="size-4 shrink-0" />}
             </DropdownMenuItem>

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Sidebar } from "@/components/sidebar/sidebar";
 import { ShellProvider } from "@/components/shell-provider";
 import { CreateAgentDialog } from "@/components/create-agent-dialog";
-import { IncomingInvitesBanner } from "@/components/incoming-invites-banner";
+import { BannerStack } from "@/components/banner-stack";
 import { CommandPalette } from "@/components/command-palette";
 import { useGoKeys } from "@/hooks/use-go-keys";
 import type { ShellApi } from "@/lib/shell";
@@ -72,7 +72,7 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
           <Sidebar agentId={agentId} onNavigate={close} />
         </div>
         <main className="flex min-w-0 flex-1 flex-col">
-          <IncomingInvitesBanner />
+          <BannerStack />
           {children}
         </main>
       </div>

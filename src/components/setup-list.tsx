@@ -124,7 +124,11 @@ export function SetupList({
     }
     onNavigate();
     goTo(target.route);
-    openCoachMark(target, { returnFocusTo: anchor });
+    openCoachMark(target, {
+      returnFocusTo: anchor,
+      position: { step: rows.indexOf(row) + 1, total: rows.length },
+      onSkip: dismiss,
+    });
   };
 
   const goTo = (route: CoachTarget["route"]) => {

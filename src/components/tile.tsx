@@ -21,6 +21,7 @@ export function Tile({
   size = 24,
   tone = "neutral",
   imageUrl,
+  letters = 2,
   className,
 }: {
   /** What the monogram is taken from: a name, or the letters themselves. */
@@ -28,6 +29,8 @@ export function Tile({
   size?: TileSize;
   tone?: "neutral" | "ink";
   imageUrl?: string | null;
+  /** A workspace is one letter on its tile; a source or an app, two. */
+  letters?: 1 | 2;
   className?: string;
 }) {
   if (imageUrl) {
@@ -45,7 +48,7 @@ export function Tile({
         className,
       )}
     >
-      {monogram(label, size)}
+      {letters === 1 ? label.trim().charAt(0).toUpperCase() || "–" : monogram(label, size)}
     </span>
   );
 }

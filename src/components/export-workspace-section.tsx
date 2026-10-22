@@ -1,94 +1,168 @@
 import { useState } from "react";
-import { SectionHeading } from "@/components/page-container";
-import { Disclosure, SectionCard } from "@/components/section-card";
-import { Button } from "@/components/ui/button";
-import { api, ApiError } from "@/lib/api-client";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Field } from "@/components/field";
+import { SectionLabel } from "@/components/section";
+import { StatusWord } from "@/components/status-dot";
+import { Button } from "@/components/ui/button";
+import { api, ApiError, type WorkspaceExport } from "@/lib/api-client";
+import { formatFileSize } from "@/lib/file-size";
+import { cn } from "@/lib/utils";
+
+/** "20 October 2026". */
+const day = (at: number) =>
+  new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
 /**
- * Taking the workspace with you.
+ * Settings › Export and deletion › Export (A27): ask for everything as a zip,
+ * prepared in the background and mailed to you (0132), and the exports asked
+ * for before — each yours to download, or somebody else's to.
  *
- * The README has always said a self-hosted Covan is the whole product and that
- * nothing is held hostage. That was true of the licence and true of the
- * database, and not true of the interface: the answer to "can I get my data
- * out" was `pg_dump`, which is an answer for whoever runs the server and not
- * for the team using it. This is the button that makes the claim checkable by
- * the person the claim was aimed at.
- *
- * Deliberately not gated on being an admin. An export is a read, and it
- * contains what this person could already see by clicking around — so refusing
- * it to a member would withhold a convenient copy of their own work, not
- * protect anything. What their file does *not* contain is anybody else's
- * private sessions, and the archive's manifest says so in its own words rather
- * than letting the filename imply otherwise.
- *
- * The whole archive lands in the browser before it is saved, which is what
- * fetching with a bearer token costs — an `<a href>` carries no Authorization
- * header. Fine for a workspace; the limit is the browser's memory, and the one
- * that would bite first is the Worker's, which is why the server streams.
+ * It holds what the person who asked can see — somebody else's private
+ * threads are not in their copy, which is also why only they may download
+ * it. The old synchronous download stays, for an install whose scheduled
+ * work does not run.
  */
 export function ExportWorkspaceSection({
   workspaceId,
-  workspaceName,
+  isAdmin,
+  highlight,
 }: {
   workspaceId?: string;
-  workspaceName?: string;
+  isAdmin: boolean;
+  /** An export the email's link pointed at. */
+  highlight?: string;
 }) {
-  const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState<string | null>(null);
+  const key = ["exports", workspaceId];
+  const { data: exports = [] } = useQuery({
+    queryKey: key,
+    queryFn: () => api.exports.list(workspaceId!),
+    enabled: !!workspaceId && isAdmin,
+    // While one is being prepared, look again now and then.
+    refetchInterval: (q) =>
+      (q.state.data ?? []).some((e) => e.status === "queued" || e.status === "running")
+        ? 15_000
+        : false,
+  });
+  const inProgress = exports.some((e) => e.status === "queued" || e.status === "running");
 
-  const download = async () => {
-    if (busy || !workspaceId) return;
-    setBusy(true);
+  const run = async (id: string, work: () => Promise<unknown>, done?: string) => {
+    if (busy) return;
+    setBusy(id);
     try {
-      await api.workspace.exportArchive(workspaceId);
-      toast.success("Export downloaded");
+      await work();
+      if (done) toast.success(done);
+      await queryClient.invalidateQueries({ queryKey: key });
     } catch (e) {
-      // No inline error state here, unlike closing an account: there is nothing
-      // to go and fix and nothing to re-type. A failed export is a failed
-      // request, and trying again is the whole remedy.
-      toast.error(e instanceof ApiError ? e.message : "Could not build the export");
+      toast.error(e instanceof ApiError ? e.message : "Couldn't do that");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
   return (
-    <section className="mt-14">
-      <SectionHeading
-        title="Take it with you"
-        description="Everything this workspace holds, in one archive, with the SQL to put it back into a Covan you run yourself."
-      />
-      <SectionCard className="mt-6 space-y-5">
-        {/* These two stay on the screen. The first is the scope of the file
-            and the second is a consequence somebody meets days later, on a
-            machine that is not this one — "should have been told here" is the
-            whole reason it is written down at all. The inventory folds. */}
-        <p className="text-sm text-muted-foreground">
-          It holds what <span className="text-foreground">you</span> can see — somebody else&rsquo;s
-          private chats are not in your copy. Delivery channels come back without their secrets, so
-          a restore brings every routine back <span className="text-foreground">paused</span>,
-          waiting for its credential rather than failing on a schedule.
-        </p>
-        <Disclosure label="What the file contains">
-          Agents and their personas, knowledge bundles, every document and its original file, chats
-          and their messages, brainstorm boards, and routines with their schedules. Retrieval chunks
-          are left out — they are rebuilt from the documents after a restore, and they would be the
-          largest thing in the file by far. Delivery secrets are encrypted with a key belonging to
-          this install, so they cannot travel; the archive&rsquo;s{" "}
-          <code className="text-xs">manifest.json</code> repeats all of this, so the file explains
-          itself later, when nobody remembers this page.
-        </Disclosure>
-        <div className="flex items-center gap-3">
-          <Button onClick={download} disabled={busy || !workspaceId} variant="outline">
-            {busy ? "Building the archive…" : "Download the archive"}
+    <>
+      <SectionLabel>Export</SectionLabel>
+      <Field
+        label="Everything as a zip"
+        help="Threads, documents as they were uploaded, agents and routines, with the SQL to put them back into a Covan you run yourself. Ready within an hour; the link is emailed to you and works for 7 days."
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={!workspaceId || !isAdmin || inProgress || busy === "request"}
+            onClick={() =>
+              workspaceId &&
+              void run(
+                "request",
+                () => api.exports.request(workspaceId),
+                "Export requested — we'll email you when it's ready",
+              )
+            }
+          >
+            {inProgress ? "Preparing…" : "Request export"}
           </Button>
-          {workspaceName ? (
-            <span className="text-xs text-muted-foreground">
-              Exports {workspaceName}, the workspace you are in.
-            </span>
-          ) : null}
+          <Button
+            variant="ghost"
+            disabled={!workspaceId || busy === "now"}
+            onClick={() =>
+              workspaceId &&
+              void run("now", () => api.workspace.exportArchive(workspaceId), "Export downloaded")
+            }
+          >
+            {busy === "now" ? "Building…" : "Download it now instead"}
+          </Button>
         </div>
-      </SectionCard>
-    </section>
+        <p className="mt-2 text-meta text-muted-foreground">
+          Owners and admins only. It holds what you can see: somebody else&rsquo;s private threads
+          are not in your copy. Delivery channels come back without their secrets, so a restore
+          brings every routine back paused.
+        </p>
+      </Field>
+
+      {isAdmin && exports.length > 0 && (
+        <Field label="Previous exports">
+          <ul className="m-0 max-w-[560px] list-none p-0">
+            {exports.map((e) => (
+              <ExportRow
+                key={e.id}
+                item={e}
+                highlighted={e.id === highlight}
+                busy={busy === e.id}
+                onDownload={() => void run(e.id, () => api.exports.download(e.id))}
+              />
+            ))}
+          </ul>
+        </Field>
+      )}
+    </>
+  );
+}
+
+function ExportRow({
+  item,
+  highlighted,
+  busy,
+  onDownload,
+}: {
+  item: WorkspaceExport;
+  highlighted: boolean;
+  busy: boolean;
+  onDownload: () => void;
+}) {
+  return (
+    <li
+      className={cn(
+        "flex min-h-11 items-center gap-3 border-b border-hairline text-sm last:border-b-0",
+        highlighted && "bg-surface-muted",
+      )}
+    >
+      <span className="min-w-0 flex-1 truncate">
+        {day(item.createdAt)}
+        <span className="text-muted-foreground">
+          {item.sizeBytes ? ` · ${formatFileSize(item.sizeBytes)}` : ""} · requested by{" "}
+          {item.mine ? "you" : (item.requestedBy?.name ?? "an admin")}
+        </span>
+      </span>
+      {item.status === "ready" ? (
+        item.mine ? (
+          <Button variant="secondary" size="sm" onClick={onDownload} disabled={busy}>
+            {busy ? "Downloading…" : "Download"}
+          </Button>
+        ) : (
+          // Their copy holds their private threads; it is theirs to download.
+          <span className="text-meta text-muted-foreground">Theirs to download</span>
+        )
+      ) : item.status === "queued" || item.status === "running" ? (
+        <StatusWord state="running" className="text-meta">
+          Preparing
+        </StatusWord>
+      ) : item.status === "failed" ? (
+        <span className="text-meta text-destructive">{item.error ?? "Failed"}</span>
+      ) : (
+        <span className="text-meta text-muted-foreground">Expired</span>
+      )}
+    </li>
   );
 }

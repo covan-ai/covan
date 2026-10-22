@@ -4,6 +4,7 @@ import { Markdown } from "@/components/markdown";
 import type { DocumentJob } from "@/lib/api-client";
 import { saveDocument, type ExportFormat } from "@/lib/document-export";
 import { cn } from "@/lib/utils";
+import { StatusDot } from "@/components/status-dot";
 import { SectionSquares } from "./document-progress";
 import { isWriting, statusLine } from "./use-document-jobs";
 
@@ -120,7 +121,7 @@ export function DocumentPanel({
                 <Markdown content={section.body} className="mt-3" />
               ) : i === writingIndex ? (
                 <p className="mt-3 flex items-center gap-2 text-meta text-muted-foreground">
-                  <span className="step-running h-2 w-2 shrink-0 rounded-full" />
+                  <StatusDot state="running" />
                   Being written…
                 </p>
               ) : null}

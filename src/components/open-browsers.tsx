@@ -21,6 +21,7 @@ import {
 import { sessionLabel } from "@/lib/session-label";
 import { ApiError } from "@/lib/api-error";
 import { cn } from "@/lib/utils";
+import { StatusDot } from "@/components/status-dot";
 
 /**
  * The person's browsers that may still be open (Task 3.2, ruling R48): the
@@ -103,20 +104,10 @@ function stateOf(browser: OpenConversationBrowser): string {
   return "Nobody is using it";
 }
 
-/** The status square: the panel's chip, at row scale. Squares, not circles. */
+/** The status dot: the panel's, at row scale (DESIGN.md §12). */
 function Square({ tone }: { tone: "agent" | "person" | "idle" }) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "h-2 w-2 shrink-0 rounded-full",
-        tone === "agent"
-          ? "step-running"
-          : tone === "person"
-            ? "bg-brand"
-            : "bg-muted-foreground/40",
-      )}
-    />
+    <StatusDot state={tone === "agent" ? "running" : tone === "person" ? "waiting" : "done"} />
   );
 }
 

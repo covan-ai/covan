@@ -1,7 +1,6 @@
 import { memo } from "react";
 import { Copy, RefreshCw, ThumbsDown, ThumbsUp, Volume2, VolumeX } from "lucide-react";
 import type { Message } from "@/lib/agents-store";
-import { AgentAvatar } from "@/components/avatars";
 import { Button } from "@/components/ui/button";
 import type { FeedbackKind } from "@/lib/api-client";
 import { Markdown } from "@/components/markdown";
@@ -50,8 +49,6 @@ import { cn } from "@/lib/utils";
 export const AnswerTurn = memo(function AnswerTurn({
   message,
   streamTail,
-  agentName,
-  agentEmoji,
   time,
   busy,
   model,
@@ -76,8 +73,6 @@ export const AnswerTurn = memo(function AnswerTurn({
   message: Message;
   /** Tokens still arriving for THIS message. Null for every settled row. */
   streamTail: string | null;
-  agentName: string;
-  agentEmoji: string;
   /** Already formatted. A turn should not own a locale. */
   time: string;
   busy: boolean;
@@ -108,31 +103,25 @@ export const AnswerTurn = memo(function AnswerTurn({
 }) {
   const sources = message.sources ?? [];
 
-  // A byline, which this file argued against and now carries.
-  //
-  // The old reason was arithmetic and it was right: a tile, a name and a clock
-  // above every reply is three lines of furniture per answer, and the reply
-  // was already the only thing on this side of the transcript. What changed is
-  // the other side of that sum. The clock left every question for a hover row,
-  // the step trail folded into one line, the dots stopped taking a line of
-  // their own — so a byline is now the transcript's only repeated furniture
-  // rather than its fourth.
-  //
-  // It earns the space by answering a question the rail cannot: in a shared
-  // session the questions have names above them, and without this the answers
-  // are the only unattributed thing on screen. One line, one baseline, and the
-  // answer still starts at the margin the questions are measured from.
+  // No byline (A2): the agent is named in the bar over the page, and the
+  // reply starts at the margin the questions are measured from. What it did
+  // comes first, folded into one line, then what it wrote.
   return (
     <div className={cn("group flex flex-col gap-2", className)}>
       <div className="min-w-0" data-turn="answer">
-        <div data-part="byline" className="mb-2 flex items-center gap-2">
-          <AgentAvatar emoji={agentEmoji} className="h-5 w-5 text-[11px]" />
-          <span className="text-sm font-semibold leading-none">{agentName}</span>
-          <span className="text-xs tabular-nums text-muted-foreground">{time}</span>
-        </div>
+        {message.steps && message.steps.length > 0 && (
+          <SettledSteps
+            steps={toStepViews(message.steps)}
+            sources={sources.length}
+            className="mb-3"
+          />
+        )}
         <Markdown
           content={streamTail === null ? message.content : message.content + streamTail}
-          className={cn("text-base text-foreground", streamTail !== null && "stream-live")}
+          className={cn(
+            "text-base leading-[1.65] text-foreground",
+            streamTail !== null && "stream-live",
+          )}
         />
 
         {/* Which take on this answer is showing, when there is more than one.
@@ -149,17 +138,9 @@ export const AnswerTurn = memo(function AnswerTurn({
           />
         )}
 
-        {/* Above Sources, because it is the earlier half of the same sentence:
-            these are the places the answer went looking, and those are the
-            documents it came back with. Folded shut — somebody checking an
-            answer opens it, and everybody else reads the reply. */}
-        {message.steps && message.steps.length > 0 && (
-          <SettledSteps steps={toStepViews(message.steps)} />
-        )}
-
         {sources.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">Sources</span>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
+            <span>Sources</span>
             {sources.map((source, i) => (
               <SourceChip
                 key={source.id ?? `${source.name}:${i}`}
@@ -263,6 +244,7 @@ export const AnswerTurn = memo(function AnswerTurn({
             The cost badge above stays hover-only because it genuinely is
             incidental, which is why the wrapper keeps its `group`. */}
         <div data-part="actions" className="mt-2 flex items-center gap-0.5">
+          <span className="mr-1.5 text-xs text-micro-foreground tabular-nums">{time}</span>
           <MsgAction label="Copy" onClick={() => onCopy(message.content)}>
             <Copy className="h-3.5 w-3.5" />
           </MsgAction>

@@ -1,7 +1,8 @@
-import type { ReactNode } from "react";
-import { Check, Minus, X } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Check, ChevronRight, Minus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Disclosure } from "@/components/section-card";
+import { StatusDot } from "@/components/status-dot";
+import { stepsSummary } from "@/lib/step-summary";
 import { Tool, hasPayload, type ToolPart } from "@/components/prompt-kit/tool";
 import { cn } from "@/lib/utils";
 
@@ -69,29 +70,17 @@ const WORDS: Record<AgentStepView["status"], string> = {
 };
 
 /**
- * THERE ARE TWO AMBERS IN THE TRAIL AND THEY MEAN OPPOSITE THINGS.
- *
- * A waiting step is a FILLED amber square: somebody is being asked, and
- * nothing moves until they answer. A running step is an amber OUTLINE with the
- * fill sweeping through it: the machine is busy and nothing is being asked.
- *
- * The distinction is shape, not motion, and that is the whole of why it works.
- * A reader with `prefers-reduced-motion` set sees a ring and a fill — still two
- * different marks — where "one of them is animated" would have collapsed into
- * two identical squares. See `.step-running` in `styles.css`.
- *
- * Running used to be lucide's `Loader2` spinning. It was the one circle on a
- * screen whose rule is squares, and it said "busy" in general rather than
- * "this row", which is the only thing a trail exists to say.
+ * A step's mark, in the dot language of the whole app (DESIGN.md §12): a
+ * running step is the filled amber dot that breathes, one waiting on somebody
+ * is the amber ring. Fill against ring is the difference, so it holds with
+ * motion switched off. A finished step is a tick, a failed one a red cross.
  */
 function Mark({ status }: { status: AgentStepView["status"] }) {
-  if (status === "running") {
-    return <span className="step-running h-2 w-2 shrink-0 rounded-full" />;
-  }
+  if (status === "running") return <StatusDot state="running" />;
   if (status === "ok") return <Check className="h-3 w-3 shrink-0 text-muted-foreground" />;
   if (status === "failed") return <X className="h-3 w-3 shrink-0 text-destructive" />;
   if (status === "refused") return <Minus className="h-3 w-3 shrink-0 text-muted-foreground" />;
-  return <span className="h-2 w-2 shrink-0 rounded-full bg-brand" />;
+  return <StatusDot state="waiting" />;
 }
 
 /** The row itself: a mark, what it was pointed at, and how it ended. */
@@ -167,37 +156,41 @@ export function StepTrail({ steps, className }: { steps: AgentStepView[]; classN
 }
 
 /**
- * The same trail, under a reply that has already landed.
+ * The same trail, under a reply that has already landed (A2): one line —
+ * "› Searched Knowledge · 3 sources · 6 s" — that opens onto the rows.
  *
- * Folded rather than the open list: the live version answers "what is it
- * doing"; this one answers "what did it do", which is a question somebody asks
- * occasionally and should not have to scroll past the rest of the time. The
- * `Disclosure` primitive is the same one the Thinking block uses two components
- * over — they are two foldable notes about one reply, and two vocabularies for
- * that would be a deviation rather than a choice.
+ * Folded, because the live version answers "what is it doing" and this one
+ * answers "what did it do", which somebody asks occasionally and should not
+ * have to scroll past the rest of the time.
  */
-export function SettledSteps({ steps }: { steps: AgentStepView[] }) {
+export function SettledSteps({
+  steps,
+  sources = 0,
+  className,
+}: {
+  steps: AgentStepView[];
+  /** How many documents the reply cites, said on the line. */
+  sources?: number;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
   if (steps.length === 0) return null;
-  const failed = steps.filter((s) => s.status === "failed" || s.status === "refused").length;
-  const count = steps.length === 1 ? "1 step" : `${steps.length} steps`;
-
-  // The question people actually have about a pause is how long it was, and
-  // the number was already in `message_steps` — it was being dropped on the
-  // way to the screen. Omitted rather than zeroed when no step recorded one:
-  // "0.0s" is a measurement, and there was none.
-  const timed = steps.filter((s) => typeof s.durationMs === "number");
-  const total = timed.reduce((sum, s) => sum + (s.durationMs ?? 0), 0);
-  const took = timed.length > 0 ? `${(total / 1000).toFixed(1)}s` : null;
-
   return (
-    <Disclosure
-      className="mt-3"
-      label={[count, took, failed > 0 ? `${failed} did not complete` : null]
-        .filter(Boolean)
-        .join(" · ")}
-    >
-      <StepTrail steps={steps} />
-    </Disclosure>
+    <div className={className}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="-ml-2 flex h-8 items-center gap-2.5 rounded-md px-2 text-meta font-medium text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
+      >
+        <ChevronRight
+          aria-hidden
+          className={cn("size-4 shrink-0 transition-transform", open && "rotate-90")}
+        />
+        <span>{stepsSummary(steps, sources)}</span>
+      </button>
+      {open && <StepTrail steps={steps} className="mt-1 mb-2 pl-1" />}
+    </div>
   );
 }
 
@@ -346,12 +339,8 @@ function ProposalRows({ proposal, nested }: { proposal: unknown; nested?: boolea
 }
 
 /**
- * The card.
- *
- * Radius 12, one step larger than the 10 of the rows inside it, because a
- * child inside a rounded parent takes one step larger and this is the parent.
- * No shadow: a border and a surface step, which is the whole of how a card
- * sits on this canvas.
+ * The card, drawn as A2's ask card: a bordered box, the amber ring of
+ * something waiting on you, who is asking and what.
  *
  * Both buttons are real. "Not now" is not a dismissal — it goes to the same
  * endpoint with `approve: false`, so the agent is told and can say something
@@ -375,55 +364,61 @@ export function ConfirmCard({
   busy,
   onAnswer,
   standing,
+  agentName,
 }: {
   pending: PendingConfirmation;
   busy: boolean;
   onAnswer: (approve: boolean) => void;
   standing?: { label: string; onChoose: () => void };
+  /** Who is asking: "Support is asking you". */
+  agentName?: string;
 }) {
   return (
-    <div className="mt-3 flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
-      <div className="flex items-start gap-2.5">
-        <span className="mt-[5px] h-2 w-2 shrink-0 rounded-full bg-brand" />
+    <div className="mt-2 flex items-start gap-3 rounded-xl border border-border p-4">
+      <StatusDot state="waiting" className="mt-[7px]" />
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-title font-semibold leading-tight">
+          <span className="text-sm font-medium">
+            {agentName ? `${agentName} is asking you` : "Waiting for you"}
+          </span>
+          <span className="text-sm text-muted-foreground">
             {pending.summary || "The agent wants to do something."}
           </span>
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-micro-foreground">
             {pending.tool} · nothing happens until you say so
           </span>
         </div>
-      </div>
 
-      <ProposalRows proposal={pending.proposal} />
+        <ProposalRows proposal={pending.proposal} />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={busy} onClick={() => onAnswer(true)}>
-          {busy ? "Working…" : "Approve"}
-        </Button>
-        <Button variant="outline" disabled={busy} onClick={() => onAnswer(false)}>
-          Not now
-        </Button>
-        {standing ? (
-          <Button variant="ghost" disabled={busy} onClick={standing.onChoose}>
-            {standing.label}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button disabled={busy} onClick={() => onAnswer(true)}>
+            {busy ? "Working…" : "Approve"}
           </Button>
-        ) : null}
-      </div>
-      {standing ? (
-        /* The destructive clause is not a nicety. Until #202 one yes genuinely did
+          <Button variant="secondary" disabled={busy} onClick={() => onAnswer(false)}>
+            Not now
+          </Button>
+          {standing ? (
+            <Button variant="ghost" disabled={busy} onClick={standing.onChoose}>
+              {standing.label}
+            </Button>
+          ) : null}
+        </div>
+        {standing ? (
+          /* The destructive clause is not a nicety. Until #202 one yes genuinely did
            cover the whole service, and this sentence was true; #202 narrowed it so
            that an operation which changes data is covered only by its own approval,
            and the sentence was left behind saying somebody had granted more than
            they had. It is on every connected-app card — `runToolProposal` returns a
            standing action for every well-formed run_tool proposal — so a person
            reading it is reading it at the moment they are deciding. #201. */
-        <p className="text-xs leading-[1.45] text-muted-foreground">
-          Approving covers this service for the rest of this conversation, except for anything that
-          changes data there — that asks again each time. The third option applies to this operation
-          on this agent until somebody removes it, on the Integrations page.
-        </p>
-      ) : null}
+          <p className="text-xs leading-[1.45] text-muted-foreground">
+            Approving covers this service for the rest of this conversation, except for anything
+            that changes data there — that asks again each time. The third option applies to this
+            operation on this agent until somebody removes it, on the Integrations page.
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

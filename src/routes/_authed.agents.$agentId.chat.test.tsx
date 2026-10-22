@@ -85,6 +85,11 @@ const store = {
   bundles: [] as { id: string; name: string; shared?: boolean; mine?: boolean }[],
 };
 vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
+// The thread's search and browser controls go up into the agent's bar; with no
+// bar around the page in a test, they are drawn where they stand.
+vi.mock("@/components/top-bar", () => ({
+  TopBarPortal: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 
 const listMessages = vi.fn();
 const createMessage = vi.fn();
@@ -98,6 +103,7 @@ const turnStatus = vi.fn();
 const stopTurn = vi.fn();
 const documentJobs = vi.fn();
 const stopDocument = vi.fn();
+const setVisibility = vi.fn(() => Promise.resolve());
 /**
  * What `/me` answers. A variable rather than a literal so the dial's tests can
  * add `modelSpecs` — without it every model reads as one that does not
@@ -119,7 +125,7 @@ vi.mock("@/lib/api-client", () => ({
     me: () => Promise.resolve(meReply),
     sessions: {
       messages: listMessages,
-      setVisibility: vi.fn(),
+      setVisibility,
       browserTasks,
       tune: tuneSession,
       turn: turnStatus,
@@ -278,19 +284,19 @@ async function renderChat() {
       <ChatTab />
     </QueryClientProvider>,
   );
-  // Waits on the share toggle rather than the composer, which renders before
-  // anything has loaded. The toggle needs `isOwner`, which needs `/me` — so by
-  // the time it is on screen both queries have settled and the shortcuts that
-  // turn on ownership behave the way they will in a browser.
+  // Waits on "Started by you" rather than the composer, which renders before
+  // anything has loaded. It needs `isOwner`, which needs `/me` — so by the time
+  // it is on screen both queries have settled and the shortcuts that turn on
+  // ownership behave the way they will in a browser.
   await screen.findByPlaceholderText(composerPlaceholder(agent.name));
-  await screen.findByRole("button", { name: /Private to you|Shared with your workspace/ });
+  await screen.findByText(/Started by you/);
   return { ...view, client };
 }
 
 /** Opens the conversation search and hands back the field. */
 async function openSearch() {
-  await userEvent.click(screen.getByRole("button", { name: "Search this conversation" }));
-  return screen.getByPlaceholderText("Search this conversation");
+  await userEvent.click(screen.getByRole("button", { name: "Search this thread" }));
+  return screen.getByPlaceholderText("Search this thread");
 }
 
 /** The scrolling element, which has no other handle on it. */
@@ -1831,7 +1837,8 @@ describe("the browser beside the conversation", () => {
     const control = await screen.findByRole("button", {
       name: "Show the browser: a site needs you to sign in",
     });
-    expect(control.querySelector(".bg-brand")).not.toBeNull();
+    // The ring: something is waiting on the person (DESIGN.md §12).
+    expect(control.querySelector(".border-brand")).not.toBeNull();
   });
 
   it("does not mark it when nothing is waiting on the person", async () => {
@@ -1840,7 +1847,9 @@ describe("the browser beside the conversation", () => {
     await renderChat();
 
     const control = await screen.findByRole("button", { name: "Show the browser" });
-    expect(control.querySelector(".bg-brand")).toBeNull();
+    // The agent is driving: the running dot, never the ring.
+    expect(control.querySelector(".border-brand")).toBeNull();
+    expect(control.querySelector(".dot-live")).not.toBeNull();
   });
 
   /** Ruling R18: a drained v2 task keeps its old card, in the transcript. */
@@ -2230,17 +2239,19 @@ describe("who can read this thread", () => {
   // It used to be said three times — an icon in the header, a sentence under
   // the greeting, a clause under the composer — and a tester who read
   // "private" in one and "shared" in another could not tell which to believe.
-  it("is said once, in words, on the header control", async () => {
+  // Now it is one word on the thread's own line, and the owner's menu changes it.
+  it("is said once, on the thread's line, and changed from its menu", async () => {
     listMessages.mockResolvedValue([]);
     await renderChat();
 
-    const control = screen.getByRole("button", { name: /Private to you/ });
-    expect(control).toHaveTextContent("Private to you");
-    expect(control).toHaveAttribute("aria-pressed", "false");
-    // Nowhere else on the screen.
-    expect(screen.getAllByText(/private to you/i)).toHaveLength(1);
-    expect(screen.queryByText(/shared with your workspace/i)).toBeNull();
-    expect(screen.getByText(/grounded in 0 team documents$/)).toBeInTheDocument();
+    expect(screen.getByText(/Started by you/).parentElement).toHaveTextContent(
+      /^Started by you · Private$/,
+    );
+    expect(screen.queryByText(/shared with workspace/i)).toBeNull();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Thread actions" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Share with workspace" }));
+    await waitFor(() => expect(setVisibility).toHaveBeenCalledWith("session-1", "shared"));
   });
 
   it("says a brainstorm is the team's from the start, where the brainstorm opens", async () => {
@@ -2253,9 +2264,14 @@ describe("who can read this thread", () => {
       expect(
         screen.getByText(/Brainstorms are shared with your team from the start/),
       ).toBeInTheDocument();
-      const control = screen.getByRole("button", { name: /Shared with your workspace/ });
-      expect(control).toHaveTextContent("Shared with workspace");
-      expect(control).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText(/Started by you/).parentElement).toHaveTextContent(
+        /^Brainstorm · Started by you · Shared with workspace$/,
+      );
+      // From the keyboard, as the dial's tests open theirs: the Idea board
+      // beside a brainstorm takes focus as it mounts, which a pointer-opened
+      // menu reads as a click outside.
+      fireEvent.keyDown(screen.getByRole("button", { name: "Thread actions" }), { key: "Enter" });
+      expect(await screen.findByRole("menuitem", { name: "Make private" })).toBeInTheDocument();
     } finally {
       session.kind = "chat";
       session.visibility = "private";
@@ -2328,5 +2344,36 @@ describe("the first thing to do in an empty conversation", () => {
       agent.myAccess = "use";
       session.visibility = "private";
     }
+  });
+});
+
+describe("a question the agent asked", () => {
+  const asked = {
+    ...answer,
+    content: "The policy allows it within 60 days.",
+    ask: {
+      question: "Should I draft the reply to the customer?",
+      replies: ["Draft the reply", "Summary is enough"],
+    },
+  };
+
+  it("is the ask card under the last reply, with its answers as buttons", async () => {
+    listMessages.mockResolvedValue([question, asked]);
+    await renderChat();
+
+    const card = await screen.findByRole("group", { name: "GTM Agent is asking you" });
+    expect(card).toHaveTextContent("Should I draft the reply to the customer?");
+    expect(within(card).getByRole("button", { name: "Draft the reply" })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Summary is enough" })).toBeInTheDocument();
+  });
+
+  it("is gone once somebody has answered it", async () => {
+    listMessages.mockResolvedValue([
+      question,
+      asked,
+      { ...question, id: "msg-3", content: "Draft the reply" },
+    ]);
+    await renderChat();
+    expect(screen.queryByRole("group", { name: "GTM Agent is asking you" })).toBeNull();
   });
 });

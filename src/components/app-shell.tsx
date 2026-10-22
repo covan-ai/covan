@@ -71,7 +71,10 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
         >
           <Sidebar agentId={agentId} onNavigate={close} />
         </div>
-        <main className="flex min-w-0 flex-1 flex-col">
+        {/* A page that is a window rather than a document — a thread, with its
+            composer pinned to the bottom — marks itself `data-fill-screen`,
+            and the column holds to the screen's height for it. */}
+        <main className="flex min-w-0 flex-1 flex-col has-[[data-fill-screen]]:h-dvh">
           <BannerStack />
           {children}
         </main>

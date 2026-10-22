@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { FileText, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 // Lazy: the chip is under every answer and the dialog is opened from few of
 // them, and the dialog brings the API client with it.
 const DocumentPreviewDialog = lazy(() =>
@@ -56,18 +56,11 @@ export function SourceChip({
           : {})}
         title={age ? `${source.name} — uploaded ${age.label}` : source.name}
         className={cn(
-          "inline-flex max-w-[260px] items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
-          source.id && "transition-colors hover:border-foreground/30 hover:text-foreground",
-          age?.stale
-            ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-            : "border-hairline bg-popover text-muted-foreground",
+          "inline-flex h-[22px] max-w-[260px] items-center gap-1.5 rounded-sm bg-surface px-2 font-mono text-xs text-chip-foreground",
+          source.id && "transition-colors hover:bg-surface-hover hover:text-foreground",
         )}
       >
-        {age?.stale ? (
-          <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden />
-        ) : (
-          <FileText className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
-        )}
+        {age?.stale && <TriangleAlert className="h-3 w-3 shrink-0" aria-hidden />}
         <span className="truncate">{source.name}</span>
         {age && (
           <span className={cn("shrink-0", age.stale ? "font-medium" : "opacity-70")}>

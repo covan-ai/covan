@@ -2,12 +2,11 @@ import type { DocumentJob } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 /**
- * Where a document is, in words and in squares.
+ * Where a document is, in words and in dots.
  *
- * One square per section, the step trail's marks at the scale of a document:
- * a written section is solid, the one being written is the running square
- * (`.step-running`), and the rest are outlines. Squares, never a spinner or a
- * bar (DESIGN.md: squares, not circles; one amber).
+ * One dot per section, in the dot language of DESIGN.md §12: a written
+ * section is the grey fill, the one being written is the running dot, and the
+ * rest are grey rings. Never a spinner or a bar.
  */
 
 export function SectionSquares({ job, className }: { job: DocumentJob; className?: string }) {
@@ -26,10 +25,10 @@ export function SectionSquares({ job, className }: { job: DocumentJob; className
           className={cn(
             "h-2 w-2 shrink-0 rounded-full",
             section.done
-              ? "bg-muted-foreground"
+              ? "bg-dot-done"
               : i === writingIndex
-                ? "step-running"
-                : "border border-border",
+                ? "dot-live bg-brand"
+                : "border-2 border-dot-done",
           )}
         />
       ))}

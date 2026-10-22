@@ -39,8 +39,10 @@ function AgentLayout() {
 
   return (
     <TopBarSlotProvider>
-      <AgentTopBar agent={agent} />
-      <Outlet />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <AgentTopBar agent={agent} />
+        <Outlet />
+      </div>
     </TopBarSlotProvider>
   );
 }

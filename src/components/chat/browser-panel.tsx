@@ -11,6 +11,7 @@ import { ApiError } from "@/lib/api-error";
 import { Button } from "@/components/ui/button";
 import { HeaderAction } from "@/components/chat/turn-actions";
 import { cn } from "@/lib/utils";
+import { StatusDot } from "@/components/status-dot";
 import { SignInCard } from "./sign-in-card";
 import {
   browserKey,
@@ -435,20 +436,16 @@ export function BrowserPanel({
       )}
     >
       <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
-        {/* The status chip. The running square while the agent drives (an
-            amber outline, the machine busy), a filled amber square while the
-            person does (this one is yours), neutral otherwise — the same two
-            ambers `.step-running` in styles.css keeps apart. */}
-        <span
-          aria-hidden="true"
-          className={cn(
-            "h-2 w-2 shrink-0 rounded-full",
+        {/* The status dot (DESIGN.md §12): running while the agent drives,
+            the ring while the person does (it is theirs now), grey otherwise. */}
+        <StatusDot
+          state={
             mode === "agent" || mode === "cancelling"
-              ? "step-running"
+              ? "running"
               : mode === "human"
-                ? "bg-brand"
-                : "bg-muted-foreground/40",
-          )}
+                ? "waiting"
+                : "done"
+          }
         />
         <span className="sr-only">{status}</span>
         <h2 className="min-w-0 flex-1 truncate text-title font-semibold">Browser</h2>

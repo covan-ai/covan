@@ -889,8 +889,12 @@ export const api = {
     knowledgeUsage: (
       id: string,
       days = 30,
-    ): Promise<{ byBundle: Record<string, { replies: number }> }> =>
-      request("GET", `/agents/${id}/knowledge-usage?days=${days}`),
+    ): Promise<{
+      byBundle: Record<string, { replies: number }>;
+      /** Its replies in the window, and the share not grounded in a passage (0134). */
+      answers: number;
+      notCoveredPct: number | null;
+    }> => request("GET", `/agents/${id}/knowledge-usage?days=${days}`),
     /**
      * Who can reach the agent, and how far. The list is the whole list: anybody
      * left out of `shares` loses their row. 403 for anyone short of Full access.
@@ -1646,9 +1650,27 @@ export const api = {
     request("GET", `/usage/credits/ledger?limit=${limit}`),
   workspaceUsage: (): Promise<WorkspaceUsageResponse> => request("GET", "/usage/workspace"),
   coverage: {
-    /** Admin only; 403 otherwise. `days` is clamped to 1–365 on both sides. */
-    workspace: (days = 30): Promise<CoverageResponse> =>
-      request("GET", `/coverage/workspace?days=${days}`),
+    /**
+     * Admin only; 403 otherwise. `days` is clamped to 1–365 on both sides. With
+     * `agentId`, that agent's bar alone and its counts as the totals.
+     */
+    workspace: (days = 30, agentId?: string): Promise<CoverageResponse> =>
+      request(
+        "GET",
+        `/coverage/workspace?days=${days}${agentId ? `&agentId=${encodeURIComponent(agentId)}` : ""}`,
+      ),
+    /**
+     * "Documents worth revisiting": older than three months and cited in the
+     * window, most used first. Numbers only cross private threads.
+     */
+    documents: (
+      days = 30,
+      agentId?: string,
+    ): Promise<{ days: number; documents: RevisitDocument[] }> =>
+      request(
+        "GET",
+        `/coverage/documents?days=${days}${agentId ? `&agentId=${encodeURIComponent(agentId)}` : ""}`,
+      ),
     /** The workspace's own switch. Admin only; 403 otherwise. */
     setEnabled: (enabled: boolean): Promise<{ ok: true }> =>
       request("PATCH", "/coverage/settings", { enabled }),
@@ -2180,6 +2202,8 @@ export type CoverageAgent = {
   agentId: string;
   name: string;
   emoji: string | null;
+  /** The agent's mark (0120), or null for its monogram. */
+  avatar: string | null;
   answers: number;
   covered: number;
   fallback: number;
@@ -2201,8 +2225,22 @@ export type CoverageResponse = {
   available: boolean;
   /** The window these figures cover, in days, after clamping. */
   days: number;
+  /** The one agent asked for, or null for all of them. */
+  agentId?: string | null;
   totals: CoverageTotals;
   agents: CoverageAgent[];
+};
+
+/** A row of "Documents worth revisiting" (A18, A32). */
+export type RevisitDocument = {
+  documentId: string;
+  name: string;
+  bundleId: string;
+  bundleName: string;
+  createdAt: number;
+  /** Replies that cited it in the window. */
+  uses: number;
+  readBy: Array<{ agentId: string; name: string; avatar: string | null }>;
 };
 
 export type ApiKey = {

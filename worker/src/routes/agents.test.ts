@@ -418,13 +418,17 @@ describe("GET /agents/:id/delete-summary", () => {
 });
 
 describe("GET /agents/:id/knowledge-usage", () => {
-  function usageDb(answer: { data?: unknown; error?: { code: string; message: string } }) {
+  function usageDb(
+    answer: { data?: unknown; error?: { code: string; message: string } },
+    grounding: unknown = [],
+  ) {
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
     return {
       calls,
       db: {
         async rpc(name: string, args: Record<string, unknown>) {
           calls.push({ name, args });
+          if (name === "agent_coverage") return { data: grounding, error: answer.error ?? null };
           return { data: answer.data ?? null, error: answer.error ?? null };
         },
       },
@@ -441,8 +445,18 @@ describe("GET /agents/:id/knowledge-usage", () => {
     const res = await appWith(db).request("/agents/agent-1/knowledge-usage");
     expect(await res.json()).toEqual({
       byBundle: { policies: { replies: 61 }, templates: { replies: 0 } },
+      answers: 0,
+      notCoveredPct: null,
     });
     expect(calls[0]!.args).toEqual({ p_agent_id: "agent-1", p_days: 30 });
+  });
+
+  it("says how much of what it was asked was not covered (0134)", async () => {
+    const { db } = usageDb({ data: [] }, [
+      { answers: 312, covered: 181, fallback: 100, ungrounded: 31 },
+    ]);
+    const res = await appWith(db).request("/agents/agent-1/knowledge-usage?days=30");
+    expect(await res.json()).toMatchObject({ answers: 312, notCoveredPct: 42 });
   });
 
   it("answers an agent the caller cannot use as not there", async () => {

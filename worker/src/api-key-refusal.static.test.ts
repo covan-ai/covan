@@ -254,6 +254,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/connections.ts GET /connections/:id/runs",
   "routes/connections.ts POST /connections/:id/sync",
   "routes/coverage.ts GET /coverage/workspace",
+  "routes/coverage.ts GET /coverage/documents",
   "routes/coverage.ts PATCH /coverage/settings",
   "routes/coverage.ts PUT /coverage/preference",
   "routes/coverage.ts GET /coverage/preference",

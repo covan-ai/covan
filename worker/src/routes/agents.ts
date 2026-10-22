@@ -386,20 +386,32 @@ agents.get("/agents/:id/knowledge-usage", async (c) => {
   const parsed = usageQuery.safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  const { data, error } = await c.get("db").rpc("agent_knowledge_usage", {
-    p_agent_id: c.req.param("id"),
-    p_days: parsed.data.days ?? 30,
-  });
+  const args = { p_agent_id: c.req.param("id"), p_days: parsed.data.days ?? 30 };
+  const db = c.get("db");
+  const [usage, grounding] = await Promise.all([
+    db.rpc("agent_knowledge_usage", args),
+    // "Asked, not covered" (A32, 0134): how its replies were grounded.
+    db.rpc("agent_coverage", args),
+  ]);
+  const error = usage.error ?? grounding.error;
   if (error) {
     if (error.code === "P0002") return c.json({ error: "not found" }, 404);
-    console.error("agent_knowledge_usage failed", error);
+    console.error("agent knowledge usage failed", error);
     return c.json({ error: "failed to count what the agent read" }, 500);
   }
   const byBundle: Record<string, { replies: number }> = {};
-  for (const row of (data ?? []) as Array<{ bundle_id: string; replies: number }>) {
+  for (const row of (usage.data ?? []) as Array<{ bundle_id: string; replies: number }>) {
     byBundle[row.bundle_id] = { replies: row.replies ?? 0 };
   }
-  return c.json({ byBundle });
+  const g = ((grounding.data ?? []) as Array<Record<string, number | string>>)[0];
+  const answers = Number(g?.answers) || 0;
+  const notCovered = (Number(g?.fallback) || 0) + (Number(g?.ungrounded) || 0);
+  return c.json({
+    byBundle,
+    answers,
+    // Null with nothing to divide: "0% not covered" of no replies says nothing.
+    notCoveredPct: answers > 0 ? Math.round((notCovered / answers) * 100) : null,
+  });
 });
 
 // DELETE /agents/:id

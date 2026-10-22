@@ -1,27 +1,53 @@
-import { Gauge, Settings, User, Users } from "lucide-react";
+import { DOCS_HOME } from "@/lib/docs";
 
 /**
- * The settings area's pages, in the order the rail lists them, each under the
- * heading it belongs to: the workspace's settings or your own.
- *
- * Every page is listed for every role. What a role may change is decided on the
- * page, section by section, exactly as it was when this was one long page — a
- * rail that changed shape by role would answer "where did Members go?" with
- * silence.
+ * Settings' pages, as the sub-nav lists them (DESIGN.md §6, A9): what belongs
+ * to the workspace, what belongs to you, and where to get help. Members is
+ * the Team page — the people in a workspace are not a setting to the people
+ * in it — and is listed here so an admin looking under Settings finds it.
  */
-export const SETTINGS_PAGES = [
-  { to: "/settings/workspace", label: "Workspace", icon: Settings, group: "workspace" },
-  { to: "/settings/members", label: "Members", icon: Users, group: "workspace" },
-  { to: "/settings/usage", label: "Usage", icon: Gauge, group: "workspace" },
-  { to: "/settings/account", label: "Account", icon: User, group: "account" },
-] as const;
+export type SettingsItem = {
+  href: string;
+  label: string;
+  /** Opens elsewhere: the documentation. */
+  external?: boolean;
+  /** Not a page: the item does something (Send feedback). */
+  action?: "feedback";
+};
 
-export const SETTINGS_GROUPS = [
-  { key: "workspace", label: "Workspace" },
-  { key: "account", label: "My account" },
-] as const;
+export const SETTINGS_GROUPS: ReadonlyArray<{ label: string; items: readonly SettingsItem[] }> = [
+  {
+    label: "Workspace",
+    items: [
+      { href: "/settings/general", label: "General" },
+      { href: "/team", label: "Members" },
+      { href: "/settings/integrations", label: "Integrations" },
+      { href: "/settings/usage", label: "Usage and billing" },
+      { href: "/settings/coverage", label: "Coverage" },
+      { href: "/settings/api-keys", label: "API keys" },
+      { href: "/settings/export", label: "Export and deletion" },
+    ],
+  },
+  {
+    label: "My account",
+    items: [
+      { href: "/settings/profile", label: "Profile" },
+      { href: "/settings/security", label: "Security" },
+      { href: "/settings/preferences", label: "Preferences" },
+    ],
+  },
+  {
+    label: "Help",
+    items: [
+      { href: DOCS_HOME, label: "Documentation", external: true },
+      { href: "#feedback", label: "Send feedback", action: "feedback" },
+    ],
+  },
+];
 
-/** The same rule as the sidebar: the page itself, or anything under it. */
-export function isSettingsPage(pathname: string, to: string): boolean {
-  return pathname === to || pathname.startsWith(`${to}/`);
+/** The settings pages that are routes under /settings, for the route check. */
+export function settingsRoutes(): string[] {
+  return SETTINGS_GROUPS.flatMap((g) => g.items)
+    .filter((i) => !i.external && !i.action && i.href.startsWith("/settings/"))
+    .map((i) => i.href);
 }

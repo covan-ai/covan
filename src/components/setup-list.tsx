@@ -146,10 +146,10 @@ export function SetupList({
         return;
       }
       case "integrations":
-        if (pathname !== "/integrations") void navigate({ to: "/integrations" });
+        if (pathname !== "/settings/integrations") void navigate({ to: "/settings/integrations" });
         return;
       case "members":
-        if (pathname !== "/settings/members") void navigate({ to: "/settings/members" });
+        if (pathname !== "/team") void navigate({ to: "/team" });
         return;
       case "routines": {
         if (!targetAgentId) return;

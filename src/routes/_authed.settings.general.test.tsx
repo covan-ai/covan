@@ -29,21 +29,19 @@ vi.mock("@/components/recently-deleted-section", () => ({
     canWrite ? <div data-testid="recently-deleted" /> : null,
 }));
 
-const { Route } = await import("./_authed.settings.workspace");
+const { Route } = await import("./_authed.settings.general");
 
 beforeEach(() => {
   me = meFixture();
 });
 
-describe("/settings/workspace", () => {
-  it("lets an admin change the name and see the coverage report", async () => {
+describe("/settings/general", () => {
+  it("lets an admin change the name and the default model", async () => {
     renderRoute(Route);
     const name = await screen.findByDisplayValue("Acme");
     expect(name).toBeEnabled();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument();
-    expect(screen.getByTestId("coverage")).toBeInTheDocument();
     expect(screen.getByTestId("default-model")).toBeInTheDocument();
-    expect(screen.getByTestId("export")).toBeInTheDocument();
   });
 
   it("shows a member the workspace without offering what an admin decides", async () => {
@@ -53,15 +51,6 @@ describe("/settings/workspace", () => {
     await waitFor(() => expect(name).toBeDisabled());
     expect(screen.getByText("The name and slug are an admin's to change.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
-    expect(screen.queryByTestId("coverage")).not.toBeInTheDocument();
     expect(screen.queryByTestId("default-model")).not.toBeInTheDocument();
-    expect(screen.getByTestId("recently-deleted")).toBeInTheDocument();
-  });
-
-  it("hides recently deleted from a viewer, whom the trash refuses anyway", async () => {
-    me = meFixture({ role: "viewer" });
-    renderRoute(Route);
-    await screen.findByText("The name and slug are an admin's to change.");
-    expect(screen.queryByTestId("recently-deleted")).not.toBeInTheDocument();
   });
 });

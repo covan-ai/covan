@@ -8,13 +8,13 @@ vi.mock("@tanstack/react-router", () => ({
 const { Route } = await import("./_authed.settings.index");
 
 describe("/settings", () => {
-  it("sends you to your account, replacing the entry so Back does not bounce", () => {
+  it("opens on General, replacing the entry so Back does not bounce", () => {
     expect.assertions(1);
     const route = Route as unknown as { beforeLoad: () => void };
     try {
       route.beforeLoad();
     } catch (thrown) {
-      expect(thrown).toEqual({ redirect: { to: "/settings/account", replace: true } });
+      expect(thrown).toEqual({ redirect: { to: "/settings/general", replace: true } });
     }
   });
 });

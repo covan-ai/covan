@@ -167,7 +167,7 @@ describe("SetupList", () => {
   });
 
   it("does not navigate when already on the page", async () => {
-    pathname = "/integrations";
+    pathname = "/settings/integrations";
     render(<SetupList onNavigate={vi.fn()} />);
 
     await userEvent.click(screen.getByRole("button", { name: /try: connect gmail/i }));

@@ -34,31 +34,12 @@ vi.mock("@/components/close-account-section", () => ({
   CloseAccountSection: stub("close-account"),
 }));
 
-const { Route } = await import("./_authed.settings.account");
+const { Route } = await import("./_authed.settings.profile");
 
-describe("/settings/account", () => {
-  it("hands your profile to the form once `me` arrives", async () => {
+describe("/settings/profile", () => {
+  it("hands your profile to the form once `me` arrives, and your address under it", async () => {
     renderRoute(Route);
     expect(await screen.findByText("Ada Lovelace")).toBeInTheDocument();
-  });
-
-  it("holds what is yours, and closing the account comes last", async () => {
-    renderRoute(Route);
-    const sections = [
-      "profile",
-      "email",
-      "password",
-      "two-factor",
-      "preferences",
-      "delivery-channels",
-      "api-keys",
-      "browser-signins",
-    ].map((id) => screen.getByTestId(id));
-    const close = screen.getByTestId("close-account");
-    for (const section of sections) {
-      expect(
-        section.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-    }
+    expect(screen.getByTestId("email")).toBeInTheDocument();
   });
 });

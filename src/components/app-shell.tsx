@@ -784,12 +784,12 @@ function AccountMenu({
         </div>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/settings/account" onClick={onNavigate}>
+          <Link to="/settings/profile" onClick={onNavigate}>
             <User className="h-4 w-4" /> Profile
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/settings/workspace" onClick={onNavigate}>
+          <Link to="/settings/general" onClick={onNavigate}>
             <Settings className="h-4 w-4" /> Workspace settings
           </Link>
         </DropdownMenuItem>

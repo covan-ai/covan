@@ -76,7 +76,7 @@ const store = { agents: [agent], updateAgent, deleteAgent: vi.fn(), canWrite: tr
 
 vi.mock("@/lib/agents-store", () => ({ useAgentsStore: () => store }));
 
-const { Route } = await import("./_authed.agents.$agentId.settings");
+const { Route } = await import("./_authed.agents.$agentId.configuration");
 
 function renderSettings() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

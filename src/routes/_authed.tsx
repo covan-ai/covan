@@ -125,8 +125,8 @@ function AuthedLayout() {
   // grant in this tab (`lib/sensitive-url.ts`). Signed in now, they are taken
   // to the one page that finishes it, rather than to wherever sign-in lands.
   useEffect(() => {
-    if (session && !redirect && pathname !== "/integrations" && hasPendingGrant()) {
-      void navigate({ to: "/integrations", replace: true });
+    if (session && !redirect && pathname !== "/settings/integrations" && hasPendingGrant()) {
+      void navigate({ to: "/settings/integrations", replace: true });
     }
   }, [session, redirect, pathname, navigate]);
 

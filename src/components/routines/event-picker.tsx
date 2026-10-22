@@ -109,7 +109,10 @@ export function EventPicker({
         // works, said where the choice is made.
         <p className="text-xs text-muted-foreground">
           {entry.app} is not connected yet.{" "}
-          <Link to="/integrations" className="text-foreground underline underline-offset-2">
+          <Link
+            to="/settings/integrations"
+            className="text-foreground underline underline-offset-2"
+          >
             Connect {entry.app}
           </Link>{" "}
           and come back to finish.

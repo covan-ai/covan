@@ -2,6 +2,8 @@ import { Link, Outlet, createFileRoute } from "@tanstack/react-router";
 import { useAgentsStore } from "@/lib/agents-store";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/section-card";
+import { AgentTopBar } from "@/components/agent-top-bar";
+import { TopBarSlotProvider } from "@/components/top-bar";
 
 export const Route = createFileRoute("/_authed/agents/$agentId")({
   component: AgentLayout,
@@ -35,5 +37,10 @@ function AgentLayout() {
     );
   }
 
-  return <Outlet />;
+  return (
+    <TopBarSlotProvider>
+      <AgentTopBar agent={agent} />
+      <Outlet />
+    </TopBarSlotProvider>
+  );
 }

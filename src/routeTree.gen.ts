@@ -23,16 +23,28 @@ import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as TwoFactorRouteImport } from './routes/two-factor'
 import { Route as AuthedAppRouteImport } from './routes/_authed.app'
+import { Route as AuthedInboxRouteImport } from './routes/_authed.inbox'
 import { Route as AuthedIntegrationsRouteImport } from './routes/_authed.integrations'
 import { Route as AuthedKnowledgeRouteImport } from './routes/_authed.knowledge'
+import { Route as AuthedRoutinesRouteImport } from './routes/_authed.routines'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedTeamRouteImport } from './routes/_authed.team'
+import { Route as AuthedThreadsRouteImport } from './routes/_authed.threads'
 import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedAgentsAgentIdRouteImport } from './routes/_authed.agents.$agentId'
+import { Route as AuthedRoutinesIndexRouteImport } from './routes/_authed.routines.index'
 import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed.settings.index'
 import { Route as AuthedSettingsAccountRouteImport } from './routes/_authed.settings.account'
+import { Route as AuthedSettingsApiKeysRouteImport } from './routes/_authed.settings.api-keys'
+import { Route as AuthedSettingsCoverageRouteImport } from './routes/_authed.settings.coverage'
+import { Route as AuthedSettingsExportRouteImport } from './routes/_authed.settings.export'
+import { Route as AuthedSettingsGeneralRouteImport } from './routes/_authed.settings.general'
+import { Route as AuthedSettingsIntegrationsRouteImport } from './routes/_authed.settings.integrations'
 import { Route as AuthedSettingsMembersRouteImport } from './routes/_authed.settings.members'
+import { Route as AuthedSettingsPreferencesRouteImport } from './routes/_authed.settings.preferences'
+import { Route as AuthedSettingsProfileRouteImport } from './routes/_authed.settings.profile'
+import { Route as AuthedSettingsSecurityRouteImport } from './routes/_authed.settings.security'
 import { Route as AuthedSettingsUsageRouteImport } from './routes/_authed.settings.usage'
 import { Route as AuthedSettingsWorkspaceRouteImport } from './routes/_authed.settings.workspace'
 import { Route as AuthedAgentsAgentIdIndexRouteImport } from './routes/_authed.agents.$agentId.index'
@@ -40,7 +52,9 @@ import { Route as AuthedAgentsAgentIdChatRouteImport } from './routes/_authed.ag
 import { Route as AuthedAgentsAgentIdConfigurationRouteImport } from './routes/_authed.agents.$agentId.configuration'
 import { Route as AuthedAgentsAgentIdKnowledgeRouteImport } from './routes/_authed.agents.$agentId.knowledge'
 import { Route as AuthedAgentsAgentIdSettingsRouteImport } from './routes/_authed.agents.$agentId.settings'
+import { Route as AuthedAgentsAgentIdThreadsRouteImport } from './routes/_authed.agents.$agentId.threads'
 import { Route as AuthedDocumentsDocumentIdPrintRouteImport } from './routes/_authed.documents.$documentId.print'
+import { Route as AuthedRoutinesRoutineIdIndexRouteImport } from './routes/_authed.routines.$routineId.index'
 import { Route as AuthedAgentsAgentIdRoutinesIndexRouteImport } from './routes/_authed.agents.$agentId.routines.index'
 import { Route as AuthedAgentsAgentIdRoutinesRoutineIdRouteImport } from './routes/_authed.agents.$agentId.routines.$routineId'
 
@@ -113,6 +127,11 @@ const AuthedAppRoute = AuthedAppRouteImport.update({
   path: '/app',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedInboxRoute = AuthedInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthedIntegrationsRoute = AuthedIntegrationsRouteImport.update({
   id: '/integrations',
   path: '/integrations',
@@ -123,6 +142,11 @@ const AuthedKnowledgeRoute = AuthedKnowledgeRouteImport.update({
   path: '/knowledge',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedRoutinesRoute = AuthedRoutinesRouteImport.update({
+  id: '/routines',
+  path: '/routines',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
@@ -131,6 +155,11 @@ const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
 const AuthedTeamRoute = AuthedTeamRouteImport.update({
   id: '/team',
   path: '/team',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedThreadsRoute = AuthedThreadsRouteImport.update({
+  id: '/threads',
+  path: '/threads',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedWelcomeRoute = AuthedWelcomeRouteImport.update({
@@ -148,6 +177,11 @@ const AuthedAgentsAgentIdRoute = AuthedAgentsAgentIdRouteImport.update({
   path: '/agents/$agentId',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedRoutinesIndexRoute = AuthedRoutinesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthedRoutinesRoute,
+} as any)
 const AuthedSettingsIndexRoute = AuthedSettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -158,9 +192,51 @@ const AuthedSettingsAccountRoute = AuthedSettingsAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => AuthedSettingsRoute,
 } as any)
+const AuthedSettingsApiKeysRoute = AuthedSettingsApiKeysRouteImport.update({
+  id: '/api-keys',
+  path: '/api-keys',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsCoverageRoute = AuthedSettingsCoverageRouteImport.update({
+  id: '/coverage',
+  path: '/coverage',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsExportRoute = AuthedSettingsExportRouteImport.update({
+  id: '/export',
+  path: '/export',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsGeneralRoute = AuthedSettingsGeneralRouteImport.update({
+  id: '/general',
+  path: '/general',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsIntegrationsRoute =
+  AuthedSettingsIntegrationsRouteImport.update({
+    id: '/integrations',
+    path: '/integrations',
+    getParentRoute: () => AuthedSettingsRoute,
+  } as any)
 const AuthedSettingsMembersRoute = AuthedSettingsMembersRouteImport.update({
   id: '/members',
   path: '/members',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsPreferencesRoute =
+  AuthedSettingsPreferencesRouteImport.update({
+    id: '/preferences',
+    path: '/preferences',
+    getParentRoute: () => AuthedSettingsRoute,
+  } as any)
+const AuthedSettingsProfileRoute = AuthedSettingsProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
+const AuthedSettingsSecurityRoute = AuthedSettingsSecurityRouteImport.update({
+  id: '/security',
+  path: '/security',
   getParentRoute: () => AuthedSettingsRoute,
 } as any)
 const AuthedSettingsUsageRoute = AuthedSettingsUsageRouteImport.update({
@@ -202,11 +278,23 @@ const AuthedAgentsAgentIdSettingsRoute =
     path: '/settings',
     getParentRoute: () => AuthedAgentsAgentIdRoute,
   } as any)
+const AuthedAgentsAgentIdThreadsRoute =
+  AuthedAgentsAgentIdThreadsRouteImport.update({
+    id: '/threads',
+    path: '/threads',
+    getParentRoute: () => AuthedAgentsAgentIdRoute,
+  } as any)
 const AuthedDocumentsDocumentIdPrintRoute =
   AuthedDocumentsDocumentIdPrintRouteImport.update({
     id: '/documents/$documentId/print',
     path: '/documents/$documentId/print',
     getParentRoute: () => AuthedRoute,
+  } as any)
+const AuthedRoutinesRoutineIdIndexRoute =
+  AuthedRoutinesRoutineIdIndexRouteImport.update({
+    id: '/$routineId/',
+    path: '/$routineId/',
+    getParentRoute: () => AuthedRoutinesRoute,
   } as any)
 const AuthedAgentsAgentIdRoutinesIndexRoute =
   AuthedAgentsAgentIdRoutinesIndexRouteImport.update({
@@ -235,24 +323,38 @@ export interface FileRoutesByFullPath {
   '/terms': typeof TermsRoute
   '/two-factor': typeof TwoFactorRoute
   '/app': typeof AuthedAppRoute
+  '/inbox': typeof AuthedInboxRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/knowledge': typeof AuthedKnowledgeRoute
+  '/routines': typeof AuthedRoutinesRouteWithChildren
   '/settings': typeof AuthedSettingsRouteWithChildren
   '/team': typeof AuthedTeamRoute
+  '/threads': typeof AuthedThreadsRoute
   '/welcome': typeof AuthedWelcomeRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/settings/account': typeof AuthedSettingsAccountRoute
+  '/settings/api-keys': typeof AuthedSettingsApiKeysRoute
+  '/settings/coverage': typeof AuthedSettingsCoverageRoute
+  '/settings/export': typeof AuthedSettingsExportRoute
+  '/settings/general': typeof AuthedSettingsGeneralRoute
+  '/settings/integrations': typeof AuthedSettingsIntegrationsRoute
   '/settings/members': typeof AuthedSettingsMembersRoute
+  '/settings/preferences': typeof AuthedSettingsPreferencesRoute
+  '/settings/profile': typeof AuthedSettingsProfileRoute
+  '/settings/security': typeof AuthedSettingsSecurityRoute
   '/settings/usage': typeof AuthedSettingsUsageRoute
   '/settings/workspace': typeof AuthedSettingsWorkspaceRoute
+  '/routines/': typeof AuthedRoutinesIndexRoute
   '/settings/': typeof AuthedSettingsIndexRoute
   '/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
   '/agents/$agentId/settings': typeof AuthedAgentsAgentIdSettingsRoute
+  '/agents/$agentId/threads': typeof AuthedAgentsAgentIdThreadsRoute
   '/documents/$documentId/print': typeof AuthedDocumentsDocumentIdPrintRoute
   '/agents/$agentId/': typeof AuthedAgentsAgentIdIndexRoute
+  '/routines/$routineId/': typeof AuthedRoutinesRoutineIdIndexRoute
   '/agents/$agentId/routines/$routineId': typeof AuthedAgentsAgentIdRoutinesRoutineIdRoute
   '/agents/$agentId/routines/': typeof AuthedAgentsAgentIdRoutinesIndexRoute
 }
@@ -270,22 +372,35 @@ export interface FileRoutesByTo {
   '/terms': typeof TermsRoute
   '/two-factor': typeof TwoFactorRoute
   '/app': typeof AuthedAppRoute
+  '/inbox': typeof AuthedInboxRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/knowledge': typeof AuthedKnowledgeRoute
   '/team': typeof AuthedTeamRoute
+  '/threads': typeof AuthedThreadsRoute
   '/welcome': typeof AuthedWelcomeRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/settings/account': typeof AuthedSettingsAccountRoute
+  '/settings/api-keys': typeof AuthedSettingsApiKeysRoute
+  '/settings/coverage': typeof AuthedSettingsCoverageRoute
+  '/settings/export': typeof AuthedSettingsExportRoute
+  '/settings/general': typeof AuthedSettingsGeneralRoute
+  '/settings/integrations': typeof AuthedSettingsIntegrationsRoute
   '/settings/members': typeof AuthedSettingsMembersRoute
+  '/settings/preferences': typeof AuthedSettingsPreferencesRoute
+  '/settings/profile': typeof AuthedSettingsProfileRoute
+  '/settings/security': typeof AuthedSettingsSecurityRoute
   '/settings/usage': typeof AuthedSettingsUsageRoute
   '/settings/workspace': typeof AuthedSettingsWorkspaceRoute
+  '/routines': typeof AuthedRoutinesIndexRoute
   '/settings': typeof AuthedSettingsIndexRoute
   '/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
   '/agents/$agentId/settings': typeof AuthedAgentsAgentIdSettingsRoute
+  '/agents/$agentId/threads': typeof AuthedAgentsAgentIdThreadsRoute
   '/documents/$documentId/print': typeof AuthedDocumentsDocumentIdPrintRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdIndexRoute
+  '/routines/$routineId': typeof AuthedRoutinesRoutineIdIndexRoute
   '/agents/$agentId/routines/$routineId': typeof AuthedAgentsAgentIdRoutinesRoutineIdRoute
   '/agents/$agentId/routines': typeof AuthedAgentsAgentIdRoutinesIndexRoute
 }
@@ -305,24 +420,38 @@ export interface FileRoutesById {
   '/terms': typeof TermsRoute
   '/two-factor': typeof TwoFactorRoute
   '/_authed/app': typeof AuthedAppRoute
+  '/_authed/inbox': typeof AuthedInboxRoute
   '/_authed/integrations': typeof AuthedIntegrationsRoute
   '/_authed/knowledge': typeof AuthedKnowledgeRoute
+  '/_authed/routines': typeof AuthedRoutinesRouteWithChildren
   '/_authed/settings': typeof AuthedSettingsRouteWithChildren
   '/_authed/team': typeof AuthedTeamRoute
+  '/_authed/threads': typeof AuthedThreadsRoute
   '/_authed/welcome': typeof AuthedWelcomeRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/_authed/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/_authed/settings/account': typeof AuthedSettingsAccountRoute
+  '/_authed/settings/api-keys': typeof AuthedSettingsApiKeysRoute
+  '/_authed/settings/coverage': typeof AuthedSettingsCoverageRoute
+  '/_authed/settings/export': typeof AuthedSettingsExportRoute
+  '/_authed/settings/general': typeof AuthedSettingsGeneralRoute
+  '/_authed/settings/integrations': typeof AuthedSettingsIntegrationsRoute
   '/_authed/settings/members': typeof AuthedSettingsMembersRoute
+  '/_authed/settings/preferences': typeof AuthedSettingsPreferencesRoute
+  '/_authed/settings/profile': typeof AuthedSettingsProfileRoute
+  '/_authed/settings/security': typeof AuthedSettingsSecurityRoute
   '/_authed/settings/usage': typeof AuthedSettingsUsageRoute
   '/_authed/settings/workspace': typeof AuthedSettingsWorkspaceRoute
+  '/_authed/routines/': typeof AuthedRoutinesIndexRoute
   '/_authed/settings/': typeof AuthedSettingsIndexRoute
   '/_authed/agents/$agentId/chat': typeof AuthedAgentsAgentIdChatRoute
   '/_authed/agents/$agentId/configuration': typeof AuthedAgentsAgentIdConfigurationRoute
   '/_authed/agents/$agentId/knowledge': typeof AuthedAgentsAgentIdKnowledgeRoute
   '/_authed/agents/$agentId/settings': typeof AuthedAgentsAgentIdSettingsRoute
+  '/_authed/agents/$agentId/threads': typeof AuthedAgentsAgentIdThreadsRoute
   '/_authed/documents/$documentId/print': typeof AuthedDocumentsDocumentIdPrintRoute
   '/_authed/agents/$agentId/': typeof AuthedAgentsAgentIdIndexRoute
+  '/_authed/routines/$routineId/': typeof AuthedRoutinesRoutineIdIndexRoute
   '/_authed/agents/$agentId/routines/$routineId': typeof AuthedAgentsAgentIdRoutinesRoutineIdRoute
   '/_authed/agents/$agentId/routines/': typeof AuthedAgentsAgentIdRoutinesIndexRoute
 }
@@ -342,24 +471,38 @@ export interface FileRouteTypes {
     | '/terms'
     | '/two-factor'
     | '/app'
+    | '/inbox'
     | '/integrations'
     | '/knowledge'
+    | '/routines'
     | '/settings'
     | '/team'
+    | '/threads'
     | '/welcome'
     | '/auth/callback'
     | '/agents/$agentId'
     | '/settings/account'
+    | '/settings/api-keys'
+    | '/settings/coverage'
+    | '/settings/export'
+    | '/settings/general'
+    | '/settings/integrations'
     | '/settings/members'
+    | '/settings/preferences'
+    | '/settings/profile'
+    | '/settings/security'
     | '/settings/usage'
     | '/settings/workspace'
+    | '/routines/'
     | '/settings/'
     | '/agents/$agentId/chat'
     | '/agents/$agentId/configuration'
     | '/agents/$agentId/knowledge'
     | '/agents/$agentId/settings'
+    | '/agents/$agentId/threads'
     | '/documents/$documentId/print'
     | '/agents/$agentId/'
+    | '/routines/$routineId/'
     | '/agents/$agentId/routines/$routineId'
     | '/agents/$agentId/routines/'
   fileRoutesByTo: FileRoutesByTo
@@ -377,22 +520,35 @@ export interface FileRouteTypes {
     | '/terms'
     | '/two-factor'
     | '/app'
+    | '/inbox'
     | '/integrations'
     | '/knowledge'
     | '/team'
+    | '/threads'
     | '/welcome'
     | '/auth/callback'
     | '/settings/account'
+    | '/settings/api-keys'
+    | '/settings/coverage'
+    | '/settings/export'
+    | '/settings/general'
+    | '/settings/integrations'
     | '/settings/members'
+    | '/settings/preferences'
+    | '/settings/profile'
+    | '/settings/security'
     | '/settings/usage'
     | '/settings/workspace'
+    | '/routines'
     | '/settings'
     | '/agents/$agentId/chat'
     | '/agents/$agentId/configuration'
     | '/agents/$agentId/knowledge'
     | '/agents/$agentId/settings'
+    | '/agents/$agentId/threads'
     | '/documents/$documentId/print'
     | '/agents/$agentId'
+    | '/routines/$routineId'
     | '/agents/$agentId/routines/$routineId'
     | '/agents/$agentId/routines'
   id:
@@ -411,24 +567,38 @@ export interface FileRouteTypes {
     | '/terms'
     | '/two-factor'
     | '/_authed/app'
+    | '/_authed/inbox'
     | '/_authed/integrations'
     | '/_authed/knowledge'
+    | '/_authed/routines'
     | '/_authed/settings'
     | '/_authed/team'
+    | '/_authed/threads'
     | '/_authed/welcome'
     | '/auth/callback'
     | '/_authed/agents/$agentId'
     | '/_authed/settings/account'
+    | '/_authed/settings/api-keys'
+    | '/_authed/settings/coverage'
+    | '/_authed/settings/export'
+    | '/_authed/settings/general'
+    | '/_authed/settings/integrations'
     | '/_authed/settings/members'
+    | '/_authed/settings/preferences'
+    | '/_authed/settings/profile'
+    | '/_authed/settings/security'
     | '/_authed/settings/usage'
     | '/_authed/settings/workspace'
+    | '/_authed/routines/'
     | '/_authed/settings/'
     | '/_authed/agents/$agentId/chat'
     | '/_authed/agents/$agentId/configuration'
     | '/_authed/agents/$agentId/knowledge'
     | '/_authed/agents/$agentId/settings'
+    | '/_authed/agents/$agentId/threads'
     | '/_authed/documents/$documentId/print'
     | '/_authed/agents/$agentId/'
+    | '/_authed/routines/$routineId/'
     | '/_authed/agents/$agentId/routines/$routineId'
     | '/_authed/agents/$agentId/routines/'
   fileRoutesById: FileRoutesById
@@ -550,6 +720,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAppRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/inbox': {
+      id: '/_authed/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof AuthedInboxRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/integrations': {
       id: '/_authed/integrations'
       path: '/integrations'
@@ -564,6 +741,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedKnowledgeRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/routines': {
+      id: '/_authed/routines'
+      path: '/routines'
+      fullPath: '/routines'
+      preLoaderRoute: typeof AuthedRoutinesRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/settings': {
       id: '/_authed/settings'
       path: '/settings'
@@ -576,6 +760,13 @@ declare module '@tanstack/react-router' {
       path: '/team'
       fullPath: '/team'
       preLoaderRoute: typeof AuthedTeamRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/threads': {
+      id: '/_authed/threads'
+      path: '/threads'
+      fullPath: '/threads'
+      preLoaderRoute: typeof AuthedThreadsRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/welcome': {
@@ -599,6 +790,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAgentsAgentIdRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/routines/': {
+      id: '/_authed/routines/'
+      path: '/'
+      fullPath: '/routines/'
+      preLoaderRoute: typeof AuthedRoutinesIndexRouteImport
+      parentRoute: typeof AuthedRoutinesRoute
+    }
     '/_authed/settings/': {
       id: '/_authed/settings/'
       path: '/'
@@ -613,11 +811,67 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsAccountRouteImport
       parentRoute: typeof AuthedSettingsRoute
     }
+    '/_authed/settings/api-keys': {
+      id: '/_authed/settings/api-keys'
+      path: '/api-keys'
+      fullPath: '/settings/api-keys'
+      preLoaderRoute: typeof AuthedSettingsApiKeysRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/coverage': {
+      id: '/_authed/settings/coverage'
+      path: '/coverage'
+      fullPath: '/settings/coverage'
+      preLoaderRoute: typeof AuthedSettingsCoverageRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/export': {
+      id: '/_authed/settings/export'
+      path: '/export'
+      fullPath: '/settings/export'
+      preLoaderRoute: typeof AuthedSettingsExportRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/general': {
+      id: '/_authed/settings/general'
+      path: '/general'
+      fullPath: '/settings/general'
+      preLoaderRoute: typeof AuthedSettingsGeneralRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/integrations': {
+      id: '/_authed/settings/integrations'
+      path: '/integrations'
+      fullPath: '/settings/integrations'
+      preLoaderRoute: typeof AuthedSettingsIntegrationsRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
     '/_authed/settings/members': {
       id: '/_authed/settings/members'
       path: '/members'
       fullPath: '/settings/members'
       preLoaderRoute: typeof AuthedSettingsMembersRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/preferences': {
+      id: '/_authed/settings/preferences'
+      path: '/preferences'
+      fullPath: '/settings/preferences'
+      preLoaderRoute: typeof AuthedSettingsPreferencesRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/profile': {
+      id: '/_authed/settings/profile'
+      path: '/profile'
+      fullPath: '/settings/profile'
+      preLoaderRoute: typeof AuthedSettingsProfileRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
+    '/_authed/settings/security': {
+      id: '/_authed/settings/security'
+      path: '/security'
+      fullPath: '/settings/security'
+      preLoaderRoute: typeof AuthedSettingsSecurityRouteImport
       parentRoute: typeof AuthedSettingsRoute
     }
     '/_authed/settings/usage': {
@@ -669,12 +923,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedAgentsAgentIdSettingsRouteImport
       parentRoute: typeof AuthedAgentsAgentIdRoute
     }
+    '/_authed/agents/$agentId/threads': {
+      id: '/_authed/agents/$agentId/threads'
+      path: '/threads'
+      fullPath: '/agents/$agentId/threads'
+      preLoaderRoute: typeof AuthedAgentsAgentIdThreadsRouteImport
+      parentRoute: typeof AuthedAgentsAgentIdRoute
+    }
     '/_authed/documents/$documentId/print': {
       id: '/_authed/documents/$documentId/print'
       path: '/documents/$documentId/print'
       fullPath: '/documents/$documentId/print'
       preLoaderRoute: typeof AuthedDocumentsDocumentIdPrintRouteImport
       parentRoute: typeof AuthedRoute
+    }
+    '/_authed/routines/$routineId/': {
+      id: '/_authed/routines/$routineId/'
+      path: '/$routineId'
+      fullPath: '/routines/$routineId/'
+      preLoaderRoute: typeof AuthedRoutinesRoutineIdIndexRouteImport
+      parentRoute: typeof AuthedRoutinesRoute
     }
     '/_authed/agents/$agentId/routines/': {
       id: '/_authed/agents/$agentId/routines/'
@@ -693,9 +961,31 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthedRoutinesRouteChildren {
+  AuthedRoutinesIndexRoute: typeof AuthedRoutinesIndexRoute
+  AuthedRoutinesRoutineIdIndexRoute: typeof AuthedRoutinesRoutineIdIndexRoute
+}
+
+const AuthedRoutinesRouteChildren: AuthedRoutinesRouteChildren = {
+  AuthedRoutinesIndexRoute: AuthedRoutinesIndexRoute,
+  AuthedRoutinesRoutineIdIndexRoute: AuthedRoutinesRoutineIdIndexRoute,
+}
+
+const AuthedRoutinesRouteWithChildren = AuthedRoutinesRoute._addFileChildren(
+  AuthedRoutinesRouteChildren,
+)
+
 interface AuthedSettingsRouteChildren {
   AuthedSettingsAccountRoute: typeof AuthedSettingsAccountRoute
+  AuthedSettingsApiKeysRoute: typeof AuthedSettingsApiKeysRoute
+  AuthedSettingsCoverageRoute: typeof AuthedSettingsCoverageRoute
+  AuthedSettingsExportRoute: typeof AuthedSettingsExportRoute
+  AuthedSettingsGeneralRoute: typeof AuthedSettingsGeneralRoute
+  AuthedSettingsIntegrationsRoute: typeof AuthedSettingsIntegrationsRoute
   AuthedSettingsMembersRoute: typeof AuthedSettingsMembersRoute
+  AuthedSettingsPreferencesRoute: typeof AuthedSettingsPreferencesRoute
+  AuthedSettingsProfileRoute: typeof AuthedSettingsProfileRoute
+  AuthedSettingsSecurityRoute: typeof AuthedSettingsSecurityRoute
   AuthedSettingsUsageRoute: typeof AuthedSettingsUsageRoute
   AuthedSettingsWorkspaceRoute: typeof AuthedSettingsWorkspaceRoute
   AuthedSettingsIndexRoute: typeof AuthedSettingsIndexRoute
@@ -703,7 +993,15 @@ interface AuthedSettingsRouteChildren {
 
 const AuthedSettingsRouteChildren: AuthedSettingsRouteChildren = {
   AuthedSettingsAccountRoute: AuthedSettingsAccountRoute,
+  AuthedSettingsApiKeysRoute: AuthedSettingsApiKeysRoute,
+  AuthedSettingsCoverageRoute: AuthedSettingsCoverageRoute,
+  AuthedSettingsExportRoute: AuthedSettingsExportRoute,
+  AuthedSettingsGeneralRoute: AuthedSettingsGeneralRoute,
+  AuthedSettingsIntegrationsRoute: AuthedSettingsIntegrationsRoute,
   AuthedSettingsMembersRoute: AuthedSettingsMembersRoute,
+  AuthedSettingsPreferencesRoute: AuthedSettingsPreferencesRoute,
+  AuthedSettingsProfileRoute: AuthedSettingsProfileRoute,
+  AuthedSettingsSecurityRoute: AuthedSettingsSecurityRoute,
   AuthedSettingsUsageRoute: AuthedSettingsUsageRoute,
   AuthedSettingsWorkspaceRoute: AuthedSettingsWorkspaceRoute,
   AuthedSettingsIndexRoute: AuthedSettingsIndexRoute,
@@ -718,6 +1016,7 @@ interface AuthedAgentsAgentIdRouteChildren {
   AuthedAgentsAgentIdConfigurationRoute: typeof AuthedAgentsAgentIdConfigurationRoute
   AuthedAgentsAgentIdKnowledgeRoute: typeof AuthedAgentsAgentIdKnowledgeRoute
   AuthedAgentsAgentIdSettingsRoute: typeof AuthedAgentsAgentIdSettingsRoute
+  AuthedAgentsAgentIdThreadsRoute: typeof AuthedAgentsAgentIdThreadsRoute
   AuthedAgentsAgentIdIndexRoute: typeof AuthedAgentsAgentIdIndexRoute
   AuthedAgentsAgentIdRoutinesRoutineIdRoute: typeof AuthedAgentsAgentIdRoutinesRoutineIdRoute
   AuthedAgentsAgentIdRoutinesIndexRoute: typeof AuthedAgentsAgentIdRoutinesIndexRoute
@@ -728,6 +1027,7 @@ const AuthedAgentsAgentIdRouteChildren: AuthedAgentsAgentIdRouteChildren = {
   AuthedAgentsAgentIdConfigurationRoute: AuthedAgentsAgentIdConfigurationRoute,
   AuthedAgentsAgentIdKnowledgeRoute: AuthedAgentsAgentIdKnowledgeRoute,
   AuthedAgentsAgentIdSettingsRoute: AuthedAgentsAgentIdSettingsRoute,
+  AuthedAgentsAgentIdThreadsRoute: AuthedAgentsAgentIdThreadsRoute,
   AuthedAgentsAgentIdIndexRoute: AuthedAgentsAgentIdIndexRoute,
   AuthedAgentsAgentIdRoutinesRoutineIdRoute:
     AuthedAgentsAgentIdRoutinesRoutineIdRoute,
@@ -739,10 +1039,13 @@ const AuthedAgentsAgentIdRouteWithChildren =
 
 interface AuthedRouteChildren {
   AuthedAppRoute: typeof AuthedAppRoute
+  AuthedInboxRoute: typeof AuthedInboxRoute
   AuthedIntegrationsRoute: typeof AuthedIntegrationsRoute
   AuthedKnowledgeRoute: typeof AuthedKnowledgeRoute
+  AuthedRoutinesRoute: typeof AuthedRoutinesRouteWithChildren
   AuthedSettingsRoute: typeof AuthedSettingsRouteWithChildren
   AuthedTeamRoute: typeof AuthedTeamRoute
+  AuthedThreadsRoute: typeof AuthedThreadsRoute
   AuthedWelcomeRoute: typeof AuthedWelcomeRoute
   AuthedAgentsAgentIdRoute: typeof AuthedAgentsAgentIdRouteWithChildren
   AuthedDocumentsDocumentIdPrintRoute: typeof AuthedDocumentsDocumentIdPrintRoute
@@ -750,10 +1053,13 @@ interface AuthedRouteChildren {
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedAppRoute: AuthedAppRoute,
+  AuthedInboxRoute: AuthedInboxRoute,
   AuthedIntegrationsRoute: AuthedIntegrationsRoute,
   AuthedKnowledgeRoute: AuthedKnowledgeRoute,
+  AuthedRoutinesRoute: AuthedRoutinesRouteWithChildren,
   AuthedSettingsRoute: AuthedSettingsRouteWithChildren,
   AuthedTeamRoute: AuthedTeamRoute,
+  AuthedThreadsRoute: AuthedThreadsRoute,
   AuthedWelcomeRoute: AuthedWelcomeRoute,
   AuthedAgentsAgentIdRoute: AuthedAgentsAgentIdRouteWithChildren,
   AuthedDocumentsDocumentIdPrintRoute: AuthedDocumentsDocumentIdPrintRoute,

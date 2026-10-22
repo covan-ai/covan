@@ -74,9 +74,9 @@ export function CommandPalette() {
 
   const pages = [
     { label: "Home", icon: LayoutGrid, to: "/app" as const },
-    { label: "Team", icon: Users, to: "/settings/members" as const },
-    { label: "Integrations", icon: Plug, to: "/integrations" as const },
-    { label: "Settings", icon: Settings, to: "/settings/account" as const },
+    { label: "Team", icon: Users, to: "/team" as const },
+    { label: "Integrations", icon: Plug, to: "/settings/integrations" as const },
+    { label: "Settings", icon: Settings, to: "/settings/general" as const },
   ];
 
   return (

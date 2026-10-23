@@ -2,6 +2,7 @@ import { Markdown } from "@/components/markdown";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/prompt-kit/reasoning";
 import { StepTrail, type AgentStepView } from "@/components/agent-steps";
 import { stepTime } from "@/lib/step-summary";
+import type { ToolConnection } from "@/lib/connections-api";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 import { useLocale } from "@/i18n/provider";
@@ -26,6 +27,7 @@ export function LiveAnswer({
   thinkingMs,
   thinking,
   steps,
+  connections,
   streaming,
   className,
 }: {
@@ -52,6 +54,8 @@ export function LiveAnswer({
   /** Something is happening right now, so the dots belong on screen. */
   thinking: boolean;
   steps: AgentStepView[];
+  /** The workspace's connected services, for the marks in the step trail. */
+  connections?: ToolConnection[];
   /**
    * Tokens are still arriving, as opposed to the answer having stopped and
    * being about to be replaced by the server's copy. This is what draws the
@@ -77,7 +81,9 @@ export function LiveAnswer({
       <div className="min-w-0" data-turn="answer">
         {/* What it did, above the words that came back from it (A13): the one
             thing on this screen that says the agent left the room. */}
-        {steps.length > 0 && <StepTrail steps={steps} boxed className="mb-3" />}
+        {steps.length > 0 && (
+          <StepTrail steps={steps} connections={connections} boxed className="mb-3" />
+        )}
         {/* What the model is working through, while it works through it.
             OPEN while it is still working through it, and folded the moment it
             stops. This was a closed `Disclosure` labelled "Thinking", which

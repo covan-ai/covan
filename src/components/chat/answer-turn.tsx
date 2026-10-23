@@ -10,6 +10,7 @@ import { MsgAction } from "@/components/chat/turn-actions";
 import { VersionPicker, RetryOn } from "@/components/chat/answer-controls";
 import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
 import type { ReplyPrices } from "@/lib/agent-meta";
+import type { ToolConnection } from "@/lib/connections-api";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
 
@@ -57,6 +58,7 @@ export const AnswerTurn = memo(function AnswerTurn({
   canRegenerate,
   pickableModels,
   prices,
+  connections,
   truncated,
   stoppedShort,
   canSpeak,
@@ -85,6 +87,8 @@ export const AnswerTurn = memo(function AnswerTurn({
   pickableModels: string[];
   /** What each model costs per reply, in the unit the server answers in. */
   prices: ReplyPrices | undefined;
+  /** The workspace's connected services, for the marks in the step trail. */
+  connections?: ToolConnection[];
   /** The answer stopped at its length cap and can be carried on. */
   truncated: boolean;
   /** The turn stopped at a ceiling, and which one. */
@@ -114,6 +118,7 @@ export const AnswerTurn = memo(function AnswerTurn({
         {message.steps && message.steps.length > 0 && (
           <SettledSteps
             steps={toStepViews(message.steps)}
+            connections={connections}
             sources={sources.length}
             className="mb-3"
           />

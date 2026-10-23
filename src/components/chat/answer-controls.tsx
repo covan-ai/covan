@@ -6,6 +6,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModelCost } from "@/components/model-cost";
+import { useTranslation } from "@/i18n";
 import { priceFor, type ReplyPrices } from "@/lib/agent-meta";
 
 /**
@@ -36,6 +37,7 @@ export function VersionPicker({
   busy: boolean;
   onShow: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const at = versions.indexOf(current);
   // A chain that does not contain the message showing is a transcript and a
   // version list that disagree, and drawing `0/3` over it helps nobody.
@@ -47,19 +49,25 @@ export function VersionPicker({
         type="button"
         onClick={() => step(-1)}
         disabled={busy || at === 0}
-        aria-label="Previous version of this answer"
+        aria-label={t("Previous version of this answer")}
         className="grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
       >
         <ChevronLeft className="h-3.5 w-3.5" />
       </button>
-      <span className="tabular-nums" aria-label={`Version ${at + 1} of ${versions.length}`}>
+      <span
+        className="tabular-nums"
+        aria-label={t("Version {{number}} of {{total}}", {
+          number: at + 1,
+          total: versions.length,
+        })}
+      >
         {at + 1}/{versions.length}
       </span>
       <button
         type="button"
         onClick={() => step(1)}
         disabled={busy || at === versions.length - 1}
-        aria-label="Next version of this answer"
+        aria-label={t("Next version of this answer")}
         className="grid h-6 w-6 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
       >
         <ChevronRight className="h-3.5 w-3.5" />
@@ -89,14 +97,15 @@ export function RetryOn({
   prices: ReplyPrices | undefined;
   onPick: (model: string) => void;
 }) {
+  const { t } = useTranslation();
   if (models.length === 0) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          title="Answer again on another model"
-          aria-label="Answer again on another model"
+          title={t("Answer again on another model")}
+          aria-label={t("Answer again on another model")}
           className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Sparkles className="h-3.5 w-3.5" />

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { useAgentsStore } from "@/lib/agents-store";
 import { findChatBundle } from "@/lib/chat-uploads";
 import { validateUpload } from "@/lib/uploads";
@@ -37,6 +38,7 @@ export type ChatUploads = {
  * answer. So the receipt stays under the composer until it is acted on.
  */
 export function useChatUploads(agent: { id: string; name: string }): ChatUploads {
+  const { t } = useTranslation();
   const { ensureChatBundle, uploadToBundle, removeDocument, moveDocument, bundles } =
     useAgentsStore();
   const [receipts, setReceipts] = useState<ChatUploadReceipt[]>([]);
@@ -60,7 +62,7 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
     async (files: File[]) => {
       const accepted: File[] = [];
       for (const file of files) {
-        const check = validateUpload(file);
+        const check = validateUpload(file, t);
         if (check.ok) accepted.push(file);
         else toast.error(check.reason);
       }
@@ -74,8 +76,8 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
       } catch (e) {
         toast.error(
           e instanceof Error && e.message
-            ? `Couldn't open a place to put the file: ${e.message}`
-            : "Couldn't open a place to put the file.",
+            ? t("Couldn't open a place to put the file: {{message}}", { message: e.message })
+            : t("Couldn't open a place to put the file."),
         );
         return;
       }
@@ -114,19 +116,22 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
             if (!doc.indexed) {
               // Uploaded, stored, listed — and no passage in it can be matched.
               toast.warning(
-                `${file.name} went in but could not be indexed, so answers won't be grounded in it.`,
+                t(
+                  "{{name}} went in but could not be indexed, so answers won't be grounded in it.",
+                  { name: file.name },
+                ),
               );
             }
           } catch (e) {
             patch(id, {
               state: "failed",
-              reason: e instanceof Error ? e.message : "Upload failed",
+              reason: e instanceof Error ? e.message : t("Upload failed"),
             });
           }
         }),
       );
     },
-    [agent, ensureChatBundle, uploadToBundle, patch, nameOf],
+    [agent, ensureChatBundle, uploadToBundle, patch, nameOf, t],
   );
 
   // Promotion: the file turned out to be worth keeping, so it goes where the
@@ -141,7 +146,9 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
         await moveDocument(receipt.documentId, bundleId);
       } catch (e) {
         toast.error(
-          e instanceof Error && e.message ? `Couldn't move it: ${e.message}` : "Couldn't move it.",
+          e instanceof Error && e.message
+            ? t("Couldn't move it: {{message}}", { message: e.message })
+            : t("Couldn't move it."),
         );
         return;
       }
@@ -151,7 +158,7 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
         ),
       );
     },
-    [receipts, moveDocument, nameOf],
+    [receipts, moveDocument, nameOf, t],
   );
 
   const dismiss = useCallback((receiptId: string) => {
@@ -167,15 +174,15 @@ export function useChatUploads(agent: { id: string; name: string }): ChatUploads
         } catch (e) {
           toast.error(
             e instanceof Error && e.message
-              ? `Couldn't remove it: ${e.message}`
-              : "Couldn't remove it.",
+              ? t("Couldn't remove it: {{message}}", { message: e.message })
+              : t("Couldn't remove it."),
           );
           return;
         }
       }
       setReceipts((prev) => prev.filter((r) => r.id !== receiptId));
     },
-    [receipts, removeDocument],
+    [receipts, removeDocument, t],
   );
 
   return { receipts, destinations, addFiles, moveTo, remove, dismiss };

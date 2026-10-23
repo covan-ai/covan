@@ -10,13 +10,12 @@ import { isAdminRole } from "@/lib/roles";
 export function adminsToAsk(
   members: { id: string; name: string | null; email: string | null; role: string }[],
   selfId: string | undefined,
+  locale: string = "en-GB",
 ): string | null {
   const names = members
     .filter((m) => isAdminRole(m.role) && m.id !== selfId)
     .map((m) => m.name?.trim() || m.email || null)
     .filter((n): n is string => !!n);
   if (names.length === 0) return null;
-  if (names.length === 1) return names[0];
-  if (names.length === 2) return `${names[0]} or ${names[1]}`;
-  return `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+  return new Intl.ListFormat(locale, { type: "disjunction" }).format(names);
 }

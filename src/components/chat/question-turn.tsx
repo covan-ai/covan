@@ -3,6 +3,7 @@ import { Pencil } from "lucide-react";
 import type { Message } from "@/lib/agents-store";
 import { cn } from "@/lib/utils";
 import { avatarSrc } from "@/lib/avatar-src";
+import { useTranslation } from "@/i18n";
 
 /**
  * One question in a transcript.
@@ -50,6 +51,7 @@ export function QuestionTurn({
   /** How much air goes above this turn. See `gapBefore`. */
   className?: string;
 }) {
+  const { t } = useTranslation();
   const senderAvatar = avatarSrc(sender?.avatarUrl);
   return (
     <div className={cn("group flex flex-col items-end gap-1.5", className)}>
@@ -58,7 +60,7 @@ export function QuestionTurn({
           {senderAvatar ? (
             <img src={senderAvatar} alt="" className="h-4 w-4 rounded-sm object-cover" />
           ) : null}
-          <span>{sender.name ?? "Someone"}</span>
+          <span>{sender.name ?? t("Someone")}</span>
         </div>
       )}
       {/* The clock and the one thing you can do to your own turn, ABOVE the
@@ -92,7 +94,7 @@ export function QuestionTurn({
             disabled={busy}
             className="flex items-center gap-1 transition-colors hover:text-foreground disabled:hidden"
           >
-            <Pencil className="h-3 w-3" /> Edit
+            <Pencil className="h-3 w-3" /> {t("Edit")}
           </button>
         )}
       </div>

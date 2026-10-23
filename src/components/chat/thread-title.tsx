@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { TextPromptDialog } from "@/components/text-prompt-dialog";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/i18n";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,6 +33,7 @@ export function ThreadTitle({
     remove: () => void;
   };
 }) {
+  const { t } = useTranslation();
   const [renaming, setRenaming] = useState(false);
   const parts = meta.filter(Boolean);
   return (
@@ -54,34 +56,36 @@ export function ThreadTitle({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Thread actions"
+                aria-label={t("Thread actions")}
                 className="ml-auto self-center text-muted-foreground"
               >
                 <MoreHorizontal />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onClick={() => setRenaming(true)}>Rename</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setRenaming(true)}>{t("Rename")}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => actions.setShared(!actions.shared)}>
-                {actions.shared ? "Make private" : "Share with workspace"}
+                {actions.shared ? t("Make private") : t("Share with workspace")}
               </DropdownMenuItem>
               {actions.writeReport && (
-                <DropdownMenuItem onClick={actions.writeReport}>Write a report</DropdownMenuItem>
+                <DropdownMenuItem onClick={actions.writeReport}>
+                  {t("Write a report")}
+                </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive" onClick={actions.remove}>
-                Delete thread
+                {t("Delete thread")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <TextPromptDialog
             open={renaming}
             onOpenChange={setRenaming}
-            title="Rename thread"
-            label="Name"
+            title={t("Rename thread")}
+            label={t("Name")}
             initialValue={title}
-            submitLabel="Rename"
-            busyLabel="Renaming…"
+            submitLabel={t("Rename")}
+            busyLabel={t("Renaming…")}
             onSubmit={async (next) => {
               actions.rename(next);
               return true;

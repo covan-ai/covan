@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { Routine, UpdateRoutineInput } from "@/lib/routines-api";
+import { Trans, useTranslation } from "@/i18n";
 
 /**
  * Whether this routine may use the browser on its own, and what it carries.
@@ -42,6 +43,7 @@ export function RoutineBrowserCard({
   onSave: (patch: UpdateRoutineInput) => void;
   saving: boolean;
 }) {
+  const { t } = useTranslation();
   const on = routine.browserAccess !== "off";
   // The site is typed, so it is saved on demand rather than on every key. Null
   // is "nothing typed", which shows what is saved.
@@ -53,6 +55,7 @@ export function RoutineBrowserCard({
   const [picking, setPicking] = useState(false);
   const pickingSite = picking && routine.browserAccess === "all";
   const setPickingSite = setPicking;
+  const siteName = routine.browserSite ?? t("that site");
   const saveSite = () => {
     onSave({ browserAccess: "site", browserSite: site.trim() });
     setDraft(null);
@@ -61,19 +64,19 @@ export function RoutineBrowserCard({
 
   return (
     <section className="mt-2">
-      <SectionLabel>Use a browser</SectionLabel>
+      <SectionLabel>{t("Use a browser")}</SectionLabel>
       <p className="mt-0 mb-3 text-meta text-muted-foreground">
-        Let this routine open web pages on its own, and report what it found.
+        {t("Let this routine open web pages on its own, and report what it found.")}
       </p>
 
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-4">
           <label htmlFor="routine-browser" className="text-sm">
-            Allow the browser on scheduled runs
+            {t("Allow the browser on scheduled runs")}
           </label>
           <Switch
             id="routine-browser"
-            aria-label="Allow the browser on scheduled runs"
+            aria-label={t("Allow the browser on scheduled runs")}
             checked={on}
             // Turning it on starts with what chat does, unless a site was
             // already named — then the narrower choice comes back as it was.
@@ -88,14 +91,15 @@ export function RoutineBrowserCard({
 
         {!on ? (
           <p className="text-sm text-muted-foreground">
-            Runs cannot use the browser. Nobody is there to approve a task, so a run that needs a
-            web page reports that it could not open one.
+            {t(
+              "Runs cannot use the browser. Nobody is there to approve a task, so a run that needs a web page reports that it could not open one.",
+            )}
           </p>
         ) : (
           <>
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground" htmlFor="routine-browser-access">
-                What the browser may use
+                {t("What the browser may use")}
               </label>
               <Select
                 value={pickingSite ? "site" : routine.browserAccess}
@@ -119,8 +123,8 @@ export function RoutineBrowserCard({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Everything, as in a conversation</SelectItem>
-                  <SelectItem value="site">One site's saved login only</SelectItem>
+                  <SelectItem value="all">{t("Everything, as in a conversation")}</SelectItem>
+                  <SelectItem value="site">{t("One site's saved login only")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -138,36 +142,43 @@ export function RoutineBrowserCard({
               <Globe className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
               {routine.browserAccess === "site" || pickingSite ? (
                 <span>
-                  Each run's browser starts with none of your sign-ins. It is given only your saved
-                  login for{" "}
-                  <strong className="font-medium">{routine.browserSite ?? "that site"}</strong>, and
-                  can type it on that site and nowhere else.
+                  <Trans
+                    t={t}
+                    i18nKey="Each run's browser starts with none of your sign-ins. It is given only your saved login for <b>{{site}}</b>, and can type it on that site and nowhere else."
+                    values={{ site: siteName }}
+                    components={{ b: <strong className="font-medium" /> }}
+                  />
                 </span>
               ) : (
                 <span>
-                  Each run's browser carries what yours does in a conversation: the sites you signed
-                  into in the browser panel, and the logins you saved. Choose one site's login only
-                  if this routine reads feeds or pages other people write.
+                  {t(
+                    "Each run's browser carries what yours does in a conversation: the sites you signed into in the browser panel, and the logins you saved. Choose one site's login only if this routine reads feeds or pages other people write.",
+                  )}
                 </span>
               )}
             </p>
 
             <p className="text-meta text-muted-foreground">
-              The report waits until the browser has answered, and is sent once with its answers in
-              it.
+              {t(
+                "The report waits until the browser has answered, and is sent once with its answers in it.",
+              )}
               {routine.browserConversationId && (
                 <>
                   {" "}
-                  The browser works beside{" "}
-                  <Link
-                    to="/agents/$agentId/chat"
-                    params={{ agentId: routine.agentId }}
-                    search={{ s: routine.browserConversationId }}
-                    className="underline underline-offset-2"
-                  >
-                    this routine's conversation
-                  </Link>
-                  , where you can watch it or sign in for it.
+                  <Trans
+                    t={t}
+                    i18nKey="The browser works beside <a>this routine's conversation</a>, where you can watch it or sign in for it."
+                    components={{
+                      a: (
+                        <Link
+                          to="/agents/$agentId/chat"
+                          params={{ agentId: routine.agentId }}
+                          search={{ s: routine.browserConversationId }}
+                          className="underline underline-offset-2"
+                        />
+                      ),
+                    }}
+                  />
                 </>
               )}
             </p>
@@ -194,11 +205,12 @@ function SiteField({
   canSave: boolean;
   saving: boolean;
 }) {
+  const { t } = useTranslation();
   if (!visible) return null;
   return (
     <div className="space-y-2">
       <label className="text-xs text-muted-foreground" htmlFor="routine-browser-site">
-        The site it may sign in to
+        {t("The site it may sign in to")}
       </label>
       <div className="flex gap-2">
         <Input
@@ -212,7 +224,7 @@ function SiteField({
           disabled={saving}
         />
         <Button variant="secondary" onClick={onSave} disabled={!canSave || saving}>
-          Save
+          {t("Save")}
         </Button>
       </div>
     </div>

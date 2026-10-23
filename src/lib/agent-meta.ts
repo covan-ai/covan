@@ -1,5 +1,10 @@
 // Shared agent metadata — the single source of truth for the model pickers:
 // the models, the three tiers, what a message costs and what a model accepts.
+//
+// The words in the tables below are keys (`msg`); a screen says them with
+// `lookup(t, …)`, and the helpers that build a sentence take a `t`.
+
+import { englishT, lookup, msg, type Translate } from "@/i18n";
 
 /**
  * Every model this build knows, in picker order.
@@ -77,20 +82,20 @@ export const DEFAULT_NEW_AGENT_MODEL = "gpt-4.1-mini";
 export const MODEL_TIERS = [
   {
     id: "fast",
-    label: "Fast",
-    description: "Short answers, simple lookups.",
+    label: msg("Fast"),
+    description: msg("Short answers, simple lookups."),
     model: "claude-haiku-4-5",
   },
   {
     id: "standard",
-    label: "Standard",
-    description: "Reads documents, drafts replies, follows multi-step instructions.",
+    label: msg("Standard"),
+    description: msg("Reads documents, drafts replies, follows multi-step instructions."),
     model: "claude-sonnet-5",
   },
   {
     id: "best",
-    label: "Best",
-    description: "Long research, careful writing, browser work.",
+    label: msg("Best"),
+    description: msg("Long research, careful writing, browser work."),
     model: "claude-opus-5",
   },
 ] as const;
@@ -113,8 +118,9 @@ export function tierOf(model: string | null | undefined): ModelTier | null {
 }
 
 /** What a chip or a sentence calls a model: its tier's word, else its id. */
-export function modelLabel(model: string): string {
-  return tierOf(model)?.label ?? model;
+export function modelLabel(model: string, t: Translate = englishT): string {
+  const tier = tierOf(model);
+  return tier ? lookup(t, tier.label) : model;
 }
 
 /**
@@ -169,10 +175,10 @@ export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 /** What each effort buys, for the one line of help under the picker. */
 export const REASONING_EFFORT_HINTS: Record<ReasoningEffort, string> = {
-  minimal: "Answers immediately. Cheapest, and best for lookups and rewrites.",
-  low: "A moment's thought before answering.",
-  medium: "The model's usual amount of deliberation.",
-  high: "Thinks at length first. Best for analysis, and the most expensive.",
+  minimal: msg("Answers immediately. Cheapest, and best for lookups and rewrites."),
+  low: msg("A moment's thought before answering."),
+  medium: msg("The model's usual amount of deliberation."),
+  high: msg("Thinks at length first. Best for analysis, and the most expensive."),
 };
 
 export type ModelSpec = { temperature: boolean; reasoning: boolean; webSearch: boolean };
@@ -222,15 +228,15 @@ export function effortLevelOf(effort: ReasoningEffort | null | undefined): DialE
  * (`minimal`…`high`); only what a person reads changes.
  */
 export const EFFORT_WORDS: Record<ReasoningEffort, string> = {
-  minimal: "Off",
-  low: "Brief",
-  medium: "Standard",
-  high: "Extended",
+  minimal: msg("Off"),
+  low: msg("Brief"),
+  medium: msg("Standard"),
+  high: msg("Extended"),
 };
 
 /** "medium" → "Standard", for a chip and a sentence. */
-export function effortWord(effort: ReasoningEffort): string {
-  return EFFORT_WORDS[effort];
+export function effortWord(effort: ReasoningEffort, t: Translate = englishT): string {
+  return lookup(t, EFFORT_WORDS[effort]);
 }
 
 /**
@@ -249,10 +255,11 @@ export function dialLabel(
   model: string,
   effort: ReasoningEffort | null | undefined,
   reasons: boolean,
+  t: Translate = englishT,
 ): string {
-  const name = modelLabel(model);
+  const name = modelLabel(model, t);
   if (!reasons || effort == null) return name;
-  return `${name} · ${effortWord(effort)}`;
+  return `${name} · ${effortWord(effort, t)}`;
 }
 
 /**
@@ -286,9 +293,9 @@ export function costFor(
  * the middle band holding what 0025 actually measured.
  */
 export const COST_BANDS = [
-  { upToUsd: 0.005, label: "under ½¢" },
+  { upToUsd: 0.005, label: msg("under ½¢") },
   { upToUsd: 0.015, label: "½¢–1½¢" },
-  { upToUsd: Infinity, label: "over 1½¢" },
+  { upToUsd: Infinity, label: msg("over 1½¢") },
 ] as const;
 
 /** Which band `cost` falls in, or -1 when there is no price to place. */
@@ -304,8 +311,15 @@ export function costBandIndex(cost: number | null): number {
  * gpt-5-nano would round the cheapest model in the catalogue to free, which is
  * the one number on this scale worth getting right.
  */
-export function formatReplyCost(cost: number): string {
-  return cost >= 0.01 ? `$${cost.toFixed(3)}` : `$${cost.toFixed(4)}`;
+export function formatReplyCost(cost: number, locale: string = "en"): string {
+  const digits = cost >= 0.01 ? 3 : 4;
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "USD",
+    currencyDisplay: "narrowSymbol",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(cost);
 }
 
 /**
@@ -352,22 +366,34 @@ export function priceFor(
  * function's, because `credits.ts` reaches `api-client` at import and this
  * module is meant to stay free of it.
  */
-export function formatReplyCredits(credits: number): string {
-  if (credits < 1) return "<1 credit";
+export function formatReplyCredits(
+  credits: number,
+  t: Translate = englishT,
+  locale?: string,
+): string {
+  if (credits < 1) return t("<1 credit");
   let rounded: number;
   if (credits < 20) rounded = Math.round(credits);
   else {
     const magnitude = 10 ** (Math.floor(Math.log10(credits)) - 1);
     rounded = Math.round(credits / magnitude) * magnitude;
   }
-  return `~${rounded.toLocaleString()} ${rounded === 1 ? "credit" : "credits"}`;
+  return t("~{{amount}} credit", {
+    count: rounded,
+    amount: rounded.toLocaleString(locale),
+    defaultValue_other: "~{{amount}} credits",
+  });
 }
 
 /** A reply price in its own unit. */
-export function formatReplyPrice(price: ReplyPrice): string {
+export function formatReplyPrice(
+  price: ReplyPrice,
+  t: Translate = englishT,
+  locale?: string,
+): string {
   return price.unit === "credits"
-    ? formatReplyCredits(price.amount)
-    : formatReplyCost(price.amount);
+    ? formatReplyCredits(price.amount, t, locale)
+    : formatReplyCost(price.amount, locale);
 }
 
 /**

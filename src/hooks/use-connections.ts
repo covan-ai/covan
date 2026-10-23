@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { i18n } from "@/i18n";
 import { api } from "@/lib/api-client";
 import type { ProviderId } from "@/lib/connections-api";
 import { beginFlow } from "@/lib/flow-nonce";
@@ -190,7 +191,7 @@ export function useConnectComposio() {
       // happen, and no error would fire so there would be no toast.
       if (url) navigateAway(url);
       else if (expectRedirect) {
-        throw new Error("That connection started but there is nowhere to finish it.");
+        throw new Error(i18n.t("That connection started but there is nowhere to finish it."));
       }
     },
   });

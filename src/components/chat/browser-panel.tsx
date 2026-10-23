@@ -24,6 +24,8 @@ import {
   waitingFor,
 } from "./use-conversation-browser";
 import { safeNavigationUrl } from "@/lib/safe-url";
+import { lookup, msg, useTranslation, type TFunction } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /**
  * The browser beside the conversation.
@@ -51,20 +53,20 @@ const TAKE_OVER_RETRY_MS = 2_000;
 /** How many times to ask again before handing the person a "Try again". */
 const TAKE_OVER_RETRIES = 5;
 
-function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : "Something went wrong.";
+function messageOf(err: unknown, t: TFunction): string {
+  return err instanceof Error && err.message ? err.message : t("Something went wrong.");
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-const GAVE_UP = "The agent has not let go of the browser yet. Try again in a moment.";
+const GAVE_UP = msg("The agent has not let go of the browser yet. Try again in a moment.");
 
 /** A queued task's place, as the list says it. The server keeps at most three waiting. */
-const PLACES = ["Up next", "Second in line", "Third in line"];
+const PLACES = [msg("Up next"), msg("Second in line"), msg("Third in line")];
 
 /** The server's sentences start in lower case, for splicing; on their own they are sentences. */
-function sentence(text: string): string {
-  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+function sentence(text: string, locale: string): string {
+  return text ? text.charAt(0).toLocaleUpperCase(locale) + text.slice(1) : text;
 }
 
 /**
@@ -93,6 +95,7 @@ export function BrowserPanel({
   /** Who is browsing: "Finance is browsing". */
   agentName?: string;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data, dataUpdatedAt } = useConversationBrowser(sessionId);
   const session = data?.session ?? null;
@@ -146,7 +149,7 @@ export function BrowserPanel({
         if (!current) return;
         // 409 is "no browser is running yet" — the run is still starting it.
         const notYet = err instanceof ApiError && err.status === 409;
-        setLive({ url: null, problem: notYet ? null : messageOf(err) });
+        setLive({ url: null, problem: notYet ? null : messageOf(err, t) });
       },
     );
     return () => {
@@ -154,7 +157,8 @@ export function BrowserPanel({
     };
     // `browserReady` and the newest task are triggers, not inputs: each is a
     // moment the browser on screen may no longer be the browser there is.
-  }, [browserId, browserReady, mints, newestTask]);
+    // `t` changes only with the language, and a fresh mint then is harmless.
+  }, [browserId, browserReady, mints, newestTask, t]);
 
   /**
    * Take-over's own clock.
@@ -239,7 +243,7 @@ export function BrowserPanel({
     },
     onError: (err) => {
       setTakeOverState("idle");
-      setProblem(messageOf(err));
+      setProblem(messageOf(err, t));
       // A 409 here is usually a browser that has closed (final-review I2); the
       // server has forgotten it, and asking now drops the sign-in prompt
       // rather than leaving it pointing at nothing until the next poll.
@@ -268,7 +272,7 @@ export function BrowserPanel({
     },
     // A 409 is a sentence worth reading — "already tried again", "nothing to
     // continue" — so it goes beside the button rather than into a toast.
-    onError: (err) => setProblem(messageOf(err)),
+    onError: (err) => setProblem(messageOf(err, t)),
   });
 
   const stop = useMutation({
@@ -286,7 +290,7 @@ export function BrowserPanel({
       }
       onHide();
     },
-    onError: (err) => setProblem(messageOf(err)),
+    onError: (err) => setProblem(messageOf(err, t)),
   });
 
   /** Take one task out of the line before its turn (0080). */
@@ -296,7 +300,7 @@ export function BrowserPanel({
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) }),
     // A 409 is a task that started meanwhile: the sentence says so.
     onError: (err) => {
-      setProblem(messageOf(err));
+      setProblem(messageOf(err, t));
       void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) });
     },
   });
@@ -350,10 +354,10 @@ export function BrowserPanel({
     openInNewWindow(async () => {
       if (takeOverFirst && liveState !== "human") {
         const result = await takeOver.mutateAsync(id);
-        if (result.liveState !== "human") throw new Error(GAVE_UP);
+        if (result.liveState !== "human") throw new Error(lookup(t, GAVE_UP));
       }
       return (await api.browser.live(id)).liveUrl;
-    }).catch((err: unknown) => setProblem(messageOf(err)));
+    }, t).catch((err: unknown) => setProblem(messageOf(err, t)));
   }
 
   /**
@@ -376,7 +380,7 @@ export function BrowserPanel({
         return; // `takeOver`'s own onError has said why, beside the button.
       }
       if (taken.liveState !== "human") {
-        setProblem(GAVE_UP);
+        setProblem(lookup(t, GAVE_UP));
         return;
       }
     }
@@ -417,17 +421,17 @@ export function BrowserPanel({
 
   const status =
     mode === "agent" || mode === "cancelling"
-      ? "The agent is driving"
+      ? t("The agent is driving")
       : mode === "human"
-        ? "You are driving"
-        : "Nobody is driving";
+        ? t("You are driving")
+        : t("Nobody is driving");
   const placeholder = live.problem
     ? live.problem
     : session && (running || liveState !== "none")
-      ? "Starting the browser…"
+      ? t("Starting the browser…")
       : line.length > 0
-        ? "Starting the next task…"
-        : "No browser is open right now.";
+        ? t("Starting the next task…")
+        : t("No browser is open right now.");
   const pill = pillOf({
     mode,
     ready: browserReady || !!live.url,
@@ -438,6 +442,7 @@ export function BrowserPanel({
     onTakeOver: () => session && takeOver.mutate(session.id),
     onDone: () => session && handBack.mutate({ id: session.id }),
     onClose: close,
+    t,
   });
   const task = (data?.tasks ?? []).find(isRunning) ?? null;
   const latest = data?.events.length ? data.events[data.events.length - 1] : null;
@@ -456,10 +461,12 @@ export function BrowserPanel({
       status={status}
       title={
         mode === "agent" || mode === "cancelling"
-          ? `${agentName ?? "The agent"} is browsing`
+          ? agentName
+            ? t("{{name}} is browsing", { name: agentName })
+            : t("The agent is browsing")
           : mode === "human"
-            ? "Your hands on the browser"
-            : "Browser"
+            ? t("Your hands on the browser")
+            : t("Browser")
       }
       task={task?.task ?? null}
       action={pill.action}
@@ -489,12 +496,16 @@ export function BrowserPanel({
           {confirmingClose && session && (
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 text-sm">
-                Close the browser? Closing it saves your sign-ins to your profile.
-                {line.length === 1 && " The task waiting for it won't run."}
-                {line.length > 1 && ` The ${line.length} tasks waiting for it won't run.`}
+                {t("Close the browser? Closing it saves your sign-ins to your profile.")}
+                {line.length > 0 && " "}
+                {line.length > 0 &&
+                  t("The task waiting for it won't run.", {
+                    count: line.length,
+                    defaultValue_other: "The {{count}} tasks waiting for it won't run.",
+                  })}
               </span>
               <Button variant="ghost" size="sm" onClick={() => setConfirmingClose(false)}>
-                Keep it open
+                {t("Keep it open")}
               </Button>
               <Button
                 variant="secondary"
@@ -502,7 +513,7 @@ export function BrowserPanel({
                 disabled={stop.isPending}
                 onClick={() => stop.mutate(session.id)}
               >
-                Close it
+                {t("Close it")}
               </Button>
             </div>
           )}
@@ -525,7 +536,7 @@ export function BrowserPanel({
               choice. */}
           {mode === "human" && (
             <p className="text-meta text-muted-foreground">
-              The browser closes about ten minutes after this tab is closed.
+              {t("The browser closes about ten minutes after this tab is closed.")}
             </p>
           )}
           {problem && (
@@ -541,11 +552,11 @@ export function BrowserPanel({
            started is the take-over's, not this list's. */
         line.length > 0 && (
           <section
-            aria-label="Queued tasks"
+            aria-label={t("Queued tasks")}
             className="flex max-h-48 flex-col gap-1.5 overflow-y-auto border-t border-hairline p-3"
           >
             <h3 className="text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-              Queued
+              {t("Queued")}
             </h3>
             <ol className="flex flex-col gap-1.5">
               {line.map((task, i) => (
@@ -555,7 +566,9 @@ export function BrowserPanel({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-meta text-muted-foreground">
-                      {PLACES[i] ?? `Number ${i + 1} in line`}
+                      {PLACES[i]
+                        ? lookup(t, PLACES[i])
+                        : t("Number {{place}} in line", { place: i + 1 })}
                     </p>
                     <p className="line-clamp-2 text-sm [overflow-wrap:anywhere]">{task.task}</p>
                   </div>
@@ -565,7 +578,7 @@ export function BrowserPanel({
                     disabled={removeWaiting.isPending}
                     onClick={() => removeWaiting.mutate(task.id)}
                   >
-                    Remove
+                    {t("Remove")}
                   </Button>
                 </li>
               ))}
@@ -599,7 +612,7 @@ export function BrowserPanel({
       >
         {live.url ? (
           <iframe
-            title="The agent's browser"
+            title={t("The agent's browser")}
             src={live.url}
             allow="autoplay"
             className="h-full w-full border-0 bg-background"
@@ -650,6 +663,7 @@ function BrowserFrame({
   after?: ReactNode;
   footer: ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
@@ -658,7 +672,7 @@ function BrowserFrame({
         live && "browser-live",
       )}
     >
-      <h2 className="sr-only">Browser</h2>
+      <h2 className="sr-only">{t("Browser")}</h2>
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline pr-2 pl-3">
         <StatusDot state={dot} />
         <span className="sr-only">{status}</span>
@@ -675,7 +689,7 @@ function BrowserFrame({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="Open in new window"
+            aria-label={t("Open in new window")}
             className="text-muted-foreground"
             onClick={onOpenWindow}
           >
@@ -685,7 +699,7 @@ function BrowserFrame({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Close the browser"
+          aria-label={t("Close the browser")}
           className="text-muted-foreground"
           onClick={onClose}
         >
@@ -760,6 +774,8 @@ function OwnBrowserView({
   /** A refusal the conversation's view was showing when this one took over. */
   notice: string | null;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<"opening" | "closing" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -821,7 +837,7 @@ function OwnBrowserView({
           return;
         }
       }
-      setProblem(sentence(messageOf(err)));
+      setProblem(sentence(messageOf(err, t), locale));
     } finally {
       if (alive.current) setBusy(null);
     }
@@ -837,7 +853,7 @@ function OwnBrowserView({
       void queryClient.invalidateQueries({ queryKey: ["browser-profile"] });
       if (!alive.current) return;
       onChange(null);
-      setNote(sentence(closed.message));
+      setNote(sentence(closed.message, locale));
       if (thenHide) onHide();
     } catch (err) {
       if (!alive.current) return;
@@ -849,10 +865,10 @@ function OwnBrowserView({
       // saves the jar.
       if (err instanceof ApiError && err.status === 409) {
         onChange(null);
-        setNote("This browser has already been closed, and your sign-ins were saved.");
+        setNote(t("This browser has already been closed, and your sign-ins were saved."));
         if (thenHide) onHide();
       } else {
-        setProblem(sentence(messageOf(err)));
+        setProblem(sentence(messageOf(err, t), locale));
       }
     } finally {
       if (alive.current) {
@@ -870,9 +886,9 @@ function OwnBrowserView({
     openInNewWindow(async () => {
       if (liveUrl) return liveUrl;
       const { takeover } = await api.takeovers.current();
-      if (!takeover?.liveUrl || takeover.id !== id) throw new Error("This browser has closed.");
+      if (!takeover?.liveUrl || takeover.id !== id) throw new Error(t("This browser has closed."));
       return takeover.liveUrl;
-    }).catch((err: unknown) => setProblem(messageOf(err)));
+    }, t).catch((err: unknown) => setProblem(messageOf(err, t)));
   }
 
   function close() {
@@ -889,21 +905,25 @@ function OwnBrowserView({
   // sweep stops it within a few minutes — and that stop saves the jar too.
   const clock =
     left > 0
-      ? `${Math.floor(left / 60_000)}:${String(Math.floor((left % 60_000) / 1_000)).padStart(2, "0")} left — press Done to save your sign-ins.`
-      : "Time is up. Press Done to finish; if you don't, it closes by itself shortly and your sign-ins are still saved.";
+      ? t("{{time}} left — press Done to save your sign-ins.", {
+          time: `${Math.floor(left / 60_000)}:${String(Math.floor((left % 60_000) / 1_000)).padStart(2, "0")}`,
+        })
+      : t(
+          "Time is up. Press Done to finish; if you don't, it closes by itself shortly and your sign-ins are still saved.",
+        );
 
   return (
     <BrowserFrame
       layout={layout}
       live={false}
       dot={own ? "waiting" : "done"}
-      status={own ? "You are driving" : "Nobody is driving"}
-      title={own ? "Your browser" : "Browser"}
+      status={own ? t("You are driving") : t("Nobody is driving")}
+      title={own ? t("Your browser") : t("Browser")}
       task={null}
       action={
         own ? (
           <Button size="sm" disabled={busy !== null} onClick={() => void done(false)}>
-            {busy === "closing" ? "Saving…" : "Done"}
+            {busy === "closing" ? t("Saving…") : t("Done")}
           </Button>
         ) : null
       }
@@ -912,11 +932,11 @@ function OwnBrowserView({
       footer={
         own ? (
           <>
-            <span>You are using the browser</span>
+            <span>{t("You are using the browser")}</span>
             <span className="ml-auto font-mono tabular-nums">{clock}</span>
           </>
         ) : (
-          <span>It stays open for ten minutes. Press Done to save your sign-ins.</span>
+          <span>{t("It stays open for ten minutes. Press Done to save your sign-ins.")}</span>
         )
       }
       notices={
@@ -924,10 +944,10 @@ function OwnBrowserView({
           {confirmingClose && own && (
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 text-sm">
-                Close the browser? Closing it saves your sign-ins to your profile.
+                {t("Close the browser? Closing it saves your sign-ins to your profile.")}
               </span>
               <Button variant="ghost" size="sm" onClick={() => setConfirmingClose(false)}>
-                Keep it open
+                {t("Keep it open")}
               </Button>
               <Button
                 variant="secondary"
@@ -935,7 +955,7 @@ function OwnBrowserView({
                 disabled={busy !== null}
                 onClick={() => void done(true)}
               >
-                Close it
+                {t("Close it")}
               </Button>
             </div>
           )}
@@ -957,14 +977,14 @@ function OwnBrowserView({
         <div data-testid="browser-frame" className="absolute inset-0">
           {own.liveUrl ? (
             <iframe
-              title="Your browser"
+              title={t("Your browser")}
               src={own.liveUrl}
               allow="autoplay"
               className="h-full w-full border-0 bg-background"
             />
           ) : (
             <div className="grid h-full place-items-center p-4 text-center text-meta text-muted-foreground">
-              The browser has no view to show yet. Open it in a new window instead.
+              {t("The browser has no view to show yet. Open it in a new window instead.")}
             </div>
           )}
         </div>
@@ -972,10 +992,10 @@ function OwnBrowserView({
         <div className="absolute inset-0 grid place-items-center p-6 text-center">
           <div className="flex max-w-xs flex-col items-center gap-3">
             <p className="text-sm">
-              Sign in to sites ahead of time, so the agent&apos;s browser finds you signed in.
+              {t("Sign in to sites ahead of time, so the agent's browser finds you signed in.")}
             </p>
             <Button size="sm" disabled={busy !== null} onClick={() => void open()}>
-              {busy === "opening" ? "Opening…" : "Open browser"}
+              {busy === "opening" ? t("Opening…") : t("Open browser")}
             </Button>
           </div>
         </div>
@@ -998,6 +1018,7 @@ function pillOf({
   onTakeOver,
   onDone,
   onClose,
+  t,
 }: {
   mode: "agent" | "human" | "cancelling" | "idle";
   ready: boolean;
@@ -1009,20 +1030,21 @@ function pillOf({
   onTakeOver: () => void;
   onDone: () => void;
   onClose: () => void;
+  t: TFunction;
 }): { text: ReactNode; action: ReactNode } {
   if (mode === "human") {
     return {
-      text: "You're driving",
+      text: t("You're driving"),
       // Done continues a task; with none to continue (the newest finished, or
       // is already the retry) the person's one real move is to close the
       // browser, which saves what they did in it.
       action: continuable ? (
         <Button size="sm" disabled={donePending} onClick={onDone}>
-          Done
+          {t("Done")}
         </Button>
       ) : (
         <Button size="sm" onClick={onClose}>
-          Close
+          {t("Close")}
         </Button>
       ),
     };
@@ -1030,29 +1052,29 @@ function pillOf({
   if (mode === "cancelling") {
     return takeOverState === "gave-up"
       ? {
-          text: "The agent has not let go yet",
+          text: t("The agent has not let go yet"),
           action: (
             <Button variant="secondary" size="sm" onClick={onTakeOver}>
-              Try again
+              {t("Try again")}
             </Button>
           ),
         }
       : {
-          text: "Waiting for the agent to stop…",
+          text: t("Waiting for the agent to stop…"),
           action: (
             <Button variant="secondary" size="sm" disabled>
-              Take over
+              {t("Take over")}
             </Button>
           ),
         };
   }
-  if (!ready && mode === "agent") return { text: "Starting the browser…", action: null };
+  if (!ready && mode === "agent") return { text: t("Starting the browser…"), action: null };
   if (mode === "agent") {
     return {
-      text: "Agent is using the browser",
+      text: t("Agent is using the browser"),
       action: (
         <Button variant="secondary" size="sm" onClick={onTakeOver}>
-          Take over
+          {t("Take over")}
         </Button>
       ),
     };
@@ -1062,10 +1084,10 @@ function pillOf({
   // sign-in wall, taking over is the whole of what to do next, so it is the
   // primary button.
   return {
-    text: signIn ? "Waiting for you to sign in" : "The agent is not using the browser",
+    text: signIn ? t("Waiting for you to sign in") : t("The agent is not using the browser"),
     action: (
       <Button variant={signIn ? "default" : "secondary"} size="sm" onClick={onTakeOver}>
-        Take over
+        {t("Take over")}
       </Button>
     ),
   };

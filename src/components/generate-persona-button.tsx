@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -34,6 +35,7 @@ export function GeneratePersonaButton({
   onGenerated: (persona: string) => void;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const title = name.trim();
@@ -45,7 +47,7 @@ export function GeneratePersonaButton({
       const { persona } = await api.persona.suggest(title, model);
       onGenerated(persona);
     } catch {
-      toast.error("Couldn't write a persona. Try again.");
+      toast.error(t("Couldn't write a persona. Try again."));
     } finally {
       setBusy(false);
     }
@@ -59,7 +61,7 @@ export function GeneratePersonaButton({
         size="sm"
         aria-busy={busy}
         disabled={!title || busy}
-        title={title ? undefined : "Name the agent first"}
+        title={title ? undefined : t("Name the agent first")}
         onClick={() => (hasPersona ? setConfirming(true) : void draft())}
         className={cn(
           "h-7 gap-1.5 px-2 text-xs font-medium text-muted-foreground hover:text-foreground",
@@ -71,21 +73,23 @@ export function GeneratePersonaButton({
         ) : (
           <Sparkles className="h-3.5 w-3.5" />
         )}
-        {busy ? "Writing…" : hasPersona ? "Rewrite it for me" : "Write it for me"}
+        {busy ? t("Writing…") : hasPersona ? t("Rewrite it for me") : t("Write it for me")}
       </Button>
 
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Replace the current persona?</AlertDialogTitle>
+            <AlertDialogTitle>{t("Replace the current persona?")}</AlertDialogTitle>
             <AlertDialogDescription>
-              A new persona will be written from the name “{title}” and will overwrite what's in the
-              field now.
+              {t(
+                "A new persona will be written from the name “{{title}}” and will overwrite what's in the field now.",
+                { title },
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void draft()}>Replace</AlertDialogAction>
+            <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void draft()}>{t("Replace")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

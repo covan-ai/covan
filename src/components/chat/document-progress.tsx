@@ -1,5 +1,6 @@
 import type { DocumentJob } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 
 /**
  * Where a document is, in words and in dots.
@@ -10,13 +11,18 @@ import { cn } from "@/lib/utils";
  */
 
 export function SectionSquares({ job, className }: { job: DocumentJob; className?: string }) {
+  const { t } = useTranslation();
   if (job.sections.length === 0) return null;
   const writingIndex = job.status === "writing" ? job.sections.findIndex((s) => !s.done) : -1;
   return (
     <span
       className={cn("flex flex-wrap items-center gap-1", className)}
       role="img"
-      aria-label={`${job.written} of ${job.total} sections written`}
+      aria-label={t("{{written}} of {{count}} section written", {
+        written: job.written,
+        count: job.total,
+        defaultValue_other: "{{written}} of {{count}} sections written",
+      })}
     >
       {job.sections.map((section, i) => (
         <span

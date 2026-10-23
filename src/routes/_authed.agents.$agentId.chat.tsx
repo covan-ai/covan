@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { useAgentsStore, type ChatSession, type Message } from "@/lib/agents-store";
 import { ApiError, api, getAccessToken, type FeedbackKind } from "@/lib/api-client";
-import { ACCEPTED_SUMMARY } from "@/lib/uploads";
+import { acceptedSummary } from "@/lib/uploads";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { supabase } from "@/lib/supabase/client";
 import { IdeaBoard } from "@/components/idea-board";
 import {
@@ -146,11 +148,13 @@ function ceilingOf(outcome: string | undefined): "budget" | "tokens" | "runtime"
   return outcome === "budget" || outcome === "tokens" || outcome === "runtime" ? outcome : null;
 }
 
-function formatTime(ts: number) {
-  return new Date(ts).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+function formatTime(ts: number, locale: string) {
+  return new Date(ts).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
 }
 
 function ChatTab() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { agentId } = Route.useParams();
   const { s: activeId } = Route.useSearch();
   const navigate = useNavigate();
@@ -294,11 +298,15 @@ function ChatTab() {
   const hiddenByPrivacy = agent.documents.length - readable.length;
   const privateFoldersNote =
     isShared && hiddenByPrivacy > 0
-      ? `This shared thread can't read your private folders (${hiddenByPrivacy} ${hiddenByPrivacy === 1 ? "document" : "documents"}).`
+      ? t("This shared thread can't read your private folders ({{count}} document).", {
+          count: hiddenByPrivacy,
+          defaultValue_other:
+            "This shared thread can't read your private folders ({{count}} documents).",
+        })
       : null;
   // Named after a real file once one is indexed, so the first tap on a fresh
   // agent returns an answer with a citation on it rather than a general one.
-  const starters = useMemo(() => startersFor(readable), [readable]);
+  const starters = useMemo(() => startersFor(readable, t), [readable, t]);
   // Nothing indexed means nothing to ask about: the empty screen then asks
   // for a document instead of offering "Summarize what you know".
   const hasKnowledge = readable.some((d) => d.indexed);
@@ -332,9 +340,9 @@ function ChatTab() {
     mutationFn: (sessionId: string) => api.brainstorm.suggest(sessionId),
     onSuccess: (res) => {
       setSuggestions(res.ideas.map((idea) => ({ ...idea, id: crypto.randomUUID() })));
-      if (res.ideas.length === 0) toast.message("No clear ideas to extract yet.");
+      if (res.ideas.length === 0) toast.message(t("No clear ideas to extract yet."));
     },
-    onError: () => toast.error("Could not extract ideas."),
+    onError: () => toast.error(t("Could not extract ideas.")),
   });
   const addIdeaMutation = useMutation({
     mutationFn: ({
@@ -350,9 +358,9 @@ function ChatTab() {
     onSuccess: (_i, vars) => {
       setSuggestions((prev) => prev.filter((s) => s.id !== vars.id));
       void queryClient.invalidateQueries({ queryKey: ["ideas", vars.sessionId] });
-      toast.success("Added to the board");
+      toast.success(t("Added to the board"));
     },
-    onError: () => toast.error("Could not add it to the board."),
+    onError: () => toast.error(t("Could not add it to the board.")),
   });
 
   // Messages for the active session live under their own query — the store's
@@ -382,12 +390,12 @@ function ChatTab() {
   // What the screen actually shows: either everything, or what matches the
   // search. Filtered in the client because the query is live — every keystroke
   // re-runs it, and a server round-trip per keystroke is not a search box.
-  const lowerQuery = searchQuery.toLowerCase();
+  const lowerQuery = searchQuery.toLocaleLowerCase(locale);
   const messages = searchQuery
     ? allMessages.filter(
         (m) =>
-          m.content.toLowerCase().includes(lowerQuery) ||
-          m.sender?.name?.toLowerCase().includes(lowerQuery),
+          m.content.toLocaleLowerCase(locale).includes(lowerQuery) ||
+          m.sender?.name?.toLocaleLowerCase(locale).includes(lowerQuery),
       )
     : allMessages;
 
@@ -395,7 +403,7 @@ function ChatTab() {
   // twice per message inside the loop. Searching rebuilds `messages` on every
   // keystroke, so this rebuilds too — which is what it should do: the dividers
   // belong to what is on screen, and a filtered transcript has different ones.
-  const dividers = useMemo(() => dateDividers(messages), [messages]);
+  const dividers = useMemo(() => dateDividers(messages, t, locale), [messages, t, locale]);
   // Each document's card sits under the reply that started it, or at the foot
   // until that reply exists (`placeJobs`).
   const placedJobs = useMemo(
@@ -459,7 +467,7 @@ function ChatTab() {
       const deeper = await api.sessions.messages(active.id, { limit: next });
       queryClient.setQueryData<Message[]>(["messages", active.id], deeper);
     } catch {
-      toast.error("Couldn't load earlier messages.");
+      toast.error(t("Couldn't load earlier messages."));
     } finally {
       setLoadingEarlier(false);
     }
@@ -970,7 +978,7 @@ function ChatTab() {
       }
 
       if (res.status === 409 && !opts.resume) {
-        toast.message("This conversation is still answering. Showing that answer instead.");
+        toast.message(t("This conversation is still answering. Showing that answer instead."));
         setThinking(false);
         setReplyingIn(null);
         joinRunning = true;
@@ -985,7 +993,7 @@ function ChatTab() {
         const refusal = (await res.json().catch(() => null)) as { balance?: unknown } | null;
         const balance = typeof refusal?.balance === "number" ? refusal.balance : 0;
         setRefusedAtBalance(Math.max(0, balance));
-        setFailed({ sessionId, message: "This workspace is out of credits.", credits: true });
+        setFailed({ sessionId, message: t("This workspace is out of credits."), credits: true });
         setThinking(false);
         setStreamText("");
         setThinkingText("");
@@ -995,7 +1003,7 @@ function ChatTab() {
       }
 
       if (!res.ok || !res.body) {
-        setFailed({ sessionId, message: "Couldn't reach the assistant. Please try again." });
+        setFailed({ sessionId, message: t("Couldn't reach the assistant. Please try again.") });
         setThinking(false);
         setStreamText("");
         setThinkingText("");
@@ -1227,11 +1235,12 @@ function ChatTab() {
                   ]) ?? []
                 )
                   .filter((m) => m.role === "user")
-                  .map((m) => m.content.trim().toLowerCase()),
+                  .map((m) => m.content.trim().toLocaleLowerCase(locale)),
               );
               setFollowUps(
                 qs.filter(
-                  (q): q is string => typeof q === "string" && !asked.has(q.trim().toLowerCase()),
+                  (q): q is string =>
+                    typeof q === "string" && !asked.has(q.trim().toLocaleLowerCase(locale)),
                 ),
               );
             }
@@ -1239,7 +1248,7 @@ function ChatTab() {
             terminalSeen = true;
             setFailed({
               sessionId,
-              message: event.error ?? "The assistant hit an error.",
+              message: event.error ?? t("The assistant hit an error."),
               retryable: event.retryable,
             });
             setStreamText("");
@@ -1277,7 +1286,7 @@ function ChatTab() {
         // Handled by `stop()`, which owns reconciling from the server.
         return;
       }
-      setFailed({ sessionId, message: "Couldn't reach the assistant." });
+      setFailed({ sessionId, message: t("Couldn't reach the assistant.") });
       setStreamText("");
       setThinkingText("");
       setThinking(false);
@@ -1320,7 +1329,7 @@ function ChatTab() {
     }
     invalidateMessages(sessionId);
     if (partialText.trim().length > 0) {
-      toast.error("The connection dropped before the reply finished.");
+      toast.error(t("The connection dropped before the reply finished."));
     }
   };
 
@@ -1405,7 +1414,7 @@ function ChatTab() {
       try {
         await api.messages.create({ sessionId, role: "user", content: text });
       } catch {
-        toast.error("Couldn't send your message.");
+        toast.error(t("Couldn't send your message."));
         // Hand the words back. The composer was cleared optimistically, so a
         // failed send used to destroy what had just been typed — the one thing
         // the person could not get back, and the thing they were most likely
@@ -1513,8 +1522,8 @@ function ChatTab() {
   const rewriteFailed = (e: unknown) => {
     const message =
       e instanceof ApiError && e.status === 403
-        ? "Only the person who started this conversation can rewrite it."
-        : "Couldn't update the conversation.";
+        ? t("Only the person who started this conversation can rewrite it.")
+        : t("Couldn't update the conversation.");
     toast.error(message);
   };
 
@@ -1543,7 +1552,7 @@ function ChatTab() {
   const keepGoing = () => {
     if (!active || busy) return;
     setStoppedShort(null);
-    void submit("Keep going — pick up where you stopped.");
+    void submit(t("Keep going — pick up where you stopped."));
   };
 
   /**
@@ -1574,7 +1583,7 @@ function ChatTab() {
       .then(({ steps }) => {
         void queryClient.invalidateQueries({ queryKey: browserKey(sessionId) });
         if (steps.length > 0 && active?.id === sessionId) {
-          void submit("The browser is done — carry on with the next step.");
+          void submit(t("The browser is done — carry on with the next step."));
         }
       })
       .catch(() => {
@@ -1609,11 +1618,16 @@ function ChatTab() {
       if (action === "stop") await api.documentJobs.stop(jobId);
       else await api.documentJobs.retry(jobId);
     } catch (e) {
-      const message = e instanceof Error && e.message ? `: ${e.message}` : "";
+      const message = e instanceof Error && e.message ? e.message : "";
+      const stopping = action === "stop";
       toast.error(
-        action === "stop"
-          ? `Couldn't stop the document${message}`
-          : `Couldn't start it again${message}`,
+        message
+          ? stopping
+            ? t("Couldn't stop the document: {{message}}", { message })
+            : t("Couldn't start it again: {{message}}", { message })
+          : stopping
+            ? t("Couldn't stop the document")
+            : t("Couldn't start it again"),
       );
     }
     void queryClient.invalidateQueries({ queryKey: documentJobsKey(active?.id) });
@@ -1649,10 +1663,15 @@ function ChatTab() {
         mode: "always",
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save that permission");
+      toast.error(err instanceof Error ? err.message : t("Could not save that permission"));
       return;
     }
-    toast.success(`${agent.name} will run ${target.slug} without asking.`);
+    toast.success(
+      t("{{name}} will run {{operation}} without asking.", {
+        name: agent.name,
+        operation: target.slug,
+      }),
+    );
     await answerConfirmation(true);
   };
 
@@ -1709,8 +1728,8 @@ function ChatTab() {
 
   const copyMessage = (content: string) => {
     navigator.clipboard?.writeText(content).then(
-      () => toast.success("Copied to clipboard"),
-      () => toast.error("Couldn't copy"),
+      () => toast.success(t("Copied to clipboard")),
+      () => toast.error(t("Couldn't copy")),
     );
   };
 
@@ -1825,16 +1844,19 @@ function ChatTab() {
   // Private · grounded in 12 documents".
   const ownerName =
     active && !isOwner
-      ? (me?.members?.find((m) => m.id === active.ownerId)?.name ?? "a teammate")
+      ? (me?.members?.find((m) => m.id === active.ownerId)?.name ?? t("a teammate"))
       : null;
   const startedAt = allMessages[0]?.createdAt;
   const threadMeta = [
-    isBrainstorm ? "Brainstorm" : null,
-    active ? `Started by ${isOwner ? "you" : ownerName}` : null,
-    startedAt ? lastActivityLabel(startedAt) : null,
-    active ? (isShared ? "Shared with workspace" : "Private") : null,
+    isBrainstorm ? t("Brainstorm") : null,
+    active ? (isOwner ? t("Started by you") : t("Started by {{name}}", { name: ownerName })) : null,
+    startedAt ? lastActivityLabel(startedAt, undefined, t, locale) : null,
+    active ? (isShared ? t("Shared with workspace") : t("Private")) : null,
     readable.length > 0
-      ? `grounded in ${readable.length} ${readable.length === 1 ? "document" : "documents"}`
+      ? t("grounded in {{count}} document", {
+          count: readable.length,
+          defaultValue_other: "grounded in {{count}} documents",
+        })
       : null,
   ];
 
@@ -1866,8 +1888,10 @@ function ChatTab() {
         <div className="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-xl border border-dashed border-brand bg-background/80">
           <div className="flex flex-col items-center gap-2">
             <Upload className="h-6 w-6 text-brand" />
-            <div className="text-title font-semibold">Drop to add to {agent.name}</div>
-            <div className="text-xs text-muted-foreground">{ACCEPTED_SUMMARY}</div>
+            <div className="text-title font-semibold">
+              {t("Drop to add to {{name}}", { name: agent.name })}
+            </div>
+            <div className="text-xs text-muted-foreground">{acceptedSummary(t)}</div>
           </div>
         </div>
       )}
@@ -1882,8 +1906,8 @@ function ChatTab() {
               id="conversation-search"
               autoFocus
               type="text"
-              placeholder="Search this thread"
-              aria-label="Search this thread"
+              placeholder={t("Search this thread")}
+              aria-label={t("Search this thread")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onBlur={() => {
@@ -1902,7 +1926,11 @@ function ChatTab() {
             {searchQuery !== "" && (
               <span
                 className="text-xs text-muted-foreground tabular-nums"
-                aria-label={`${messages.length} of ${allMessages.length} messages match`}
+                aria-label={t("{{matching}} of {{count}} message match", {
+                  matching: messages.length,
+                  count: allMessages.length,
+                  defaultValue_other: "{{matching}} of {{count}} messages match",
+                })}
               >
                 {messages.length}/{allMessages.length}
               </span>
@@ -1912,7 +1940,7 @@ function ChatTab() {
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Search this thread"
+            aria-label={t("Search this thread")}
             className="text-muted-foreground"
             onClick={() => setSearchOpen(true)}
           >
@@ -1936,10 +1964,10 @@ function ChatTab() {
             aria-pressed={browserPanel.open}
             aria-label={
               browserPanel.open
-                ? "Hide the browser"
+                ? t("Hide the browser")
                 : browserPanel.signIn
-                  ? "Show the browser: a site needs you to sign in"
-                  : "Show the browser"
+                  ? t("Show the browser: a site needs you to sign in")
+                  : t("Show the browser")
             }
             className={cn(
               "relative",
@@ -1962,7 +1990,7 @@ function ChatTab() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto bg-background px-4 lg:px-10">
         <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col pt-7 pb-8">
           <ThreadTitle
-            title={active ? sessionLabel(active) : "New thread"}
+            title={active ? sessionLabel(active, t) : t("New thread")}
             meta={threadMeta}
             actions={
               isOwner && active
@@ -1990,7 +2018,9 @@ function ChatTab() {
                   where the brainstorm opens. */}
               {isBrainstorm && (
                 <p className="mb-5 text-sm text-muted-foreground">
-                  Brainstorms are shared with your team from the start, so everyone can add ideas.
+                  {t(
+                    "Brainstorms are shared with your team from the start, so everyone can add ideas.",
+                  )}
                 </p>
               )}
               {/* Two groups, because they answer two questions: what this
@@ -1998,7 +2028,7 @@ function ChatTab() {
                   nothing at all when there is nothing connected — heading
                   included — so a workspace on its first day sees exactly what
                   it saw before. */}
-              <SectionLabel>Knowledge</SectionLabel>
+              <SectionLabel>{t("Knowledge")}</SectionLabel>
               {hasKnowledge ? (
                 <ul className="m-0 flex list-none flex-col gap-2 p-0">
                   {starters.map((s) => (
@@ -2059,19 +2089,19 @@ function ChatTab() {
                     disabled={loadingEarlier}
                     className="font-medium text-muted-foreground"
                   >
-                    {loadingEarlier ? "Loading…" : "Load earlier messages"}
+                    {loadingEarlier ? t("Loading…") : t("Load earlier messages")}
                   </Button>
                 </div>
               )}
               {searchQuery !== "" && messages.length === 0 && (
                 <p className="py-16 text-center text-sm text-muted-foreground">
-                  Nothing in this conversation matches “{searchQuery}”.
+                  {t("Nothing in this conversation matches “{{query}}”.", { query: searchQuery })}
                 </p>
               )}
               {/* Each turn carries its own top margin rather than the log
                   spacing them all alike — see `gapBefore`. A question and its
                   answer are 20px apart; one exchange is 44px from the next. */}
-              <div role="log" aria-label="Conversation" aria-relevant="additions">
+              <div role="log" aria-label={t("Conversation")} aria-relevant="additions">
                 {messages.map((m, idx, arr) => {
                   // Set when this message is the first of its day, undefined
                   // when it is not. See `dateDividers`.
@@ -2104,7 +2134,7 @@ function ChatTab() {
                           className={gap}
                           message={m}
                           sender={isShared ? (m.sender ?? null) : null}
-                          time={formatTime(m.createdAt)}
+                          time={formatTime(m.createdAt, locale)}
                           canEdit={isOwner}
                           busy={busy}
                           onEdit={startEdit}
@@ -2124,7 +2154,9 @@ function ChatTab() {
                                     <span className="text-muted-foreground">{r.name}</span>
                                     {r.state === "uploading" && (
                                       <span className="tabular-nums text-muted-foreground">
-                                        {r.progress}%
+                                        {new Intl.NumberFormat(locale, { style: "percent" }).format(
+                                          r.progress / 100,
+                                        )}
                                       </span>
                                     )}
                                   </div>
@@ -2152,7 +2184,7 @@ function ChatTab() {
                         streamTail={
                           continuingId === m.id && replyingIn === active?.id ? streamText : null
                         }
-                        time={formatTime(m.createdAt)}
+                        time={formatTime(m.createdAt, locale)}
                         busy={busy}
                         model={effectiveModel || "gpt-4.1"}
                         uploadedAt={uploadedAt}
@@ -2260,7 +2292,7 @@ function ChatTab() {
                         size="sm"
                         onClick={() => void streamReply(failed.sessionId)}
                       >
-                        <RefreshCw className="h-3.5 w-3.5" /> Try again
+                        <RefreshCw className="h-3.5 w-3.5" /> {t("Try again")}
                       </Button>
                     )}
                   </div>
@@ -2274,14 +2306,14 @@ function ChatTab() {
                   className="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm"
                 >
                   <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-                  <span className="min-w-0 flex-1">This question didn't get an answer.</span>
+                  <span className="min-w-0 flex-1">{t("This question didn't get an answer.")}</span>
                   {isOwner && active && (
                     <Button
                       variant="secondary"
                       size="sm"
                       onClick={() => void streamReply(active.id)}
                     >
-                      <RefreshCw className="h-3.5 w-3.5" /> Try again
+                      <RefreshCw className="h-3.5 w-3.5" /> {t("Try again")}
                     </Button>
                   )}
                 </div>
@@ -2300,7 +2332,9 @@ function ChatTab() {
                     steps={kept.steps}
                     streaming={false}
                   />
-                  <p className="mt-3 text-meta text-muted-foreground">You stopped this answer.</p>
+                  <p className="mt-3 text-meta text-muted-foreground">
+                    {t("You stopped this answer.")}
+                  </p>
                 </div>
               )}
             </div>
@@ -2333,7 +2367,7 @@ function ChatTab() {
                 // app's operation, and an admin looking at it. The card knows
                 // neither of those things and should not — see its own note.
                 canGrantStanding && runToolProposal(pendingConfirm.proposal)
-                  ? { label: "Always allow this", onChoose: () => void approveAlways() }
+                  ? { label: t("Always allow this"), onChoose: () => void approveAlways() }
                   : undefined
               }
             />
@@ -2359,8 +2393,8 @@ function ChatTab() {
           <span role="status" aria-live="polite" className="sr-only">
             {replyingIn === active?.id
               ? thinking
-                ? `${agent.name} is thinking`
-                : `${agent.name} is replying`
+                ? t("{{name}} is thinking", { name: agent.name })
+                : t("{{name}} is replying", { name: agent.name })
               : ""}
           </span>
         </div>
@@ -2378,7 +2412,7 @@ function ChatTab() {
             variant="secondary"
             size="icon"
             onClick={jumpToEnd}
-            aria-label="Jump to the latest message"
+            aria-label={t("Jump to the latest message")}
             className="absolute -top-5 left-1/2 z-10 -translate-x-1/2 bg-popover text-muted-foreground hover:text-foreground"
           >
             <ArrowDown className="h-4 w-4" />
@@ -2484,7 +2518,11 @@ function ChatTab() {
               }}
               // "Reply" once there is something to reply to. The first
               // message in a thread is not a reply to anything.
-              placeholder={messages.length > 0 ? `Reply to ${agent.name}…` : `Ask ${agent.name}…`}
+              placeholder={
+                messages.length > 0
+                  ? t("Reply to {{name}}…", { name: agent.name })
+                  : t("Ask {{name}}…", { name: agent.name })
+              }
               className="min-h-[52px] overflow-y-auto px-3.5 pt-3.5 pb-1 text-lead"
             />
             <PromptInputActions className="gap-0.5 px-2 pt-1 pb-2">
@@ -2504,7 +2542,7 @@ function ChatTab() {
               />
               {(!isMobile || dictation.state !== "idle") && <ChatMic dictation={dictation} />}
               <div className="ml-auto flex min-w-0 items-center gap-0.5">
-                {isBrainstorm && <Chip className="mr-1">Brainstorm</Chip>}
+                {isBrainstorm && <Chip className="mr-1">{t("Brainstorm")}</Chip>}
                 <ModelChip
                   value={nextModel}
                   agentModel={agent.model}
@@ -2541,11 +2579,11 @@ function ChatTab() {
                     variant="secondary"
                     size="sm"
                     onClick={stop}
-                    aria-label="Stop generating"
+                    aria-label={t("Stop generating")}
                     className="ml-1 shrink-0"
                   >
                     <StatusDot state="running" className="size-1.5" />
-                    Stop
+                    {t("Stop")}
                   </Button>
                 ) : (
                   /* A real tooltip rather than `title`, which never appears on
@@ -2556,17 +2594,17 @@ function ChatTab() {
                   <PromptInputAction
                     tooltip={
                       busy
-                        ? "Waiting for the current reply to finish"
+                        ? t("Waiting for the current reply to finish")
                         : outOfCredits
-                          ? "Out of credits"
-                          : "Send message"
+                          ? t("Out of credits")
+                          : t("Send message")
                     }
                   >
                     <Button
                       size="icon"
                       onClick={send}
                       disabled={!input.trim() || busy || outOfCredits}
-                      aria-label="Send message"
+                      aria-label={t("Send message")}
                       className="ml-1 shrink-0"
                     >
                       <ArrowUp />
@@ -2582,7 +2620,7 @@ function ChatTab() {
               under the thumb. */}
           {!isMobile && (
             <p className="mt-2 text-center text-xs text-micro-foreground">
-              Enter to send · Shift + Enter for a new line
+              {t("Enter to send · Shift + Enter for a new line")}
             </p>
           )}
           {privateFoldersNote && (
@@ -2602,7 +2640,11 @@ function ChatTab() {
           if (!next) setRating(null);
         }}
         path={`/agents/${agentId}/chat`}
-        about={rating ? { messageId: rating.messageId, label: `${agent.name}'s answer` } : null}
+        about={
+          rating
+            ? { messageId: rating.messageId, label: t("{{name}}'s answer", { name: agent.name }) }
+            : null
+        }
         initialKind={rating?.kind ?? null}
       />
 
@@ -2613,7 +2655,7 @@ function ChatTab() {
       {belowLg && browserPanel.open && active && (
         <div
           role="dialog"
-          aria-label="Browser"
+          aria-label={t("Browser")}
           className="fixed inset-0 z-40 flex flex-col bg-background"
         >
           <BrowserPanel
@@ -2638,7 +2680,7 @@ function ChatTab() {
    */
   const browserAside =
     browserPanel.open && active && !belowLg ? (
-      <aside aria-label="Browser" className="flex w-[580px] shrink-0 py-4 pr-5">
+      <aside aria-label={t("Browser")} className="flex w-[580px] shrink-0 py-4 pr-5">
         {/* Keyed by the conversation so a second chat never inherits the
             first one's live view. */}
         <BrowserPanel
@@ -2657,7 +2699,7 @@ function ChatTab() {
       <div className="flex h-full flex-col border-l border-border">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <Sparkles className="h-4 w-4 text-muted-foreground" /> Idea board
+            <Sparkles className="h-4 w-4 text-muted-foreground" /> {t("Idea board")}
           </div>
           {/* Secondary on purpose: the composer's send is this view's one
               primary action (DESIGN.md §2). */}
@@ -2668,13 +2710,13 @@ function ChatTab() {
             disabled={suggestMutation.isPending}
             className="font-medium"
           >
-            {suggestMutation.isPending ? "Extracting…" : "Extract ideas"}
+            {suggestMutation.isPending ? t("Extracting…") : t("Extract ideas")}
           </Button>
         </div>
         {suggestions.length > 0 && (
           <div className="border-b border-border bg-muted/30 p-2">
             <div className="px-1 pb-1.5 text-xs font-medium text-muted-foreground">
-              Candidate ideas — click to add one to the board
+              {t("Candidate ideas — click to add one to the board")}
             </div>
             <div className="flex flex-col gap-1.5">
               {suggestions.map((s) => (
@@ -2699,7 +2741,7 @@ function ChatTab() {
                     }
                     className="shrink-0 font-medium hover:bg-secondary"
                   >
-                    Add to board
+                    {t("Add to board")}
                   </Button>
                 </div>
               ))}
@@ -2753,7 +2795,7 @@ function ChatTab() {
           aria-describedby={undefined}
           className="h-[min(820px,calc(100dvh-4.5rem))] max-w-[960px] gap-0 overflow-hidden p-0"
         >
-          <DialogTitle className="sr-only">{shownJob?.title ?? "Document"}</DialogTitle>
+          <DialogTitle className="sr-only">{shownJob?.title ?? t("Document")}</DialogTitle>
           {shownJob && (
             <DocumentPanel
               key={shownJob.id}

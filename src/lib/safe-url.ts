@@ -1,3 +1,5 @@
+import { i18n } from "@/i18n";
+
 /**
  * An address the app may send the browser to, if it is an `https:` one;
  * otherwise null.
@@ -21,6 +23,6 @@ export function safeNavigationUrl(raw: string | null | undefined): string | null
 /** `location.assign` for an address from a response, or an error saying why not. */
 export function navigateAway(raw: string): void {
   const url = safeNavigationUrl(raw);
-  if (!url) throw new Error("That sent back an address Covan won't open.");
+  if (!url) throw new Error(i18n.t("That sent back an address Covan won't open."));
   window.location.assign(url);
 }

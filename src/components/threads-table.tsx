@@ -133,7 +133,7 @@ export function ThreadsTable({ agentId }: { agentId?: string }) {
         ) : (
           <span className="inline-flex items-center gap-2 text-muted-foreground">
             <Avatar name={r.ownerName} url={r.ownerAvatarUrl} size={20} />
-            {r.isMine ? t("You") : shortName(r.ownerName)}
+            {r.isMine ? t("You") : shortName(r.ownerName, t, locale)}
           </span>
         ),
     },

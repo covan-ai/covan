@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Loader2, Mic } from "lucide-react";
 import type { Dictation } from "@/lib/use-dictation";
 import { StatusDot } from "@/components/status-dot";
+import { useTranslation } from "@/i18n";
 
 /** Seconds as a clock, so two minutes reads as a length rather than a number. */
 function clock(seconds: number): string {
@@ -21,6 +22,7 @@ function clock(seconds: number): string {
  * only fills in the caller's own message, which a viewer is free to send.
  */
 export function ChatMic({ dictation }: { dictation: Dictation }) {
+  const { t } = useTranslation();
   const { supported, state, seconds, start, stop, cancel } = dictation;
 
   useEffect(() => {
@@ -41,8 +43,8 @@ export function ChatMic({ dictation }: { dictation: Dictation }) {
       <button
         type="button"
         onClick={stop}
-        aria-label="Stop recording"
-        title="Escape discards the recording"
+        aria-label={t("Stop recording")}
+        title={t("Escape discards the recording")}
         className="flex h-8 items-center gap-1.5 rounded-md bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-hover"
       >
         <StatusDot state="running" />
@@ -58,7 +60,7 @@ export function ChatMic({ dictation }: { dictation: Dictation }) {
       type="button"
       onClick={() => void start()}
       disabled={transcribing}
-      aria-label={transcribing ? "Transcribing your recording" : "Dictate a message"}
+      aria-label={transcribing ? t("Transcribing your recording") : t("Dictate a message")}
       className="grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:hover:bg-transparent"
     >
       {transcribing ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}

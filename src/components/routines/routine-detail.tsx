@@ -30,6 +30,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useTranslation, type Translate } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { cronToProse } from "@/lib/cron-to-prose";
 import { formatRelative } from "@/lib/relative-time";
 import { lastActivityLabel } from "@/lib/day-groups";
@@ -44,14 +46,17 @@ import type { Connection } from "@/lib/connections-api";
  * whole workspace, so a miss here means the list has not loaded yet or the
  * connection has since been deleted, and neither is worth showing a uuid for.
  */
-function sourceLabel(routine: Routine, connections: Connection[]): string {
-  if (routine.sourceKind === "none") return "Scheduled task";
+function sourceLabel(routine: Routine, connections: Connection[], t: Translate): string {
+  if (routine.sourceKind === "none") return t("Scheduled task");
   if (routine.sourceKind === "connection") {
     const connection = connections.find((c) => c.id === routine.connectionId);
-    if (!connection) return "A connected source";
+    if (!connection) return t("A connected source");
     const scope = connection.folderName ?? connection.bundleName;
-    return `Connected · ${connection.accountLabel}${scope ? ` · ${scope}` : ""}`;
+    return scope
+      ? t("Connected · {{account}} · {{scope}}", { account: connection.accountLabel, scope })
+      : t("Connected · {{account}}", { account: connection.accountLabel });
   }
+  // i18n-ignore: the source kind is an identifier (RSS, WEB), not a word.
   return `${routine.sourceKind.toUpperCase()} · ${routine.sourceUrl ?? ""}`;
 }
 
@@ -61,18 +66,18 @@ function sourceLabel(routine: Routine, connections: Connection[]): string {
  * A run from before the column existed says nothing either, which is true:
  * nothing recorded it.
  */
-function runTriggerText(run: RoutineRun): string | null {
+function runTriggerText(run: RoutineRun, t: Translate): string | null {
   switch (run.triggeredBy) {
     case "event":
-      return run.triggerLabel ?? "An app event";
+      return run.triggerLabel ?? t("An app event");
     case "webhook":
-      return "Webhook";
+      return t("Webhook");
     case "manual":
-      return "Run now";
+      return t("Run now");
     case "reply":
-      return run.triggerLabel ?? "A reply";
+      return run.triggerLabel ?? t("A reply");
     case "test":
-      return "A test";
+      return t("A test");
     default:
       return null;
   }
@@ -88,11 +93,12 @@ const STOPPED_SHORT: ReadonlySet<RunOutcome> = new Set([
 ]);
 
 /** "6 min", "4 min so far", "—". */
-function durationWords(run: RoutineRun, running: boolean): string {
-  if (run.durationMs === null) return running ? "Under way" : "—";
+function durationWords(run: RoutineRun, running: boolean, t: Translate): string {
+  if (run.durationMs === null) return running ? t("Under way") : "—";
   const min = Math.round(run.durationMs / 60_000);
-  if (min >= 1) return `${min} min`;
-  return `${Math.max(1, Math.round(run.durationMs / 1000))} s`;
+  if (min >= 1) return t("{{count}} min", { count: min, defaultValue_other: "{{count}} min" });
+  const sec = Math.max(1, Math.round(run.durationMs / 1000));
+  return t("{{count}} s", { count: sec, defaultValue_other: "{{count}} s" });
 }
 
 /**
@@ -101,19 +107,23 @@ function durationWords(run: RoutineRun, running: boolean): string {
  * queued), whether it was filed, and what did not get delivered.
  */
 function RunResult({ run }: { run: RoutineRun }) {
+  const { t } = useTranslation();
   const stoppedShort =
     run.status === "ok" && run.outcome !== null && STOPPED_SHORT.has(run.outcome);
   if (run.status === "failed") {
     return (
       <StatusWord state="failed" className="max-w-[22rem]">
-        <span className="truncate">Failed{run.error ? ` · ${run.error}` : ""}</span>
+        <span className="truncate">
+          {t("Failed")}
+          {run.error ? ` · ${run.error}` : ""}
+        </span>
       </StatusWord>
     );
   }
   if (run.status === "waiting") {
     // Not delivered yet and not a failure: the report is written and held
     // until the browser task it started answers (0100).
-    return <StatusWord state="waiting">Waiting on the browser</StatusWord>;
+    return <StatusWord state="waiting">{t("Waiting on the browser")}</StatusWord>;
   }
   if (run.status === "skipped") {
     // "Nothing to report" is a judgement the model made, and the count is what
@@ -122,16 +132,22 @@ function RunResult({ run }: { run: RoutineRun }) {
     return (
       <StatusWord state="idle">
         {run.nothingRelevant
-          ? `Nothing to report${run.itemsNew > 0 ? ` · ${run.itemsNew} reviewed` : ""}`
-          : "No action needed"}
+          ? run.itemsNew > 0
+            ? t("Nothing to report · {{reviewed}} reviewed", { reviewed: run.itemsNew })
+            : t("Nothing to report")
+          : t("No action needed")}
       </StatusWord>
     );
   }
   const parts = [
-    stoppedShort ? "Stopped before it finished" : "Done",
-    run.itemsNew > 0 ? `${run.itemsNew} new ${run.itemsNew === 1 ? "item" : "items"}` : null,
-    run.itemsOverflow > 0 ? `${run.itemsOverflow} skipped` : null,
-    run.documentId !== null ? "Filed" : null,
+    stoppedShort
+      ? t("Stopped before it finished")
+      : t("Done", { context: "status", defaultValue: "Done" }),
+    run.itemsNew > 0
+      ? t("{{count}} new item", { count: run.itemsNew, defaultValue_other: "{{count}} new items" })
+      : null,
+    run.itemsOverflow > 0 ? t("{{skipped}} skipped", { skipped: run.itemsOverflow }) : null,
+    run.documentId !== null ? t("Filed") : null,
   ].filter(Boolean);
   return (
     <span className="flex min-w-0 flex-col">
@@ -152,12 +168,13 @@ function RunResult({ run }: { run: RoutineRun }) {
  * for runs from before run threads — the only copy if the mail never came.
  */
 function RunOpen({ run, agentId }: { run: RoutineRun; agentId: string }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   if (run.sessionId) {
     return (
       <Button asChild variant="ghost" size="sm">
         <Link to="/agents/$agentId/chat" params={{ agentId }} search={{ s: run.sessionId }}>
-          Open
+          {t("Open")}
         </Link>
       </Button>
     );
@@ -166,12 +183,12 @@ function RunOpen({ run, agentId }: { run: RoutineRun; agentId: string }) {
   return (
     <>
       <Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
-        Summary
+        {t("Summary")}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>What it delivered</DialogTitle>
+            <DialogTitle>{t("What it delivered")}</DialogTitle>
           </DialogHeader>
           <p className="m-0 max-h-[60vh] overflow-y-auto text-sm whitespace-pre-wrap">
             {run.summary}
@@ -183,14 +200,14 @@ function RunOpen({ run, agentId }: { run: RoutineRun; agentId: string }) {
 }
 
 /** A routine's when, in the kv's words: "Every Monday at 09:00 · Europe/Istanbul". */
-function runsWords(routine: Routine): string {
+function runsWords(routine: Routine, t: Translate): string {
   if (routine.triggerKind === "event") {
     return routine.event
-      ? `When ${routine.event.app} · ${routine.event.label}`
-      : "When something happens in an app";
+      ? t("When {{app}} · {{event}}", { app: routine.event.app, event: routine.event.label })
+      : t("When something happens in an app");
   }
-  if (routine.triggerKind === "webhook") return "When something calls its webhook";
-  return `${cronToProse(routine.scheduleCron)} · ${routine.timezone}`;
+  if (routine.triggerKind === "webhook") return t("When something calls its webhook");
+  return `${cronToProse(routine.scheduleCron, t)} · ${routine.timezone}`;
 }
 
 /**
@@ -258,18 +275,21 @@ export function RoutineDetail({
   /** The editor, for the owner (A28). */
   editHref?: string;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const state = runningSince
-    ? { dot: "running" as const, word: "Running" }
+    ? { dot: "running" as const, word: t("Running") }
     : routine.status === "paused"
-      ? { dot: "idle" as const, word: "Paused" }
+      ? { dot: "idle" as const, word: t("Paused") }
       : routine.status === "completed"
-        ? { dot: "done" as const, word: "Finished" }
-        : { dot: "done" as const, word: "Active" };
+        ? { dot: "done" as const, word: t("Finished") }
+        : { dot: "done" as const, word: t("Active") };
+  const teammate = t("A teammate");
   const outputName = bundles.find((b) => b.id === routine.outputBundleId)?.name ?? null;
   const edit = editHref ? (
     <Link to={editHref} className="hover:text-foreground">
-      Edit
+      {t("Edit")}
     </Link>
   ) : undefined;
 
@@ -294,25 +314,29 @@ export function RoutineDetail({
                 as an invitation to restart a finished series. */}
             {routine.status !== "completed" && (
               <Button variant="secondary" onClick={onTogglePause} disabled={busy}>
-                {routine.status === "active" ? "Pause" : "Resume"}
+                {routine.status === "active" ? t("Pause") : t("Resume")}
               </Button>
             )}
             {/* The one primary action here. Without it the only way to find
                 out whether a routine works is to wait for its schedule. */}
             <Button onClick={onRunNow} disabled={running || busy}>
               <Play />
-              {running ? "Running…" : "Run now"}
+              {running ? t("Running…") : t("Run now")}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="secondary" size="icon" aria-label={`More for ${routine.name}`}>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  aria-label={t("More for {{name}}", { name: routine.name })}
+                >
                   <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
                 {editHref && (
                   <DropdownMenuItem asChild>
-                    <Link to={editHref}>Edit</Link>
+                    <Link to={editHref}>{t("Edit")}</Link>
                   </DropdownMenuItem>
                 )}
                 {/* Never for a `workspace` routine: 0076 refuses sharing one
@@ -320,7 +344,7 @@ export function RoutineDetail({
                     workspace's gaps. */}
                 {routine.sourceKind !== "workspace" && (
                   <DropdownMenuItem onClick={() => onToggleShared(routine.visibility !== "shared")}>
-                    {routine.visibility === "shared" ? "Make private" : "Share with team"}
+                    {routine.visibility === "shared" ? t("Make private") : t("Share with team")}
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
@@ -328,7 +352,7 @@ export function RoutineDetail({
                   className="text-destructive"
                   onClick={() => setConfirmDelete(true)}
                 >
-                  Delete routine
+                  {t("Delete routine")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -339,70 +363,71 @@ export function RoutineDetail({
       <div className="px-4 pt-2 pb-12 lg:px-8">
         <div className="max-w-[760px]">
           <section className="mt-6">
-            <SectionLabel action={edit}>Schedule</SectionLabel>
+            <SectionLabel action={edit}>{t("Schedule")}</SectionLabel>
             <dl className="m-0">
-              <Kv label="Runs">{runsWords(routine)}</Kv>
+              <Kv label={t("Runs")}>{runsWords(routine, t)}</Kv>
               {routine.triggerKind !== "event" && routine.triggerKind !== "webhook" && (
-                <Kv label="Cron">
+                <Kv label={t("Cron")}>
                   <Chip tone="code">{routine.scheduleCron}</Chip>
                 </Kv>
               )}
-              <Kv label="Next run">
+              <Kv label={t("Next run")}>
                 {routine.status === "active" && routine.triggerKind === "event"
-                  ? "When the event arrives"
+                  ? t("When the event arrives")
                   : routine.status === "active" && routine.nextRunAt !== null
-                    ? `${new Date(routine.nextRunAt).toLocaleDateString("en-GB", {
+                    ? `${new Date(routine.nextRunAt).toLocaleDateString(locale, {
                         weekday: "long",
                         day: "numeric",
                         month: "long",
-                      })} · ${formatRelative(routine.nextRunAt)}`
+                      })} · ${formatRelative(routine.nextRunAt, undefined, t, locale)}`
                     : routine.status === "completed"
-                      ? "Finished"
-                      : "Paused"}
+                      ? t("Finished")
+                      : t("Paused")}
               </Kv>
-              <Kv label="Created by">
+              <Kv label={t("Created by")}>
                 <span className="inline-flex items-center gap-2">
                   <Avatar name={createdByName} size={20} />
-                  {createdByName ?? "A teammate"} · {formatRelative(routine.createdAt)}
+                  {createdByName ?? teammate} ·{" "}
+                  {formatRelative(routine.createdAt, undefined, t, locale)}
                 </span>
               </Kv>
               {routine.sourceKind !== "none" && (
-                <Kv label="Reads">{sourceLabel(routine, connections)}</Kv>
+                <Kv label={t("Reads")}>{sourceLabel(routine, connections, t)}</Kv>
               )}
             </dl>
           </section>
 
           <section className="mt-7">
-            <SectionLabel action={edit}>Instructions</SectionLabel>
+            <SectionLabel action={edit}>{t("Instructions")}</SectionLabel>
             <div className="rounded-lg border border-border px-3.5 py-3 text-lead leading-[1.6] whitespace-pre-wrap text-foreground">
               {routine.instruction}
             </div>
           </section>
 
           <section className="mt-7">
-            <SectionLabel>Delivers to</SectionLabel>
+            <SectionLabel>{t("Delivers to")}</SectionLabel>
             <dl className="m-0">
               {outputName && (
-                <Kv label="Knowledge">
+                <Kv label={t("Knowledge")}>
                   <Chip tone="code">{outputName}</Chip>
                 </Kv>
               )}
               {channelLabels ? (
                 <>
                   {channelLabels.email.length > 0 && (
-                    <Kv label="Email">{channelLabels.email.join(", ")}</Kv>
+                    <Kv label={t("Email")}>{channelLabels.email.join(", ")}</Kv>
                   )}
                   {channelLabels.slack.length > 0 && (
-                    <Kv label="Slack">{channelLabels.slack.join(", ")}</Kv>
+                    <Kv label={t("Slack")}>{channelLabels.slack.join(", ")}</Kv>
                   )}
                 </>
               ) : (
-                <Kv label="Channel">The owner&rsquo;s channel</Kv>
+                <Kv label={t("Channel")}>{t("The owner’s channel")}</Kv>
               )}
-              <Kv label="Inbox">
+              <Kv label={t("Inbox")}>
                 {routine.deliverInbox
-                  ? "Everyone who can use the agent sees the result as a thread"
-                  : "Off"}
+                  ? t("Everyone who can use the agent sees the result as a thread")
+                  : t("Off")}
               </Kv>
             </dl>
           </section>
@@ -412,9 +437,9 @@ export function RoutineDetail({
               exactly this feature's privacy properties. */}
           {routine.sourceKind === "workspace" && (
             <p className="mt-3 text-meta text-muted-foreground">
-              Never shared and never filed: sharing would show the whole workspace a report built so
-              that nobody who asked a question can be singled out, and filing would turn what the
-              team does not know into something an agent quotes back as if it did.
+              {t(
+                "Never shared and never filed: sharing would show the whole workspace a report built so that nobody who asked a question can be singled out, and filing would turn what the team does not know into something an agent quotes back as if it did.",
+              )}
             </p>
           )}
 
@@ -442,64 +467,70 @@ export function RoutineDetail({
           )}
 
           <section className="mt-7">
-            <SectionLabel>Recent runs</SectionLabel>
+            <SectionLabel>{t("Recent runs")}</SectionLabel>
             {runs.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No runs yet
                 {routine.triggerKind === "event"
-                  ? " — the first one starts when the event arrives."
+                  ? t("No runs yet — the first one starts when the event arrives.")
                   : routine.nextRunAt !== null
-                    ? ` — the first one is scheduled ${formatRelative(routine.nextRunAt)}.`
-                    : "."}
+                    ? t("No runs yet — the first one is scheduled {{when}}.", {
+                        when: formatRelative(routine.nextRunAt, undefined, t, locale),
+                      })
+                    : t("No runs yet.")}
               </p>
             ) : (
               <div className="overflow-x-auto">
                 <DataTable
-                  label="Recent runs"
+                  label={t("Recent runs")}
                   rows={runs.slice(0, 20)}
                   rowKey={(r) => r.id}
                   columns={[
                     {
                       key: "started",
-                      header: "Started",
+                      header: t("Started"),
                       cell: (r) => (
                         <span className="tabular-nums">
-                          {lastActivityLabel(r.startedAt)}
-                          {runTriggerText(r) ? (
-                            <span className="text-muted-foreground"> · {runTriggerText(r)}</span>
+                          {lastActivityLabel(r.startedAt, undefined, t, locale)}
+                          {runTriggerText(r, t) ? (
+                            <span className="text-muted-foreground"> · {runTriggerText(r, t)}</span>
                           ) : null}
                         </span>
                       ),
                     },
                     {
                       key: "duration",
-                      header: "Duration",
+                      header: t("Duration"),
                       cell: (r) => (
                         <span className="text-muted-foreground">
                           {durationWords(
                             r,
                             runningSince !== null && r.startedAt >= runningSince - 1000,
+                            t,
                           )}
                         </span>
                       ),
                     },
                     {
                       key: "cost",
-                      header: "Credits",
+                      header: t("Credits"),
                       cell: (r) => (
                         <span className="text-muted-foreground tabular-nums">
                           {r.cost
                             ? r.cost.unit === "usd"
-                              ? `$${r.cost.amount.toFixed(2)}`
-                              : r.cost.amount.toLocaleString("en-US")
+                              ? new Intl.NumberFormat(locale, {
+                                  style: "currency",
+                                  currency: "USD",
+                                  currencyDisplay: "narrowSymbol",
+                                }).format(r.cost.amount)
+                              : r.cost.amount.toLocaleString(locale)
                             : "—"}
                         </span>
                       ),
                     },
-                    { key: "result", header: "Result", cell: (r) => <RunResult run={r} /> },
+                    { key: "result", header: t("Result"), cell: (r) => <RunResult run={r} /> },
                     {
                       key: "open",
-                      header: <span className="sr-only">Open</span>,
+                      header: <span className="sr-only">{t("Open")}</span>,
                       className: "text-right",
                       cell: (r) => <RunOpen run={r} agentId={routine.agentId} />,
                     },
@@ -514,16 +545,17 @@ export function RoutineDetail({
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {routine.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t("Delete {{name}}?", { name: routine.name })}</AlertDialogTitle>
             <AlertDialogDescription>
-              It stops running. It waits 30 days in Settings › Export and deletion with its run
-              history, and comes back paused if you restore it.
+              {t(
+                "It stops running. It waits 30 days in Settings › Export and deletion with its run history, and comes back paused if you restore it.",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
             <AlertDialogAction variant="danger" onClick={onDelete}>
-              Delete routine
+              {t("Delete routine")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 
 /**
@@ -16,6 +17,7 @@ import { api } from "@/lib/api-client";
  * warning about a feature nobody here has is worse than no warning at all.
  */
 export function LiveKeyWarning({ userId }: { userId: string }) {
+  const { t } = useTranslation();
   const { data } = useQuery({
     queryKey: ["api-keys", "count", userId],
     queryFn: () => api.workspace.members.keyCount(userId),
@@ -30,9 +32,14 @@ export function LiveKeyWarning({ userId }: { userId: string }) {
 
   return (
     <p className="text-sm text-muted-foreground">
-      They have {count} {count === 1 ? "API key that is" : "API keys that are"} still in use.{" "}
-      {count === 1 ? "It" : "They"} will stop working immediately, and anything scheduled against{" "}
-      {count === 1 ? "it" : "them"} will go quiet.
+      {t(
+        "They have {{count}} API key that is still in use. It will stop working immediately, and anything scheduled against it will go quiet.",
+        {
+          count,
+          defaultValue_other:
+            "They have {{count}} API keys that are still in use. They will stop working immediately, and anything scheduled against them will go quiet.",
+        },
+      )}
     </p>
   );
 }

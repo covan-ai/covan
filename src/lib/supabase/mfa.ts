@@ -1,4 +1,5 @@
 import type { Factor } from "@supabase/supabase-js";
+import { i18n } from "@/i18n";
 import { supabase } from "./client";
 
 /**
@@ -31,7 +32,9 @@ export async function verifiedAuthenticators(): Promise<Factor[]> {
  */
 export async function giveSecondFactor(code: string): Promise<void> {
   const factors = await verifiedAuthenticators();
-  if (factors.length === 0) throw new Error("This account has no authenticator to check against.");
+  if (factors.length === 0) {
+    throw new Error(i18n.t("This account has no authenticator to check against."));
+  }
 
   let lastError: Error | null = null;
   for (const factor of factors) {
@@ -39,7 +42,7 @@ export async function giveSecondFactor(code: string): Promise<void> {
     if (!error) return;
     lastError = error;
   }
-  throw lastError ?? new Error("That code did not match.");
+  throw lastError ?? new Error(i18n.t("That code did not match."));
 }
 
 export type Enrollment = { factorId: string; qrCode: string; secret: string };

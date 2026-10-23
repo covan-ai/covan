@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { api, ApiError, type Bundle, type UploadPhase } from "./api-client";
 import { indexingNow } from "./index-status";
 import { canWriteAsRole } from "./roles";
@@ -351,6 +352,7 @@ type Store = {
 const StoreCtx = createContext<Store | null>(null);
 
 export function AgentsProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   // This provider wraps every route, public ones included — the command
@@ -419,7 +421,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           // caller's access was narrowed after this screen loaded, and "could
           // not save" would not tell them that.
           .catch((e) =>
-            toast.error(e instanceof ApiError ? e.message : "Couldn't save the agent."),
+            toast.error(e instanceof ApiError ? e.message : t("Couldn't save the agent.")),
           );
       },
 
@@ -517,7 +519,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           .then(() => queryClient.invalidateQueries({ queryKey: ["agents"] }))
           .then(() => true)
           .catch(() => {
-            toast.error("Couldn't attach the knowledge bundle.");
+            toast.error(t("Couldn't attach the knowledge bundle."));
             return false;
           }),
 
@@ -525,7 +527,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         void api.bundles
           .detach(agentId, bundleId)
           .then(() => queryClient.invalidateQueries({ queryKey: ["agents"] }))
-          .catch(() => toast.error("Couldn't remove the knowledge bundle."));
+          .catch(() => toast.error(t("Couldn't remove the knowledge bundle.")));
       },
 
       removeBundle: (id) => {
@@ -536,7 +538,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
             void queryClient.invalidateQueries({ queryKey: ["agents"] });
             void queryClient.invalidateQueries({ queryKey: BUNDLE_DOCUMENTS });
           })
-          .catch(() => toast.error("Couldn't delete the knowledge bundle."));
+          .catch(() => toast.error(t("Couldn't delete the knowledge bundle.")));
       },
 
       deleteAgent: (id) => {
@@ -546,7 +548,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
             void queryClient.invalidateQueries({ queryKey: ["agents"] });
             void queryClient.invalidateQueries({ queryKey: ["sessions"] });
           })
-          .catch(() => toast.error("Couldn't delete the agent."));
+          .catch(() => toast.error(t("Couldn't delete the agent.")));
       },
 
       startSession: async (agentId) => {
@@ -565,7 +567,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         void api.sessions
           .remove(id)
           .then(() => queryClient.invalidateQueries({ queryKey: ["sessions"] }))
-          .catch(() => toast.error("Couldn't delete the conversation."));
+          .catch(() => toast.error(t("Couldn't delete the conversation.")));
       },
 
       // Optimistic, unlike deleteSession: the name is already on screen in the
@@ -583,7 +585,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           .rename(id, title)
           .catch(() => {
             queryClient.setQueryData<ChatSession[]>(key, previous);
-            toast.error("Couldn't rename the conversation.");
+            toast.error(t("Couldn't rename the conversation."));
           })
           .finally(() => {
             void queryClient.invalidateQueries({ queryKey: key });
@@ -594,14 +596,14 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
         void api.messages
           .update(messageId, content)
           .then(() => queryClient.invalidateQueries({ queryKey: ["messages", sessionId] }))
-          .catch(() => toast.error("Couldn't update the message."));
+          .catch(() => toast.error(t("Couldn't update the message.")));
       },
 
       deleteMessagesAfter: (sessionId, messageId) => {
         void api.messages
           .deleteAfter(messageId)
           .then(() => queryClient.invalidateQueries({ queryKey: ["messages", sessionId] }))
-          .catch(() => toast.error("Couldn't update the conversation."));
+          .catch(() => toast.error(t("Couldn't update the conversation.")));
       },
 
       toggleFavorite: (agentId) => {
@@ -615,14 +617,14 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
           .toggleFavorite(agentId)
           .catch(() => {
             queryClient.setQueryData<string[]>(key, previous);
-            toast.error("Couldn't update favorites.");
+            toast.error(t("Couldn't update favorites."));
           })
           .finally(() => {
             void queryClient.invalidateQueries({ queryKey: ["favorites"] });
           });
       },
     };
-  }, [agents, sessions, sessionsLoaded, favorites, bundles, canWrite, queryClient]);
+  }, [agents, sessions, sessionsLoaded, favorites, bundles, canWrite, queryClient, t]);
 
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
 }

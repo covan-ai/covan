@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { EmptyWell } from "@/components/empty-page";
-import { ACCEPTED_SUMMARY } from "@/lib/uploads";
+import { acceptedSummary } from "@/lib/uploads";
+import { useTranslation } from "@/i18n";
 
 /**
  * The empty screen of an agent that has nothing to read yet.
@@ -38,21 +39,25 @@ export function FirstDocument({
   /** Goes to the agent's Knowledge tab. */
   onKnowledge: () => void;
 }) {
+  const { t } = useTranslation();
   if (!canUpload) {
     return (
       <p className="text-sm text-muted-foreground">
-        Nobody has added documents to {agentName} yet.
+        {t("Nobody has added documents to {{name}} yet.", { name: agentName })}
       </p>
     );
   }
   if (isShared) {
     return (
       <EmptyWell
-        title="Upload your first document"
-        description={`${agentName} answers from what your team uploads. A file added in a shared thread would go to your private folder, which a shared thread can't read — so add it on the Knowledge tab.`}
+        title={t("Upload your first document")}
+        description={t(
+          "{{name}} answers from what your team uploads. A file added in a shared thread would go to your private folder, which a shared thread can't read — so add it on the Knowledge tab.",
+          { name: agentName },
+        )}
         actions={
           <Button variant="secondary" onClick={onKnowledge}>
-            Add documents on the Knowledge tab
+            {t("Add documents on the Knowledge tab")}
           </Button>
         }
       />
@@ -60,17 +65,20 @@ export function FirstDocument({
   }
   return (
     <EmptyWell
-      title="Upload your first document"
-      description={`${agentName} answers from what your team uploads. ${ACCEPTED_SUMMARY}.`}
+      title={t("Upload your first document")}
+      description={t("{{name}} answers from what your team uploads. {{accepted}}.", {
+        name: agentName,
+        accepted: acceptedSummary(t),
+      })}
       actions={
         <div className="flex flex-wrap items-center justify-center gap-2">
           {/* Secondary, not the amber fill: the one amber button on this
               screen is Send (DESIGN.md §4). */}
           <Button variant="secondary" onClick={onPick}>
-            Upload a document
+            {t("Upload a document")}
           </Button>
           <Button variant="link" onClick={onKnowledge}>
-            Open the Knowledge tab
+            {t("Open the Knowledge tab")}
           </Button>
         </div>
       }

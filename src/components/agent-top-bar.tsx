@@ -2,6 +2,7 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { MoreHorizontal, Share } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { TopBar } from "@/components/top-bar";
 import { Tabs } from "@/components/tabs";
 import { Chip } from "@/components/chip";
@@ -35,6 +36,7 @@ import { useAgentsStore, type Agent } from "@/lib/agents-store";
  * into the bar's slot through `TopBarPortal`.
  */
 export function AgentTopBar({ agent }: { agent: Agent }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { favorites, toggleFavorite, startBrainstorm, deleteAgent, canWrite } = useAgentsStore();
@@ -53,7 +55,7 @@ export function AgentTopBar({ agent }: { agent: Agent }) {
         search: { s: s.id },
       });
     } catch {
-      toast.error("Couldn't start a brainstorm.");
+      toast.error(t("Couldn't start a brainstorm."));
     }
   };
 
@@ -65,40 +67,44 @@ export function AgentTopBar({ agent }: { agent: Agent }) {
         slot
         tabs={
           <Tabs
-            label="Agent pages"
+            label={t("Agent pages")}
             items={[
-              { href: `${base}/threads`, label: "Threads", activeAlso: [`${base}/chat`] },
-              { href: `${base}/knowledge`, label: "Knowledge" },
-              { href: `${base}/routines`, label: "Routines" },
-              { href: `${base}/configuration`, label: "Configuration" },
+              { href: `${base}/threads`, label: t("Threads"), activeAlso: [`${base}/chat`] },
+              { href: `${base}/knowledge`, label: t("Knowledge") },
+              { href: `${base}/routines`, label: t("Routines") },
+              { href: `${base}/configuration`, label: t("Configuration") },
             ]}
           />
         }
         actions={
           <>
-            <Chip>{sharingWords(agent)}</Chip>
+            <Chip>{sharingWords(agent, t)}</Chip>
             {canManage && (
               <Button
                 variant="secondary"
                 onClick={() => setShareOpen(true)}
                 data-coach="share-agent"
               >
-                <Share /> Share
+                <Share /> {t("Share")}
               </Button>
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="secondary" size="icon" aria-label={`More for ${agent.name}`}>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  aria-label={t("More for {{name}}", { name: agent.name })}
+                >
                   <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuItem onClick={() => toggleFavorite(agent.id)}>
-                  {pinned ? "Unpin" : "Pin to the top"}
+                  {pinned ? t("Unpin") : t("Pin to the top")}
                 </DropdownMenuItem>
                 {canWrite && (
                   <DropdownMenuItem onClick={() => void brainstorm()}>
-                    New brainstorm
+                    {t("New brainstorm")}
                   </DropdownMenuItem>
                 )}
                 {!pathname.startsWith(`${base}/configuration`) && (
@@ -110,7 +116,7 @@ export function AgentTopBar({ agent }: { agent: Agent }) {
                       })
                     }
                   >
-                    Configuration
+                    {t("Configuration")}
                   </DropdownMenuItem>
                 )}
                 {canManage && (
@@ -120,7 +126,7 @@ export function AgentTopBar({ agent }: { agent: Agent }) {
                       className="text-destructive"
                       onClick={() => setDeleteOpen(true)}
                     >
-                      Delete agent
+                      {t("Delete agent")}
                     </DropdownMenuItem>
                   </>
                 )}
@@ -133,15 +139,15 @@ export function AgentTopBar({ agent }: { agent: Agent }) {
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{t("Delete {{name}}?", { name: agent.name })}</AlertDialogTitle>
             <AlertDialogDescription>
-              This takes it away from everyone it's shared with, along with every thread and routine
-              attached to it — including private ones. It waits 30 days in Settings › Export and
-              deletion, and comes back whole if you restore it.
+              {t(
+                "This takes it away from everyone it's shared with, along with every thread and routine attached to it — including private ones. It waits 30 days in Settings › Export and deletion, and comes back whole if you restore it.",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
             <AlertDialogAction
               variant="danger"
               onClick={() => {
@@ -149,7 +155,7 @@ export function AgentTopBar({ agent }: { agent: Agent }) {
                 void navigate({ to: "/app" });
               }}
             >
-              Delete {agent.name}
+              {t("Delete {{name}}", { name: agent.name })}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

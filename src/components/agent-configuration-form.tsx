@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { lookup, Trans, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { AgentFoldersDialog } from "@/components/agent-folders-dialog";
 import { AgentMark, AgentMarkPicker } from "@/components/agent-mark";
 import { Chip } from "@/components/chip";
@@ -99,6 +101,8 @@ const same = (a: Draft, b: Draft) => JSON.stringify(a) === JSON.stringify(b);
  * deletes. The server refuses the rest either way.
  */
 export function AgentConfigurationForm({ agent }: { agent: Agent }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { updateAgent, deleteAgent, bundles, canWrite } = useAgentsStore();
   const navigate = useNavigate();
   const canEdit = canEditAgent(agent);
@@ -129,7 +133,9 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
   const myRole = me?.members.find((m) => m.id === me.user.id)?.role;
   const isAdmin = me ? isAdminRole(myRole) : false;
   const nameOf = (id: string) => me?.members.find((m) => m.id === id)?.name ?? null;
-  const workspaceName = me?.workspace.name ?? "the workspace";
+  const theWorkspace = t("the workspace");
+  const workspaceName = me?.workspace.name ?? theWorkspace;
+  const connectedApp = t("Connected app");
   const connections = (tools.data?.connections ?? []).filter((c) => c.status === "active");
   const folders = bundles.filter((b) => agent.bundleIds.includes(b.id));
 
@@ -139,7 +145,7 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
     setSaved(next);
     setDraft(next);
     setSavedAt(Date.now());
-    toast.success("Changes saved");
+    toast.success(t("Changes saved"));
   };
 
   return (
@@ -147,13 +153,17 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
       {canEdit ? (
         <TopBarPortal>
           <span className="hidden text-meta text-muted-foreground sm:inline">
-            {dirty ? "Unsaved changes" : savedAt ? `Saved ${lastActivityLabel(savedAt)}` : ""}
+            {dirty
+              ? t("Unsaved changes")
+              : savedAt
+                ? t("Saved {{when}}", { when: lastActivityLabel(savedAt, undefined, t, locale) })
+                : ""}
           </span>
           <Button variant="secondary" disabled={!dirty} onClick={() => setDraft(saved)}>
-            Discard
+            {t("Discard")}
           </Button>
           <Button disabled={!dirty} onClick={save}>
-            Save changes
+            {t("Save changes")}
           </Button>
         </TopBarPortal>
       ) : null}
@@ -162,14 +172,20 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
         {!canEdit ? (
           <p className="mt-5 mb-0 rounded-lg border border-border px-4 py-3 text-sm text-muted-foreground">
             {canWrite
-              ? "This is how the agent is set up. Changing it takes Can edit, which its owner or an admin can give you."
-              : "This is how the agent is set up. Changing it is a member's job."}
+              ? t(
+                  "This is how the agent is set up. Changing it takes Can edit, which its owner or an admin can give you.",
+                )
+              : t("This is how the agent is set up. Changing it is a member's job.")}
           </p>
         ) : null}
 
         <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
-          <SectionLabel className="mt-5">Identity</SectionLabel>
-          <Field label="Name" help="How the team addresses it. Short works best." htmlFor="a-name">
+          <SectionLabel className="mt-5">{t("Identity")}</SectionLabel>
+          <Field
+            label={t("Name")}
+            help={t("How the team addresses it. Short works best.")}
+            htmlFor="a-name"
+          >
             <Input
               id="a-name"
               className="max-w-[420px]"
@@ -177,17 +193,22 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
               onChange={(e) => set("name", e.target.value)}
             />
           </Field>
-          <Field label="Face" help="One of eight marks, or two letters from the name. No emoji.">
+          <Field
+            label={t("Face")}
+            help={t("One of eight marks, or two letters from the name. No emoji.")}
+          >
             <div className="flex items-center gap-3">
               <AgentMark agent={{ name: draft.name, avatar: draft.avatar }} size={36} />
               <Button size="sm" variant="secondary" onClick={() => setChoosingFace(true)}>
-                Change
+                {t("Change")}
               </Button>
             </div>
           </Field>
           <Field
-            label="Persona"
-            help="What it is for, how it speaks, what it must never do. The team sees this when they share it."
+            label={t("Persona")}
+            help={t(
+              "What it is for, how it speaks, what it must never do. The team sees this when they share it.",
+            )}
             htmlFor="a-persona"
           >
             <Textarea
@@ -205,16 +226,18 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
                   onGenerated={(persona) => set("persona", persona)}
                 />
                 {prices?.unit === "credits" ? (
-                  <span className="text-xs text-muted-foreground">Uses one credit</span>
+                  <span className="text-xs text-muted-foreground">{t("Uses one credit")}</span>
                 ) : null}
               </div>
             ) : null}
           </Field>
 
-          <SectionLabel>Model</SectionLabel>
+          <SectionLabel>{t("Model")}</SectionLabel>
           <Field
-            label="Default model"
-            help="Three tiers, or one specific model. The team can switch per message from the composer."
+            label={t("Default model")}
+            help={t(
+              "Three tiers, or one specific model. The team can switch per message from the composer.",
+            )}
           >
             <ModelPicker
               value={draft.model}
@@ -226,8 +249,10 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
             />
           </Field>
           <Field
-            label="All models"
-            help="Everything this install serves. Add a custom endpoint for a self-hosted or OpenAI-compatible model."
+            label={t("All models")}
+            help={t(
+              "Everything this install serves. Add a custom endpoint for a self-hosted or OpenAI-compatible model.",
+            )}
           >
             <AllModels
               models={models}
@@ -238,8 +263,10 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
             />
           </Field>
           <Field
-            label="Thinking"
-            help="How long it reasons before answering. Extended costs more and is slower; the team can change it per message."
+            label={t("Thinking")}
+            help={t(
+              "How long it reasons before answering. Extended costs more and is slower; the team can change it per message.",
+            )}
           >
             <Select
               value={draft.reasoningEffort ?? AUTO}
@@ -248,38 +275,44 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
                 set("reasoningEffort", v === AUTO ? null : (v as ReasoningEffort))
               }
             >
-              <SelectTrigger aria-label="Thinking" className="max-w-[420px]">
+              <SelectTrigger aria-label={t("Thinking")} className="max-w-[420px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={AUTO}>Auto</SelectItem>
+                <SelectItem value={AUTO}>{t("Auto")}</SelectItem>
                 {REASONING_EFFORTS.map((e) => (
                   <SelectItem key={e} value={e}>
-                    {EFFORT_WORDS[e]}
+                    {lookup(t, EFFORT_WORDS[e])}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             {!spec.reasoning ? (
               <p className="mt-2 mb-0 text-meta text-muted-foreground">
-                <span className="font-mono">{draft.model}</span> answers without a separate thinking
-                step, so this has no effect on it.
+                <Trans
+                  t={t}
+                  i18nKey="<code>{{model}}</code> answers without a separate thinking step, so this has no effect on it."
+                  values={{ model: draft.model }}
+                  components={{ code: <span className="font-mono" /> }}
+                />
               </p>
             ) : null}
-            <Disclosure label="Temperature" className="mt-3">
+            <Disclosure label={t("Temperature")} className="mt-3">
               <TemperatureField
                 value={draft.temperature}
-                onChange={(t) => set("temperature", t)}
+                onChange={(next) => set("temperature", next)}
                 accepted={spec.temperature}
                 model={draft.model}
               />
             </Disclosure>
           </Field>
 
-          <SectionLabel>Knowledge</SectionLabel>
+          <SectionLabel>{t("Knowledge")}</SectionLabel>
           <Field
-            label="Folders it can read"
-            help="Everything in these folders, including what a connected source syncs into them."
+            label={t("Folders it can read")}
+            help={t(
+              "Everything in these folders, including what a connected source syncs into them.",
+            )}
           >
             <div className="flex flex-wrap items-center gap-2">
               {folders.map((b) => (
@@ -288,25 +321,27 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
                 </Link>
               ))}
               {folders.length === 0 ? (
-                <span className="text-sm text-muted-foreground">None yet.</span>
+                <span className="text-sm text-muted-foreground">{t("None yet.")}</span>
               ) : null}
               {canEdit ? (
                 <Button size="sm" variant="secondary" onClick={() => setFoldersOpen(true)}>
-                  Attach folder
+                  {t("Attach folder")}
                 </Button>
               ) : null}
             </div>
           </Field>
 
-          <SectionLabel>Tools</SectionLabel>
+          <SectionLabel>{t("Tools")}</SectionLabel>
           <Field
-            label="What it may use"
-            help="Each one it uses is logged in the thread as a step. Turned off here, it is not offered at all."
+            label={t("What it may use")}
+            help={t(
+              "Each one it uses is logged in the thread as a step. Turned off here, it is not offered at all.",
+            )}
           >
             <ul className="m-0 max-w-[560px] list-none p-0">
               <ToolRow
-                name="Browser"
-                note="Opens pages and saved sign-ins. Asks before each task in a thread."
+                name={t("Browser")}
+                note={t("Opens pages and saved sign-ins. Asks before each task in a thread.")}
                 checked={!draft.browserOff}
                 onChange={(on) => set("browserOff", !on)}
               />
@@ -316,12 +351,16 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
                   name={c.label}
                   note={
                     c.transport === "composio"
-                      ? `${c.toolkitSlug ?? "Connected app"} · asks before its first action`
-                      : `${c.transport === "http" ? "HTTP API" : "Database"} · ${
-                          c.allowedMethods.some((m) => !["GET", "HEAD"].includes(m))
-                            ? "can write"
-                            : "read only"
-                        }`
+                      ? t("{{app}} · asks before its first action", {
+                          app: c.toolkitSlug ?? connectedApp,
+                        })
+                      : c.allowedMethods.some((m) => !["GET", "HEAD"].includes(m))
+                        ? c.transport === "http"
+                          ? t("HTTP API · can write")
+                          : t("Database · can write")
+                        : c.transport === "http"
+                          ? t("HTTP API · read only")
+                          : t("Database · read only")
                   }
                   checked={!draft.connectionsOff.includes(c.id)}
                   onChange={(on) =>
@@ -335,11 +374,11 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
                 />
               ))}
               <ToolRow
-                name="Web search"
+                name={t("Web search")}
                 note={
                   spec.webSearch
-                    ? "When the team's documents don't have the answer"
-                    : `${draft.model} cannot search the web`
+                    ? t("When the team's documents don't have the answer")
+                    : t("{{model}} cannot search the web", { model: draft.model })
                 }
                 checked={draft.webSearch}
                 disabled={!spec.webSearch}
@@ -347,56 +386,63 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
               />
             </ul>
             <p className="mt-2 mb-0 text-meta text-muted-foreground">
-              Connect more under{" "}
-              <Link to="/settings/integrations" className="underline underline-offset-4">
-                Integrations
-              </Link>
-              .
+              <Trans
+                t={t}
+                i18nKey="Connect more under <a>Integrations</a>."
+                components={{
+                  a: <Link to="/settings/integrations" className="underline underline-offset-4" />,
+                }}
+              />
             </p>
           </Field>
         </fieldset>
 
-        <SectionLabel>Sharing</SectionLabel>
+        <SectionLabel>{t("Sharing")}</SectionLabel>
         <Field
-          label="Who can use it"
-          help="Threads stay private to whoever starts them either way."
+          label={t("Who can use it")}
+          help={t("Threads stay private to whoever starts them either way.")}
         >
           <div className="flex flex-wrap items-center gap-2 pt-1 text-sm">
-            <span>{whoCanUse(agent, workspaceName, me?.user.id)}</span>
+            <span>{whoCanUse(agent, workspaceName, me?.user.id, t)}</span>
             {canManage ? (
               <Button size="sm" variant="secondary" onClick={() => setShareOpen(true)}>
-                Share
+                {t("Share")}
               </Button>
             ) : null}
           </div>
         </Field>
-        <Field label="Who can edit it" help="Change the persona, tools and knowledge.">
+        <Field label={t("Who can edit it")} help={t("Change the persona, tools and knowledge.")}>
           <span className="block pt-1 text-sm">
-            {whoCanEdit(agent, workspaceName, nameOf, me?.user.id)}
+            {whoCanEdit(agent, workspaceName, nameOf, me?.user.id, t)}
           </span>
         </Field>
-        <Field label="Your access">
-          <span className="block pt-1 text-sm">{ACCESS_LABEL[agent.myAccess]}</span>
+        <Field label={t("Your access")}>
+          <span className="block pt-1 text-sm">{lookup(t, ACCESS_LABEL[agent.myAccess])}</span>
         </Field>
 
-        <SectionLabel>Saved sign-ins</SectionLabel>
+        <SectionLabel>{t("Saved sign-ins")}</SectionLabel>
         <SavedLoginsList
           agentId={agent.id}
-          empty="None yet. When a browser task stops at a login, you can save one from the browser beside the thread. Encrypted; Covan's AI model is never given them."
+          empty={t(
+            "None yet. When a browser task stops at a login, you can save one from the browser beside the thread. Encrypted; Covan's AI model is never given them.",
+          )}
         />
 
         {canManage ? (
           <>
-            <SectionLabel>Danger</SectionLabel>
-            <Field label="Delete agent" help="Its threads stay readable for 30 days, then go.">
+            <SectionLabel>{t("Danger")}</SectionLabel>
+            <Field
+              label={t("Delete agent")}
+              help={t("Its threads stay readable for 30 days, then go.")}
+            >
               <Button variant="danger" onClick={() => setDeleting(true)}>
-                Delete {agent.name}…
+                {t("Delete {{name}}…", { name: agent.name })}
               </Button>
             </Field>
           </>
         ) : null}
 
-        <Field label="Agent ID" help="For support requests and the API." className="mt-6">
+        <Field label={t("Agent ID")} help={t("For support requests and the API.")} className="mt-6">
           <Chip tone="code">{agent.id}</Chip>
         </Field>
       </PageBody>
@@ -404,7 +450,7 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
       <Dialog open={choosingFace} onOpenChange={setChoosingFace}>
         <DialogContent size="sm">
           <DialogHeader>
-            <DialogTitle>Choose a face</DialogTitle>
+            <DialogTitle>{t("Choose a face")}</DialogTitle>
           </DialogHeader>
           <DialogBody>
             <AgentMarkPicker
@@ -422,9 +468,11 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
                 setChoosingFace(false);
               }}
             >
-              Use letters
+              {t("Use letters")}
             </Button>
-            <Button onClick={() => setChoosingFace(false)}>Done</Button>
+            <Button onClick={() => setChoosingFace(false)}>
+              {t("Done", { context: "button", defaultValue: "Done" })}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -439,7 +487,7 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
             onOpenChange={setDeleting}
             onDelete={() => {
               deleteAgent(agent.id);
-              toast.success("Agent deleted");
+              toast.success(t("Agent deleted"));
               void navigate({ to: "/app" });
             }}
           />
@@ -490,6 +538,7 @@ function TemperatureField({
   accepted: boolean;
   model: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-2 text-foreground">
       <div className="flex items-center gap-2">
@@ -502,14 +551,14 @@ function TemperatureField({
           onCheckedChange={(checked) => onChange(checked === true ? null : 0.7)}
         />
         <Label className="text-meta font-normal" htmlFor="a-temperature-auto">
-          Auto
+          {t("Auto")}
         </Label>
       </div>
       {value !== null && (
         <div className="flex max-w-[360px] items-center gap-3">
           <input
             id="a-temperature"
-            aria-label="Temperature"
+            aria-label={t("Temperature")}
             type="range"
             min={0}
             max={2}
@@ -526,18 +575,20 @@ function TemperatureField({
       )}
       <p className="m-0 text-meta text-muted-foreground">
         {!accepted ? (
-          <>
-            <span className="font-mono">{model}</span> decides this for itself and rejects any other
-            value.
-          </>
+          <Trans
+            t={t}
+            i18nKey="<code>{{model}}</code> decides this for itself and rejects any other value."
+            values={{ model }}
+            components={{ code: <span className="font-mono" /> }}
+          />
         ) : value === null ? (
-          "Left to the mode: steady in Normal, wide-ranging in Brainstorm."
+          t("Left to the mode: steady in Normal, wide-ranging in Brainstorm.")
         ) : value <= 0.3 ? (
-          "Close to the same answer every time. Good for support and policy questions."
+          t("Close to the same answer every time. Good for support and policy questions.")
         ) : value <= 1 ? (
-          "Some variation in wording, the same substance."
+          t("Some variation in wording, the same substance.")
         ) : (
-          "Freely inventive, and less predictable. Worth checking what it says."
+          t("Freely inventive, and less predictable. Worth checking what it says.")
         )}
       </p>
     </div>

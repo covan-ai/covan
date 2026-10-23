@@ -9,6 +9,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { useAgentsStore } from "@/lib/agents-store";
 import { canEditAgent } from "@/lib/agent-access";
 import { formatFileSize } from "@/lib/file-size";
@@ -30,6 +32,8 @@ export function FolderReadersDialog({
   /** For the footer: "18 files · 42 MB". */
   summary?: { files: number; bytes: number };
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const store = useAgentsStore();
   const editable = store.agents.filter(canEditAgent);
 
@@ -37,17 +41,18 @@ export function FolderReadersDialog({
     <Dialog open={bundle !== null} onOpenChange={onOpenChange}>
       <DialogContent size="sm">
         <DialogHeader>
-          <DialogTitle>Who reads {bundle?.name}</DialogTitle>
+          <DialogTitle>{t("Who reads {{folder}}", { folder: bundle?.name ?? "" })}</DialogTitle>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-3">
           <p className="m-0 text-meta text-muted-foreground">
-            An agent sees new files in this folder within a minute. Nothing is sent anywhere; the
-            folder stays where it is.
+            {t(
+              "An agent sees new files in this folder within a minute. Nothing is sent anywhere; the folder stays where it is.",
+            )}
           </p>
           {bundle ? (
             editable.length === 0 ? (
               <p className="m-0 text-sm text-muted-foreground">
-                You can&apos;t edit any agent, so there is nothing to give it to.
+                {t("You can't edit any agent, so there is nothing to give it to.")}
               </p>
             ) : (
               <ul className="m-0 list-none p-0">
@@ -64,7 +69,10 @@ export function FolderReadersDialog({
                         if (on) void store.attachBundle(a.id, bundle.id);
                         else store.detachBundle(a.id, bundle.id);
                       }}
-                      aria-label={`${a.name} reads ${bundle.name}`}
+                      aria-label={t("{{agent}} reads {{folder}}", {
+                        agent: a.name,
+                        folder: bundle.name,
+                      })}
                     />
                   </li>
                 ))}
@@ -75,11 +83,16 @@ export function FolderReadersDialog({
         <DialogFooter>
           {summary ? (
             <span className="mr-auto text-meta text-muted-foreground">
-              {summary.files} {summary.files === 1 ? "file" : "files"} ·{" "}
-              {formatFileSize(summary.bytes)}
+              {t("{{count}} file", {
+                count: summary.files,
+                defaultValue_other: "{{count}} files",
+              })}{" "}
+              · {formatFileSize(summary.bytes, locale)}
             </span>
           ) : null}
-          <Button onClick={() => onOpenChange(false)}>Done</Button>
+          <Button onClick={() => onOpenChange(false)}>
+            {t("Done", { context: "button", defaultValue: "Done" })}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

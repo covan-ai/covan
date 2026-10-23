@@ -15,9 +15,11 @@ import {
   type ReasoningEffort,
 } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";
+import { lookup, useTranslation, type Translate } from "@/i18n";
 
 /** "Off", "Brief", "Standard", "Extended", or "Auto" for the model's own. */
-const word = (effort: ReasoningEffort | null) => (effort == null ? "Auto" : effortWord(effort));
+const word = (effort: ReasoningEffort | null, t: Translate) =>
+  effort == null ? t("Auto") : effortWord(effort, t);
 
 /**
  * How long the next message is thought about (A2): "Thinking · Brief". Only
@@ -38,6 +40,7 @@ export function ThinkingChip({
   compact?: boolean;
   onChange: (effort: ReasoningEffort | null) => void;
 }) {
+  const { t } = useTranslation();
   const item = (effort: ReasoningEffort | null, label: string, hint?: string) => (
     <DropdownMenuItem key={label} onSelect={() => onChange(effort)} className="gap-2.5">
       <span className="min-w-0 flex-1">
@@ -56,26 +59,30 @@ export function ThinkingChip({
         <Button
           variant="ghost"
           size="sm"
-          aria-label={`Thinking: ${word(value)}`}
+          aria-label={t("Thinking: {{level}}", { level: word(value, t) })}
           className="h-7 gap-1.5 px-2 text-meta text-muted-foreground data-[state=open]:bg-surface"
         >
           <Lightbulb />
-          {compact ? word(value) : `Thinking · ${word(value)}`}
+          {compact ? word(value, t) : t("Thinking · {{level}}", { level: word(value, t) })}
           <ChevronDown />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="top" className="w-64">
         <DropdownMenuLabel className="text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-          Thinking for this message
+          {t("Thinking for this message")}
         </DropdownMenuLabel>
         {item(
           null,
-          "Auto",
-          agentEffort == null ? "The model's own" : `The agent's: ${word(agentEffort)}`,
+          t("Auto"),
+          agentEffort == null
+            ? t("The model's own")
+            : t("The agent's: {{level}}", { level: word(agentEffort, t) }),
         )}
-        {item("minimal", "Off")}
+        {item("minimal", effortWord("minimal", t))}
         <DropdownMenuSeparator />
-        {DIAL_EFFORTS.map((level) => item(level, effortWord(level), DIAL_EFFORT_HINTS[level]))}
+        {DIAL_EFFORTS.map((level) =>
+          item(level, effortWord(level, t), lookup(t, DIAL_EFFORT_HINTS[level])),
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

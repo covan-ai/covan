@@ -11,6 +11,7 @@ import { VersionPicker, RetryOn } from "@/components/chat/answer-controls";
 import { estimateCostUsd, formatCost, formatTokens } from "@/lib/pricing";
 import type { ReplyPrices } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 
 /**
  * One answer in a transcript.
@@ -101,6 +102,7 @@ export const AnswerTurn = memo(function AnswerTurn({
   /** How much air goes above this turn. See `gapBefore`. */
   className?: string;
 }) {
+  const { t } = useTranslation();
   const sources = message.sources ?? [];
 
   // No byline (A2): the agent is named in the bar over the page, and the
@@ -140,7 +142,7 @@ export const AnswerTurn = memo(function AnswerTurn({
 
         {sources.length > 0 && (
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
-            <span>Sources</span>
+            <span>{t("Sources")}</span>
             {sources.map((source, i) => (
               <SourceChip
                 key={source.id ?? `${source.name}:${i}`}
@@ -157,14 +159,16 @@ export const AnswerTurn = memo(function AnswerTurn({
             exactly like one that finished. */}
         {truncated && (
           <div className="mt-3 flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">This answer hit its length limit.</span>
+            <span className="text-xs text-muted-foreground">
+              {t("This answer hit its length limit.")}
+            </span>
             <Button
               variant="secondary"
               size="sm"
               onClick={() => onContinue(message.id)}
               disabled={busy}
             >
-              Continue
+              {t("Continue")}
             </Button>
           </div>
         )}
@@ -177,22 +181,22 @@ export const AnswerTurn = memo(function AnswerTurn({
           <div className="mt-3 flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
               {stoppedShort === "tokens"
-                ? "This turn reached the most one answer is allowed to spend."
+                ? t("This turn reached the most one answer is allowed to spend.")
                 : stoppedShort === "runtime"
                   ? // Neither of our budgets — the platform. Nothing to narrow,
                     // so the sentence points at the one thing that does work:
                     // the count resets per turn.
-                    "This turn reached how much this deployment can do in one go."
+                    t("This turn reached how much this deployment can do in one go.")
                   : stoppedShort === "credits"
                     ? // The workspace's, checked before every step. Keep going
                       // would be refused until somebody adds credit, so it is
                       // not offered.
-                      "This workspace ran out of credits partway through this answer."
-                    : "This turn used every tool call it is allowed."}
+                      t("This workspace ran out of credits partway through this answer.")
+                    : t("This turn used every tool call it is allowed.")}
             </span>
             {stoppedShort !== "credits" && (
               <Button variant="secondary" size="sm" onClick={onKeepGoing} disabled={busy}>
-                Keep going
+                {t("Keep going")}
               </Button>
             )}
           </div>
@@ -203,7 +207,7 @@ export const AnswerTurn = memo(function AnswerTurn({
             mid-sentence otherwise reads, after a reload, as one that
             finished. No button — the person who stopped it can ask again. */}
         {message.outcome === "stopped" && !truncated && !stoppedShort && (
-          <p className="mt-3 text-meta text-muted-foreground">You stopped this answer.</p>
+          <p className="mt-3 text-meta text-muted-foreground">{t("You stopped this answer.")}</p>
         )}
 
         {message.promptTokens != null && message.completionTokens != null && (
@@ -211,10 +215,16 @@ export const AnswerTurn = memo(function AnswerTurn({
             data-part="cost"
             className="mt-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
           >
-            {formatTokens(message.promptTokens)} in · {formatTokens(message.completionTokens)} out
-            {message.cachedTokens != null && message.cachedTokens > 0 && (
-              <> · {formatTokens(message.cachedTokens)} cached</>
-            )}
+            {message.cachedTokens != null && message.cachedTokens > 0
+              ? t("{{prompt}} in · {{completion}} out · {{cached}} cached", {
+                  prompt: formatTokens(message.promptTokens),
+                  completion: formatTokens(message.completionTokens),
+                  cached: formatTokens(message.cachedTokens),
+                })
+              : t("{{prompt}} in · {{completion}} out", {
+                  prompt: formatTokens(message.promptTokens),
+                  completion: formatTokens(message.completionTokens),
+                })}
             {/* Priced here, in the browser, from list prices — which is a
                 dollar figure and nothing else. Where the deployment charges
                 credits that figure is the wrong unit, and the server has not
@@ -245,25 +255,25 @@ export const AnswerTurn = memo(function AnswerTurn({
             incidental, which is why the wrapper keeps its `group`. */}
         <div data-part="actions" className="mt-2 flex items-center gap-0.5">
           <span className="mr-1.5 text-xs text-micro-foreground tabular-nums">{time}</span>
-          <MsgAction label="Copy" onClick={() => onCopy(message.content)}>
+          <MsgAction label={t("Copy")} onClick={() => onCopy(message.content)}>
             <Copy className="h-3.5 w-3.5" />
           </MsgAction>
           {canSpeak && (
             <MsgAction
-              label={speaking ? "Stop reading" : "Read aloud"}
+              label={speaking ? t("Stop reading") : t("Read aloud")}
               onClick={() => (speaking ? onStopSpeaking() : onSpeak(message.id, message.content))}
             >
               {speaking ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
             </MsgAction>
           )}
           <MsgAction
-            label="This answer was good — say why"
+            label={t("This answer was good — say why")}
             onClick={() => onRate(message.id, "other")}
           >
             <ThumbsUp className="h-3.5 w-3.5" />
           </MsgAction>
           <MsgAction
-            label="Something's wrong with this answer"
+            label={t("Something's wrong with this answer")}
             onClick={() => onRate(message.id, "problem")}
           >
             <ThumbsDown className="h-3.5 w-3.5" />
@@ -282,7 +292,7 @@ export const AnswerTurn = memo(function AnswerTurn({
               The caller works all that out; this takes the conclusion. */}
           {canRegenerate && (
             <>
-              <MsgAction label="Regenerate" onClick={() => onRegenerate()}>
+              <MsgAction label={t("Regenerate")} onClick={() => onRegenerate()}>
                 <RefreshCw className="h-3.5 w-3.5" />
               </MsgAction>
               <RetryOn models={pickableModels} prices={prices} onPick={onRegenerate} />

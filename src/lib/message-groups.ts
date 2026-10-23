@@ -1,3 +1,4 @@
+import { englishT, type Translate } from "@/i18n";
 import type { Message } from "./agents-store";
 
 /**
@@ -8,7 +9,7 @@ import type { Message } from "./agents-store";
  * still today where the reader is, not where the server is.
  */
 
-function dateLabel(ts: number): string {
+function dateLabel(ts: number, t: Translate, locale: string): string {
   const date = new Date(ts);
   const today = new Date();
   const yesterday = new Date(today);
@@ -19,12 +20,12 @@ function dateLabel(ts: number): string {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate();
 
-  if (isSameDay(date, today)) return "Today";
-  if (isSameDay(date, yesterday)) return "Yesterday";
+  if (isSameDay(date, today)) return t("Today");
+  if (isSameDay(date, yesterday)) return t("Yesterday");
 
   // "March 15" for this year, "March 15, 2025" for other years
   const sameYear = date.getFullYear() === today.getFullYear();
-  return date.toLocaleDateString("en-US", {
+  return date.toLocaleDateString(locale, {
     month: "long",
     day: "numeric",
     ...(sameYear ? {} : { year: "numeric" }),
@@ -48,14 +49,18 @@ function dateLabel(ts: number): string {
  * started today was a heading on a page with one section. A thread that spans
  * days still gets a line wherever the day turns.
  */
-export function dateDividers(messages: Message[]): Map<string, string> {
+export function dateDividers(
+  messages: Message[],
+  t: Translate = englishT,
+  locale: string = "en-US",
+): Map<string, string> {
   const dividers = new Map<string, string>();
   let previousDay: string | null = null;
 
   for (const msg of messages) {
     const day = new Date(msg.createdAt).toDateString();
     if (previousDay !== null && day !== previousDay) {
-      dividers.set(msg.id, dateLabel(msg.createdAt));
+      dividers.set(msg.id, dateLabel(msg.createdAt, t, locale));
     }
     previousDay = day;
   }

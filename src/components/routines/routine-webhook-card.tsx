@@ -15,6 +15,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { Trans, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { ApiError } from "@/lib/api-client";
 import {
   useRoutineTrigger,
@@ -22,8 +24,8 @@ import {
   useRemoveRoutineTrigger,
 } from "@/hooks/use-routines";
 
-function formatWhen(epochMs: number): string {
-  return new Date(epochMs).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+function formatWhen(epochMs: number, locale: string): string {
+  return new Date(epochMs).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
 }
 
 /**
@@ -36,6 +38,8 @@ function formatWhen(epochMs: number): string {
  * fire it.
  */
 export function RoutineWebhookCard({ routineId }: { routineId: string }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { data: trigger, isLoading } = useRoutineTrigger(routineId, true);
   const create = useCreateRoutineTrigger();
   const remove = useRemoveRoutineTrigger();
@@ -52,7 +56,7 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
       const { path } = await create.mutateAsync(routineId);
       setRevealed(`${import.meta.env.VITE_API_URL}${path}`);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not create that URL");
+      toast.error(err instanceof ApiError ? err.message : t("Could not create that URL"));
     }
   };
 
@@ -60,9 +64,9 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
     try {
       await remove.mutateAsync(routineId);
       setRevealed(null);
-      toast.success("Webhook turned off");
+      toast.success(t("Webhook turned off"));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not turn it off");
+      toast.error(err instanceof ApiError ? err.message : t("Could not turn it off"));
     }
   };
 
@@ -70,40 +74,41 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
 
   return (
     <section className="mt-2">
-      <SectionLabel>Webhook</SectionLabel>
+      <SectionLabel>{t("Webhook")}</SectionLabel>
       <p className="mt-0 mb-3 text-meta text-muted-foreground">
-        The URL that starts this routine. Whatever it POSTs is what the agent reads.
+        {t("The URL that starts this routine. Whatever it POSTs is what the agent reads.")}
       </p>
 
       <div className="space-y-4">
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
         ) : revealed ? (
           <div className="space-y-3">
-            <RevealedSecret value={revealed} label="Copy webhook URL" />
+            <RevealedSecret value={revealed} label={t("Copy webhook URL")} />
             <p className="text-meta text-muted-foreground">
-              This is the only time it is shown. Covan stores a hash of it, so nobody — including us
-              — can show it again. Anyone who has this URL can start this routine, which spends your
-              workspace's credits, so treat it the way you would a password. Lost it? Make a new one
-              here; the old one stops working at once.
+              {t(
+                "This is the only time it is shown. Covan stores a hash of it, so nobody — including us — can show it again. Anyone who has this URL can start this routine, which spends your workspace's credits, so treat it the way you would a password. Lost it? Make a new one here; the old one stops working at once.",
+              )}
             </p>
           </div>
         ) : configured ? (
           <div className="space-y-1">
             <p className="flex items-center gap-2 text-sm">
               <Webhook className="h-4 w-4 shrink-0 text-muted-foreground" />
-              This routine has a webhook URL.
+              {t("This routine has a webhook URL.")}
             </p>
             <p className="text-meta text-muted-foreground">
               {trigger.lastUsedAt === null
-                ? "Nothing has used it yet."
-                : `Last used ${formatWhen(trigger.lastUsedAt)}.`}{" "}
-              The URL itself is not shown again.
+                ? t("Nothing has used it yet.")
+                : t("Last used {{when}}.", { when: formatWhen(trigger.lastUsedAt, locale) })}{" "}
+              {t("The URL itself is not shown again.")}
             </p>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No webhook URL yet. Make one and paste it into whatever should start this routine.
+            {t(
+              "No webhook URL yet. Make one and paste it into whatever should start this routine.",
+            )}
           </p>
         )}
 
@@ -113,21 +118,23 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="secondary" size="sm" disabled={create.isPending}>
-                    Replace the URL
+                    {t("Replace the URL")}
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Replace this webhook URL?</AlertDialogTitle>
+                    <AlertDialogTitle>{t("Replace this webhook URL?")}</AlertDialogTitle>
                     <AlertDialogDescription>
-                      The current URL stops working the moment you confirm, and anything still
-                      calling it will get a 401 until you paste the new one in. The routine itself
-                      is unchanged.
+                      {t(
+                        "The current URL stops working the moment you confirm, and anything still calling it will get a 401 until you paste the new one in. The routine itself is unchanged.",
+                      )}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void mint()}>Replace</AlertDialogAction>
+                    <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void mint()}>
+                      {t("Replace")}
+                    </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
@@ -135,27 +142,30 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="ghost" size="sm" disabled={remove.isPending}>
-                    Turn it off
+                    {t("Turn it off")}
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Turn this webhook off?</AlertDialogTitle>
+                    <AlertDialogTitle>{t("Turn this webhook off?")}</AlertDialogTitle>
                     <AlertDialogDescription>
-                      The URL stops working and nothing can start this routine from outside. If it
-                      also runs on a schedule, it keeps doing that.
+                      {t(
+                        "The URL stops working and nothing can start this routine from outside. If it also runs on a schedule, it keeps doing that.",
+                      )}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void turnOff()}>Turn off</AlertDialogAction>
+                    <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void turnOff()}>
+                      {t("Turn off")}
+                    </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
             </>
           ) : (
             <Button size="sm" onClick={() => void mint()} disabled={create.isPending}>
-              {create.isPending ? "Making…" : "Make a webhook URL"}
+              {create.isPending ? t("Making…") : t("Make a webhook URL")}
             </Button>
           )}
         </div>
@@ -177,31 +187,37 @@ export function RoutineWebhookCard({ routineId }: { routineId: string }) {
  * GitHub or a CI job, and these steps are for the few on a phone.
  */
 function SiriSteps() {
+  const { t } = useTranslation();
+  const code = <code className="font-mono" />;
   return (
     <details className="text-sm">
       <summary className="cursor-pointer text-xs text-muted-foreground">
-        Use it with Siri or Shortcuts
+        {t("Use it with Siri or Shortcuts")}
       </summary>
       <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-xs text-muted-foreground">
-        <li>In the Shortcuts app, make a new shortcut and add Dictate Text.</li>
+        <li>{t("In the Shortcuts app, make a new shortcut and add Dictate Text.")}</li>
         <li>
-          Add Get Contents of URL. Paste this webhook URL and add{" "}
-          <code className="font-mono">?wait=1</code> to the end. Set Method to POST and Request Body
-          to JSON, with one Text field named <code className="font-mono">text</code> set to Dictated
-          Text.
+          <Trans
+            t={t}
+            i18nKey="Add Get Contents of URL. Paste this webhook URL and add <code>?wait=1</code> to the end. Set Method to POST and Request Body to JSON, with one Text field named <code>text</code> set to Dictated Text."
+            components={{ code }}
+          />
         </li>
         <li>
-          Add Get Dictionary Value for the key <code className="font-mono">summary</code>, then
-          Speak Text.
+          <Trans
+            t={t}
+            i18nKey="Add Get Dictionary Value for the key <code>summary</code>, then Speak Text."
+            components={{ code }}
+          />
         </li>
-        <li>Name the shortcut. Saying “Hey Siri” and its name runs it.</li>
+        <li>{t("Name the shortcut. Saying “Hey Siri” and its name runs it.")}</li>
       </ol>
       <p className="mt-2 text-meta text-muted-foreground">
-        Siri reads the routine's answer if it is ready within about 25 seconds. If not, it says the
-        routine is still working, and the answer arrives where this routine delivers. To keep the
-        token out of the URL, replace the token at its end with <code className="font-mono">-</code>{" "}
-        and send the token in an <code className="font-mono">X-Covan-Ingest-Token</code> header
-        instead.
+        <Trans
+          t={t}
+          i18nKey="Siri reads the routine's answer if it is ready within about 25 seconds. If not, it says the routine is still working, and the answer arrives where this routine delivers. To keep the token out of the URL, replace the token at its end with <code>-</code> and send the token in an <code>X-Covan-Ingest-Token</code> header instead."
+          components={{ code }}
+        />
       </p>
     </details>
   );

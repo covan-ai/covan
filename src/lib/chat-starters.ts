@@ -13,14 +13,20 @@
  * because an answer that cites a file the user recognises is the entire pitch.
  */
 
+import { englishT, lookup, msg, type Translate } from "@/i18n";
 import type { ConnectedApp } from "./connected-apps";
 
-/** What to offer when there is nothing retrievable behind the agent. */
+/**
+ * What to offer when there is nothing retrievable behind the agent.
+ *
+ * Keys, not sentences: a starter is sent as the person's own message, so it
+ * goes out in the language they read — `startersFor` looks each one up.
+ */
 export const GENERAL_STARTERS: readonly string[] = [
-  "What can you help me with?",
-  "Summarize what you know",
-  "Walk me through an example",
-  "Draft something for me",
+  msg("What can you help me with?"),
+  msg("Summarize what you know"),
+  msg("Walk me through an example"),
+  msg("Draft something for me"),
 ];
 
 export type StarterDocument = {
@@ -32,15 +38,18 @@ export type StarterDocument = {
   indexed: boolean;
 };
 
-export function startersFor(documents: readonly StarterDocument[]): string[] {
+export function startersFor(
+  documents: readonly StarterDocument[],
+  t: Translate = englishT,
+): string[] {
   const ready = documents.filter((d) => d.indexed);
-  if (ready.length === 0) return [...GENERAL_STARTERS];
+  if (ready.length === 0) return GENERAL_STARTERS.map((key) => lookup(t, key));
 
   return [
-    `What does ${ready[0].name} say?`,
-    ready.length > 1 ? "What do these documents have in common?" : "Summarize what you know",
-    "What should I know that I haven't asked about?",
-    "Draft something for me",
+    t("What does {{name}} say?", { name: ready[0].name }),
+    ready.length > 1 ? t("What do these documents have in common?") : t("Summarize what you know"),
+    t("What should I know that I haven't asked about?"),
+    t("Draft something for me"),
   ];
 }
 
@@ -63,17 +72,17 @@ export function startersFor(documents: readonly StarterDocument[]): string[] {
  * and the interface never claimed otherwise.
  */
 const APP_STARTER: Record<string, string> = {
-  github: "What pull requests are waiting on me?",
-  gmail: "What's waiting in my inbox?",
-  googlecalendar: "What's on my calendar this week?",
-  googledocs: "What did I write in my most recent doc?",
-  googledrive: "What's in my Drive that I should read?",
-  googlesheets: "What's in my most recent spreadsheet?",
-  hubspot: "Which deals have gone quiet?",
-  jira: "What's assigned to me in Jira?",
-  linear: "What's assigned to me in Linear?",
-  notion: "What have we written down in Notion about this?",
-  slack: "What did the team decide in Slack this week?",
+  github: msg("What pull requests are waiting on me?"),
+  gmail: msg("What's waiting in my inbox?"),
+  googlecalendar: msg("What's on my calendar this week?"),
+  googledocs: msg("What did I write in my most recent doc?"),
+  googledrive: msg("What's in my Drive that I should read?"),
+  googlesheets: msg("What's in my most recent spreadsheet?"),
+  hubspot: msg("Which deals have gone quiet?"),
+  jira: msg("What's assigned to me in Jira?"),
+  linear: msg("What's assigned to me in Linear?"),
+  notion: msg("What have we written down in Notion about this?"),
+  slack: msg("What did the team decide in Slack this week?"),
 };
 
 /**
@@ -109,11 +118,17 @@ const MAX_APP_STARTERS = 6;
  * screen of six generic questions is worth less than three specific ones.
  * Stable within each group, so the grid still does not reshuffle.
  */
-export function appStartersFor(apps: readonly ConnectedApp[]): AppStarter[] {
+export function appStartersFor(
+  apps: readonly ConnectedApp[],
+  t: Translate = englishT,
+): AppStarter[] {
   const curated = apps.filter((app) => APP_STARTER[app.slug]);
   const rest = apps.filter((app) => !APP_STARTER[app.slug]);
-  return [...curated, ...rest].slice(0, MAX_APP_STARTERS).map((app) => ({
-    app,
-    starter: APP_STARTER[app.slug] ?? `What can you do with ${app.name}?`,
-  }));
+  return [...curated, ...rest].slice(0, MAX_APP_STARTERS).map((app) => {
+    const key = APP_STARTER[app.slug];
+    return {
+      app,
+      starter: key ? lookup(t, key) : t("What can you do with {{name}}?", { name: app.name }),
+    };
+  });
 }

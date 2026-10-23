@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { goKeyReader, isTyping } from "@/lib/go-keys";
 import { useAgentsStore } from "@/lib/agents-store";
 
@@ -10,6 +11,7 @@ import { useAgentsStore } from "@/lib/agents-store";
  * opens the palette, whose first rows are the agents.
  */
 export function useGoKeys(agentId: string | undefined) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { startSession, canWrite } = useAgentsStore();
   useEffect(() => {
@@ -32,9 +34,9 @@ export function useGoKeys(agentId: string | undefined) {
         .then((s) =>
           navigate({ to: "/agents/$agentId/chat", params: { agentId }, search: { s: s.id } }),
         )
-        .catch(() => toast.error("Couldn't start a new thread."));
+        .catch(() => toast.error(t("Couldn't start a new thread.")));
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [agentId, canWrite, navigate, startSession]);
+  }, [agentId, canWrite, navigate, startSession, t]);
 }

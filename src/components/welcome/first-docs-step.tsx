@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { formatFileSize } from "@/lib/file-size";
 import { KNOWLEDGE_TEMPLATES, type KnowledgeTemplate } from "@/lib/knowledge-templates";
 import { useAgentsStore, type Agent } from "@/lib/agents-store";
-import { ACCEPT, ACCEPTED_SUMMARY, validateUpload } from "@/lib/uploads";
+import { ACCEPT, acceptedSummary, validateUpload } from "@/lib/uploads";
 import { cn } from "@/lib/utils";
 
 /**
@@ -81,7 +81,7 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
     try {
       const id = await folder();
       for (const file of list) {
-        const check = validateUpload(file);
+        const check = validateUpload(file, t);
         if (!check.ok) {
           toast.error(check.reason);
           continue;
@@ -183,7 +183,7 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
           <span className="font-medium">
             {busy === "any" ? t("Uploading…") : t("Or drop anything here.")}
           </span>{" "}
-          <span className="text-muted-foreground">{ACCEPTED_SUMMARY}.</span>
+          <span className="text-muted-foreground">{acceptedSummary(t)}.</span>
         </button>
         <Button size="sm" variant="secondary" asChild>
           <Link to="/settings/integrations">{t("Connect Google Drive")}</Link>
@@ -224,7 +224,7 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
               className="flex min-h-11 items-center gap-3 border-b border-hairline last:border-b-0"
             >
               <Chip tone="code">{tpl.filename}</Chip>
-              <span className="min-w-0 flex-1 truncate text-sm">{tpl.blurb}</span>
+              <span className="min-w-0 flex-1 truncate text-sm">{lookup(t, tpl.blurb)}</span>
               <Button
                 variant="ghost"
                 size="sm"

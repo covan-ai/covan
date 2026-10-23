@@ -12,6 +12,7 @@ import { CoachMarkLayer } from "@/components/coach-mark";
 import { AppShell } from "@/components/app-shell";
 import { shellFor } from "@/lib/shell-context";
 import { applyLocale } from "@/i18n/provider";
+import { useTranslation } from "@/i18n";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
@@ -27,6 +28,7 @@ export const Route = createFileRoute("/_authed")({
 const RETRY_AFTER_MS = 3000;
 
 function AuthedLayout() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   /** True while the session could neither be found nor ruled out. */
@@ -154,16 +156,17 @@ function AuthedLayout() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md text-center">
-          <h1 className="text-title-lg font-semibold text-foreground">Can't reach Covan</h1>
+          <h1 className="text-title-lg font-semibold text-foreground">{t("Can't reach Covan")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            You're still signed in — this is a connection problem, not your account. Trying again on
-            its own.
+            {t(
+              "You're still signed in — this is a connection problem, not your account. Trying again on its own.",
+            )}
           </p>
           <button
             onClick={() => setAttempt((n) => n + 1)}
             className="mt-6 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            Try now
+            {t("Try now")}
           </button>
         </div>
       </div>
@@ -178,7 +181,7 @@ function AuthedLayout() {
   if (!session || (isPending && !isError) || redirect) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="text-sm text-muted-foreground">Loading…</div>
+        <div className="text-sm text-muted-foreground">{t("Loading…")}</div>
       </div>
     );
   }

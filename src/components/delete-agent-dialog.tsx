@@ -9,6 +9,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { deleteSummarySentence } from "@/lib/agent-access";
 
@@ -28,6 +29,7 @@ export function DeleteAgentDialog({
   onOpenChange: (open: boolean) => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const { data, isError } = useQuery({
     queryKey: ["agent-delete-summary", agent.id],
     queryFn: () => api.agents.deleteSummary(agent.id),
@@ -38,19 +40,21 @@ export function DeleteAgentDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete {agent.name}?</AlertDialogTitle>
+          <AlertDialogTitle>{t("Delete {{name}}?", { name: agent.name })}</AlertDialogTitle>
           <AlertDialogDescription>
             {data
-              ? deleteSummarySentence(data)
+              ? deleteSummarySentence(data, t)
               : isError
-                ? "Its threads stay readable for 30 days under Recently deleted, then go. Routines pointed at it stop now. The folders it reads are not touched."
-                : "Counting what it takes with it…"}
+                ? t(
+                    "Its threads stay readable for 30 days under Recently deleted, then go. Routines pointed at it stop now. The folders it reads are not touched.",
+                  )
+                : t("Counting what it takes with it…")}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
           <AlertDialogAction variant="danger" onClick={onDelete}>
-            Delete {agent.name}
+            {t("Delete {{name}}", { name: agent.name })}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

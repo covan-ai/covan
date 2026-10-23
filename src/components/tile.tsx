@@ -1,3 +1,4 @@
+import { useLocale } from "@/i18n/provider";
 import { cn } from "@/lib/utils";
 import { monogram } from "@/lib/monogram";
 
@@ -33,6 +34,7 @@ export function Tile({
   letters?: 1 | 2;
   className?: string;
 }) {
+  const locale = useLocale();
   if (imageUrl) {
     return (
       <img src={imageUrl} alt="" className={cn("shrink-0 object-cover", BOX[size], className)} />
@@ -48,7 +50,9 @@ export function Tile({
         className,
       )}
     >
-      {letters === 1 ? label.trim().charAt(0).toUpperCase() || "–" : monogram(label)}
+      {letters === 1
+        ? label.trim().charAt(0).toLocaleUpperCase(locale) || "–"
+        : monogram(label, locale)}
     </span>
   );
 }

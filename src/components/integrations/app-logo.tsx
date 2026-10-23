@@ -1,5 +1,6 @@
 import { useState, type ComponentType } from "react";
 import { monogram } from "@/lib/monogram";
+import { useLocale } from "@/i18n/provider";
 import { cn } from "@/lib/utils";
 
 /**
@@ -68,6 +69,7 @@ export function AppLogo({
   size?: 28 | 32 | 36 | 44;
   className?: string;
 }) {
+  const locale = useLocale();
   const [failed, setFailed] = useState(false);
   const tile = TILE[size];
   const showImage = Boolean(src) && !failed;
@@ -104,7 +106,7 @@ export function AppLogo({
         // A monogram is not a type role, which is why it has no step of its
         // own — it is sized by the tile it sits in. See `TILE`.
         <span className={cn(tile.monogram, "font-semibold tracking-[0.02em]")}>
-          {monogram(name)}
+          {monogram(name, locale)}
         </span>
       )}
     </span>

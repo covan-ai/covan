@@ -7,6 +7,8 @@
 // the three surfaces cannot drift into disagreeing about what an acceptable
 // file is.
 
+import { englishT, type Translate } from "@/i18n";
+
 export const ALLOWED_EXT = [
   "pdf",
   "docx",
@@ -42,7 +44,14 @@ export const MAX_SIZE = 100 * 1024 * 1024;
  * dialog and the chat said "TXT, Markdown, CSV, JSON, PDF" long after Word,
  * PowerPoint and Excel were accepted, so people never tried them.
  */
-export const ACCEPTED_SUMMARY = `PDF, Word, PowerPoint, Excel, Markdown, text and more · up to ${MAX_SIZE / 1024 / 1024} MB each`;
+export function acceptedSummary(t: Translate = englishT): string {
+  return t("PDF, Word, PowerPoint, Excel, Markdown, text and more · up to {{size}} MB each", {
+    size: MAX_SIZE / 1024 / 1024,
+  });
+}
+
+/** The English line, for a caller that has not been translated yet. */
+export const ACCEPTED_SUMMARY = acceptedSummary();
 
 // What the extension list is called when a person has to read it. `markdown` is
 // left out on purpose: it is the same format as `md` and naming both explains
@@ -51,7 +60,7 @@ const SPOKEN_EXT = "pdf, docx, pptx, xlsx, doc, xls, ppt, odt, rtf, md, txt, csv
 
 /** The characters after the last dot, lowercased. "" when there is no dot. */
 export function extOf(name: string): string {
-  const m = name.toLowerCase().match(/\.([a-z0-9]+)$/);
+  const m = name.toLowerCase().match(/\.([a-z0-9]+)$/); // i18n-ignore: an extension
   return m ? m[1] : "";
 }
 
@@ -61,16 +70,26 @@ export type UploadCheck = { ok: true } | { ok: false; reason: string };
  * Decide whether a picked file is worth sending. Reads the name and the size
  * only — the same two things the server can check before it has the bytes.
  */
-export function validateUpload(file: { name: string; size: number }): UploadCheck {
+export function validateUpload(
+  file: { name: string; size: number },
+  t: Translate = englishT,
+): UploadCheck {
   const ext = extOf(file.name);
+  const name = file.name;
   if (!(ALLOWED_EXT as readonly string[]).includes(ext)) {
-    return { ok: false, reason: `${file.name}: unsupported type (${SPOKEN_EXT})` };
+    return {
+      ok: false,
+      reason: t("{{name}}: unsupported type ({{types}})", { name, types: SPOKEN_EXT }),
+    };
   }
   if (file.size === 0) {
-    return { ok: false, reason: `${file.name}: the file is empty` };
+    return { ok: false, reason: t("{{name}}: the file is empty", { name }) };
   }
   if (file.size > MAX_SIZE) {
-    return { ok: false, reason: `${file.name}: too large (max 100 MB)` };
+    return {
+      ok: false,
+      reason: t("{{name}}: too large (max {{size}} MB)", { name, size: MAX_SIZE / 1024 / 1024 }),
+    };
   }
   return { ok: true };
 }

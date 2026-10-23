@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { EmptyPage } from "@/components/empty-page";
 import { RoutineDetail } from "@/components/routines/routine-detail";
 import { api, ApiError } from "@/lib/api-client";
@@ -32,6 +33,7 @@ export function RoutinePage({
   /** Where to go once it is deleted. */
   onDeleted: () => void;
 }) {
+  const { t } = useTranslation();
   const { data: routines = [], isLoading } = useRoutines();
   const { data: runs = [] } = useRoutineRuns(routineId);
   const { data: channels = [] } = useDeliveryChannels();
@@ -50,13 +52,13 @@ export function RoutinePage({
 
   const routine = routines.find((r) => r.id === routineId);
 
-  if (isLoading) return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
+  if (isLoading) return <p className="p-6 text-sm text-muted-foreground">{t("Loading…")}</p>;
 
   if (!routine) {
     return (
       <EmptyPage
-        title="Routine not found"
-        description="It may have been deleted, or the link points at another workspace."
+        title={t("Routine not found")}
+        description={t("It may have been deleted, or the link points at another workspace.")}
         actions={notFoundAction}
       />
     );
@@ -80,18 +82,18 @@ export function RoutinePage({
       await updateRoutine.mutateAsync({ id: routine.id, patch: { status: next } });
       // Resuming also clears consecutive_failures and fires promptly, which is
       // why a routine the engine auto-paused recovers with one click.
-      toast.success(next === "active" ? "Routine resumed" : "Routine paused");
+      toast.success(next === "active" ? t("Routine resumed") : t("Routine paused"));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not update that routine");
+      toast.error(err instanceof ApiError ? err.message : t("Could not update that routine"));
     }
   };
 
   const save = async (patch: UpdateRoutineInput) => {
     try {
       await updateRoutine.mutateAsync({ id: routine.id, patch });
-      toast.success("Routine updated");
+      toast.success(t("Routine updated"));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not update that routine");
+      toast.error(err instanceof ApiError ? err.message : t("Could not update that routine"));
     }
   };
 
@@ -101,30 +103,33 @@ export function RoutinePage({
       if (result.status === "ok") {
         if (result.itemsNew > 0) {
           toast.success(
-            `Delivered · ${result.itemsNew} new item${result.itemsNew === 1 ? "" : "s"}`,
+            t("Delivered · {{count}} new item", {
+              count: result.itemsNew,
+              defaultValue_other: "Delivered · {{count}} new items",
+            }),
           );
         } else {
-          toast.success("Routine executed and delivered");
+          toast.success(t("Routine executed and delivered"));
         }
       } else if (result.status === "skipped") {
-        toast.message("No action needed");
+        toast.message(t("No action needed"));
       } else if (result.status === "waiting") {
-        toast.message("The browser is working — the report is sent when it answers");
+        toast.message(t("The browser is working — the report is sent when it answers"));
       } else {
-        toast.error("That run failed — see the run history for why");
+        toast.error(t("That run failed — see the run history for why"));
       }
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not run that routine");
+      toast.error(err instanceof ApiError ? err.message : t("Could not run that routine"));
     }
   };
 
   const remove = async () => {
     try {
       await deleteRoutine.mutateAsync(routine.id);
-      toast.success("Routine deleted");
+      toast.success(t("Routine deleted"));
       onDeleted();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not delete that routine");
+      toast.error(err instanceof ApiError ? err.message : t("Could not delete that routine"));
     }
   };
 

@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { englishT, type Translate } from "@/i18n";
 import { api, type DocumentJob } from "@/lib/api-client";
 
 /**
@@ -24,20 +25,34 @@ export function isWriting(job: DocumentJob): boolean {
 }
 
 /** Where a document is, in one line, for the card and the panel. */
-export function statusLine(job: DocumentJob): string {
+export function statusLine(job: DocumentJob, t: Translate = englishT): string {
+  const { written } = job;
   switch (job.status) {
     case "queued":
-      return "Planning the sections…";
+      return t("Planning the sections…");
     case "writing":
-      return `Writing — ${job.written} of ${job.total} sections`;
+      return t("Writing — {{written}} of {{count}} section", {
+        written,
+        count: job.total,
+        defaultValue_other: "Writing — {{written}} of {{count}} sections",
+      });
     case "filing":
-      return "Filing it in the reports bundle…";
+      return t("Filing it in the reports bundle…");
     case "ready":
-      return job.total > 0 ? `Ready — ${job.total} sections` : "Ready";
+      return job.total > 0
+        ? t("Ready — {{count}} section", {
+            count: job.total,
+            defaultValue_other: "Ready — {{count}} sections",
+          })
+        : t("Ready");
     case "stopped":
-      return `Stopped at ${job.written} of ${job.total} sections`;
+      return t("Stopped at {{written}} of {{count}} section", {
+        written,
+        count: job.total,
+        defaultValue_other: "Stopped at {{written}} of {{count}} sections",
+      });
     case "failed":
-      return job.error ?? "This document could not be finished.";
+      return job.error ?? t("This document could not be finished.");
   }
 }
 

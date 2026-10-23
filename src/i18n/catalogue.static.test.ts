@@ -26,7 +26,7 @@ function read(name: string): Catalogue {
   return JSON.parse(readFileSync(join(dir, name), "utf8")) as Catalogue;
 }
 
-const PLURAL = /^(.*)_(ordinal_)?(zero|one|two|few|many|other)$/;
+const PLURAL = /^(.*?)_(ordinal_)?(zero|one|two|few|many|other)$/;
 const CONTEXT = /^(.*)_([a-z][a-zA-Z0-9]*)$/;
 const PLACEHOLDER = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
 
@@ -88,7 +88,23 @@ describe("the catalogues", () => {
       });
 
       it("has a Turkish value for every English key", () => {
-        const missing = Object.keys(en).filter((key) => !tr[key]);
+        // A plural form Turkish does not have is not missing: English says
+        // "1st, 2nd, 3rd", Turkish only "1.", so en.json has `_ordinal_one`,
+        // `_two` and `_few` and tr.json, by the parser's own rules, has only
+        // `_ordinal_other`. The forms Turkish uses are asked for by name.
+        const turkishForms = new Set([
+          ...new Intl.PluralRules("tr").resolvedOptions().pluralCategories,
+        ]);
+        const turkishOrdinals = new Set([
+          ...new Intl.PluralRules("tr", { type: "ordinal" }).resolvedOptions().pluralCategories,
+        ]);
+        const missing = Object.keys(en).filter((key) => {
+          if (tr[key]) return false;
+          const plural = PLURAL.exec(key);
+          if (!plural) return true;
+          const forms = plural[2] ? turkishOrdinals : turkishForms;
+          return forms.has(plural[3] as Intl.LDMLPluralRule);
+        });
         expect(missing).toEqual([]);
       });
 

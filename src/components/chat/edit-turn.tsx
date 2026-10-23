@@ -1,6 +1,7 @@
 import { Textarea } from "@/components/ui/textarea";
 import { useAutoGrow } from "@/lib/use-auto-grow";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 
 /**
  * A past question, open for editing.
@@ -30,6 +31,7 @@ export function EditTurn({
   /** How much air goes above this turn. See `gapBefore`. */
   className?: string;
 }) {
+  const { t } = useTranslation();
   const ref = useAutoGrow<HTMLTextAreaElement>(value);
   return (
     <div className={cn("flex flex-col items-end gap-1.5", className)}>
@@ -58,7 +60,7 @@ export function EditTurn({
           }}
           rows={1}
           autoFocus
-          aria-label="Edit your message"
+          aria-label={t("Edit your message")}
           className="max-h-60 min-h-[40px] resize-none overflow-y-auto border-0 bg-transparent p-1.5 text-sm shadow-none focus-visible:ring-0"
         />
         <div className="flex justify-end gap-1.5 pt-1">
@@ -66,14 +68,14 @@ export function EditTurn({
             onClick={onCancel}
             className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             onClick={onSave}
             disabled={!value.trim()}
             className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
           >
-            Save & send
+            {t("Save & send")}
           </button>
         </div>
       </div>

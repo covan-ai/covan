@@ -3,6 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
+import { lookup, msg, Trans, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { AgentMark } from "@/components/agent-mark";
 import { Chip } from "@/components/chip";
 import { EventPicker } from "@/components/routines/event-picker";
@@ -90,6 +92,17 @@ function Row({
   );
 }
 
+/** What the bar says is still missing, as keys (`msg`). */
+const NEEDS = {
+  name: msg("a name"),
+  agent: msg("an agent"),
+  instructions: msg("instructions"),
+  delivery: msg("somewhere to deliver"),
+  schedule: msg("a schedule"),
+  event: msg("an event"),
+  connection: msg("a connected source"),
+};
+
 function Hint({ children }: { children: ReactNode }) {
   return <p className="mt-1.5 text-meta leading-[1.45] text-muted-foreground">{children}</p>;
 }
@@ -130,6 +143,8 @@ export function RoutineEditor({
   cancelTo: string;
   onSaved: (id: string) => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { agents, bundles } = useAgentsStore();
   const { data: channels = [] } = useDeliveryChannels();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
@@ -147,7 +162,9 @@ export function RoutineEditor({
   const [sourceKind] = useState<RoutineSourceKind | CreatableSourceKind>(
     routine?.sourceKind ?? template?.draft.sourceKind ?? "none",
   );
-  const [name, setName] = useState(routine?.name ?? template?.draft.name ?? "");
+  const [name, setName] = useState(
+    routine?.name ?? (template ? lookup(t, template.draft.name) : ""),
+  );
   // Derived until picked: the agents may arrive a beat after the page.
   const [pickedAgent, setAgentId] = useState(routine?.agentId ?? initialAgentId ?? "");
   const agentId = pickedAgent || agents[0]?.id || "";
@@ -229,15 +246,17 @@ export function RoutineEditor({
 
   const problems = useMemo(() => {
     const list: string[] = [];
-    if (!name.trim()) list.push("a name");
-    if (!agentId) list.push("an agent");
-    if (!instruction.trim()) list.push("instructions");
-    if (!canDeliver) list.push("somewhere to deliver");
+    if (!name.trim()) list.push(NEEDS.name);
+    if (!agentId) list.push(NEEDS.agent);
+    if (!instruction.trim()) list.push(NEEDS.instructions);
+    if (!canDeliver) list.push(NEEDS.delivery);
     if (needsSchedule && (cron.trim() === "" || scheduleError(cron) !== null)) {
-      list.push("a schedule");
+      list.push(NEEDS.schedule);
     }
-    if (isEvent && !routine && !eventChoiceReady(eventCatalog, eventChoice)) list.push("an event");
-    if (runs === "connection" && !routine && !connectionId) list.push("a connected source");
+    if (isEvent && !routine && !eventChoiceReady(eventCatalog, eventChoice)) {
+      list.push(NEEDS.event);
+    }
+    if (runs === "connection" && !routine && !connectionId) list.push(NEEDS.connection);
     return list;
   }, [
     name,
@@ -269,8 +288,8 @@ export function RoutineEditor({
     } catch (err) {
       toast.error(
         err instanceof ApiError && err.status === 503
-          ? `${err.message} Fill it in below instead.`
-          : "Couldn't read that one — fill it in below instead.",
+          ? t("{{message}} Fill it in below instead.", { message: err.message })
+          : t("Couldn't read that one — fill it in below instead."),
       );
     } finally {
       setDrafting(false);
@@ -296,7 +315,7 @@ export function RoutineEditor({
         });
         await api.routines.setChannels(routine.id, others);
         setDirty(false);
-        toast.success("Routine saved");
+        toast.success(t("Routine saved"));
         onSaved(routine.id);
         return;
       }
@@ -327,17 +346,19 @@ export function RoutineEditor({
       if (others.length > 0) await api.routines.setChannels(created.id, others);
       toast.success(
         created.confirmation
-          ? "Routine saved. We've emailed that address a link — nothing is sent there until it's confirmed."
-          : "Routine saved",
+          ? t(
+              "Routine saved. We've emailed that address a link — nothing is sent there until it's confirmed.",
+            )
+          : t("Routine saved"),
       );
       onSaved(created.id);
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Could not save that routine";
+      const message = err instanceof ApiError ? err.message : t("Could not save that routine");
       toast.error(
         message.includes("unusable schedule")
-          ? "That schedule can't be read. Try 0 9 * * * for every day at 09:00."
+          ? t("That schedule can't be read. Try 0 9 * * * for every day at 09:00.")
           : message === "not an email address"
-            ? "That doesn't look like an email address."
+            ? t("That doesn't look like an email address.")
             : message,
       );
     }
@@ -348,38 +369,46 @@ export function RoutineEditor({
     setTesting(true);
     try {
       const result = await api.routines.test(routine.id);
-      if (result.status === "failed") toast.error("The test run failed — see its thread for why");
-      else toast.success("The test ran — its thread is in your Inbox");
+      if (result.status === "failed")
+        toast.error(t("The test run failed — see its thread for why"));
+      else toast.success(t("The test ran — its thread is in your Inbox"));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not run a test");
+      toast.error(err instanceof ApiError ? err.message : t("Could not run a test"));
     } finally {
       setTesting(false);
     }
   };
 
   const money = (n: number) =>
-    estimate?.unit === "usd" ? `$${n.toFixed(2)}` : n.toLocaleString("en-US");
+    estimate?.unit === "usd"
+      ? new Intl.NumberFormat(locale, {
+          style: "currency",
+          currency: "USD",
+          currencyDisplay: "narrowSymbol",
+        }).format(n)
+      : n.toLocaleString(locale);
+  const agentName = agent?.name;
 
   return (
     <div className="flex min-h-full flex-col">
       <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-1.5 lg:px-6">
         <h2 className="m-0 min-w-0 truncate text-lead font-semibold">
-          {routine ? routine.name : "New routine"}
+          {routine ? routine.name : t("New routine")}
         </h2>
         <span className="text-meta text-muted-foreground">
-          {!routine || dirty ? "Unsaved" : "Saved"}
+          {!routine || dirty ? t("Unsaved") : t("Saved")}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <Button asChild variant="secondary">
-            <Link to={cancelTo}>Cancel</Link>
+            <Link to={cancelTo}>{t("Cancel")}</Link>
           </Button>
           {routine && (
             <Button variant="secondary" onClick={() => void test()} disabled={testing || dirty}>
-              {testing ? "Testing…" : "Run a test"}
+              {testing ? t("Testing…") : t("Run a test")}
             </Button>
           )}
           <Button onClick={() => void save()} disabled={problems.length > 0 || saving}>
-            {saving ? "Saving…" : "Save routine"}
+            {saving ? t("Saving…") : t("Save routine")}
           </Button>
         </div>
       </div>
@@ -387,12 +416,12 @@ export function RoutineEditor({
       <div className="px-4 pt-2 pb-12 lg:px-8">
         <div className="max-w-[760px]">
           {!routine && (
-            <Row label="Start from a sentence" htmlFor="routine-prose">
+            <Row label={t("Start from a sentence")} htmlFor="routine-prose">
               <div className="flex max-w-[560px] gap-2">
                 <Input
                   id="routine-prose"
                   value={prose}
-                  placeholder="Every Monday at 9, summarise last week's tickets for the team."
+                  placeholder={t("Every Monday at 9, summarise last week's tickets for the team.")}
                   onChange={(e) => setProse(e.target.value)}
                 />
                 <Button
@@ -400,14 +429,16 @@ export function RoutineEditor({
                   onClick={() => void draft()}
                   disabled={!prose.trim() || drafting}
                 >
-                  {drafting ? "Reading…" : "Fill in"}
+                  {drafting ? t("Reading…") : t("Fill in")}
                 </Button>
               </div>
-              <Hint>Optional. It fills in the fields below; you check them before saving.</Hint>
+              <Hint>
+                {t("Optional. It fills in the fields below; you check them before saving.")}
+              </Hint>
             </Row>
           )}
 
-          <Row label="Name" htmlFor="routine-name">
+          <Row label={t("Name")} htmlFor="routine-name">
             <Input
               id="routine-name"
               className="max-w-[420px]"
@@ -419,7 +450,7 @@ export function RoutineEditor({
             />
           </Row>
 
-          <Row label="Agent">
+          <Row label={t("Agent")}>
             <Select
               value={agentId}
               disabled={!!routine}
@@ -428,8 +459,8 @@ export function RoutineEditor({
                 touch();
               }}
             >
-              <SelectTrigger aria-label="Agent" className="max-w-[420px]">
-                <SelectValue placeholder="Pick an agent" />
+              <SelectTrigger aria-label={t("Agent")} className="max-w-[420px]">
+                <SelectValue placeholder={t("Pick an agent")} />
               </SelectTrigger>
               <SelectContent>
                 {agents.map((a) => (
@@ -444,16 +475,19 @@ export function RoutineEditor({
             </Select>
             {agent && (
               <Hint>
-                Runs with the agent&rsquo;s model, tools and knowledge.{" "}
+                {t("Runs with the agent’s model, tools and knowledge.")}{" "}
                 {readsFolders.length > 0
-                  ? `${agent.name} reads ${readsFolders.join(", ")}.`
-                  : `${agent.name} reads no folders yet.`}
+                  ? t("{{agent}} reads {{folders}}.", {
+                      agent: agent.name,
+                      folders: readsFolders.join(", "),
+                    })
+                  : t("{{agent}} reads no folders yet.", { agent: agent.name })}
               </Hint>
             )}
           </Row>
 
           {sourceKind !== "workspace" && (
-            <Row label="Runs">
+            <Row label={t("Runs")}>
               <Select
                 value={runs}
                 disabled={!!routine}
@@ -462,15 +496,15 @@ export function RoutineEditor({
                   touch();
                 }}
               >
-                <SelectTrigger aria-label="Runs" className="max-w-[420px]">
+                <SelectTrigger aria-label={t("Runs")} className="max-w-[420px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="schedule">On a schedule</SelectItem>
-                  <SelectItem value="event">When an app event happens</SelectItem>
-                  <SelectItem value="webhook">On a webhook</SelectItem>
+                  <SelectItem value="schedule">{t("On a schedule")}</SelectItem>
+                  <SelectItem value="event">{t("When an app event happens")}</SelectItem>
+                  <SelectItem value="webhook">{t("On a webhook")}</SelectItem>
                   {(usableConnections.length > 0 || runs === "connection") && (
-                    <SelectItem value="connection">From a connected source</SelectItem>
+                    <SelectItem value="connection">{t("From a connected source")}</SelectItem>
                   )}
                 </SelectContent>
               </Select>
@@ -484,19 +518,20 @@ export function RoutineEditor({
                         setAlsoSchedule(on);
                         touch();
                       }}
-                      aria-label="Also on its schedule"
+                      aria-label={t("Also on its schedule")}
                     />
-                    Also on its schedule
+                    {t("Also on its schedule")}
                   </label>
                   <Hint>
-                    You get a URL to paste into whatever should start it once it is saved, and
-                    whatever it POSTs is what the agent reads.
+                    {t(
+                      "You get a URL to paste into whatever should start it once it is saved, and whatever it POSTs is what the agent reads.",
+                    )}
                   </Hint>
                 </>
               )}
               {isEvent &&
                 (routine ? (
-                  <Hint>The event it listens for is set on the routine&rsquo;s page.</Hint>
+                  <Hint>{t("The event it listens for is set on the routine’s page.")}</Hint>
                 ) : (
                   <div className="mt-3">
                     <EventPicker
@@ -519,8 +554,8 @@ export function RoutineEditor({
                       touch();
                     }}
                   >
-                    <SelectTrigger aria-label="Connected source" className="max-w-[420px]">
-                      <SelectValue placeholder="Pick a connection" />
+                    <SelectTrigger aria-label={t("Connected source")} className="max-w-[420px]">
+                      <SelectValue placeholder={t("Pick a connection")} />
                     </SelectTrigger>
                     <SelectContent>
                       {usableConnections.map((c) => (
@@ -532,8 +567,9 @@ export function RoutineEditor({
                     </SelectContent>
                   </Select>
                   <Hint>
-                    It reports what the connection has already synced, so it sees a change no sooner
-                    than the next sync does.
+                    {t(
+                      "It reports what the connection has already synced, so it sees a change no sooner than the next sync does.",
+                    )}
                   </Hint>
                 </div>
               )}
@@ -541,7 +577,7 @@ export function RoutineEditor({
           )}
 
           {needsSchedule && (
-            <Row label="Schedule">
+            <Row label={t("Schedule")}>
               <SchedulePicker
                 value={cron}
                 onChange={(c) => {
@@ -557,7 +593,7 @@ export function RoutineEditor({
             </Row>
           )}
 
-          <Row label="Instructions" htmlFor="routine-instruction">
+          <Row label={t("Instructions")} htmlFor="routine-instruction">
             <Textarea
               id="routine-instruction"
               className="min-h-[110px]"
@@ -568,16 +604,17 @@ export function RoutineEditor({
               }}
             />
             <Hint>
-              Write it as you would to a colleague. The agent reads this and nothing else at the
-              start of each run.
+              {t(
+                "Write it as you would to a colleague. The agent reads this and nothing else at the start of each run.",
+              )}
             </Hint>
           </Row>
 
-          <Row label="Delivers to">
+          <Row label={t("Delivers to")}>
             <div className="flex flex-col gap-2.5">
               {sourceKind !== "workspace" && (
                 <DeliveryRow
-                  label="Knowledge"
+                  label={t("Knowledge")}
                   on={fileTo !== null}
                   onToggle={(on) => {
                     setFileTo(on ? (bundles[0]?.id ?? null) : null);
@@ -593,8 +630,8 @@ export function RoutineEditor({
                       touch();
                     }}
                   >
-                    <SelectTrigger aria-label="Folder to file it in">
-                      <SelectValue placeholder="Pick a folder" />
+                    <SelectTrigger aria-label={t("Folder to file it in")}>
+                      <SelectValue placeholder={t("Pick a folder")} />
                     </SelectTrigger>
                     <SelectContent>
                       {bundles.map((b) => (
@@ -608,7 +645,7 @@ export function RoutineEditor({
               )}
 
               <DeliveryRow
-                label="Email"
+                label={t("Email")}
                 on={emails.length > 0 || (channels.length === 0 && newAddress !== "")}
                 onToggle={(on) => {
                   setEmailIds(on && emailChannels[0] ? [emailChannels[0].id] : []);
@@ -619,8 +656,8 @@ export function RoutineEditor({
                 {channels.length === 0 && !routine ? (
                   <Input
                     type="email"
-                    aria-label="Email address"
-                    placeholder={me?.user.email ?? "you@company.com"}
+                    aria-label={t("Email address")}
+                    placeholder={me?.user.email ?? t("you@company.com")}
                     value={newEmail}
                     onChange={(e) => {
                       setNewEmail(e.target.value);
@@ -629,25 +666,32 @@ export function RoutineEditor({
                   />
                 ) : (
                   <div className="flex min-h-8 flex-wrap items-center gap-1.5 rounded-md border border-input px-2 py-1">
-                    {emails.map((id) => (
-                      <Chip key={id} className="pr-1">
-                        {emailChannels.find((c) => c.id === id)?.label ?? "An address"}
-                        <button
-                          type="button"
-                          aria-label={`Stop sending to ${emailChannels.find((c) => c.id === id)?.label ?? "this address"}`}
-                          onClick={() => {
-                            setEmailIds(emails.filter((x) => x !== id));
-                            touch();
-                          }}
-                          className="grid size-4 place-items-center rounded-sm text-muted-foreground hover:text-foreground"
-                        >
-                          <X className="size-3" />
-                        </button>
-                      </Chip>
-                    ))}
+                    {emails.map((id) => {
+                      const address = emailChannels.find((c) => c.id === id)?.label;
+                      return (
+                        <Chip key={id} className="pr-1">
+                          {address ?? t("An address")}
+                          <button
+                            type="button"
+                            aria-label={
+                              address
+                                ? t("Stop sending to {{address}}", { address })
+                                : t("Stop sending to this address")
+                            }
+                            onClick={() => {
+                              setEmailIds(emails.filter((x) => x !== id));
+                              touch();
+                            }}
+                            className="grid size-4 place-items-center rounded-sm text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </Chip>
+                      );
+                    })}
                     <DropdownMenu>
                       <DropdownMenuTrigger className="inline-flex h-6 items-center gap-1 rounded-sm px-1.5 text-meta text-muted-foreground hover:text-foreground">
-                        <Plus className="size-3.5" /> Add…
+                        <Plus className="size-3.5" /> {t("Add…")}
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-64">
                         {emailChannels
@@ -663,14 +707,14 @@ export function RoutineEditor({
                               {c.label}
                               {!c.confirmed && (
                                 <span className="ml-auto text-xs text-muted-foreground">
-                                  not confirmed
+                                  {t("not confirmed")}
                                 </span>
                               )}
                             </DropdownMenuItem>
                           ))}
                         {emailChannels.length > emails.length && <DropdownMenuSeparator />}
                         <DropdownMenuItem asChild>
-                          <Link to="/settings/preferences">Add an address in Settings…</Link>
+                          <Link to="/settings/preferences">{t("Add an address in Settings…")}</Link>
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -679,7 +723,7 @@ export function RoutineEditor({
               </DeliveryRow>
 
               <DeliveryRow
-                label="Slack"
+                label={t("Slack")}
                 on={slack !== null}
                 onToggle={(on) => {
                   setSlackId(on ? (slackChannels[0]?.id ?? null) : null);
@@ -689,11 +733,18 @@ export function RoutineEditor({
               >
                 {slackChannels.length === 0 ? (
                   <span className="text-meta text-muted-foreground">
-                    Add a Slack channel in{" "}
-                    <Link to="/settings/preferences" className="underline underline-offset-2">
-                      Settings
-                    </Link>
-                    .
+                    <Trans
+                      t={t}
+                      i18nKey="Add a Slack channel in <a>Settings</a>."
+                      components={{
+                        a: (
+                          <Link
+                            to="/settings/preferences"
+                            className="underline underline-offset-2"
+                          />
+                        ),
+                      }}
+                    />
                   </span>
                 ) : (
                   <Select
@@ -704,8 +755,8 @@ export function RoutineEditor({
                       touch();
                     }}
                   >
-                    <SelectTrigger aria-label="Slack channel">
-                      <SelectValue placeholder="Pick a channel" />
+                    <SelectTrigger aria-label={t("Slack channel")}>
+                      <SelectValue placeholder={t("Pick a channel")} />
                     </SelectTrigger>
                     <SelectContent>
                       {slackChannels.map((c) => (
@@ -719,7 +770,7 @@ export function RoutineEditor({
               </DeliveryRow>
 
               <DeliveryRow
-                label="Inbox"
+                label={t("Inbox")}
                 wide
                 on={inbox}
                 onToggle={(on) => {
@@ -728,13 +779,17 @@ export function RoutineEditor({
                 }}
               >
                 <span className="text-meta text-muted-foreground">
-                  Everyone who can use {agent?.name ?? "the agent"} sees the result as a message.
+                  {agentName
+                    ? t("Everyone who can use {{agent}} sees the result as a message.", {
+                        agent: agentName,
+                      })
+                    : t("Everyone who can use the agent sees the result as a message.")}
                 </span>
               </DeliveryRow>
             </div>
           </Row>
 
-          <Row label="Model">
+          <Row label={t("Model")}>
             <div className="flex flex-wrap gap-2">
               <Select
                 value={model ?? AGENT_DEFAULT}
@@ -743,20 +798,20 @@ export function RoutineEditor({
                   touch();
                 }}
               >
-                <SelectTrigger aria-label="Model" className="w-auto gap-1.5">
+                <SelectTrigger aria-label={t("Model")} className="w-auto gap-1.5">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={AGENT_DEFAULT}>
-                    Agent default · {modelLabel(agent?.model ?? "")}
+                    {t("Agent default · {{model}}", { model: modelLabel(agent?.model ?? "", t) })}
                   </SelectItem>
-                  {tiers.map((t) => (
-                    <SelectItem key={t.model} value={t.model}>
-                      {t.label}
+                  {tiers.map((tier) => (
+                    <SelectItem key={tier.model} value={tier.model}>
+                      {lookup(t, tier.label)}
                     </SelectItem>
                   ))}
                   {served
-                    .filter((m) => !tiers.some((t) => t.model === m))
+                    .filter((m) => !tiers.some((tier) => tier.model === m))
                     .map((m) => (
                       <SelectItem key={m} value={m}>
                         {m}
@@ -772,15 +827,15 @@ export function RoutineEditor({
                     touch();
                   }}
                 >
-                  <SelectTrigger aria-label="Thinking" className="w-auto gap-1.5">
+                  <SelectTrigger aria-label={t("Thinking")} className="w-auto gap-1.5">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={AUTO}>Thinking · Auto</SelectItem>
-                    <SelectItem value="minimal">Thinking · Off</SelectItem>
+                    <SelectItem value={AUTO}>{t("Thinking · Auto")}</SelectItem>
+                    <SelectItem value="minimal">{t("Thinking · Off")}</SelectItem>
                     {DIAL_EFFORTS.map((level) => (
                       <SelectItem key={level} value={level}>
-                        Thinking · {effortWord(level)}
+                        {t("Thinking · {{level}}", { level: effortWord(level, t) })}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -790,28 +845,49 @@ export function RoutineEditor({
           </Row>
 
           {estimate && estimate.low !== null && estimate.high !== null && (
-            <Row label="Estimate" last>
+            <Row label={t("Estimate")} last>
               <div className="pt-1.5 text-sm font-medium">
-                About {money(estimate.low)} to {money(estimate.high)}{" "}
-                {estimate.unit === "usd" ? "per run" : "credits per run"}
+                {estimate.unit === "usd"
+                  ? t("About {{low}} to {{high}} per run", {
+                      low: money(estimate.low),
+                      high: money(estimate.high),
+                    })
+                  : t("About {{low}} to {{high}} credits per run", {
+                      low: money(estimate.low),
+                      high: money(estimate.high),
+                    })}
                 {estimate.runsPerMonth !== null
-                  ? ` · ${estimate.runsPerMonth} ${estimate.runsPerMonth === 1 ? "run" : "runs"} a month`
+                  ? ` · ${t("{{count}} run a month", {
+                      count: estimate.runsPerMonth,
+                      defaultValue_other: "{{count}} runs a month",
+                    })}`
                   : ""}
               </div>
               <Hint>
                 {estimate.basedOn?.kind === "routine"
-                  ? `Based on ${estimate.basedOn.name}, which ${agent?.name ?? "this agent"} already runs.`
+                  ? agentName
+                    ? t("Based on {{routine}}, which {{agent}} already runs.", {
+                        routine: estimate.basedOn.name,
+                        agent: agentName,
+                      })
+                    : t("Based on {{routine}}, which this agent already runs.", {
+                        routine: estimate.basedOn.name,
+                      })
                   : estimate.basedOn?.kind === "replies"
-                    ? `Based on what ${agent?.name ?? "this agent"}'s replies cost.`
+                    ? agentName
+                      ? t("Based on what {{agent}}'s replies cost.", { agent: agentName })
+                      : t("Based on what this agent's replies cost.")
                     : null}{" "}
-                A test run costs the same and goes only to you.
+                {t("A test run costs the same and goes only to you.")}
               </Hint>
             </Row>
           )}
 
           {problems.length > 0 && dirty && (
             <p className="mt-4 text-meta text-muted-foreground">
-              Still needs {problems.join(", ")}.
+              {t("Still needs {{things}}.", {
+                things: problems.map((p) => lookup(t, p)).join(", "),
+              })}
             </p>
           )}
         </div>
@@ -837,13 +913,14 @@ function DeliveryRow({
   wide?: boolean;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center gap-2.5">
       <Switch
         checked={on}
         disabled={disabled}
         onCheckedChange={onToggle}
-        aria-label={`Deliver to ${label}`}
+        aria-label={t("Deliver to {{place}}", { place: label })}
       />
       <span className="w-[110px] shrink-0 text-sm">{label}</span>
       <div className={cn("min-w-0 flex-1", !wide && "max-w-[320px]")}>{children}</div>

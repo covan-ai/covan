@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useTranslation } from "@/i18n";
+import { lookup, useTranslation } from "@/i18n";
 import { AGENT_MARKS, AgentMarkPicker } from "@/components/agent-mark";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
 import { Button } from "@/components/ui/button";
@@ -203,7 +203,7 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
               <SelectContent>
                 {NEW_AGENT_SHARING.map((choice) => (
                   <SelectItem key={choice} value={choice}>
-                    {choice === "only" ? t("Only me") : NEW_AGENT_SHARING_LABEL[choice]}
+                    {choice === "only" ? t("Only me") : lookup(t, NEW_AGENT_SHARING_LABEL[choice])}
                   </SelectItem>
                 ))}
               </SelectContent>

@@ -7,6 +7,8 @@ import {
   type ReplyPrice,
 } from "@/lib/agent-meta";
 import { Disclosure } from "@/components/disclosure";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /**
  * The price beside a model's name in a picker.
@@ -25,10 +27,12 @@ import { Disclosure } from "@/components/disclosure";
  * is unknown by design, and a blank is the honest shape of that.
  */
 export function ModelCost({ price }: { price: ReplyPrice | null }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   if (price === null) return null;
   return (
     <span className="ml-3 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-      {formatReplyPrice(price)}
+      {formatReplyPrice(price, t, locale)}
     </span>
   );
 }

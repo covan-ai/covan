@@ -1,3 +1,4 @@
+import { msg } from "@/i18n";
 import type { CreatableSourceKind } from "./routines-api";
 
 /**
@@ -33,12 +34,14 @@ import type { CreatableSourceKind } from "./routines-api";
 export type RoutineTemplate = {
   /** Stable, and the `?template=` value in a URL — renaming one breaks a link. */
   id: string;
+  /** A key (`msg`): drawn with `lookup(t, …)`. */
   label: string;
-  /** One line under the label. What arrives, not how it works. */
+  /** One line under the label. What arrives, not how it works. A key, like `label`. */
   blurb: string;
 
   /** Exactly the fields step 2 holds. */
   draft: {
+    /** A key (`msg`): the editor fills its Name field with `lookup(t, …)`. */
     name: string;
     sourceKind: CreatableSourceKind;
     instruction: string;
@@ -97,10 +100,10 @@ export const GAP_REPORT_MIN_MEMBERS = 3;
 export const ROUTINE_TEMPLATES: RoutineTemplate[] = [
   {
     id: "first-week",
-    label: "Somebody's first week",
-    blurb: "One note each morning for a week, from what the team has written down.",
+    label: msg("Somebody's first week"),
+    blurb: msg("One note each morning for a week, from what the team has written down."),
     draft: {
-      name: "First week",
+      name: msg("First week"),
       sourceKind: "none",
       scheduleCron: "0 9 * * *",
       channelKind: "email",
@@ -128,10 +131,10 @@ Write it as a short note to one new person: what it is, why it matters here, and
   },
   {
     id: "gap-report",
-    label: "What nobody wrote down",
-    blurb: "Weekly: the topics your team asked about that no document covered.",
+    label: msg("What nobody wrote down"),
+    blurb: msg("Weekly: the topics your team asked about that no document covered."),
     draft: {
-      name: "Coverage gaps",
+      name: msg("Coverage gaps"),
       sourceKind: "workspace",
       scheduleCron: "0 9 * * 1",
       channelKind: "email",
@@ -189,7 +192,7 @@ export function unmetRequirements(
 }
 
 /**
- * What to say instead of offering it.
+ * What to say instead of offering it — a key (`msg`), drawn with `lookup(t, …)`.
  *
  * Shown with the card rather than in place of it: hiding a template means
  * nobody learns it exists, and "an admin can turn this on" is a useful
@@ -198,13 +201,21 @@ export function unmetRequirements(
 export function requirementReason(requirement: TemplateRequirement): string {
   switch (requirement) {
     case "documents":
-      return "Upload something to this agent first — the series covers what the team has written down, and there is nothing to cover yet.";
+      return msg(
+        "Upload something to this agent first — the series covers what the team has written down, and there is nothing to cover yet.",
+      );
     case "admin":
-      return "Only an admin of this workspace can set this one up, because it reads across conversations an admin cannot otherwise see.";
+      return msg(
+        "Only an admin of this workspace can set this one up, because it reads across conversations an admin cannot otherwise see.",
+      );
     case "gapReport":
-      return "An admin has to turn the coverage report on in Settings before a routine can read it.";
+      return msg(
+        "An admin has to turn the coverage report on in Settings before a routine can read it.",
+      );
     case "enoughPeople":
-      return "Not available for a workspace of exactly two — any topic the report named would tell one of you about the other, and no setting changes that. One person alone is fine: there is nobody to protect from.";
+      return msg(
+        "Not available for a workspace of exactly two — any topic the report named would tell one of you about the other, and no setting changes that. One person alone is fine: there is nobody to protect from.",
+      );
     default:
       return assertNever(requirement);
   }

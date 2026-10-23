@@ -1,3 +1,5 @@
+import { i18n } from "@/i18n";
+
 /** What the photo is stored at: square, and twice the largest tile it fills. */
 export const AVATAR_SIZE = 256;
 
@@ -15,20 +17,23 @@ const MAX_SOURCE_BYTES = 10 * 1024 * 1024;
  * WebP where the browser can encode it, JPEG where it cannot — `toBlob` falls
  * back to PNG silently for a type it does not support, so the result's type is
  * checked rather than trusted.
+ *
+ * The errors are what the profile form shows, so they are worded — in the
+ * page's language, read at the moment they are thrown.
  */
 export async function resizeAvatar(file: File): Promise<Blob> {
   if (!file.type.startsWith("image/")) {
-    throw new Error("Pick an image file.");
+    throw new Error(i18n.t("Pick an image file."));
   }
   if (file.size > MAX_SOURCE_BYTES) {
-    throw new Error("That image is over 10 MB. Pick a smaller one.");
+    throw new Error(i18n.t("That image is over 10 MB. Pick a smaller one."));
   }
 
   let bitmap: ImageBitmap;
   try {
     bitmap = await createImageBitmap(file);
   } catch {
-    throw new Error("That image could not be read.");
+    throw new Error(unreadable());
   }
 
   const side = Math.min(bitmap.width, bitmap.height);
@@ -39,7 +44,7 @@ export async function resizeAvatar(file: File): Promise<Blob> {
   canvas.width = AVATAR_SIZE;
   canvas.height = AVATAR_SIZE;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("That image could not be read.");
+  if (!ctx) throw new Error(unreadable());
   ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
   bitmap.close();
 
@@ -50,5 +55,9 @@ export async function resizeAvatar(file: File): Promise<Blob> {
   if (webp && webp.type === "image/webp") return webp;
   const jpeg = await encode("image/jpeg", 0.88);
   if (jpeg) return jpeg;
-  throw new Error("That image could not be read.");
+  throw new Error(unreadable());
+}
+
+function unreadable(): string {
+  return i18n.t("That image could not be read.");
 }

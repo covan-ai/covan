@@ -1,4 +1,5 @@
 import { Link, Outlet, createFileRoute } from "@tanstack/react-router";
+import { useTranslation } from "@/i18n";
 import { useAgentsStore } from "@/lib/agents-store";
 import { Button } from "@/components/ui/button";
 import { EmptyWell } from "@/components/empty-page";
@@ -14,6 +15,7 @@ export const Route = createFileRoute("/_authed/agents/$agentId")({
  * expands this agent in the sidebar from the path.
  */
 function AgentLayout() {
+  const { t } = useTranslation();
   const { agentId } = Route.useParams();
   const { agents } = useAgentsStore();
   const agent = agents.find((a) => a.id === agentId);
@@ -25,11 +27,11 @@ function AgentLayout() {
             both: an agent you cannot see and one that does not exist look the
             same from here, and saying which would say it exists. */}
         <EmptyWell
-          title="Agent not found"
-          description="This agent was deleted or isn't shared with you."
+          title={t("Agent not found")}
+          description={t("This agent was deleted or isn't shared with you.")}
           actions={
             <Button asChild variant="secondary">
-              <Link to="/app">Back to home</Link>
+              <Link to="/app">{t("Back to home")}</Link>
             </Button>
           }
         />

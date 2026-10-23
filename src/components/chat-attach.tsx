@@ -4,6 +4,8 @@ import { Chip } from "@/components/chip";
 import { ACCEPT } from "@/lib/uploads";
 import type { ChatUploads } from "@/lib/use-chat-uploads";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /**
  * The file picker behind the composer's "+ › Attach a file" (A2), and behind
@@ -23,6 +25,7 @@ export function AttachInput({
   canWrite: boolean;
   inputRef: RefObject<HTMLInputElement | null>;
 }) {
+  const { t } = useTranslation();
   if (!canWrite) return null;
   return (
     <input
@@ -30,7 +33,7 @@ export function AttachInput({
       type="file"
       multiple
       accept={ACCEPT}
-      aria-label="Choose documents to attach"
+      aria-label={t("Choose documents to attach")}
       className="hidden"
       onChange={(e) => {
         const files = Array.from(e.target.files ?? []);
@@ -52,6 +55,8 @@ export function AttachInput({
  * after seeing that answer.
  */
 export function ChatReceipts({ uploads }: { uploads: ChatUploads }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
 
   if (uploads.receipts.length === 0) return null;
@@ -72,14 +77,16 @@ export function ChatReceipts({ uploads }: { uploads: ChatUploads }) {
           <span className="truncate font-medium">{r.name}</span>
 
           {r.state === "uploading" && (
-            <span className="tabular-nums text-muted-foreground">{r.progress}%</span>
+            <span className="tabular-nums text-muted-foreground">
+              {new Intl.NumberFormat(locale, { style: "percent" }).format(r.progress / 100)}
+            </span>
           )}
           {r.state === "done" &&
             (r.indexed ? (
-              <Chip>Indexed</Chip>
+              <Chip>{t("Indexed")}</Chip>
             ) : (
-              <span title="No embeddings, so no passage in it can be matched in chat.">
-                <Chip>Not indexed</Chip>
+              <span title={t("No embeddings, so no passage in it can be matched in chat.")}>
+                <Chip>{t("Not indexed")}</Chip>
               </span>
             ))}
           {r.state === "failed" && <span className="text-destructive">{r.reason}</span>}
@@ -95,7 +102,7 @@ export function ChatReceipts({ uploads }: { uploads: ChatUploads }) {
                     type="button"
                     onClick={() => setOpenMenu((cur) => (cur === r.id ? null : r.id))}
                     className="flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
-                    aria-label={`Move ${r.name} to another bundle`}
+                    aria-label={t("Move {{name}} to another bundle", { name: r.name })}
                     aria-expanded={openMenu === r.id}
                   >
                     <span className="max-w-[12rem] truncate">{r.bundleName}</span>
@@ -131,7 +138,7 @@ export function ChatReceipts({ uploads }: { uploads: ChatUploads }) {
               r.state === "failed" ? uploads.dismiss(r.id) : void uploads.remove(r.id)
             }
             className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
-            aria-label={`Remove ${r.name}`}
+            aria-label={t("Remove {{name}}", { name: r.name })}
           >
             <X className="h-3.5 w-3.5" />
           </button>

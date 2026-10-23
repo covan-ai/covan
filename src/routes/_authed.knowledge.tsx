@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { api } from "@/lib/api-client";
 import { formatFileSize } from "@/lib/file-size";
 
@@ -49,6 +51,8 @@ function KnowledgePage() {
  * workspace settings, which nobody looking at their files would think to open.
  */
 function KnowledgeUsage() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const usage = useQuery({
     // Under "bundles", so every change that refreshes the bundle list — an
     // upload, a new bundle, a delete — refreshes these counts with it.
@@ -56,13 +60,25 @@ function KnowledgeUsage() {
     queryFn: () => api.knowledge.usage(),
   });
   const u = usage.data;
+  // Named before the sentence they go into: the extractor does not read a
+  // `t()` nested in another's options.
+  const files = u
+    ? t("{{count}} file", { count: u.documents, defaultValue_other: "{{count}} files" })
+    : "";
+  const folders = u
+    ? t("{{count}} folder", { count: u.bundles, defaultValue_other: "{{count}} folders" })
+    : "";
   return (
     <>
       {u ? (
         <>
-          {u.documents} {u.documents === 1 ? "file" : "files"} in {u.bundles}{" "}
-          {u.bundles === 1 ? "folder" : "folders"} · {formatFileSize(u.bytes)} ·{" "}
-          {u.passages.toLocaleString("en")} searchable passages ·{" "}
+          {t("{{files}} in {{folders}} · {{size}} · {{passages}} searchable passages", {
+            files,
+            folders,
+            size: formatFileSize(u.bytes, locale),
+            passages: u.passages.toLocaleString(locale),
+          })}
+          {" · "}
         </>
       ) : null}
       <Link
@@ -70,10 +86,10 @@ function KnowledgeUsage() {
         hash="recently-deleted"
         className="underline underline-offset-2 hover:text-foreground"
       >
-        Recently deleted
+        {t("Recently deleted")}
       </Link>
       {" · "}
-      <DocsLink page="knowledge">How retrieval picks a passage</DocsLink>
+      <DocsLink page="knowledge">{t("How retrieval picks a passage")}</DocsLink>
     </>
   );
 }

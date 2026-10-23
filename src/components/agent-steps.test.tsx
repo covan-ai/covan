@@ -5,10 +5,12 @@ import {
   ConfirmCard,
   SettledSteps,
   StepTrail,
+  stepService,
   toStepViews,
   type AgentStepView,
 } from "./agent-steps";
 import { stepsSummary } from "@/lib/step-summary";
+import type { ToolConnection } from "@/lib/connections-api";
 
 /**
  * What an answer did, and the card that stops it doing something nobody
@@ -556,5 +558,92 @@ describe("the tool panel", () => {
     // than no fold.
     render(<StepTrail steps={[settled({ request: {}, resultExcerpt: null })]} />);
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+});
+
+describe("the mark of the service a step called", () => {
+  const app = (over: Partial<ToolConnection>): ToolConnection => ({
+    id: "conn-x",
+    label: "Service",
+    transport: "composio",
+    baseUrl: "",
+    allowedMethods: ["GET"],
+    summary: null,
+    rpc: null,
+    toolkitSlug: null,
+    status: "active",
+    logoPath: "",
+    scope: "owner",
+    mine: true,
+    unavailable: null,
+    createdAt: 0,
+    ...over,
+  });
+  const gmail = app({
+    id: "conn-gmail",
+    label: "Gmail",
+    toolkitSlug: "gmail",
+    logoPath: "/composio/logo?u=gmail",
+  });
+  const microsoft = app({ id: "conn-ms", label: "Microsoft", toolkitSlug: "microsoft" });
+  const teams = app({ id: "conn-teams", label: "Teams", toolkitSlug: "microsoft_teams" });
+  const orders = app({ id: "conn-db", label: "Orders DB", transport: "sql" });
+  const connections = [gmail, microsoft, teams, orders];
+  const view = (over: Partial<AgentStepView>): AgentStepView => ({
+    index: 0,
+    tool: "run_tool",
+    status: "ok",
+    label: "run_tool",
+    ...over,
+  });
+
+  it("finds a stored step by the connection it was handed", () => {
+    const step = view({ tool: "query_database", request: { connectionId: "conn-db" } });
+    expect(stepService(step, connections)).toBe(orders);
+  });
+
+  it("finds a live run_tool row by the slug on its label, which is all it has", () => {
+    expect(stepService(view({ label: "run_tool · GMAIL_SEND_EMAIL" }), connections)).toBe(gmail);
+  });
+
+  it("finds a live row by an id on its label when there was no slug", () => {
+    expect(stepService(view({ label: "run_tool · conn-teams" }), connections)).toBe(teams);
+  });
+
+  it("takes the longest toolkit, so Teams is not read as Microsoft", () => {
+    const step = view({ request: { slug: "MICROSOFT_TEAMS_SEND_MESSAGE" } });
+    expect(stepService(step, connections)).toBe(teams);
+    expect(stepService(view({ request: { slug: "MICROSOFT_LIST_FILES" } }), connections)).toBe(
+      microsoft,
+    );
+  });
+
+  it("finds a find_tool row by the application it named", () => {
+    const step = view({ tool: "find_tool", request: { query: "send", toolkit: "GMAIL" } });
+    expect(stepService(step, connections)).toBe(gmail);
+  });
+
+  it("does not read another tool's query as an operation slug", () => {
+    const step = view({ tool: "web_search", label: "web_search · GMAIL_SEND_EMAIL" });
+    expect(stepService(step, connections)).toBeNull();
+  });
+
+  it("guesses nothing when the toolkit is only a prefix of a word", () => {
+    expect(stepService(view({ request: { slug: "GMAILX_SEND" } }), connections)).toBeNull();
+  });
+
+  it("draws the mark beside the dot, and nothing on a row that called no service", () => {
+    const { container } = render(
+      <StepTrail
+        connections={connections}
+        steps={[
+          view({ index: 0, label: "run_tool · GMAIL_SEND_EMAIL" }),
+          view({ index: 1, tool: "search_documents", label: "search_documents · leave" }),
+        ]}
+      />,
+    );
+    const rows = container.querySelectorAll("li");
+    expect(rows[0].querySelector("img")).not.toBeNull();
+    expect(rows[1].querySelector("img")).toBeNull();
   });
 });

@@ -5,6 +5,9 @@ import { StatusDot } from "@/components/status-dot";
 import { stepTime, stepsSummary } from "@/lib/step-summary";
 import type { DotState } from "@/lib/dot-states";
 import { Tool, hasPayload, type ToolPart } from "@/components/prompt-kit/tool";
+import { AppLogo } from "@/components/integrations/app-logo";
+import { assetSrc } from "@/lib/asset-src";
+import type { ToolConnection } from "@/lib/connections-api";
 import { cn } from "@/lib/utils";
 import { lookup, msg, useTranslation } from "@/i18n";
 import { useLocale } from "@/i18n/provider";
@@ -88,15 +91,92 @@ const MARK: Record<AgentStepView["status"], DotState> = {
 };
 
 /**
- * The row itself (A13): the dot, what it was pointed at, and how long it took
- * — or, with no time recorded, how it ended.
+ * The connected service a step called, or null when it called none of them.
+ *
+ * Read off the workspace's own connections rather than off the step, because
+ * the step does not say which application it reached — `run_tool` is handed a
+ * connection id and an operation slug, and a live row is handed neither: its
+ * `step` event carries a label and nothing else (see `toolPart`). So, in order:
+ *
+ * 1. `request.connectionId` — a stored row of any tool that takes one.
+ * 2. `request.toolkit` — a stored `find_tool` row that named an application.
+ * 3. The label's tail, which is what a LIVE row has. `labelFor` puts `slug`
+ *    ahead of `connectionId`, so for `run_tool` it is the slug, or the id when
+ *    there was no slug. The id is tried first, because it cannot be mistaken
+ *    for anything; the slug only on `run_tool`, because another tool's tail is
+ *    a query somebody's agent wrote, and an uppercase query is not an
+ *    operation.
+ *
+ * The slug is matched by its toolkit prefix with the `_` boundary kept and the
+ * LONGEST toolkit winning — `MICROSOFT_TEAMS_SEND_MESSAGE` is `microsoft_teams`
+ * and not a `microsoft` somebody may also have connected. The same convention
+ * `run_tool`'s guard 2 falls back to, for the same reason: here there is no
+ * catalogue row to ask.
+ *
+ * No match is no logo, not a guess. A connection removed since the turn ran,
+ * and every built-in tool, keep the row as it was.
  */
-function Row({ step }: { step: AgentStepView }) {
+/** Folds an identifier's case. A slug or a toolkit name, never a word. */
+function fold(id: string): string {
+  // i18n-ignore: an identifier, not a word
+  return id.toLowerCase();
+}
+
+export function stepService(
+  step: AgentStepView,
+  connections: ToolConnection[] | undefined,
+): ToolConnection | null {
+  if (!connections || connections.length === 0) return null;
+  const request = isPlainObject(step.request) ? step.request : {};
+  const byId = (id: unknown) =>
+    typeof id === "string" ? (connections.find((c) => c.id === id) ?? null) : null;
+
+  const stored = byId(request.connectionId);
+  if (stored) return stored;
+
+  if (typeof request.toolkit === "string") {
+    const toolkit = fold(request.toolkit);
+    const named = connections.find((c) => c.toolkitSlug && fold(c.toolkitSlug) === toolkit);
+    if (named) return named;
+  }
+
+  const prefix = `${step.tool} · `;
+  const tail =
+    step.label.startsWith(prefix) && !step.label.endsWith("…")
+      ? step.label.slice(prefix.length)
+      : "";
+  const live = byId(tail);
+  if (live) return live;
+
+  if (step.tool !== "run_tool") return null;
+  const slug = fold(typeof request.slug === "string" ? request.slug : tail);
+  if (!slug) return null;
+  let best: ToolConnection | null = null;
+  for (const c of connections) {
+    const toolkit = c.toolkitSlug && fold(c.toolkitSlug);
+    if (!toolkit || (slug !== toolkit && !slug.startsWith(`${toolkit}_`))) continue;
+    if (!best || toolkit.length > (best.toolkitSlug?.length ?? 0)) best = c;
+  }
+  return best;
+}
+
+/**
+ * The row itself (A13): the dot, the mark of the service it called when it
+ * called one, what it was pointed at, and how long it took — or, with no time
+ * recorded, how it ended.
+ *
+ * The mark sits AFTER the dot, not in place of it. The dot is the status and
+ * the only thing on the row that moves; a logo is who was called, and swapping
+ * one for the other would leave a row that says Gmail and not whether it
+ * worked.
+ */
+function Row({ step, service }: { step: AgentStepView; service: ToolConnection | null }) {
   const { t } = useTranslation();
   const locale = useLocale();
   return (
     <>
       <StatusDot state={MARK[step.status]} />
+      {service && <AppLogo src={assetSrc(service.logoPath)} name={service.label} size={20} />}
       <span
         className={cn(
           "min-w-0 truncate",
@@ -153,10 +233,13 @@ function toolPart(step: AgentStepView): ToolPart | null {
  */
 export function StepTrail({
   steps,
+  connections,
   boxed = false,
   className,
 }: {
   steps: AgentStepView[];
+  /** The workspace's connected services, for the mark on a row that called one. */
+  connections?: ToolConnection[];
   /** In a bordered box, as a running turn draws it (A13). */
   boxed?: boolean;
   className?: string;
@@ -172,6 +255,7 @@ export function StepTrail({
     >
       {steps.map((step) => {
         const part = toolPart(step);
+        const service = stepService(step, connections);
         return (
           <li
             key={step.index}
@@ -182,7 +266,11 @@ export function StepTrail({
               !part && "flex min-h-8 items-center gap-2.5",
             )}
           >
-            {part ? <Tool part={part} trigger={<Row step={step} />} /> : <Row step={step} />}
+            {part ? (
+              <Tool part={part} trigger={<Row step={step} service={service} />} />
+            ) : (
+              <Row step={step} service={service} />
+            )}
           </li>
         );
       })}
@@ -200,10 +288,12 @@ export function StepTrail({
  */
 export function SettledSteps({
   steps,
+  connections,
   sources = 0,
   className,
 }: {
   steps: AgentStepView[];
+  connections?: ToolConnection[];
   /** How many documents the reply cites, said on the line. */
   sources?: number;
   className?: string;
@@ -226,7 +316,7 @@ export function SettledSteps({
         />
         <span>{stepsSummary(steps, sources, t, locale)}</span>
       </button>
-      {open && <StepTrail steps={steps} className="mt-1 mb-2 pl-1" />}
+      {open && <StepTrail steps={steps} connections={connections} className="mt-1 mb-2 pl-1" />}
     </div>
   );
 }

@@ -37,8 +37,13 @@ import { cn } from "@/lib/utils";
  * The radius does not move. 10px is the row it sits in, and a 28px chip with
  * an 8px corner inside a 10px row is failure mode #4 — a child rounder than
  * its parent — for the sake of two pixels nobody asked for.
+ *
+ * 20 is the exception, and it borrows `AgentMark`'s own 20: 4px corner, 9px
+ * monogram. It sits beside an 8px status dot in a 13px step row, where a 28px
+ * tile would be the tallest thing on the line.
  */
 const TILE = {
+  20: { box: "h-5 w-5", mark: "h-2.5 w-2.5", monogram: "text-[9px]" },
   28: { box: "h-7 w-7", mark: "h-[14px] w-[14px]", monogram: "text-[10px]" },
   32: { box: "h-8 w-8", mark: "h-4 w-4", monogram: "text-[11px]" },
   36: { box: "h-9 w-9", mark: "h-[18px] w-[18px]", monogram: "text-xs" },
@@ -65,8 +70,8 @@ export function AppLogo({
   mark?: ComponentType<{ className?: string }>;
   /** What the thing is called. Only ever rendered as a monogram. */
   name: string;
-  /** 44 on Integrations, 36 in a connected app's row, 28 in a chip. */
-  size?: 28 | 32 | 36 | 44;
+  /** 44 on Integrations, 36 in a connected app's row, 28 in a chip, 20 in a step row. */
+  size?: 20 | 28 | 32 | 36 | 44;
   className?: string;
 }) {
   const locale = useLocale();
@@ -81,7 +86,7 @@ export function AppLogo({
     <span
       className={cn(
         "grid shrink-0 place-items-center",
-        size === 28 ? "rounded-md" : "rounded-lg",
+        size === 20 ? "rounded-sm" : size === 28 ? "rounded-md" : "rounded-lg",
         drawn
           ? "bg-background text-muted-foreground ring-1 ring-inset ring-hairline"
           : "bg-surface text-chip-foreground",

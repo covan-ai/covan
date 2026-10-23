@@ -138,7 +138,8 @@ are letters on a tile, not text.
 - **`Tile`** (`components/tile.tsx`) is a workspace or a source: a square
   monogram, `neutral` grey or `ink` for the workspace you are in.
 - **`AppLogo`** renders a third party's own mark at half the width of the
-  neutral tile it sits in (22 in 44, 18 in 36, 14 in 28); a mark that fails to
+  neutral tile it sits in (22 in 44, 18 in 36, 14 in 28, 10 in 20 on a chat
+  step row, after the status dot); a mark that fails to
   load becomes a monogram, never a broken image.
 - **`BrandLockup`** (`components/brand-mark.tsx`) is the ink tile with the
   logo in it — the favicon's tile — and the word "Covan". It appears on the auth pages, the welcome flow, the legal

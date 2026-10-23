@@ -65,7 +65,12 @@ import { KickoffCard } from "@/components/chat/kickoff-card";
 import { takeKickoffFire, useKickoffCardDismissed } from "@/lib/chat-kickoff";
 import { firstConnectableTool } from "@/lib/onboarding-config";
 import { connectedSlugs } from "@/lib/connected-apps";
-import { connectionsKey, slackKey, toolConnectionsKey } from "@/hooks/use-connections";
+import {
+  connectionsKey,
+  slackKey,
+  toolConnectionsKey,
+  useToolConnections,
+} from "@/hooks/use-connections";
 import { DocumentPanel } from "@/components/chat/document-panel";
 import { documentJobsKey, placeJobs, useDocumentJobs } from "@/components/chat/use-document-jobs";
 import {
@@ -323,6 +328,10 @@ function ChatTab() {
   // Per-reply prices in the unit this deployment answers in, for the chips and
   // the retry menu.
   const prices = useMemo(() => replyPricesOf(me), [me]);
+  // The services a step can be seen calling, for the mark on its row. Always
+  // read, unlike the kickoff card's copy below: any turn can call one. The
+  // same key, so the two (and `ConnectedStarters`) share one request.
+  const toolConnections = useToolConnections().data?.connections;
   const [next, setNext] = useState<{ model?: string; effort?: ReasoningEffort | null }>({});
   const nextModel = next.model ?? effectiveModel;
   const baseEffort = active?.reasoningEffort ?? agent.reasoningEffort;
@@ -2191,6 +2200,7 @@ function ChatTab() {
                         canRegenerate={isLast && !!prevUser && isOwner}
                         pickableModels={pickableModels}
                         prices={prices}
+                        connections={toolConnections}
                         truncated={
                           truncated?.messageId === m.id && truncated.sessionId === active?.id
                         }
@@ -2254,6 +2264,7 @@ function ChatTab() {
                   thinkingMs={thinkingMs}
                   thinking={thinking}
                   steps={liveSteps}
+                  connections={toolConnections}
                   streaming={replyingIn === active?.id}
                 />
               )}
@@ -2330,6 +2341,7 @@ function ChatTab() {
                     thinkingMs={null}
                     thinking={false}
                     steps={kept.steps}
+                    connections={toolConnections}
                     streaming={false}
                   />
                   <p className="mt-3 text-meta text-muted-foreground">

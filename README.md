@@ -72,7 +72,7 @@ the app is always the same commit as the migrations the stack applies from it.
 To skip the build, set `COVAN_PULL=always` in `.env` and both images come from
 [`ghcr.io/covan-ai`](https://github.com/orgs/covan-ai/packages) instead,
 prebuilt for amd64 and arm64. They track the branch (`COVAN_VERSION=edge`) by
-default; to run a release, check out its tag and set `COVAN_VERSION=0.4.0` — no
+default; to run a release, check out its tag and set `COVAN_VERSION=0.5.0` — no
 leading `v`, since the image tags are semver. A bare `docker compose pull` does
 nothing for the two Covan images while they build. Stop with
 `docker compose down`, and add `-v` to throw away the database and the uploaded

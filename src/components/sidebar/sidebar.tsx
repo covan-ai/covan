@@ -1,5 +1,7 @@
 import { useRouterState } from "@tanstack/react-router";
 import { Plus, Search } from "lucide-react";
+import { useTranslation } from "@/i18n";
+import { lookup } from "@/i18n";
 import { Kbd } from "@/components/kbd";
 import { PAGE_NAV, PRIMARY_NAV, primaryNavMatch } from "@/components/primary-nav";
 import { useInboxCounts } from "@/hooks/use-inbox";
@@ -18,6 +20,7 @@ import { AccountRow } from "./account-row";
  * credits, Settings and you.
  */
 export function Sidebar({ agentId, onNavigate }: { agentId?: string; onNavigate?: () => void }) {
+  const { t } = useTranslation();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const shell = useShell();
   const { canWrite } = useAgentsStore();
@@ -27,7 +30,7 @@ export function Sidebar({ agentId, onNavigate }: { agentId?: string; onNavigate?
 
   return (
     <aside
-      aria-label="Sidebar"
+      aria-label={t("Sidebar")}
       className="flex h-full w-[248px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-border bg-sidebar p-2"
     >
       <WorkspaceSwitcher onNavigate={onNavigate} />
@@ -40,17 +43,17 @@ export function Sidebar({ agentId, onNavigate }: { agentId?: string; onNavigate?
         className={cn(NAV_ROW, "text-left text-muted-foreground")}
       >
         <Search className="size-4 shrink-0" strokeWidth={1.75} />
-        <span className="flex-1">Search</span>
+        <span className="flex-1">{t("Search")}</span>
         <Kbd>⌘K</Kbd>
       </button>
 
-      <nav aria-label="Workspace" className="mt-1 flex flex-col gap-0.5">
+      <nav aria-label={t("Workspace")} className="mt-1 flex flex-col gap-0.5">
         {PAGE_NAV.map((n) => (
           <NavRow
             key={n.to}
             to={n.to}
             icon={n.icon}
-            label={n.label}
+            label={lookup(t, n.label)}
             active={page === n.to}
             count={n.to === "/inbox" ? counts?.unread : undefined}
             onNavigate={onNavigate}
@@ -59,11 +62,11 @@ export function Sidebar({ agentId, onNavigate }: { agentId?: string; onNavigate?
       </nav>
 
       <div className="flex items-center justify-between px-2.5 pt-4 pb-1 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-        <span>Agents</span>
+        <span>{t("Agents")}</span>
         {canWrite && (
           <button
             type="button"
-            aria-label="New agent"
+            aria-label={t("New agent")}
             onClick={() => {
               onNavigate?.();
               shell.openCreateAgent();
@@ -78,11 +81,11 @@ export function Sidebar({ agentId, onNavigate }: { agentId?: string; onNavigate?
 
       <div className="mt-auto flex flex-col gap-0.5 pt-2">
         <CreditsRow onNavigate={onNavigate} />
-        <nav aria-label="Account" className="flex flex-col gap-0.5">
+        <nav aria-label={t("Account")} className="flex flex-col gap-0.5">
           <NavRow
             to={settings.to}
             icon={settings.icon}
-            label={settings.label}
+            label={lookup(t, settings.label)}
             active={page === settings.to}
             onNavigate={onNavigate}
           />

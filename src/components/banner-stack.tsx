@@ -1,6 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useSyncExternalStore } from "react";
+import { useTranslation } from "@/i18n";
+import { lookup, msg } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { api } from "@/lib/api-client";
 import { OPEN_THE_EMAIL, useAcceptInvitation } from "@/lib/accept-invitation";
 import { useCredits } from "@/lib/credits";
@@ -21,11 +24,20 @@ function subscribeOnline(cb: () => void) {
   };
 }
 
+/** The second half of the invitation line, by role, so the article agrees. */
+const AS_ROLE: Record<string, string> = {
+  admin: msg("as an Admin."),
+  member: msg("as a Member."),
+  viewer: msg("as a Viewer."),
+};
+
 /**
  * The banners over the page (A31, A33), most urgent first and never more
  * than two: offline, an invitation to another workspace, a low balance.
  */
 export function BannerStack() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const online = useSyncExternalStore(
     subscribeOnline,
@@ -58,7 +70,7 @@ export function BannerStack() {
       <Banner
         key="offline"
         kind="notice"
-        label="Offline"
+        label={t("Offline")}
         leading={<StatusDot state="waiting" />}
         actions={
           <button
@@ -66,48 +78,54 @@ export function BannerStack() {
             className="font-medium hover:underline"
             onClick={() => void queryClient.refetchQueries()}
           >
-            Retry
+            {t("Retry")}
           </button>
         }
       >
-        <span className="font-medium">You are offline.</span>{" "}
+        <span className="font-medium">{t("You are offline.")}</span>{" "}
         <span className="text-muted-foreground">
-          What you type is kept and sent when you are back. Running agents keep running.
+          {t("What you type is kept and sent when you are back. Running agents keep running.")}
         </span>
       </Banner>,
     );
   }
   const invitation = mounted ? incoming.find((i) => !isDismissed(`invite:${i.id}`)) : undefined;
   if (invitation) {
-    const role = invitation.role.charAt(0).toUpperCase() + invitation.role.slice(1);
+    const asRole = AS_ROLE[invitation.role];
     banners.push(
       <Banner
         key="invitation"
         kind="invitation"
-        label="Invitation"
+        label={t("Invitation")}
         leading={<Tile label={invitation.workspaceName} tone="ink" letters={1} />}
         actions={
           <>
             {canAccept(invitation.id) ? (
               <Button size="sm" disabled={busy} onClick={() => void accept(invitation.id)}>
-                Accept
+                {t("Accept")}
               </Button>
             ) : (
               <span className="text-meta text-muted-foreground max-md:hidden">
-                {OPEN_THE_EMAIL}
+                {lookup(t, OPEN_THE_EMAIL)}
               </span>
             )}
             <Button size="sm" variant="ghost" onClick={() => put(`invite:${invitation.id}`)}>
-              Ignore
+              {t("Ignore")}
             </Button>
           </>
         }
       >
         <span className="font-medium">
-          {invitation.inviterName ?? "Somebody"} invited you to {invitation.workspaceName}
+          {t("{{inviter}} invited you to {{workspace}}", {
+            inviter: invitation.inviterName ?? t("Somebody"),
+            workspace: invitation.workspaceName,
+          })}
         </span>{" "}
         <span className="text-muted-foreground">
-          as a {role}.{me ? ` Your ${me.workspace.name} workspace is not affected.` : ""}
+          {asRole ? lookup(t, asRole) : null}
+          {me
+            ? ` ${t("Your {{workspace}} workspace is not affected.", { workspace: me.workspace.name })}`
+            : ""}
         </span>
       </Banner>,
     );
@@ -118,24 +136,28 @@ export function BannerStack() {
       <Banner
         key="credits"
         kind="notice"
-        label="Credits"
+        label={t("Credits")}
         leading={<StatusDot state="waiting" />}
         actions={
           <Link to="/settings/usage" className="font-medium hover:underline">
-            Buy credits
+            {t("Buy credits")}
           </Link>
         }
         onDismiss={() => put(creditsKey)}
       >
         <span className="font-medium">
           {credits.level === "spent"
-            ? "Out of credits."
-            : `${credits.balance.toLocaleString("en-US")} credits left.`}
+            ? t("Out of credits.")
+            : t("{{balance}} credit left.", {
+                count: credits.balance,
+                balance: credits.balance.toLocaleString(locale),
+                defaultValue_other: "{{balance}} credits left.",
+              })}
         </span>{" "}
         <span className="text-muted-foreground">
           {credits.level === "spent"
-            ? "Agents pause until credits arrive; nothing is lost."
-            : "Agents pause at zero; nothing is lost."}
+            ? t("Agents pause until credits arrive; nothing is lost.")
+            : t("Agents pause at zero; nothing is lost.")}
         </span>
       </Banner>,
     );

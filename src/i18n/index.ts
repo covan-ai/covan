@@ -1,4 +1,4 @@
-import i18next, { type i18n as I18n } from "i18next";
+import i18next, { type i18n as I18n, type TFunction } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { UI_LANGUAGES, uiLanguage, type UiLanguage } from "./locale";
 import { resources } from "./resources";
@@ -11,6 +11,16 @@ export {
   uiLanguage,
   type UiLanguage,
 } from "./locale";
+/**
+ * The hook and the component come from here, not from `react-i18next`.
+ *
+ * Importing this module is what creates the instance and hands it to
+ * react-i18next (`initReactI18next`, below). A component that imported the
+ * package directly would work in the app, where the root route has long
+ * since loaded this file — and render raw keys in a unit test, where
+ * nothing else has. The lint rule makes the import path the rule.
+ */
+export { Trans, useTranslation } from "react-i18next";
 
 /**
  * The words of the interface, in the language the person reads.
@@ -91,4 +101,15 @@ export const i18n: I18n = createI18n(initialLanguage());
  */
 export function msg(english: string): string {
   return english;
+}
+
+/**
+ * `t()` for a key that came out of a table — `lookup(t, item.label)`.
+ *
+ * The extraction tool reads every `t(…)` and refuses one whose key it
+ * cannot see; the table's `msg()` entries are where it sees these. This file
+ * is outside what it reads, which is the whole trick.
+ */
+export function lookup(t: TFunction, key: string): string {
+  return t(key);
 }

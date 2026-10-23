@@ -1,4 +1,6 @@
 import { Link } from "@tanstack/react-router";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { useCredits } from "@/lib/credits";
 import { StatusDot } from "@/components/status-dot";
 
@@ -9,21 +11,32 @@ import { StatusDot } from "@/components/status-dot";
  * the waiting dot when the balance is low.
  */
 export function CreditsRow({ onNavigate }: { onNavigate?: () => void }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const credits = useCredits();
   if (!credits) return null;
+  const balance = credits.balance.toLocaleString(locale);
   return (
     <Link
       to="/settings/usage"
       onClick={onNavigate}
-      aria-label={`${credits.balance.toLocaleString("en-US")} credits left. Buy more`}
+      aria-label={t("{{balance}} credit left. Buy more", {
+        count: credits.balance,
+        balance,
+        defaultValue_other: "{{balance}} credits left. Buy more",
+      })}
       className="flex flex-col gap-1.5 rounded-md px-2.5 py-2 hover:bg-sidebar-hover"
     >
       <span className="flex items-center justify-between gap-2 text-meta">
         <span className="flex items-center gap-2 font-medium">
           {credits.level !== "fine" && <StatusDot state="waiting" />}
-          {credits.balance.toLocaleString("en-US")} credits
+          {t("{{balance}} credit", {
+            count: credits.balance,
+            balance,
+            defaultValue_other: "{{balance}} credits",
+          })}
         </span>
-        <span className="text-muted-foreground">Buy more</span>
+        <span className="text-muted-foreground">{t("Buy more")}</span>
       </span>
       <span className="block h-[3px] rounded-full bg-border">
         <span

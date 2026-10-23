@@ -69,6 +69,11 @@ export default tseslint.config(
               message:
                 "TanStack Start does not use the Next.js `server-only` package. Rename the module to `*.server.ts` or mark it with `@tanstack/react-start/server-only`.",
             },
+            {
+              name: "react-i18next",
+              message:
+                "Import useTranslation and Trans from @/i18n, which is what creates the instance they read.",
+            },
           ],
           patterns: [
             {
@@ -151,7 +156,12 @@ export default tseslint.config(
     // The one file that is allowed to read the catalogues (see the
     // `no-restricted-imports` pattern above). The glob it uses is not an
     // import statement, so this is as much documentation as exemption.
-    files: ["src/i18n/resources.ts"],
+    files: [
+      "src/i18n/resources.ts",
+      "src/i18n/index.ts",
+      "src/i18n/provider.tsx",
+      "src/test/in-turkish.ts",
+    ],
     rules: {
       "no-restricted-imports": "off",
     },
@@ -161,7 +171,20 @@ export default tseslint.config(
     // translated, the same list `src/i18n/migrated.static.test.ts` keeps
     // for what this rule cannot see; it widens with every phase and
     // becomes `src/{components,routes}/**` when the last one lands.
-    files: ["src/i18n/**/*.tsx"],
+    files: [
+      "src/i18n/**/*.tsx",
+      "src/components/sidebar/**/*.tsx",
+      "src/components/app-shell.tsx",
+      "src/components/top-bar.tsx",
+      "src/components/banner.tsx",
+      "src/components/banner-stack.tsx",
+      "src/components/error-page.tsx",
+      "src/components/empty-page.tsx",
+      "src/components/command-palette.tsx",
+      "src/components/feedback-dialog.tsx",
+      "src/components/new-thread-button.tsx",
+      "src/components/ui/dialog.tsx",
+    ],
     ignores: ["**/*.test.tsx"],
     plugins: { i18next },
     rules: {
@@ -188,6 +211,8 @@ export default tseslint.config(
             // names are not translated.
             exclude: [
               "[0-9!-/:-@[-`{-~]+",
+              // A route path or a query key is an identifier, not copy.
+              "^/.*",
               "[·—–…×✓✗→←]+",
               "Covan",
               "Slack",

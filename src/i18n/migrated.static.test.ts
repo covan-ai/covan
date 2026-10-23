@@ -22,7 +22,26 @@ import { join } from "node:path";
 const SRC = join(import.meta.dirname, "..");
 
 /** Files and directories, relative to src/, that have been through the recipe. */
-export const MIGRATED: string[] = ["i18n", "lib/toast.ts", "lib/api-error.ts"];
+export const MIGRATED: string[] = [
+  "i18n",
+  "lib/toast.ts",
+  "lib/api-error.ts",
+  "lib/session-label.ts",
+  "components/primary-nav.ts",
+  "components/sidebar",
+  "components/app-shell.tsx",
+  "components/top-bar.tsx",
+  "components/banner.tsx",
+  "components/banner-stack.tsx",
+  "components/error-page.tsx",
+  "components/empty-page.tsx",
+  "components/command-palette.tsx",
+  "components/feedback-dialog.tsx",
+  "components/new-thread-button.tsx",
+  "components/ui/dialog.tsx",
+  "components/settings/settings-pages.ts",
+  "lib/accept-invitation.ts",
+];
 
 const LEFTOVERS: Array<{ name: string; pattern: RegExp }> = [
   {
@@ -40,7 +59,9 @@ const LEFTOVERS: Array<{ name: string; pattern: RegExp }> = [
 /**
  * `toUpperCase()` on something that is not a word in any language — a
  * hex digest, a file extension, an HTTP method — is fine, and this is how
- * a line says so. Spell it out rather than disabling the check for a file.
+ * a line says so: on the line itself, or in the comment just above it,
+ * since the formatter moves a trailing comment of its own accord. Spell it
+ * out rather than disabling the check for a file.
  */
 const EXEMPT = /\bi18n-ignore\b/;
 
@@ -60,8 +81,8 @@ describe("translated files", () => {
       sourceFiles(join(SRC, entry)).flatMap((path) =>
         readFileSync(path, "utf8")
           .split("\n")
-          .flatMap((line, i) => {
-            if (EXEMPT.test(line)) return [];
+          .flatMap((line, i, lines) => {
+            if (EXEMPT.test(line) || EXEMPT.test(lines[i - 1] ?? "")) return [];
             const hit = LEFTOVERS.find(({ pattern }) => pattern.test(line));
             return hit
               ? [`${path.slice(SRC.length + 1)}:${i + 1} (${hit.name}): ${line.trim()}`]

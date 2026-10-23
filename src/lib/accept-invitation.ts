@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
+import { msg } from "@/i18n";
 import { api, ApiError } from "@/lib/api-client";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { forgetInvite, stashedInviteToken } from "@/lib/invite-stash";
@@ -16,6 +18,7 @@ import { forgetInvite, stashedInviteToken } from "@/lib/invite-stash";
  * offering one that is certain to be refused.
  */
 export function useAcceptInvitation() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
 
@@ -33,13 +36,13 @@ export function useAcceptInvitation() {
       // invalidates exactly what switching workspaces does — including the
       // incoming invitations themselves, which `invitations` prefix-matches.
       await invalidateWorkspaceScoped(queryClient);
-      toast.success("You've joined the workspace");
+      toast.success(t("You've joined the workspace"));
       return true;
     } catch (e) {
       // A refused token is spent, expired or replaced by a newer link; holding
       // on to it would only offer the same refusal again.
       if (e instanceof ApiError && e.status === 400) forgetInvite(id);
-      toast.error(e instanceof ApiError ? e.message : "Couldn't accept the invitation.");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't accept the invitation."));
       return false;
     } finally {
       setBusy(false);
@@ -49,5 +52,5 @@ export function useAcceptInvitation() {
   return { accept, canAccept, busy };
 }
 
-/** What to say where an Accept button would be, when there is no token. */
-export const OPEN_THE_EMAIL = "Open the link in your invitation email to accept.";
+/** What to say where an Accept button would be, when there is no token. An English key: `lookup(t, OPEN_THE_EMAIL)`. */
+export const OPEN_THE_EMAIL = msg("Open the link in your invitation email to accept.");

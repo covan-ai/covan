@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
 import { Tile } from "@/components/tile";
@@ -32,6 +33,7 @@ import {
  * ink tile and name, and the menu that moves you to another or makes one.
  */
 export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
@@ -52,7 +54,7 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
       onNavigate?.();
       void navigate({ to: "/app" });
     } catch {
-      toast.error("Couldn't switch workspace.");
+      toast.error(t("Couldn't switch workspace."));
     }
   };
 
@@ -65,10 +67,10 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
       await invalidateWorkspaceScoped(queryClient);
       setCreateOpen(false);
       setName("");
-      toast.success("Workspace created");
+      toast.success(t("Workspace created"));
       void navigate({ to: "/app" });
     } catch {
-      toast.error("Couldn't create workspace.");
+      toast.error(t("Couldn't create workspace."));
     } finally {
       setCreating(false);
     }
@@ -80,7 +82,7 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            aria-label="Switch workspace"
+            aria-label={t("Switch workspace")}
             className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-sidebar-hover"
           >
             <Tile
@@ -97,7 +99,7 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-60">
           <DropdownMenuLabel className="text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-            Workspaces
+            {t("Workspaces")}
           </DropdownMenuLabel>
           {workspaces.map((w) => (
             <DropdownMenuItem key={w.id} onClick={() => void switchTo(w.id)}>
@@ -113,7 +115,7 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
               setCreateOpen(true);
             }}
           >
-            <Plus className="size-4" /> Create workspace
+            <Plus className="size-4" /> {t("Create workspace")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -121,16 +123,16 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent size="sm">
           <DialogHeader>
-            <DialogTitle>Create workspace</DialogTitle>
+            <DialogTitle>{t("Create workspace")}</DialogTitle>
             <DialogDescription>
-              A separate space with its own agents, knowledge and members.
+              {t("A separate space with its own agents, knowledge and members.")}
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
             <Input
               autoFocus
-              aria-label="Workspace name"
-              placeholder="Workspace name"
+              aria-label={t("Workspace name")}
+              placeholder={t("Workspace name")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void create()}
@@ -138,10 +140,10 @@ export function WorkspaceSwitcher({ onNavigate }: { onNavigate?: () => void }) {
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setCreateOpen(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button onClick={() => void create()} disabled={!name.trim() || creating}>
-              {creating ? "Creating…" : "Create workspace"}
+              {creating ? t("Creating…") : t("Create workspace")}
             </Button>
           </DialogFooter>
         </DialogContent>

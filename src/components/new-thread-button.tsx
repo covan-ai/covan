@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Plus, SquarePen } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -29,6 +30,7 @@ export function NewThreadButton({
   variant?: "default" | "secondary" | "ghost";
   iconOnly?: boolean;
 }) {
+  const { t } = useTranslation();
   const { agents, startSession, canWrite } = useAgentsStore();
   const shell = useShell();
   const navigate = useNavigate();
@@ -45,17 +47,17 @@ export function NewThreadButton({
         search: { s: session.id },
       });
     } catch {
-      toast.error("Couldn't start a new thread.");
+      toast.error(t("Couldn't start a new thread."));
     } finally {
       setPending(false);
     }
   };
 
   const label = iconOnly ? (
-    <SquarePen aria-label="New thread" />
+    <SquarePen aria-label={t("New thread")} />
   ) : (
     <>
-      <Plus /> New thread
+      <Plus /> {t("New thread")}
     </>
   );
   const size = iconOnly ? "icon" : "default";
@@ -77,10 +79,10 @@ export function NewThreadButton({
     return (
       <Button variant={variant} size={size} onClick={shell.openCreateAgent}>
         {iconOnly ? (
-          <Plus aria-label="New agent" />
+          <Plus aria-label={t("New agent")} />
         ) : (
           <>
-            <Plus /> New agent
+            <Plus /> {t("New agent")}
           </>
         )}
       </Button>
@@ -95,7 +97,7 @@ export function NewThreadButton({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuLabel className="text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-          Start a thread with
+          {t("Start a thread with")}
         </DropdownMenuLabel>
         <div className="max-h-72 overflow-y-auto">
           {agents.map((a) => (

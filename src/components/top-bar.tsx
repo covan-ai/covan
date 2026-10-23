@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useShell } from "@/lib/shell";
+import { useTranslation } from "@/i18n";
 
 /**
  * The bar every page opens with (DESIGN.md §6): 48px, white, a bottom border.
@@ -35,6 +36,7 @@ export function TopBar({
   slot?: boolean;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const shell = useShell();
   return (
     <header className={cn("sticky top-0 z-20 border-b border-border bg-background", className)}>
@@ -42,7 +44,7 @@ export function TopBar({
         <button
           type="button"
           onClick={shell.openDrawer}
-          aria-label="Open the menu"
+          aria-label={t("Open the menu")}
           className="-ml-1.5 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface lg:hidden"
         >
           <Menu className="size-4" strokeWidth={1.75} />

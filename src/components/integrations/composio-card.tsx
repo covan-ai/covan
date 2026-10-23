@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { api, assetSrc } from "@/lib/api-client";
 import { scopeWords, type ToolConnection, type ToolConnectionGrant } from "@/lib/connections-api";
 import { canWriteAsRole } from "@/lib/roles";
@@ -92,21 +94,24 @@ function ConnectedAppRow({
   agentNames: Map<string, string>;
   canWrite: boolean;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const remove = useRemoveToolConnection();
   const [managing, setManaging] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const abandoned = isAbandoned(connection);
   useComposioStatus(connection.id, connection.status === "pending" && !abandoned);
+  const app = connection.label;
 
   const status = abandoned
-    ? { state: "idle" as const, text: "Not finished" }
+    ? { state: "idle" as const, text: t("Not finished") }
     : connection.status === "pending"
-      ? { state: "running" as const, text: "Finishing…" }
+      ? { state: "running" as const, text: t("Finishing…") }
       : connection.status === "failed"
-        ? { state: "failed" as const, text: "Not connected" }
+        ? { state: "failed" as const, text: t("Not connected") }
         : connection.verifyError
-          ? { state: "failed" as const, text: "Key refused" }
-          : { state: "done" as const, text: "Working" };
+          ? { state: "failed" as const, text: t("Key refused") }
+          : { state: "done" as const, text: t("Working") };
 
   return (
     <>
@@ -115,12 +120,18 @@ function ConnectedAppRow({
         name={connection.label}
         description={[
           connection.toolkitSlug,
-          scopeWords(connection),
+          scopeWords(connection, t),
           grants.length > 0
-            ? `${grants.length} ${grants.length === 1 ? "operation runs" : "operations run"} without asking`
+            ? t("{{count}} operation runs without asking", {
+                count: grants.length,
+                defaultValue_other: "{{count}} operations run without asking",
+              })
             : null,
           connection.unavailable
-            ? `${connection.unavailable.count} operation${connection.unavailable.count === 1 ? "" : "s"} hidden`
+            ? t("{{count}} operation hidden", {
+                count: connection.unavailable.count,
+                defaultValue_other: "{{count}} operations hidden",
+              })
             : null,
         ]
           .filter(Boolean)
@@ -128,7 +139,7 @@ function ConnectedAppRow({
         status={status}
         action={
           <Button size="sm" variant="secondary" onClick={() => setManaging(true)}>
-            Manage
+            {t("Manage")}
           </Button>
         }
       />
@@ -147,14 +158,16 @@ function ConnectedAppRow({
           <DialogBody className="flex flex-col gap-4">
             {connection.status === "active" && connection.verifyError ? (
               <p className="m-0 text-meta leading-[1.45] text-muted-foreground">
-                {connection.verifyError} Remove it and connect again with a working one.
+                {connection.verifyError} {t("Remove it and connect again with a working one.")}
               </p>
             ) : null}
 
             {abandoned ? (
               <p className="m-0 text-meta text-muted-foreground">
-                The sign-in for {connection.label} was not finished, so agents cannot use it. Remove
-                this and connect it again from Available.
+                {t(
+                  "The sign-in for {{app}} was not finished, so agents cannot use it. Remove this and connect it again from Available.",
+                  { app },
+                )}
               </p>
             ) : null}
 
@@ -164,19 +177,26 @@ function ConnectedAppRow({
                 tried again (covan#276). */}
             {connection.unavailable ? (
               <p className="m-0 text-meta text-muted-foreground">
-                {connection.label} refused{" "}
-                {connection.unavailable.count === 1 ? "an operation" : "some operations"} when an
-                agent tried {connection.unavailable.count === 1 ? "it" : "them"}, so agents are not
-                offered {connection.unavailable.count === 1 ? "it" : "them"}
+                {t(
+                  "{{app}} refused an operation when an agent tried it, so agents are not offered it.",
+                  {
+                    app,
+                    count: connection.unavailable.count,
+                    defaultValue_other:
+                      "{{app}} refused some operations when an agent tried them, so agents are not offered them.",
+                  },
+                )}
                 {connection.unavailable.hiddenUntil !== null
-                  ? `. Tried again from ${retryDate(connection.unavailable.hiddenUntil)}.`
-                  : "."}
+                  ? ` ${t("Tried again from {{date}}.", {
+                      date: retryDate(connection.unavailable.hiddenUntil, locale),
+                    })}`
+                  : null}
               </p>
             ) : null}
 
             {connection.status === "active" ? (
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">Who can use it</span>
+                <span className="text-sm font-medium">{t("Who can use it")}</span>
                 <ConnectionScope connection={connection} />
               </div>
             ) : null}
@@ -186,13 +206,13 @@ function ConnectedAppRow({
                 the absence of a row IS the asking (0063). */}
             {grants.length > 0 ? (
               <div>
-                <div className="mb-1 text-sm font-medium">Runs without asking</div>
+                <div className="mb-1 text-sm font-medium">{t("Runs without asking")}</div>
                 <ul className="m-0 flex list-none flex-col gap-1 p-0">
                   {grants.map((grant) => (
                     <StandingGrant
                       key={`${grant.agentId}:${grant.slug}`}
                       grant={grant}
-                      agentName={agentNames.get(grant.agentId) ?? "an agent"}
+                      agentName={agentNames.get(grant.agentId) ?? t("an agent")}
                       canWrite={canWrite}
                     />
                   ))}
@@ -205,10 +225,12 @@ function ConnectedAppRow({
                 {confirming ? (
                   <>
                     <span className="flex-1 text-meta text-muted-foreground">
-                      Agents lose {connection.label} at once, and the grant at Composio is revoked.
+                      {t("Agents lose {{app}} at once, and the grant at Composio is revoked.", {
+                        app,
+                      })}
                     </span>
                     <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-                      Keep
+                      {t("Keep")}
                     </Button>
                     <Button
                       variant="danger"
@@ -217,16 +239,16 @@ function ConnectedAppRow({
                         remove.mutate(connection.id, {
                           onSuccess: () => {
                             setManaging(false);
-                            toast.success(`${connection.label} disconnected.`);
+                            toast.success(t("{{app}} disconnected.", { app }));
                           },
                           onError: (err) =>
                             toast.error(
-                              err instanceof Error ? err.message : "Could not remove that",
+                              err instanceof Error ? err.message : t("Could not remove that"),
                             ),
                         })
                       }
                     >
-                      {remove.isPending ? "Removing…" : "Remove"}
+                      {remove.isPending ? t("Removing…") : t("Remove")}
                     </Button>
                   </>
                 ) : (
@@ -236,7 +258,7 @@ function ConnectedAppRow({
                     className="text-destructive"
                     onClick={() => setConfirming(true)}
                   >
-                    Remove {connection.label}…
+                    {t("Remove {{app}}…", { app })}
                   </Button>
                 )}
               </div>
@@ -264,8 +286,12 @@ function isAbandoned(connection: ToolConnection): boolean {
 }
 
 /** The day a hidden operation is offered again, in the interface's language. */
-function retryDate(at: number): string {
-  return new Date(at).toLocaleDateString("en", { day: "numeric", month: "long", year: "numeric" });
+function retryDate(at: number, locale: string): string {
+  return new Date(at).toLocaleDateString(locale, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 }
 
 /**
@@ -291,11 +317,13 @@ function StandingGrant({
   agentName: string;
   canWrite: boolean;
 }) {
+  const { t } = useTranslation();
   const revoke = useRemoveComposioGrant();
   return (
     <li className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
       <span className="min-w-0 truncate">
-        <span className="font-mono">{grant.slug}</span> · {agentName} runs this without asking
+        <span className="font-mono">{grant.slug}</span> ·{" "}
+        {t("{{agent}} runs this without asking", { agent: agentName })}
       </span>
       {canWrite ? (
         <Button
@@ -310,14 +338,20 @@ function StandingGrant({
                 slug: grant.slug,
               },
               {
-                onSuccess: () => toast.success(`${agentName} will ask before ${grant.slug}.`),
+                onSuccess: () =>
+                  toast.success(
+                    t("{{agent}} will ask before {{operation}}.", {
+                      agent: agentName,
+                      operation: grant.slug,
+                    }),
+                  ),
                 onError: (err) =>
-                  toast.error(err instanceof Error ? err.message : "Could not remove that"),
+                  toast.error(err instanceof Error ? err.message : t("Could not remove that")),
               },
             )
           }
         >
-          Ask first
+          {t("Ask first")}
         </Button>
       ) : null}
     </li>

@@ -1,6 +1,7 @@
 import { FileText } from "lucide-react";
 import type { DocumentJob } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 import { SectionSquares } from "./document-progress";
 import { statusLine } from "./use-document-jobs";
 
@@ -21,12 +22,13 @@ export function DocumentCard({
   onOpen: (jobId: string) => void;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const failed = job.status === "failed";
   return (
     <button
       type="button"
       onClick={() => onOpen(job.id)}
-      aria-label={`Open ${job.title}`}
+      aria-label={t("Open {{title}}", { title: job.title })}
       className={cn(
         "flex w-full max-w-xl items-center gap-3.5 rounded-lg border border-hairline bg-background px-4 py-3.5 text-left transition-colors duration-200 hover:bg-surface-hover",
         className,
@@ -45,11 +47,11 @@ export function DocumentCard({
             failed ? "text-destructive" : "text-muted-foreground",
           )}
         >
-          {statusLine(job)}
+          {statusLine(job, t)}
         </span>
         <SectionSquares job={job} />
       </span>
-      <span className="shrink-0 text-meta font-medium text-muted-foreground">Open</span>
+      <span className="shrink-0 text-meta font-medium text-muted-foreground">{t("Open")}</span>
     </button>
   );
 }

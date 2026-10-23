@@ -1,6 +1,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useRouterState } from "@tanstack/react-router";
+import { lookup, useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/kbd";
 import { closeCoachMark, useCoachMark, type CoachMarkRequest } from "@/lib/coach-marks";
@@ -73,6 +74,7 @@ function parseRect(s: string): Rect | null {
 }
 
 function CoachMark({ request }: { request: CoachMarkRequest }) {
+  const { t } = useTranslation();
   const { target } = request;
   const rect = parseRect(
     useSyncExternalStore(
@@ -183,18 +185,21 @@ function CoachMark({ request }: { request: CoachMarkRequest }) {
       >
         <p className="m-0 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
           {request.position
-            ? `${CTA.try} · ${request.position.step} of ${request.position.total}`
-            : CTA.try}
+            ? `${lookup(t, CTA.try)} · ${t("{{step}} of {{total}}", {
+                step: request.position.step,
+                total: request.position.total,
+              })}`
+            : lookup(t, CTA.try)}
         </p>
         <p id={titleId} className="mt-1 text-sm font-semibold">
-          {target.title}
+          {lookup(t, target.title)}
         </p>
         <p id={hintId} className="mt-1 text-meta text-muted-foreground">
-          {target.hint}
+          {lookup(t, target.hint)}
         </p>
         <div className="mt-3.5 flex items-center gap-1.5">
           <Button ref={gotIt} size="sm" onClick={closeCoachMark}>
-            {CTA.gotIt}
+            {lookup(t, CTA.gotIt)}
           </Button>
           {request.onSkip && (
             <Button
@@ -205,7 +210,7 @@ function CoachMark({ request }: { request: CoachMarkRequest }) {
                 closeCoachMark();
               }}
             >
-              Skip the tour
+              {t("Skip the tour")}
             </Button>
           )}
           <Kbd className="ml-auto">esc</Kbd>

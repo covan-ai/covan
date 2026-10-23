@@ -24,11 +24,18 @@ import {
 import { api, ApiError, type ModelEndpoint } from "@/lib/api-client";
 import { formatReplyPrice, modelTiers, priceFor, tierOf, type ReplyPrices } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";
+import { lookup, useTranslation, type Translate } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /** "~2 credits per message", or nothing for a model with no price. */
-function perMessage(prices: ReplyPrices | undefined, model: string): string {
+function perMessage(
+  prices: ReplyPrices | undefined,
+  model: string,
+  t: Translate,
+  locale: string,
+): string {
   const price = priceFor(prices, model);
-  return price ? `${formatReplyPrice(price)} per message` : "";
+  return price ? t("{{price}} per message", { price: formatReplyPrice(price, t, locale) }) : "";
 }
 
 /** An endpoint's model id as the list names it: "Acme proxy · gpt-5-mini". */
@@ -61,20 +68,22 @@ export function ModelPicker({
   endpoints: ModelEndpoint[];
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const tiers = modelTiers(models);
   const [pinning, setPinning] = useState(false);
   const pinned = pinning || tierOf(value) === null;
 
   const specific = (
     <Select value={value} onValueChange={onChange} disabled={disabled}>
-      <SelectTrigger aria-label="Specific model" className="max-w-[360px]">
+      <SelectTrigger aria-label={t("Specific model")} className="max-w-[360px]">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
         {models.map((m) => (
           <SelectItem key={m} value={m}>
             {m}
-            {perMessage(prices, m) ? ` · ${perMessage(prices, m)}` : ""}
+            {perMessage(prices, m, t, locale) ? ` · ${perMessage(prices, m, t, locale)}` : ""}
           </SelectItem>
         ))}
         {endpoints.map((e) => (
@@ -89,31 +98,38 @@ export function ModelPicker({
   if (tiers.length === 0) return specific;
 
   return (
-    <div role="radiogroup" aria-label="Default model" className="flex flex-col gap-2">
-      {tiers.map((t) => (
-        <OptionRow
-          key={t.id}
-          checked={!pinned && t.model === value}
-          disabled={disabled}
-          onSelect={() => {
-            setPinning(false);
-            onChange(t.model);
-          }}
-          title={
-            <>
-              {t.label}
-              <span className="ml-1.5 text-xs font-normal text-muted-foreground">{t.model}</span>
-            </>
-          }
-          description={`${t.description}${perMessage(prices, t.model) ? ` ${perMessage(prices, t.model)}.` : ""}`}
-        />
-      ))}
+    <div role="radiogroup" aria-label={t("Default model")} className="flex flex-col gap-2">
+      {tiers.map((tier) => {
+        const cost = perMessage(prices, tier.model, t, locale);
+        return (
+          <OptionRow
+            key={tier.id}
+            checked={!pinned && tier.model === value}
+            disabled={disabled}
+            onSelect={() => {
+              setPinning(false);
+              onChange(tier.model);
+            }}
+            title={
+              <>
+                {lookup(t, tier.label)}
+                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                  {tier.model}
+                </span>
+              </>
+            }
+            description={`${lookup(t, tier.description)}${cost ? ` ${cost}.` : ""}`}
+          />
+        );
+      })}
       <OptionRow
         checked={pinned}
         disabled={disabled}
         onSelect={() => setPinning(true)}
-        title="A specific model"
-        description="Pinned to one id. Shows as Custom to the team, priced at that model's rate."
+        title={t("A specific model")}
+        description={t(
+          "Pinned to one id. Shows as Custom to the team, priced at that model's rate.",
+        )}
       >
         {pinned ? <div className="mt-2.5">{specific}</div> : null}
       </OptionRow>
@@ -188,11 +204,13 @@ export function AllModels({
   value: string;
   canAdd: boolean;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [adding, setAdding] = useState(false);
   const row = "flex min-h-11 items-center gap-2.5 border-b border-hairline px-3";
   const selectedChip = (
     <Chip size="sm" tone="ink">
-      Selected
+      {t("Selected")}
     </Chip>
   );
 
@@ -206,9 +224,9 @@ export function AllModels({
           <div key={m} className={cn(row, selected && "bg-surface-muted")}>
             <Chip tone="code">{m}</Chip>
             <span className="flex-1" />
-            {selected ? selectedChip : tier ? <Chip size="sm">{tier.label}</Chip> : null}
+            {selected ? selectedChip : tier ? <Chip size="sm">{lookup(t, tier.label)}</Chip> : null}
             <span className="w-24 text-right text-meta text-muted-foreground tabular-nums">
-              {price ? formatReplyPrice(price) : "no price"}
+              {price ? formatReplyPrice(price, t, locale) : t("no price")}
             </span>
           </div>
         );
@@ -219,10 +237,10 @@ export function AllModels({
           <div key={e.id} className={cn(row, selected && "bg-surface-muted")}>
             <Chip tone="code">{e.model}</Chip>
             <span className="min-w-0 flex-1 truncate text-meta text-muted-foreground">
-              via {e.host}
+              {t("via {{host}}", { host: e.host })}
             </span>
-            {selected ? selectedChip : <Chip size="sm">Endpoint</Chip>}
-            <span className="w-24 text-right text-meta text-muted-foreground">no price</span>
+            {selected ? selectedChip : <Chip size="sm">{t("Endpoint")}</Chip>}
+            <span className="w-24 text-right text-meta text-muted-foreground">{t("no price")}</span>
           </div>
         );
       })}
@@ -234,7 +252,7 @@ export function AllModels({
             className="inline-flex items-center gap-1.5 text-meta font-medium text-muted-foreground hover:text-foreground"
           >
             <Plus className="size-4" aria-hidden />
-            Add a custom endpoint
+            {t("Add a custom endpoint")}
           </button>
         </div>
       ) : null}
@@ -255,6 +273,7 @@ function AddEndpointDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [label, setLabel] = useState("");
   const [model, setModel] = useState("");
@@ -283,10 +302,10 @@ function AddEndpointDialog({
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       });
       await queryClient.invalidateQueries({ queryKey: ["model-endpoints"] });
-      toast.success("Endpoint added");
+      toast.success(t("Endpoint added"));
       close(false);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't add that endpoint");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't add that endpoint"));
     } finally {
       setSaving(false);
     }
@@ -298,24 +317,25 @@ function AddEndpointDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent size="md">
         <DialogHeader>
-          <DialogTitle>Add a custom endpoint</DialogTitle>
+          <DialogTitle>{t("Add a custom endpoint")}</DialogTitle>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-3">
           <p className="m-0 text-sm text-muted-foreground">
-            A self-hosted or OpenAI-compatible model. Every agent here can pick it; it has no price,
-            because whoever runs it pays for it.
+            {t(
+              "A self-hosted or OpenAI-compatible model. Every agent here can pick it; it has no price, because whoever runs it pays for it.",
+            )}
           </p>
           <div className="space-y-1.5">
-            <Label htmlFor="endpoint-label">Name</Label>
+            <Label htmlFor="endpoint-label">{t("Name")}</Label>
             <Input
               id="endpoint-label"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Our proxy"
+              placeholder={t("Our proxy")}
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="endpoint-model">Model</Label>
+            <Label htmlFor="endpoint-model">{t("Model")}</Label>
             <Input
               id="endpoint-model"
               value={model}
@@ -324,7 +344,7 @@ function AddEndpointDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="endpoint-url">Base URL</Label>
+            <Label htmlFor="endpoint-url">{t("Base URL")}</Label>
             <Input
               id="endpoint-url"
               type="url"
@@ -334,26 +354,26 @@ function AddEndpointDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="endpoint-key">API key</Label>
+            <Label htmlFor="endpoint-key">{t("API key")}</Label>
             <Input
               id="endpoint-key"
               type="password"
               autoComplete="off"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Optional"
+              placeholder={t("Optional")}
             />
             <p className="m-0 text-meta text-muted-foreground">
-              Sealed on the server and never shown again.
+              {t("Sealed on the server and never shown again.")}
             </p>
           </div>
         </DialogBody>
         <DialogFooter>
           <Button variant="secondary" onClick={() => close(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button onClick={() => void save()} disabled={!ready || saving}>
-            {saving ? "Adding…" : "Add endpoint"}
+            {saving ? t("Adding…") : t("Add endpoint")}
           </Button>
         </DialogFooter>
       </DialogContent>

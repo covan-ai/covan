@@ -11,6 +11,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Trans, useTranslation } from "@/i18n";
 import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { OpenBrowsersList } from "@/components/open-browsers";
@@ -54,17 +55,19 @@ import { api, ApiError } from "@/lib/api-client";
  * on — the person who meets that refusal finds the browser just below it.
  */
 export function BrowserSignInsSection({ agentNames }: { agentNames?: Map<string, string> }) {
+  const { t } = useTranslation();
   return (
     <>
       <SavedLoginsList
         agentNames={agentNames}
         wrap={(list, count) => (
           <section className="mt-8">
-            <SectionLabel>Saved sign-ins · {count}</SectionLabel>
+            <SectionLabel>{t("Saved sign-ins · {{total}}", { total: count })}</SectionLabel>
             {list}
             <p className="mt-2 mb-0 text-meta text-muted-foreground">
-              Logins you saved for an agent, and the ones your team saved for everyone using one.
-              Encrypted; Covan's AI model is never given them.
+              {t(
+                "Logins you saved for an agent, and the ones your team saved for everyone using one. Encrypted; Covan's AI model is never given them.",
+              )}
             </p>
           </section>
         )}
@@ -73,10 +76,11 @@ export function BrowserSignInsSection({ agentNames }: { agentNames?: Map<string,
       <OpenBrowsersList
         wrap={(list) => (
           <section className="mt-8">
-            <SectionLabel>Open browsers</SectionLabel>
+            <SectionLabel>{t("Open browsers")}</SectionLabel>
             <p className="mt-0 mb-2 text-meta text-muted-foreground">
-              Browsers of yours that may still be open. Stopping one saves its sign-ins; none is
-              stopped while the agent is using it.
+              {t(
+                "Browsers of yours that may still be open. Stopping one saves its sign-ins; none is stopped while the agent is using it.",
+              )}
             </p>
             {list}
           </section>
@@ -87,6 +91,7 @@ export function BrowserSignInsSection({ agentNames }: { agentNames?: Map<string,
 }
 
 function CookieJarSection() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -109,7 +114,9 @@ function CookieJarSection() {
       // next rather than a notification that something happened. Same
       // judgement `close-account-section.tsx` makes about its own refusal.
       setRefusal(
-        e instanceof ApiError ? e.message : "Couldn't forget those sign-ins. Nothing was deleted.",
+        e instanceof ApiError
+          ? e.message
+          : t("Couldn't forget those sign-ins. Nothing was deleted."),
       );
     },
   });
@@ -127,13 +134,14 @@ function CookieJarSection() {
 
   return (
     <section className="mt-8">
-      <SectionLabel>Browser sign-ins</SectionLabel>
+      <SectionLabel>{t("Browser sign-ins")}</SectionLabel>
       <div className="space-y-4">
         <p className="text-sm leading-[1.5] text-muted-foreground">
-          When a browser task stops at a login, you can sign in yourself in your own tab. What
-          survives that is a cookie jar held by our browser provider, so the next task does not ask
-          again. <strong>Covan never receives your password</strong> — you type it at the site, and
-          this is the whole of what signing in yourself keeps.
+          <Trans
+            t={t}
+            i18nKey="When a browser task stops at a login, you can sign in yourself in your own tab. What survives that is a cookie jar held by our browser provider, so the next task does not ask again. <b>Covan never receives your password</b> — you type it at the site, and this is the whole of what signing in yourself keeps."
+            components={{ b: <strong /> }}
+          />
         </p>
 
         {sites.length > 0 ? (
@@ -146,8 +154,9 @@ function CookieJarSection() {
                 Facebook because they logged into LinkedIn is false, and
                 frightening in a way the truth is not. */}
             <p className="text-sm leading-[1.5] text-muted-foreground">
-              Cookies are held for these sites. Most pages drop cookies for other companies as they
-              load, so this list is longer than the places you actually signed in to:
+              {t(
+                "Cookies are held for these sites. Most pages drop cookies for other companies as they load, so this list is longer than the places you actually signed in to:",
+              )}
             </p>
             <ul className="mt-2 space-y-1">
               {sites.map((site) => (
@@ -165,8 +174,9 @@ function CookieJarSection() {
           // reported it, so an empty list can sit beside a jar that holds
           // cookies — which is also why Forget is offered either way.
           <p className="text-sm leading-[1.5] text-muted-foreground">
-            No sites are listed yet. The list fills in after a browser of yours stops, and can lag
-            behind it.
+            {t(
+              "No sites are listed yet. The list fills in after a browser of yours stops, and can lag behind it.",
+            )}
           </p>
         )}
 
@@ -174,15 +184,16 @@ function CookieJarSection() {
           <AlertDialog open={open} onOpenChange={reset}>
             <AlertDialogTrigger asChild>
               <Button variant="ghost" className="text-destructive hover:bg-destructive/10">
-                Forget these sign-ins
+                {t("Forget these sign-ins")}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Forget your browser sign-ins?</AlertDialogTitle>
+                <AlertDialogTitle>{t("Forget your browser sign-ins?")}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  The cookie jar is deleted at our browser provider. A task behind a login will stop
-                  at the login again, and you can sign in yourself when it does.
+                  {t(
+                    "The cookie jar is deleted at our browser provider. A task behind a login will stop at the login again, and you can sign in yourself when it does.",
+                  )}
                 </AlertDialogDescription>
               </AlertDialogHeader>
 
@@ -191,7 +202,7 @@ function CookieJarSection() {
               ) : null}
 
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={forget.isPending}>Cancel</AlertDialogCancel>
+                <AlertDialogCancel disabled={forget.isPending}>{t("Cancel")}</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={(e) => {
                     // Kept open so a refusal has somewhere to be read, exactly
@@ -201,7 +212,7 @@ function CookieJarSection() {
                   }}
                   disabled={forget.isPending}
                 >
-                  {forget.isPending ? "Forgetting…" : "Forget them"}
+                  {forget.isPending ? t("Forgetting…") : t("Forget them")}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

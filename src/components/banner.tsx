@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
+import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,6 +23,7 @@ export function Banner({
   actions?: ReactNode;
   onDismiss?: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       role="region"
@@ -39,7 +41,7 @@ export function Banner({
       {onDismiss && (
         <button
           type="button"
-          aria-label="Dismiss"
+          aria-label={t("Dismiss")}
           onClick={onDismiss}
           className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface hover:text-foreground"
         >

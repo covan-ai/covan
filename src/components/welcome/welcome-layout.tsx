@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "@/i18n";
 import { BrandLockup } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,10 @@ export function WelcomeLayout({
   wide?: boolean;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
+  const stepLabel = progress
+    ? t("Step {{step}} of {{total}}", { step: progress.index + 1, total: progress.count })
+    : null;
   return (
     <div className="flex min-h-dvh flex-col bg-sidebar">
       <header className="flex h-14 shrink-0 items-center gap-3 px-6">
@@ -68,15 +73,15 @@ export function WelcomeLayout({
               <span
                 className="text-meta text-muted-foreground"
                 role="status"
-                aria-label={`Step ${progress.index + 1} of ${progress.count}`}
+                aria-label={stepLabel ?? undefined}
               >
-                Step {progress.index + 1} of {progress.count}
+                {stepLabel}
               </span>
             </>
           ) : null}
           {onExit ? (
             <Button variant="ghost" onClick={onExit}>
-              Save and exit
+              {t("Save and exit")}
             </Button>
           ) : null}
         </div>

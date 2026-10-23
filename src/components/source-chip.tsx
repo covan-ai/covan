@@ -9,6 +9,8 @@ const DocumentPreviewDialog = lazy(() =>
 );
 import { documentAge, STALE_AFTER_DAYS } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /**
  * One document under an answer, with its age.
@@ -36,7 +38,9 @@ export function SourceChip({
   source: { id: string | null; name: string };
   uploadedAt?: number;
 }) {
-  const age = uploadedAt === undefined ? null : documentAge(uploadedAt);
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const age = uploadedAt === undefined ? null : documentAge(uploadedAt, undefined, t, locale);
   // A citation you cannot open is a claim you have to take on trust. With an
   // id the chip opens the document — the same preview the Knowledge tab uses,
   // with what the agent read of it one tab over. A name alone cannot be
@@ -51,10 +55,14 @@ export function SourceChip({
           ? {
               type: "button" as const,
               onClick: () => setOpen(true),
-              "aria-label": `Open ${source.name}`,
+              "aria-label": t("Open {{name}}", { name: source.name }),
             }
           : {})}
-        title={age ? `${source.name} — uploaded ${age.label}` : source.name}
+        title={
+          age
+            ? t("{{name}} — uploaded {{age}}", { name: source.name, age: age.label })
+            : source.name
+        }
         className={cn(
           "inline-flex h-[22px] max-w-[260px] items-center gap-1.5 rounded-sm bg-surface px-2 font-mono text-xs text-chip-foreground",
           source.id && "transition-colors hover:bg-surface-hover hover:text-foreground",
@@ -72,7 +80,10 @@ export function SourceChip({
           // noticing, and colour alone reaches neither a screen reader nor
           // somebody who cannot tell amber from grey.
           <span className="sr-only">
-            — older than {STALE_AFTER_DAYS} days; check it is still current
+            {t("— older than {{count}} day; check it is still current", {
+              count: STALE_AFTER_DAYS,
+              defaultValue_other: "— older than {{count}} days; check it is still current",
+            })}
           </span>
         )}
       </Tag>

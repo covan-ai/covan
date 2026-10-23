@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { modelLabel, modelTiers, priceFor, type ReplyPrices } from "@/lib/agent-meta";
 import { cn } from "@/lib/utils";
+import { lookup, useTranslation } from "@/i18n";
 
 /**
  * The model the next message is answered on (A2). Fast, Standard and Best
@@ -42,10 +43,11 @@ export function ModelChip({
   compact?: boolean;
   onChange: (model: string) => void;
 }) {
+  const { t } = useTranslation();
   const [all, setAll] = useState(false);
   const tiers = modelTiers(models);
-  const tiered = new Set<string>(tiers.map((t) => t.model));
-  const label = modelLabel(value);
+  const tiered = new Set<string>(tiers.map((tier) => tier.model));
+  const label = modelLabel(value, t);
 
   const row = (model: string, name: string, id: string | null) => (
     <DropdownMenuItem key={model} onSelect={() => onChange(model)} className="gap-2.5">
@@ -56,7 +58,7 @@ export function ModelChip({
         </span>
         {model === agentModel && (
           <Chip size="sm" className="shrink-0">
-            Agent default
+            {t("Agent default")}
           </Chip>
         )}
       </span>
@@ -74,7 +76,7 @@ export function ModelChip({
         <Button
           variant="ghost"
           size="sm"
-          aria-label={`Model: ${label}`}
+          aria-label={t("Model: {{label}}", { label })}
           className="h-7 gap-1.5 px-2 text-meta text-foreground data-[state=open]:bg-surface"
         >
           <Cpu className="text-muted-foreground" />
@@ -92,7 +94,7 @@ export function ModelChip({
               }}
               className="text-meta text-muted-foreground"
             >
-              <ChevronLeft /> All models
+              <ChevronLeft /> {t("All models")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <div className="max-h-72 overflow-y-auto">{models.map((m) => row(m, m, null))}</div>
@@ -100,9 +102,9 @@ export function ModelChip({
         ) : (
           <>
             <DropdownMenuLabel className="text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-              Model for this message
+              {t("Model for this message")}
             </DropdownMenuLabel>
-            {tiers.map((t) => row(t.model, t.label, t.model))}
+            {tiers.map((tier) => row(tier.model, lookup(t, tier.label), tier.model))}
             {!tiered.has(agentModel) && (
               <>
                 {tiers.length > 0 && <DropdownMenuSeparator />}
@@ -117,11 +119,11 @@ export function ModelChip({
                 }}
                 className="text-meta text-muted-foreground"
               >
-                All models…
+                {t("All models…")}
               </DropdownMenuItem>
             )}
             <p className="m-0 px-2 pt-2 pb-1 text-xs leading-[1.4] text-micro-foreground">
-              Applies to this message. Change the agent&rsquo;s default in Configuration.
+              {t("Applies to this message. Change the agent’s default in Configuration.")}
             </p>
           </>
         )}

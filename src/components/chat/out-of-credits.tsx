@@ -7,6 +7,8 @@ import { QuotaSupportForm } from "@/components/quota-support-form";
 import { api } from "@/lib/api-client";
 import { isAdminRole } from "@/lib/roles";
 import { adminsToAsk } from "@/lib/admins-to-ask";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /**
  * What sits where the reply would have been, when the workspace had no
@@ -29,6 +31,8 @@ export function OutOfCreditsNote({
   /** Absent when the reader may not ask this conversation for a reply. */
   onRetry?: () => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const [asking, setAsking] = useState(false);
   // The house pattern for the caller's role (`lib/workspace-role.ts`), read
@@ -36,7 +40,7 @@ export function OutOfCreditsNote({
   // member list must cost the person a name, not the transcript.
   const members = me?.members ?? [];
   const isAdmin = isAdminRole(members.find((m) => m.id === me?.user.id)?.role);
-  const admins = adminsToAsk(members, me?.user.id);
+  const admins = adminsToAsk(members, me?.user.id, locale);
 
   return (
     <div
@@ -47,25 +51,29 @@ export function OutOfCreditsNote({
         <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-brand" />
         <span className="min-w-0 flex-1">
           {canRetry
-            ? "Credits are back. This message has no reply yet."
-            : "This workspace is out of credits, so this message has no reply yet."}
+            ? t("Credits are back. This message has no reply yet.")
+            : t("This workspace is out of credits, so this message has no reply yet.")}
         </span>
         {onRetry && (
           <Button variant="secondary" size="sm" onClick={onRetry} disabled={!canRetry}>
-            <RefreshCw className="h-3.5 w-3.5" /> Try again
+            <RefreshCw className="h-3.5 w-3.5" /> {t("Try again")}
           </Button>
         )}
       </div>
       {!canRetry && (
         <div className="flex flex-col gap-2 text-xs text-muted-foreground">
           {isAdmin ? (
-            <p>Top-ups are handled by hand for now — tell us how many credits you need.</p>
+            <p>{t("Top-ups are handled by hand for now — tell us how many credits you need.")}</p>
           ) : (
             <p>
               {admins
-                ? `Ask ${admins}, an admin of this workspace, to add credits.`
-                : "Ask an admin of this workspace to add credits."}{" "}
-              Replies start again as soon as they do.
+                ? t(
+                    "Ask {{admins}}, an admin of this workspace, to add credits. Replies start again as soon as they do.",
+                    { admins },
+                  )
+                : t(
+                    "Ask an admin of this workspace to add credits. Replies start again as soon as they do.",
+                  )}
             </p>
           )}
           {isAdmin || asking ? (
@@ -76,7 +84,7 @@ export function OutOfCreditsNote({
               onClick={() => setAsking(true)}
               className="self-start text-xs text-foreground underline-offset-4 hover:underline"
             >
-              Or message Covan
+              {t("Or message Covan")}
             </button>
           )}
         </div>

@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { Markdown } from "@/components/markdown";
 
@@ -23,6 +24,7 @@ export const Route = createFileRoute("/_authed/documents/$documentId/print")({
 });
 
 function PrintDocument() {
+  const { t } = useTranslation();
   const { documentId } = Route.useParams();
   const { data, error } = useQuery({
     queryKey: ["document-print", documentId],
@@ -47,11 +49,13 @@ function PrintDocument() {
 
   if (error) {
     return (
-      <p className="p-6 text-meta text-muted-foreground">This document could not be loaded.</p>
+      <p className="p-6 text-meta text-muted-foreground">
+        {t("This document could not be loaded.")}
+      </p>
     );
   }
   if (!data) {
-    return <p className="p-6 text-meta text-muted-foreground">Preparing the document…</p>;
+    return <p className="p-6 text-meta text-muted-foreground">{t("Preparing the document…")}</p>;
   }
   return (
     <div className="print-root bg-background">

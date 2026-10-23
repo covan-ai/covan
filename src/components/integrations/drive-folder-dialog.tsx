@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Folder, Loader2 } from "lucide-react";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +40,7 @@ export function DriveFolderDialog({
   onChoose: (folder: { id: string; name: string }) => void;
   saving: boolean;
 }) {
+  const { t } = useTranslation();
   // The path so far. `root` is Drive's own name for the top of My Drive, and
   // it is never a valid destination — a connection to all of somebody's Drive
   // is the thing this dialog exists to avoid.
@@ -62,10 +64,12 @@ export function DriveFolderDialog({
     >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Choose a folder</DialogTitle>
+          <DialogTitle>{t("Choose a folder")}</DialogTitle>
           <DialogDescription>
-            Everything in this folder — and one level of subfolders — is kept in step with the
-            bundle. {accountLabel}
+            {t(
+              "Everything in this folder — and one level of subfolders — is kept in step with the bundle.",
+            )}{" "}
+            {accountLabel}
           </DialogDescription>
         </DialogHeader>
 
@@ -75,7 +79,7 @@ export function DriveFolderDialog({
             className="underline underline-offset-4 hover:text-foreground"
             onClick={() => setPath([])}
           >
-            My Drive
+            {t("My Drive")}
           </button>
           {path.map((folder, index) => (
             <span key={folder.id} className="flex items-center gap-1">
@@ -95,13 +99,13 @@ export function DriveFolderDialog({
           {folders.isPending ? (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">
               <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
-              Reading your Drive…
+              {t("Reading your Drive…")}
             </p>
           ) : folders.isError ? (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">
               {folders.error instanceof Error
                 ? folders.error.message
-                : "Could not read your Drive."}
+                : t("Could not read your Drive.")}
             </p>
           ) : folders.data && folders.data.length > 0 ? (
             <ul>
@@ -121,17 +125,21 @@ export function DriveFolderDialog({
             </ul>
           ) : (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-              No folders in here.
+              {t("No folders in here.")}
             </p>
           )}
         </div>
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button disabled={!here || saving} onClick={() => here && onChoose(here)}>
-            {saving ? "Saving…" : here ? `Use “${here.name}”` : "Go into a folder"}
+            {saving
+              ? t("Saving…")
+              : here
+                ? t("Use “{{folder}}”", { folder: here.name })
+                : t("Go into a folder")}
           </Button>
         </DialogFooter>
       </DialogContent>

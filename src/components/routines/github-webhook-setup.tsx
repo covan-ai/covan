@@ -1,13 +1,14 @@
 import { useState } from "react";
+import { lookup, msg, Trans, useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { RevealedSecret } from "@/components/revealed-secret";
 import { useRoutineEventSetup } from "@/hooks/use-routines";
 
 /** What GitHub calls each event in "Let me select individual events". */
 const GITHUB_EVENT_NAME: Record<string, string> = {
-  "github.push": "Pushes",
-  "github.pull_request": "Pull requests",
-  "github.issues": "Issues",
+  "github.push": msg("Pushes"),
+  "github.pull_request": msg("Pull requests"),
+  "github.issues": msg("Issues"),
 };
 
 /**
@@ -27,52 +28,62 @@ export function GitHubWebhookSetup({
   routineId: string;
   eventType: string;
 }) {
+  const { t } = useTranslation();
   const { data, isPending, isError } = useRoutineEventSetup(routineId, true);
   const [showSecret, setShowSecret] = useState(false);
 
-  if (isPending) return <p className="text-meta text-muted-foreground">Loading the webhook…</p>;
+  if (isPending)
+    return <p className="text-meta text-muted-foreground">{t("Loading the webhook…")}</p>;
   if (isError) {
     return (
       <p className="text-meta text-muted-foreground">
-        Couldn't load the webhook. Reload to try again.
+        {t("Couldn't load the webhook. Reload to try again.")}
       </p>
     );
   }
   if (data.kind !== "github") return null;
 
-  const eventName = GITHUB_EVENT_NAME[eventType] ?? "the matching event";
+  const known = GITHUB_EVENT_NAME[eventType];
+  const eventName = known ? lookup(t, known) : t("the matching event");
 
   return (
     <div className="space-y-3 rounded-lg border border-hairline p-4">
-      <p className="text-sm">Add this webhook to your repository</p>
+      <p className="text-sm">{t("Add this webhook to your repository")}</p>
       <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
-        <li>On GitHub, open the repository's Settings → Webhooks → Add webhook.</li>
+        <li>{t("On GitHub, open the repository's Settings → Webhooks → Add webhook.")}</li>
         <li>
-          Paste the payload URL and the secret below, and set the content type to{" "}
-          <code className="font-mono">{data.contentType}</code>.
+          <Trans
+            t={t}
+            i18nKey="Paste the payload URL and the secret below, and set the content type to <code>{{contentType}}</code>."
+            values={{ contentType: data.contentType }}
+            components={{ code: <code className="font-mono" /> }}
+          />
         </li>
         <li>
-          Under “Which events”, choose “Let me select individual events”, tick {eventName}, and
-          save.
+          {t(
+            "Under “Which events”, choose “Let me select individual events”, tick {{event}}, and save.",
+            { event: eventName },
+          )}
         </li>
       </ol>
       <div className="space-y-1.5">
-        <p className="text-meta text-muted-foreground">Payload URL</p>
-        <RevealedSecret value={data.url} label="Copy payload URL" />
+        <p className="text-meta text-muted-foreground">{t("Payload URL")}</p>
+        <RevealedSecret value={data.url} label={t("Copy payload URL")} />
       </div>
       <div className="space-y-1.5">
-        <p className="text-meta text-muted-foreground">Secret</p>
+        <p className="text-meta text-muted-foreground">{t("Secret")}</p>
         {showSecret ? (
-          <RevealedSecret value={data.secret} label="Copy secret" />
+          <RevealedSecret value={data.secret} label={t("Copy secret")} />
         ) : (
           <Button variant="secondary" size="sm" onClick={() => setShowSecret(true)}>
-            Show secret
+            {t("Show secret")}
           </Button>
         )}
       </div>
       <p className="text-meta text-muted-foreground">
-        The same webhook can be added to more than one repository. Choosing a different event later
-        makes a new URL and secret.
+        {t(
+          "The same webhook can be added to more than one repository. Choosing a different event later makes a new URL and secret.",
+        )}
       </p>
     </div>
   );

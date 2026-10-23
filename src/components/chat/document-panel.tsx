@@ -14,8 +14,17 @@ import type { DocumentJob } from "@/lib/api-client";
 import { lastActivityLabel } from "@/lib/day-groups";
 import { saveDocument, type ExportFormat } from "@/lib/document-export";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { SectionSquares } from "./document-progress";
 import { isWriting, statusLine } from "./use-document-jobs";
+
+/** What a filed document can be saved as. Format names, so not translated. */
+const FORMATS: { format: ExportFormat; name: string }[] = [
+  { format: "md", name: "Markdown" },
+  { format: "docx", name: "Word" },
+  { format: "pdf", name: "PDF" },
+];
 
 /**
  * A document the agent wrote, open over the thread (A22): a 56px bar with its
@@ -49,11 +58,13 @@ export function DocumentPanel({
   onStop: (jobId: string) => void;
   onRetry: (jobId: string) => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const live = isWriting(job);
   const writingIndex = job.status === "writing" ? job.sections.findIndex((s) => !s.done) : -1;
   const canSave = job.status === "ready" && job.documentId !== null;
   const save = (format: ExportFormat) => {
-    if (job.documentId) void saveDocument(job.documentId, `${job.title}.md`, format);
+    if (job.documentId) void saveDocument(job.documentId, `${job.title}.md`, format, t);
   };
   const when = Date.parse(job.finishedAt ?? job.updatedAt);
 
@@ -76,18 +87,18 @@ export function DocumentPanel({
         )}
         {job.total > 0 && (
           <span className="hidden text-meta whitespace-nowrap text-muted-foreground md:inline">
-            {job.total} {job.total === 1 ? "section" : "sections"}
+            {t("{{count}} section", { count: job.total, defaultValue_other: "{{count}} sections" })}
           </span>
         )}
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {live && (
             <Button variant="secondary" size="sm" onClick={() => onStop(job.id)}>
-              Stop
+              {t("Stop")}
             </Button>
           )}
           {(job.status === "failed" || job.status === "stopped") && (
             <Button variant="secondary" size="sm" onClick={() => onRetry(job.id)}>
-              {job.status === "stopped" ? "Continue" : "Try again"}
+              {job.status === "stopped" ? t("Continue") : t("Try again")}
             </Button>
           )}
           {canSave && (
@@ -99,7 +110,7 @@ export function DocumentPanel({
                   className="hidden md:inline-flex"
                   onClick={onOpenInKnowledge}
                 >
-                  Open in Knowledge
+                  {t("Open in Knowledge")}
                 </Button>
               )}
               {/* The print page lays the document out for paper and prints
@@ -111,18 +122,20 @@ export function DocumentPanel({
                   window.open(`/documents/${job.documentId}/print`, "_blank", "noopener")
                 }
               >
-                Print
+                {t("Print")}
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="secondary" size="sm">
-                    Download <ChevronDown />
+                    {t("Download")} <ChevronDown />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-40">
-                  <DropdownMenuItem onClick={() => save("md")}>Markdown</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => save("docx")}>Word</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => save("pdf")}>PDF</DropdownMenuItem>
+                  {FORMATS.map(({ format, name }) => (
+                    <DropdownMenuItem key={format} onClick={() => save(format)}>
+                      {name}
+                    </DropdownMenuItem>
+                  ))}
                 </DropdownMenuContent>
               </DropdownMenu>
             </>
@@ -131,7 +144,7 @@ export function DocumentPanel({
             variant="ghost"
             size="icon-sm"
             onClick={onClose}
-            aria-label="Close document"
+            aria-label={t("Close document")}
             className="text-muted-foreground"
           >
             <X />
@@ -155,8 +168,9 @@ export function DocumentPanel({
 
           {job.sections.length === 0 && live && (
             <p className="mt-6 text-meta text-muted-foreground">
-              Reading the conversation and the team&rsquo;s documents to plan it. You can close this
-              — it keeps being written, and will be here when you come back.
+              {t(
+                "Reading the conversation and the team’s documents to plan it. You can close this — it keeps being written, and will be here when you come back.",
+              )}
             </p>
           )}
 
@@ -172,7 +186,7 @@ export function DocumentPanel({
               ) : i === writingIndex ? (
                 <p className="mt-2 flex items-center gap-2 text-meta text-muted-foreground">
                   <StatusDot state="running" />
-                  Being written…
+                  {t("Being written…")}
                 </p>
               ) : null}
             </section>
@@ -183,11 +197,14 @@ export function DocumentPanel({
       <div className="flex h-11 shrink-0 items-center gap-4 border-t border-hairline px-5 text-meta whitespace-nowrap text-muted-foreground">
         {agent && (
           <span className="hidden truncate sm:inline">
-            Written by {agent.name} · {lastActivityLabel(when)}
+            {t("Written by {{name}} · {{when}}", {
+              name: agent.name,
+              when: lastActivityLabel(when, undefined, t, locale),
+            })}
           </span>
         )}
         <span className={cn("truncate", job.status === "failed" && "text-destructive")}>
-          {statusLine(job)}
+          {statusLine(job, t)}
         </span>
         <SectionSquares job={job} className="ml-auto shrink-0" />
       </div>

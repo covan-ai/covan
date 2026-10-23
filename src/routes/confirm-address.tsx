@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { useTranslation } from "@/i18n";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
@@ -30,6 +31,7 @@ function tokenFromFragment(hash: string): string | null {
 }
 
 function ConfirmAddress() {
+  const { t } = useTranslation();
   const [token, setToken] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("checking");
 
@@ -57,9 +59,9 @@ function ConfirmAddress() {
 
   if (status === "checking") {
     return (
-      <AuthLayout title="Confirm this address" subtitle="One moment.">
+      <AuthLayout title={t("Confirm this address")} subtitle={t("One moment.")}>
         <div className="flex min-h-24 items-center justify-center text-sm text-muted-foreground">
-          Loading…
+          {t("Loading…")}
         </div>
       </AuthLayout>
     );
@@ -68,16 +70,17 @@ function ConfirmAddress() {
   if (status === "no-link" || status === "failed") {
     return (
       <AuthLayout
-        title={status === "failed" ? "That link no longer works" : "That link is incomplete"}
+        title={status === "failed" ? t("That link no longer works") : t("That link is incomplete")}
         subtitle={
           status === "failed"
-            ? "It may have been used already, or it is more than a week old."
-            : "Open the button in the email again."
+            ? t("It may have been used already, or it is more than a week old.")
+            : t("Open the button in the email again.")
         }
       >
         <p className="m-0 text-sm text-muted-foreground">
-          Nothing will be sent to this address unless it is confirmed. If you expected these
-          messages, ask whoever set them up to send a new link.
+          {t(
+            "Nothing will be sent to this address unless it is confirmed. If you expected these messages, ask whoever set them up to send a new link.",
+          )}
         </p>
       </AuthLayout>
     );
@@ -85,10 +88,14 @@ function ConfirmAddress() {
 
   if (status === "confirmed") {
     return (
-      <AuthLayout title="Address confirmed" subtitle="Routine results can now be sent here.">
+      <AuthLayout
+        title={t("Address confirmed")}
+        subtitle={t("Routine results can now be sent here.")}
+      >
         <p className="m-0 text-sm text-muted-foreground">
-          You can close this page. To stop them later, reply to the person who set them up, or ask
-          them to remove this address.
+          {t(
+            "You can close this page. To stop them later, reply to the person who set them up, or ask them to remove this address.",
+          )}
         </p>
       </AuthLayout>
     );
@@ -96,13 +103,14 @@ function ConfirmAddress() {
 
   return (
     <AuthLayout
-      title="Confirm this address"
-      subtitle="Somebody using Covan asked to send routine results here."
+      title={t("Confirm this address")}
+      subtitle={t("Somebody using Covan asked to send routine results here.")}
     >
       <div className="flex flex-col gap-3">
         <p className="m-0 text-sm text-muted-foreground">
-          If that was you, or you expect them, confirm below. If not, close this page — nothing is
-          sent here unless you do.
+          {t(
+            "If that was you, or you expect them, confirm below. If not, close this page — nothing is sent here unless you do.",
+          )}
         </p>
         <Button
           size="lg"
@@ -110,7 +118,7 @@ function ConfirmAddress() {
           onClick={() => void confirm()}
           disabled={status === "confirming"}
         >
-          {status === "confirming" ? "Confirming…" : "Confirm this address"}
+          {status === "confirming" ? t("Confirming…") : t("Confirm this address")}
         </Button>
       </div>
     </AuthLayout>

@@ -1,7 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
+import { lookup, msg, useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { OPEN_THE_EMAIL, useAcceptInvitation } from "@/lib/accept-invitation";
+
+/** The role half of the invitation row, so the word declines with its role. */
+const AS_ROLE: Record<string, string> = {
+  admin: msg("as admin"),
+  member: msg("as member"),
+  viewer: msg("as viewer"),
+};
 
 /**
  * Someone who was invited already has a workspace waiting, so the setup steps
@@ -17,6 +25,7 @@ export function InviteAcceptStep({
   /** Also what the bar's skip does; here it only backs the empty state. */
   onSkip: () => void;
 }) {
+  const { t } = useTranslation();
   const { data: incoming = [] } = useQuery({
     queryKey: ["invitations", "incoming"],
     queryFn: () => api.invitations.incoming(),
@@ -29,7 +38,7 @@ export function InviteAcceptStep({
     // The invitation was accepted or revoked in another tab. Nothing to do here.
     return (
       <Button className="w-full" onClick={onSkip}>
-        Continue
+        {t("Continue")}
       </Button>
     );
   }
@@ -45,7 +54,9 @@ export function InviteAcceptStep({
           <span className="min-w-0 flex-1 text-base">
             <strong className="font-medium">{invite.workspaceName}</strong>
             <span className="text-muted-foreground">
-              {invite.inviterName ? ` · from ${invite.inviterName}` : ""} · as {invite.role}
+              {invite.inviterName ? ` · ${t("from {{name}}", { name: invite.inviterName })}` : ""}
+              {" · "}
+              {AS_ROLE[invite.role] ? lookup(t, AS_ROLE[invite.role]) : invite.role}
             </span>
           </span>
           {canAccept(invite.id) ? (
@@ -54,10 +65,10 @@ export function InviteAcceptStep({
               disabled={busy}
               onClick={() => void accept(invite.id).then((joined) => joined && onJoined())}
             >
-              Join
+              {t("Join")}
             </Button>
           ) : (
-            <span className="text-meta text-muted-foreground">{OPEN_THE_EMAIL}</span>
+            <span className="text-meta text-muted-foreground">{lookup(t, OPEN_THE_EMAIL)}</span>
           )}
         </div>
       ))}

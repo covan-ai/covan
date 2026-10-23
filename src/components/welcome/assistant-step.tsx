@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Check } from "lucide-react";
+import { lookup, useTranslation } from "@/i18n";
 import { AgentMark, AgentMarkPicker } from "@/components/agent-mark";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,7 @@ export function AssistantStep({
   /** So the primary button outside the form can say "Create Support". */
   onNameChange?: (name: string) => void;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(value.assistantName ?? "");
   const [avatar, setAvatar] = useState<string>(value.assistantAvatar ?? "headset");
   const [jobs, setJobs] = useState<string[]>(value.assistantJobs ?? ["answer-questions"]);
@@ -54,6 +56,8 @@ export function AssistantStep({
   useEffect(() => {
     onValidityChange?.(valid);
   }, [valid, onValidityChange]);
+  // The example name, where the field is still empty.
+  const shown = name.trim() || t("Support", { context: "agent", defaultValue: "Support" });
 
   const toggle = (id: string) =>
     setJobs((prev) => (prev.includes(id) ? prev.filter((j) => j !== id) : [...prev, id]));
@@ -76,7 +80,7 @@ export function AssistantStep({
       className="flex flex-col divide-y divide-hairline [&>*]:py-5 [&>*:first-child]:pt-0 [&>*:last-child]:mt-1 [&>*:last-child]:border-t-0 [&>*:last-child]:py-3.5"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="assistant-name">Name</Label>
+        <Label htmlFor="assistant-name">{t("Name")}</Label>
         <Input
           id="assistant-name"
           className="h-9 max-w-[360px]"
@@ -86,24 +90,24 @@ export function AssistantStep({
             onNameChange?.(e.target.value);
           }}
           maxLength={60}
-          placeholder="Support"
+          placeholder={t("Support", { context: "agent", defaultValue: "Support" })}
           autoFocus
         />
         <p className="m-0 text-meta text-muted-foreground">
-          Short works best. The team will say &ldquo;ask {name.trim() || "Support"}&rdquo;.
+          {t("Short works best. The team will say “ask {{name}}”.", { name: shown })}
         </p>
       </div>
 
       <div className="space-y-2">
         <span className="block text-sm font-medium" id="face-label">
-          Face
+          {t("Face")}
         </span>
         <AgentMarkPicker value={avatar} onChange={setAvatar} size={56} />
       </div>
 
       <div className="space-y-2">
         <span className="block text-sm font-medium" id="job-label">
-          What should it do?
+          {t("What should it do?")}
         </span>
         <div aria-labelledby="job-label" className="flex flex-wrap gap-2">
           {JOBS.map((job) => {
@@ -122,7 +126,7 @@ export function AssistantStep({
                 )}
               >
                 {on ? <Check className="size-3.5" aria-hidden /> : null}
-                {job.label}
+                {lookup(t, job.label)}
               </button>
             );
           })}
@@ -131,9 +135,9 @@ export function AssistantStep({
 
       <div className="space-y-1.5">
         <div className="flex items-baseline justify-between">
-          <Label htmlFor="assistant-persona">Persona</Label>
+          <Label htmlFor="assistant-persona">{t("Persona")}</Label>
           <Button type="button" variant="ghost" size="sm" onClick={() => setEdited(null)}>
-            Rewrite
+            {t("Rewrite")}
           </Button>
         </div>
         <Textarea
@@ -143,19 +147,22 @@ export function AssistantStep({
           onChange={(e) => setEdited(e.target.value)}
         />
         <p className="m-0 text-meta text-muted-foreground">
-          Written from your choices. Edit it freely; this is what the agent reads before every
-          thread.
+          {t(
+            "Written from your choices. Edit it freely; this is what the agent reads before every thread.",
+          )}
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg bg-sidebar px-4 py-3.5">
-        <span className="text-meta whitespace-nowrap text-muted-foreground">In the sidebar</span>
+        <span className="text-meta whitespace-nowrap text-muted-foreground">
+          {t("In the sidebar")}
+        </span>
         <span className="inline-flex h-8 items-center gap-2.5 rounded-md bg-sidebar-accent px-2.5 text-sm font-medium">
-          <AgentMark agent={{ name: name.trim() || "Support", avatar }} size={24} />
-          {name.trim() || "Support"}
+          <AgentMark agent={{ name: shown, avatar }} size={24} />
+          {shown}
         </span>
         <span className="ml-auto text-meta text-muted-foreground">
-          Only you can use it until you share it.
+          {t("Only you can use it until you share it.")}
         </span>
       </div>
     </form>

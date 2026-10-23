@@ -11,6 +11,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useTranslation, type TFunction } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Button } from "@/components/ui/button";
 import {
   api,
@@ -62,23 +64,23 @@ const STALE_AFTER_ENDING = [
 ] as const;
 
 /** A time today, a date otherwise: minutes matter for a browser, days for a login. */
-function clock(at: string, now: number): string {
+function clock(at: string, now: number, locale: string): string {
   const date = new Date(at);
   return date.toDateString() === new Date(now).toDateString()
-    ? date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString();
+    ? date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString(locale);
 }
 
-function lastUsed(at: string | null, now: number): string {
-  return at ? `Last used ${clock(at, now)}` : "Not used yet";
+function lastUsed(at: string | null, now: number, t: TFunction, locale: string): string {
+  return at ? t("Last used {{when}}", { when: clock(at, now, locale) }) : t("Not used yet");
 }
 
 /** The conversation's name, or a neutral line for one the person can no longer open. */
-function placeTitle(place: BrowserPlace): string {
-  if (!place.conversation) return "A conversation you can no longer open";
+function placeTitle(place: BrowserPlace, t: TFunction): string {
+  if (!place.conversation) return t("A conversation you can no longer open");
   // The place carries the title and not the kind, so an untitled brainstorm
   // reads as a thread here until `GET /browser/sessions` says which it is.
-  return sessionLabel(place.conversation);
+  return sessionLabel(place.conversation, t);
 }
 
 /**
@@ -90,18 +92,18 @@ function placeTitle(place: BrowserPlace): string {
  * stop route takes it only ten minutes after its last run (ruling R51), so
  * until then the way to end it is the conversation's Take over.
  */
-function stateOf(browser: OpenConversationBrowser): string {
-  if (browser.running) return "The agent is using it";
+function stateOf(browser: OpenConversationBrowser, t: TFunction): string {
+  if (browser.running) return t("The agent is using it");
   if (browser.liveState === "agent") {
     return browser.stoppable
-      ? "The agent had it last and is not using it now"
-      : "The agent had it last — take it over in the conversation to close it";
+      ? t("The agent had it last and is not using it now")
+      : t("The agent had it last — take it over in the conversation to close it");
   }
-  if (browser.liveState === "human") return "You are using it";
+  if (browser.liveState === "human") return t("You are using it");
   if (browser.liveState === "none" && browser.browserOpen) {
-    return "Idle — it stops by itself about ten minutes after its last use";
+    return t("Idle — it stops by itself about ten minutes after its last use");
   }
-  return "Nobody is using it";
+  return t("Nobody is using it");
 }
 
 /** The status dot: the panel's, at row scale (DESIGN.md §12). */
@@ -123,6 +125,8 @@ export function OpenBrowsersList({
   /** The frame around the list — a settings section — drawn only when there is a list to frame. */
   wrap?: (list: ReactElement) => ReactElement;
 } = {}) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const [ending, setEnding] = useState<Ending | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -164,7 +168,7 @@ export function OpenBrowsersList({
     },
     onError: (e: unknown) => {
       setRefusal(
-        e instanceof ApiError ? e.message : "Couldn't stop that browser. Try again in a moment.",
+        e instanceof ApiError ? e.message : t("Couldn't stop that browser. Try again in a moment."),
       );
       // A refusal may be a browser that has already gone; the list says so.
       void queryClient.invalidateQueries({ queryKey: OPEN_BROWSERS_KEY });
@@ -189,7 +193,7 @@ export function OpenBrowsersList({
             <Square tone="person" />
             <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
               <span className="text-sm font-medium leading-tight [overflow-wrap:anywhere]">
-                {takeover.forTask ? placeTitle(takeover) : "Your own browser"}
+                {takeover.forTask ? placeTitle(takeover, t) : t("Your own browser")}
               </span>
               <span className="flex flex-wrap items-center gap-x-2 text-meta leading-tight text-muted-foreground">
                 {takeover.agent && (
@@ -199,7 +203,9 @@ export function OpenBrowsersList({
                   </>
                 )}
                 <span>
-                  {takeover.forTask ? "Opened for you to sign in" : "You opened it to sign in"}
+                  {takeover.forTask
+                    ? t("Opened for you to sign in")
+                    : t("You opened it to sign in")}
                 </span>
                 <span aria-hidden="true">·</span>
                 {/* Past its window it is still open (ruling R49), and the
@@ -207,8 +213,12 @@ export function OpenBrowsersList({
                     says what happens either way, not that it is urgent. */}
                 <span>
                   {Date.parse(takeover.expiresAt) > now
-                    ? `Closes by itself at ${clock(takeover.expiresAt, now)}`
-                    : "Time is up. Close it to finish; if you don't, it closes by itself shortly and your sign-ins are still saved."}
+                    ? t("Closes by itself at {{time}}", {
+                        time: clock(takeover.expiresAt, now, locale),
+                      })
+                    : t(
+                        "Time is up. Close it to finish; if you don't, it closes by itself shortly and your sign-ins are still saved.",
+                      )}
                 </span>
               </span>
             </span>
@@ -218,7 +228,7 @@ export function OpenBrowsersList({
               className="shrink-0"
               onClick={() => begin({ kind: "close", takeover })}
             >
-              Close
+              {t("Close")}
             </Button>
           </li>
         )}
@@ -230,7 +240,7 @@ export function OpenBrowsersList({
             />
             <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
               <span className="text-sm font-medium leading-tight [overflow-wrap:anywhere]">
-                {placeTitle(browser)}
+                {placeTitle(browser, t)}
               </span>
               <span className="flex flex-wrap items-center gap-x-2 text-meta leading-tight text-muted-foreground">
                 {browser.conversation && browser.agent && (
@@ -239,9 +249,9 @@ export function OpenBrowsersList({
                     <span aria-hidden="true">·</span>
                   </>
                 )}
-                <span>{stateOf(browser)}</span>
+                <span>{stateOf(browser, t)}</span>
                 <span aria-hidden="true">·</span>
-                <span>{lastUsed(browser.lastUsedAt, now)}</span>
+                <span>{lastUsed(browser.lastUsedAt, now, t, locale)}</span>
               </span>
             </span>
             {/* Stop only where the server would take it (R50, R51). Otherwise
@@ -258,7 +268,7 @@ export function OpenBrowsersList({
                     params={{ agentId: browser.agent.id }}
                     search={{ s: browser.conversation.id }}
                   >
-                    Open the conversation
+                    {t("Open the conversation")}
                   </Link>
                 </Button>
               )
@@ -269,7 +279,7 @@ export function OpenBrowsersList({
                 className="shrink-0"
                 onClick={() => begin({ kind: "stop", browser })}
               >
-                Stop
+                {t("Stop")}
               </Button>
             )}
           </li>
@@ -289,9 +299,9 @@ export function OpenBrowsersList({
             <AlertDialogTitle>
               {ending?.kind === "close"
                 ? ending.takeover.forTask
-                  ? "Close this browser?"
-                  : "Close your browser?"
-                : "Stop this browser?"}
+                  ? t("Close this browser?")
+                  : t("Close your browser?")
+                : t("Stop this browser?")}
             </AlertDialogTitle>
             {/* The panel's own sentence about its close, and Done's about the
                 takeover: stopping is what saves the sign-ins. A task's
@@ -300,18 +310,24 @@ export function OpenBrowsersList({
             <AlertDialogDescription>
               {ending?.kind === "close"
                 ? ending.takeover.forTask
-                  ? "Closing it saves your sign-ins to your browser profile, and the task it was opened for runs again."
-                  : "Closing it saves your sign-ins to your browser profile."
+                  ? t(
+                      "Closing it saves your sign-ins to your browser profile, and the task it was opened for runs again.",
+                    )
+                  : t("Closing it saves your sign-ins to your browser profile.")
                 : ending?.browser.liveState === "human"
-                  ? "You are using it. Stopping it ends whatever is open there and saves your sign-ins to your browser profile. The agent opens a browser again the next time it needs one."
-                  : "Stopping it saves your sign-ins to your browser profile. The agent opens a browser again the next time it needs one."}
+                  ? t(
+                      "You are using it. Stopping it ends whatever is open there and saves your sign-ins to your browser profile. The agent opens a browser again the next time it needs one.",
+                    )
+                  : t(
+                      "Stopping it saves your sign-ins to your browser profile. The agent opens a browser again the next time it needs one.",
+                    )}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
           {refusal ? <p className="text-sm leading-[1.45] text-destructive">{refusal}</p> : null}
 
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={end.isPending}>Keep it open</AlertDialogCancel>
+            <AlertDialogCancel disabled={end.isPending}>{t("Keep it open")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Kept open so a refusal has somewhere to be read.
@@ -322,11 +338,11 @@ export function OpenBrowsersList({
             >
               {ending?.kind === "close"
                 ? end.isPending
-                  ? "Closing…"
-                  : "Close it"
+                  ? t("Closing…")
+                  : t("Close it")
                 : end.isPending
-                  ? "Stopping…"
-                  : "Stop it"}
+                  ? t("Stopping…")
+                  : t("Stop it")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

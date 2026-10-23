@@ -1,3 +1,4 @@
+import { englishT, msg, type Translate } from "@/i18n";
 import type { ProviderId } from "./connections-api";
 import type { FirstWeekStep } from "./first-week";
 
@@ -25,7 +26,7 @@ export type ToolEntry = {
   connect: ToolConnect;
   /** Other words people search by. The name is always searched. */
   keywords: string[];
-  /** What connecting it gives the assistant, in a few words. */
+  /** What connecting it gives the assistant, in a few words. An English key: `lookup(t, tool.line)`. */
   line: string;
   /**
    * The slug the connected-apps list (`connected-apps.ts`) reports it under
@@ -46,6 +47,7 @@ export type CoachTargetId =
 /** The page a coach target lives on, so "Try" can go there first. */
 export type CoachRoute = "chat" | "integrations" | "members" | "routines";
 
+/** `title` and `hint` are English keys: `lookup(t, target.title)` where they are drawn. */
 export type CoachTarget = { id: CoachTargetId; title: string; hint: string; route: CoachRoute };
 
 export type SetupContext = {
@@ -56,8 +58,9 @@ export type SetupContext = {
 
 export type SetupStepConfig = {
   key: FirstWeekStep["key"];
-  label: (ctx: SetupContext) => string;
-  hint: (ctx: SetupContext) => string;
+  /** Written in the caller's language when it passes its `t`; English otherwise. */
+  label: (ctx: SetupContext, t?: Translate) => string;
+  hint: (ctx: SetupContext, t?: Translate) => string;
   coach: (ctx: SetupContext) => CoachTarget;
   /**
    * Finishing it is rewarded with credits on a hosted install. The list says
@@ -98,7 +101,7 @@ export const TOOLS: ToolEntry[] = [
     logo: { kind: "provider", provider: "notion" },
     connect: { kind: "provider", provider: "notion" },
     keywords: ["wiki", "pages", "docs"],
-    line: "Pages and databases",
+    line: msg("Pages and databases"),
     connectedSlug: "notion",
   },
   {
@@ -107,7 +110,7 @@ export const TOOLS: ToolEntry[] = [
     logo: { kind: "provider", provider: "google_drive" },
     connect: { kind: "provider", provider: "google_drive" },
     keywords: ["drive", "gdrive", "files"],
-    line: "Docs, Sheets and files",
+    line: msg("Docs, Sheets and files"),
     connectedSlug: "googledrive",
   },
   {
@@ -116,28 +119,31 @@ export const TOOLS: ToolEntry[] = [
     logo: { kind: "slack" },
     connect: { kind: "slack" },
     keywords: ["chat", "channels"],
-    line: "Channels and messages",
+    line: msg("Channels and messages"),
     connectedSlug: "slack",
   },
-  composio("gmail", "Gmail", "Mail and drafts", ["email", "google"]),
-  composio("googlecalendar", "Google Calendar", "Events and availability", ["calendar", "google"]),
-  composio("googlesheets", "Google Sheets", "Spreadsheets", ["sheets", "google", "excel"]),
-  composio("googledocs", "Google Docs", "Documents", ["docs", "google"]),
-  composio("hubspot", "HubSpot", "Contacts, deals and tickets", ["crm"]),
-  composio("salesforce", "Salesforce", "Leads, accounts and opportunities", ["crm"]),
-  composio("linear", "Linear", "Issues and projects", ["tickets"]),
-  composio("jira", "Jira", "Issues and boards", ["atlassian", "tickets"]),
-  composio("github", "GitHub", "Repositories, issues and pull requests", ["git", "code"]),
-  composio("asana", "Asana", "Tasks and projects"),
-  composio("trello", "Trello", "Boards and cards", ["kanban"]),
-  composio("airtable", "Airtable", "Bases and records", ["database"]),
-  composio("dropbox", "Dropbox", "Files and folders"),
-  composio("zendesk", "Zendesk", "Tickets and customers", ["support", "helpdesk"]),
-  composio("intercom", "Intercom", "Conversations and contacts", ["support", "chat"]),
-  composio("stripe", "Stripe", "Payments, customers and invoices", ["billing"]),
-  composio("shopify", "Shopify", "Orders, products and customers", ["store", "ecommerce"]),
-  composio("outlook", "Outlook", "Mail and calendar", ["email", "microsoft"]),
-  composio("microsoftteams", "Microsoft Teams", "Chats and channels", ["teams", "microsoft"]),
+  composio("gmail", "Gmail", msg("Mail and drafts"), ["email", "google"]),
+  composio("googlecalendar", "Google Calendar", msg("Events and availability"), [
+    "calendar",
+    "google",
+  ]),
+  composio("googlesheets", "Google Sheets", msg("Spreadsheets"), ["sheets", "google", "excel"]),
+  composio("googledocs", "Google Docs", msg("Documents"), ["docs", "google"]),
+  composio("hubspot", "HubSpot", msg("Contacts, deals and tickets"), ["crm"]),
+  composio("salesforce", "Salesforce", msg("Leads, accounts and opportunities"), ["crm"]),
+  composio("linear", "Linear", msg("Issues and projects"), ["tickets"]),
+  composio("jira", "Jira", msg("Issues and boards"), ["atlassian", "tickets"]),
+  composio("github", "GitHub", msg("Repositories, issues and pull requests"), ["git", "code"]),
+  composio("asana", "Asana", msg("Tasks and projects")),
+  composio("trello", "Trello", msg("Boards and cards"), ["kanban"]),
+  composio("airtable", "Airtable", msg("Bases and records"), ["database"]),
+  composio("dropbox", "Dropbox", msg("Files and folders")),
+  composio("zendesk", "Zendesk", msg("Tickets and customers"), ["support", "helpdesk"]),
+  composio("intercom", "Intercom", msg("Conversations and contacts"), ["support", "chat"]),
+  composio("stripe", "Stripe", msg("Payments, customers and invoices"), ["billing"]),
+  composio("shopify", "Shopify", msg("Orders, products and customers"), ["store", "ecommerce"]),
+  composio("outlook", "Outlook", msg("Mail and calendar"), ["email", "microsoft"]),
+  composio("microsoftteams", "Microsoft Teams", msg("Chats and channels"), ["teams", "microsoft"]),
   {
     // Named so the answer is recorded; nothing offers to connect it yet. The
     // kickoff turn knows the same (`NOT_YET_CONNECTABLE` on the worker).
@@ -146,54 +152,57 @@ export const TOOLS: ToolEntry[] = [
     logo: { kind: "composio", slug: "whatsapp" },
     connect: { kind: "none" },
     keywords: ["messaging", "meta"],
-    line: "Not available yet",
+    line: msg("Not available yet"),
     connectedSlug: "whatsapp",
   },
 ];
 
+/** English keys: `lookup(t, CTA.continue)` where they are drawn. */
 export const CTA = {
-  continue: "Continue",
-  skip: "Skip for now",
-  back: "Back",
-  finishing: "Setting up…",
-  gotIt: "Got it",
-  try: "Try",
+  continue: msg("Continue"),
+  skip: msg("Skip for now"),
+  back: msg("Back"),
+  finishing: msg("Setting up…"),
+  gotIt: msg("Got it"),
+  try: msg("Try"),
 } as const;
 
 /**
  * "What should it do?" (A14): the jobs a first agent is set up for, as chips.
  * Each carries the sentence it adds to the persona, so the persona under the
- * chips is written from the choices and reads like one paragraph.
+ * chips is written from the choices and reads like one paragraph. The label is
+ * an English key (`lookup(t, job.label)`); the sentence is the agent's system
+ * prompt and stays English on purpose.
  */
 export const JOBS = [
   {
     id: "answer-questions",
-    label: "Answer customer questions",
+    label: msg("Answer customer questions"),
     sentence: "answer customer questions using the documents in Knowledge",
   },
   {
     id: "draft-replies",
-    label: "Draft replies",
+    label: msg("Draft replies"),
     sentence: "draft replies for the team to check and send",
   },
   {
     id: "summarise",
-    label: "Summarise documents",
+    label: msg("Summarise documents"),
     sentence: "summarise long documents into what matters",
   },
   {
     id: "watch-mailbox",
-    label: "Watch a mailbox",
+    label: msg("Watch a mailbox"),
     sentence: "keep an eye on a shared mailbox and say what needs a person",
   },
   {
     id: "research",
-    label: "Research the web",
+    label: msg("Research the web"),
     sentence: "research questions on the web and say where each fact came from",
   },
   {
     id: "reconcile",
-    label: "Reconcile numbers",
+    label: msg("Reconcile numbers"),
     sentence: "check figures against each other and point out what does not add up",
   },
 ] as const;
@@ -232,71 +241,74 @@ export function personaFor(input: {
 export const SETUP: SetupStepConfig[] = [
   {
     key: "ask",
-    label: () => "Ask your first question",
-    hint: () => "Anything at all. The reply names where it came from.",
+    label: (_ctx, t = englishT) => t("Ask your first question"),
+    hint: (_ctx, t = englishT) => t("Anything at all. The reply names where it came from."),
     coach: () => ({
       id: "composer",
-      title: "Ask here",
-      hint: "Type a question and press Enter. Shift+Enter adds a line.",
+      title: msg("Ask here"),
+      hint: msg("Type a question and press Enter. Shift+Enter adds a line."),
       route: "chat",
     }),
   },
   {
     key: "connect",
-    label: ({ toolName }) => (toolName ? `Connect ${toolName}` : "Connect an app"),
-    hint: ({ toolName }) =>
+    label: ({ toolName }, t = englishT) =>
+      toolName ? t("Connect {{toolName}}", { toolName }) : t("Connect an app"),
+    hint: ({ toolName }, t = englishT) =>
       toolName
-        ? `Your assistant can then read and act in ${toolName}, with your say-so.`
-        : "Your assistant can then read and act in it, with your say-so.",
+        ? t("Your assistant can then read and act in {{toolName}}, with your say-so.", { toolName })
+        : t("Your assistant can then read and act in it, with your say-so."),
     coach: () => ({
       id: "integrations-catalogue",
-      title: "Connect an app",
-      hint: "Pick one. You sign in with the app itself; nothing is shared with anyone else.",
+      title: msg("Connect an app"),
+      hint: msg("Pick one. You sign in with the app itself; nothing is shared with anyone else."),
       route: "integrations",
     }),
   },
   {
     key: "knowledge",
-    label: () => "Add a document",
-    hint: () => "A process doc, a contract, a research note. Answers start coming from it.",
+    label: (_ctx, t = englishT) => t("Add a document"),
+    hint: (_ctx, t = englishT) =>
+      t("A process doc, a contract, a research note. Answers start coming from it."),
     coach: () => ({
       id: "attach",
-      title: "Attach a document",
-      hint: "Drop a file here or pick one. It is read once and quoted after that.",
+      title: msg("Attach a document"),
+      hint: msg("Drop a file here or pick one. It is read once and quoted after that."),
       route: "chat",
     }),
     rewarded: true,
   },
   {
     key: "team",
-    label: ({ mode }) => (mode === "solo" ? "Share the assistant" : "Invite a teammate"),
-    hint: ({ mode }) =>
+    label: ({ mode }, t = englishT) =>
+      mode === "solo" ? t("Share the assistant") : t("Invite a teammate"),
+    hint: ({ mode }, t = englishT) =>
       mode === "solo"
-        ? "Let someone else use it. Their conversations with it stay their own."
-        : "They get everything the assistant knows. Their conversations stay their own.",
+        ? t("Let someone else use it. Their conversations with it stay their own.")
+        : t("They get everything the assistant knows. Their conversations stay their own."),
     coach: ({ mode }) =>
       mode === "solo"
         ? {
             id: "share-agent",
-            title: "Share it",
-            hint: "Choose who can use the assistant and who can train it.",
+            title: msg("Share it"),
+            hint: msg("Choose who can use the assistant and who can train it."),
             route: "chat",
           }
         : {
             id: "invite-member",
-            title: "Invite someone",
-            hint: "An email is enough. They join the workspace and see the shared assistant.",
+            title: msg("Invite someone"),
+            hint: msg("An email is enough. They join the workspace and see the shared assistant."),
             route: "members",
           },
   },
   {
     key: "routine",
-    label: () => "Schedule a routine",
-    hint: () => "Something that runs on its own and reports back.",
+    label: (_ctx, t = englishT) => t("Schedule a routine"),
+    hint: (_ctx, t = englishT) => t("Something that runs on its own and reports back."),
     coach: () => ({
       id: "new-routine",
-      title: "New routine",
-      hint: "Say what to do and how often. The result arrives by email or Slack.",
+      title: msg("New routine"),
+      hint: msg("Say what to do and how often. The result arrives by email or Slack."),
       route: "routines",
     }),
   },
@@ -317,15 +329,18 @@ export function toolById(id: string): ToolEntry | undefined {
   return TOOLS.find((t) => t.id === id);
 }
 
-/** Name and keywords, case-insensitively. An empty query is the whole grid. */
-export function searchTools(query: string): ToolEntry[] {
-  const q = query.trim().toLowerCase();
+/**
+ * Name and keywords, case-insensitively, in the language the query was typed
+ * in. An empty query is the whole grid.
+ */
+export function searchTools(query: string, locale: string = "en"): ToolEntry[] {
+  const q = query.trim().toLocaleLowerCase(locale);
   if (!q) return TOOLS;
   return TOOLS.filter(
-    (t) =>
-      t.name.toLowerCase().includes(q) ||
-      t.id.includes(q) ||
-      t.keywords.some((k) => k.toLowerCase().includes(q)),
+    (tool) =>
+      tool.name.toLocaleLowerCase(locale).includes(q) ||
+      tool.id.includes(q) ||
+      tool.keywords.some((k) => k.toLocaleLowerCase(locale).includes(q)),
   );
 }
 
@@ -348,7 +363,10 @@ export function firstConnectableTool(
 }
 
 /** "Ada's assistant", or "Your assistant" when the profile has no name. */
-export function defaultAssistantName(firstName: string | null | undefined): string {
+export function defaultAssistantName(
+  firstName: string | null | undefined,
+  t: Translate = englishT,
+): string {
   const name = firstName?.trim();
-  return name ? `${name}'s assistant` : "Your assistant";
+  return name ? t("{{name}}'s assistant", { name }) : t("Your assistant");
 }

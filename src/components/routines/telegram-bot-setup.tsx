@@ -1,3 +1,4 @@
+import { Trans, useTranslation } from "@/i18n";
 import { RevealedSecret } from "@/components/revealed-secret";
 import { useRoutineEventSetup } from "@/hooks/use-routines";
 
@@ -11,32 +12,41 @@ import { useRoutineEventSetup } from "@/hooks/use-routines";
  * owner can see who can start the routine.
  */
 export function TelegramBotSetup({ routineId }: { routineId: string }) {
+  const { t } = useTranslation();
   const { data, isPending, isError } = useRoutineEventSetup(routineId, true);
 
-  if (isPending) return <p className="text-meta text-muted-foreground">Loading the bot…</p>;
+  if (isPending) return <p className="text-meta text-muted-foreground">{t("Loading the bot…")}</p>;
   if (isError) {
     return (
-      <p className="text-meta text-muted-foreground">Couldn't load the bot. Reload to try again.</p>
+      <p className="text-meta text-muted-foreground">
+        {t("Couldn't load the bot. Reload to try again.")}
+      </p>
     );
   }
   if (data.kind !== "telegram") return null;
 
   return (
     <div className="space-y-3 rounded-lg border border-hairline p-4">
-      <p className="text-sm">Pair a chat with @{data.botUsername}</p>
+      <p className="text-sm">{t("Pair a chat with @{{bot}}", { bot: data.botUsername })}</p>
       <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
-        <li>Open the link below on a phone or computer with Telegram, and press Start.</li>
+        <li>{t("Open the link below on a phone or computer with Telegram, and press Start.")}</li>
         <li>
-          For a group, add @{data.botUsername} to the group first, then send the bot{" "}
-          <code className="font-mono">/start {data.code}</code> in the group.
+          <Trans
+            t={t}
+            i18nKey="For a group, add @{{bot}} to the group first, then send the bot <code>/start {{code}}</code> in the group."
+            values={{ bot: data.botUsername, code: data.code }}
+            components={{ code: <code className="font-mono" /> }}
+          />
         </li>
-        <li>Messages in a paired chat start the routine, and its answer comes back there.</li>
+        <li>
+          {t("Messages in a paired chat start the routine, and its answer comes back there.")}
+        </li>
       </ol>
-      <RevealedSecret value={data.link} label="Copy pairing link" />
+      <RevealedSecret value={data.link} label={t("Copy pairing link")} />
       <p className="text-meta text-muted-foreground">
         {data.chats.length === 0
-          ? "No chat is paired yet, so nothing can start this routine from Telegram."
-          : `Paired: ${data.chats.join(", ")}.`}
+          ? t("No chat is paired yet, so nothing can start this routine from Telegram.")
+          : t("Paired: {{chats}}.", { chats: data.chats.join(", ") })}
       </p>
     </div>
   );

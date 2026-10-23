@@ -55,6 +55,10 @@ jobs:
         working-directory: worker
 
       - run: bun run lint
+      # The committed catalogues must be what the source would extract: a
+      # string added without `bun run i18n:extract` fails here, not in
+      # somebody's browser as English on a Turkish page.
+      - run: bun run i18n:check
       - run: bun run typecheck
       - run: bun run typecheck
         working-directory: worker

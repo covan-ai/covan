@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { useTranslation } from "@/i18n";
 import { useAgentsStore, type Agent } from "@/lib/agents-store";
 
 /**
@@ -24,6 +25,7 @@ export function AgentFoldersDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const store = useAgentsStore();
   const folders = store.bundles;
 
@@ -31,16 +33,17 @@ export function AgentFoldersDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="sm">
         <DialogHeader>
-          <DialogTitle>Folders {agent.name} reads</DialogTitle>
+          <DialogTitle>{t("Folders {{agent}} reads", { agent: agent.name })}</DialogTitle>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-3">
           <p className="m-0 text-meta text-muted-foreground">
-            Everything in a folder, including what a connected source syncs into it. New files are
-            read within a minute.
+            {t(
+              "Everything in a folder, including what a connected source syncs into it. New files are read within a minute.",
+            )}
           </p>
           {folders.length === 0 ? (
             <p className="m-0 text-sm text-muted-foreground">
-              No folders yet. Make one in Knowledge.
+              {t("No folders yet. Make one in Knowledge.")}
             </p>
           ) : (
             <ul className="m-0 list-none p-0">
@@ -51,7 +54,10 @@ export function AgentFoldersDialog({
                 >
                   <span className="min-w-0 flex-1 truncate text-sm">{b.name}</span>
                   <span className="text-meta text-muted-foreground tabular-nums">
-                    {b.documentCount} {b.documentCount === 1 ? "file" : "files"}
+                    {t("{{count}} file", {
+                      count: b.documentCount,
+                      defaultValue_other: "{{count}} files",
+                    })}
                   </span>
                   <Switch
                     checked={agent.bundleIds.includes(b.id)}
@@ -59,7 +65,10 @@ export function AgentFoldersDialog({
                       if (on) void store.attachBundle(agent.id, b.id);
                       else store.detachBundle(agent.id, b.id);
                     }}
-                    aria-label={`${agent.name} reads ${b.name}`}
+                    aria-label={t("{{agent}} reads {{folder}}", {
+                      agent: agent.name,
+                      folder: b.name,
+                    })}
                   />
                 </li>
               ))}
@@ -67,7 +76,9 @@ export function AgentFoldersDialog({
           )}
         </DialogBody>
         <DialogFooter>
-          <Button onClick={() => onOpenChange(false)}>Done</Button>
+          <Button onClick={() => onOpenChange(false)}>
+            {t("Done", { context: "button", defaultValue: "Done" })}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

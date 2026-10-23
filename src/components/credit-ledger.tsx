@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { toast } from "sonner";
+import { lookup, msg, useTranslation, type TFunction } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Chip } from "@/components/chip";
 import { DataTable } from "@/components/data-table";
 import { SectionLabel } from "@/components/section";
@@ -12,58 +14,75 @@ import { ledgerWhen } from "@/lib/day-groups";
 
 /** How each kind of row reads when nothing names what it was for. */
 const KIND: Record<CreditLedgerEntry["kind"], string> = {
-  signup_grant: "Free credits",
-  grant: "Credits added",
-  purchase: "Bought credits",
-  refund: "Refund",
-  completion: "Model",
-  embedding: "Indexing and search",
-  transcription: "Dictation",
-  composio_call: "Connected app",
-  composio_search: "Connected app search",
-  browser_task: "Browser task",
-  browser_session: "Browser session",
+  signup_grant: msg("Free credits"),
+  grant: msg("Credits added"),
+  purchase: msg("Bought credits"),
+  refund: msg("Refund"),
+  completion: msg("Model"),
+  embedding: msg("Indexing and search"),
+  transcription: msg("Dictation"),
+  composio_call: msg("Connected app"),
+  composio_search: msg("Connected app search"),
+  browser_task: msg("Browser task"),
+  browser_session: msg("Browser session"),
 };
 
 /** Why a completion happened, when the row says. */
 const PURPOSE: Record<string, string> = {
-  reply: "Reply",
-  title: "Thread title",
-  follow_ups: "Suggested questions",
-  persona: "Persona draft",
-  brainstorm: "Brainstorm",
-  routine_draft: "Routine draft",
-  routine: "Routine run",
-  report: "Report",
-  summary: "Summary",
-  coverage: "Coverage report",
-  slack: "Slack answer",
-  reading: "Reading connected-app results",
+  reply: msg("Reply"),
+  title: msg("Thread title"),
+  follow_ups: msg("Suggested questions"),
+  persona: msg("Persona draft"),
+  brainstorm: msg("Brainstorm"),
+  routine_draft: msg("Routine draft"),
+  routine: msg("Routine run"),
+  report: msg("Report"),
+  summary: msg("Summary"),
+  coverage: msg("Coverage report"),
+  slack: msg("Slack answer"),
+  reading: msg("Reading connected-app results"),
 };
 
-/** "Bought 10,000 credits", "Persona draft", the note a grant was written with. */
-function what(e: CreditLedgerEntry): string {
-  if (e.kind === "purchase")
-    return `Bought ${Math.round(e.credits).toLocaleString("en-US")} credits`;
+/**
+ * "Bought 10,000 credits", "Persona draft", the note a grant was written with.
+ * The note is the server's own words and is shown as written.
+ */
+function what(e: CreditLedgerEntry, t: TFunction, locale: string): string {
+  if (e.kind === "purchase") {
+    const whole = Math.round(e.credits);
+    return t("Bought {{credits}} credit", {
+      count: whole,
+      credits: whole.toLocaleString(locale),
+      defaultValue_other: "Bought {{credits}} credits",
+    });
+  }
   if ((e.kind === "grant" || e.kind === "signup_grant") && e.note) return e.note;
-  if (e.kind === "completion" && e.purpose && PURPOSE[e.purpose]) return PURPOSE[e.purpose];
-  return KIND[e.kind] ?? e.kind;
+  if (e.kind === "completion" && e.purpose && PURPOSE[e.purpose]) {
+    return lookup(t, PURPOSE[e.purpose]);
+  }
+  const kind = KIND[e.kind];
+  return kind ? lookup(t, kind) : e.kind;
 }
 
 /** Two decimals under one credit, whole credits above — a credit is the unit, not a rounding. */
-function amount(v: number): string {
+function amount(v: number, locale: string): string {
   const abs = Math.abs(v);
   const shown =
     abs >= 100
-      ? Math.round(abs).toLocaleString("en-US")
+      ? Math.round(abs).toLocaleString(locale)
       : abs >= 1
-        ? abs.toFixed(1).replace(/\.0$/, "")
-        : abs.toFixed(2);
-  return `${v > 0 ? "+" : v < 0 ? "−" : ""}${shown === "0.00" ? "<0.01" : shown}`;
+        ? abs.toLocaleString(locale, { maximumFractionDigits: 1 })
+        : abs < 0.005
+          ? `<${(0.01).toLocaleString(locale, { minimumFractionDigits: 2 })}`
+          : abs.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${v > 0 ? "+" : v < 0 ? "−" : ""}${shown}`;
 }
 
 function Entry({ e }: { e: CreditLedgerEntry }) {
-  const why = e.kind === "completion" && e.purpose && e.purpose !== "reply" ? what(e) : null;
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const why =
+    e.kind === "completion" && e.purpose && e.purpose !== "reply" ? what(e, t, locale) : null;
   const suffix = why ? <span className="text-muted-foreground"> · {why}</span> : null;
   if (e.routineId && e.routineName) {
     return (
@@ -98,11 +117,12 @@ function Entry({ e }: { e: CreditLedgerEntry }) {
   if (e.sessionId && !e.sessionTitle) {
     return (
       <span>
-        A private thread<span className="text-muted-foreground"> · {what(e)}</span>
+        {t("A private thread")}
+        <span className="text-muted-foreground"> · {what(e, t, locale)}</span>
       </span>
     );
   }
-  return <span>{what(e)}</span>;
+  return <span>{what(e, t, locale)}</span>;
 }
 
 const firstName = (name: string) => name.split(/\s+/)[0] || name;
@@ -116,6 +136,8 @@ const firstName = (name: string) => name.split(/\s+/)[0] || name;
  * there rather than an empty table about a feature that does not exist.
  */
 export function CreditLedger() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const hosted = useIsHosted();
   const [exporting, setExporting] = useState(false);
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
@@ -134,7 +156,7 @@ export function CreditLedger() {
     try {
       await api.creditLedgerCsv();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't export the ledger");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't export the ledger"));
     } finally {
       setExporting(false);
     }
@@ -150,38 +172,40 @@ export function CreditLedger() {
             disabled={exporting || entries.length === 0}
             className="text-meta font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
-            {exporting ? "Exporting…" : "Export CSV"}
+            {exporting ? t("Exporting…") : t("Export CSV")}
           </button>
         }
       >
-        Ledger
+        {t("Ledger")}
       </SectionLabel>
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
       ) : (
         <div className="overflow-x-auto">
           <DataTable
-            label="Credit ledger"
+            label={t("Credit ledger")}
             rows={entries}
             rowKey={(e) => String(e.id)}
             empty={
               <p className="text-sm text-muted-foreground">
-                Every charge and every purchase shows up here as it happens.
+                {t("Every charge and every purchase shows up here as it happens.")}
               </p>
             }
             columns={[
               {
                 key: "when",
-                header: "When",
+                header: t("When"),
                 className: "whitespace-nowrap",
                 cell: (e) => (
-                  <span className="text-muted-foreground">{ledgerWhen(Date.parse(e.at))}</span>
+                  <span className="text-muted-foreground">
+                    {ledgerWhen(Date.parse(e.at), undefined, t, locale)}
+                  </span>
                 ),
               },
-              { key: "entry", header: "Entry", cell: (e) => <Entry e={e} /> },
+              { key: "entry", header: t("Entry"), cell: (e) => <Entry e={e} /> },
               {
                 key: "agent",
-                header: "Agent",
+                header: t("Agent"),
                 hideBelow: "md",
                 cell: (e) =>
                   e.agentName ? (
@@ -192,12 +216,12 @@ export function CreditLedger() {
               },
               {
                 key: "by",
-                header: "By",
+                header: t("By"),
                 hideBelow: "md",
                 cell: (e) => (
                   <span className="text-muted-foreground">
                     {e.by?.kind === "routine"
-                      ? "Routine"
+                      ? t("Routine")
                       : e.by?.kind === "person"
                         ? firstName(e.by.name)
                         : "—"}
@@ -206,11 +230,11 @@ export function CreditLedger() {
               },
               {
                 key: "credits",
-                header: "Credits",
+                header: t("Credits"),
                 num: true,
                 cell: (e) => (
                   <span className={e.credits > 0 ? "font-medium" : undefined}>
-                    {amount(e.credits)}
+                    {amount(e.credits, locale)}
                   </span>
                 ),
               },
@@ -226,12 +250,13 @@ export function CreditLedger() {
           disabled={isFetchingNextPage}
           onClick={() => void fetchNextPage()}
         >
-          {isFetchingNextPage ? "Loading…" : "Show older"}
+          {isFetchingNextPage ? t("Loading…") : t("Show older")}
         </Button>
       )}
       <p className="mt-3 text-meta text-muted-foreground">
-        A browser session appears twice: a hold when it starts, and the difference once the provider
-        says what it really cost. A private thread&rsquo;s cost is listed; its title is not.
+        {t(
+          "A browser session appears twice: a hold when it starts, and the difference once the provider says what it really cost. A private thread’s cost is listed; its title is not.",
+        )}
       </p>
     </section>
   );

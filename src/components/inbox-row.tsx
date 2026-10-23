@@ -1,4 +1,6 @@
 import { Link } from "@tanstack/react-router";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import type { InboxItem } from "@/lib/api-client";
 import { AgentMark } from "@/components/agent-mark";
 import { StatusDot } from "@/components/status-dot";
@@ -22,13 +24,15 @@ export function InboxRow({
   onOpen: (item: InboxItem) => void;
   now?: number;
 }) {
-  const agentName = agent?.name ?? "An agent";
-  const line = inboxLine(item, agentName);
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const agentName = agent?.name ?? t("An agent");
+  const line = inboxLine(item, agentName, t);
   const read = !item.unread && !item.needsYou;
   const whose = [
     agentName,
-    item.sharedBy ? `shared by ${item.sharedBy}` : null,
-    item.kind === "routine" ? "routine" : null,
+    item.sharedBy ? t("shared by {{name}}", { name: item.sharedBy }) : null,
+    item.kind === "routine" ? t("routine") : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -49,7 +53,7 @@ export function InboxRow({
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
           <span className={cn("min-w-0 truncate text-sm", read ? "font-medium" : "font-semibold")}>
-            {item.title ?? "Untitled thread"}
+            {item.title ?? t("Untitled thread")}
           </span>
           <span className="shrink-0 text-meta whitespace-nowrap text-muted-foreground max-sm:hidden">
             {whose}
@@ -71,7 +75,7 @@ export function InboxRow({
             read ? "text-muted-foreground" : "font-medium text-foreground",
           )}
         >
-          {shortTime(item.lastActivityAt, now)}
+          {shortTime(item.lastActivityAt, now, t, locale)}
         </span>
         {item.unreadCount > 0 && (
           <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-primary px-1.5 text-xs font-semibold text-primary-foreground">

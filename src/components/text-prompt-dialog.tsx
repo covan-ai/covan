@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useTranslation } from "@/i18n";
 
 /**
  * One line of text, asked for in the app's own dialog.
@@ -57,6 +58,7 @@ function PromptForm({
   busy,
   setBusy,
 }: Props & { busy: boolean; setBusy: (busy: boolean) => void }) {
+  const { t } = useTranslation();
   const [value, setValue] = useState(initialValue);
   const trimmed = value.trim();
 
@@ -92,7 +94,7 @@ function PromptForm({
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
-          Cancel
+          {t("Cancel")}
         </Button>
         <Button type="submit" disabled={busy || !trimmed}>
           {busy ? busyLabel : submitLabel}

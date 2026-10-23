@@ -44,6 +44,8 @@ import {
   Users,
 } from "lucide-react";
 
+import { lookup, msg, useTranslation, type Translate } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { api } from "@/lib/api-client";
 import { bundleDocumentsKey, useAgentsStore, type Agent } from "@/lib/agents-store";
 import { indexingNow } from "@/lib/index-status";
@@ -83,7 +85,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ACCEPT, validateUpload, ACCEPTED_SUMMARY } from "@/lib/uploads";
+import { ACCEPT, validateUpload, acceptedSummary } from "@/lib/uploads";
 import { formatFileSize } from "@/lib/file-size";
 import { dropPayload, rangeSelect } from "@/lib/knowledge-selection";
 import { documentAge } from "@/lib/relative-time";
@@ -129,10 +131,23 @@ type FilterKey = "all" | "unindexed" | "stale";
 /** Above this many bundles the rail gets a search of its own. */
 const RAIL_SEARCH_AFTER = 8;
 
-/** How each filter reads in the sentence an empty pane says. */
-const FILTER_PHRASE: Record<Exclude<FilterKey, "all">, string> = {
-  unindexed: "waiting to be indexed",
-  stale: "older than ninety days",
+/**
+ * What an empty pane says when a filter found nothing, with and without a
+ * search — whole sentences, so each language can put the filter where it goes.
+ */
+const FILTER_EMPTY: Record<Exclude<FilterKey, "all">, { searched: string; plain: string }> = {
+  unindexed: {
+    searched: msg(
+      'No file called "{{query}}" is waiting to be indexed. Press All to see every file again.',
+    ),
+    plain: msg("Nothing here is waiting to be indexed. Press All to see every file again."),
+  },
+  stale: {
+    searched: msg(
+      'No file called "{{query}}" is older than ninety days. Press All to see every file again.',
+    ),
+    plain: msg("Nothing here is older than ninety days. Press All to see every file again."),
+  },
 };
 
 type Uploading = {
@@ -189,6 +204,8 @@ export function KnowledgeExplorer({
   /** The window's own size, when the page wants it to fill the screen. */
   className?: string;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const store = useAgentsStore();
   const { bundles, canWrite } = store;
 
@@ -328,24 +345,24 @@ export function KnowledgeExplorer({
   );
 
   const visible = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
+    const needle = query.trim().toLocaleLowerCase(locale);
     const filtered = documents.filter((d) => {
-      if (needle && !d.name.toLocaleLowerCase().includes(needle)) return false;
+      if (needle && !d.name.toLocaleLowerCase(locale).includes(needle)) return false;
       if (filter === "unindexed") return !d.indexed;
       if (filter === "stale") return documentAge(d.createdAt).stale;
       return true;
     });
     const factor = sort.dir === "asc" ? 1 : -1;
-    return [...filtered].sort((a, b) => factor * compare(a, b, sort.key, counts));
-  }, [documents, query, filter, sort, counts]);
+    return [...filtered].sort((a, b) => factor * compare(a, b, sort.key, counts, locale));
+  }, [documents, query, filter, sort, counts, locale]);
 
   // The root's folders, through the same search box the files use.
   const visibleFolders = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
+    const needle = query.trim().toLocaleLowerCase(locale);
     return [...bundles]
-      .filter((b) => !needle || b.name.toLocaleLowerCase().includes(needle))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [bundles, query]);
+      .filter((b) => !needle || b.name.toLocaleLowerCase(locale).includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name, locale));
+  }, [bundles, query, locale]);
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => ({ key, dir: s.key === key && s.dir === "asc" ? "desc" : "asc" }));
@@ -394,13 +411,13 @@ export function KnowledgeExplorer({
     const list = files ? Array.from(files) : [];
     if (list.length === 0) return;
     if (!openBundle) {
-      toast.error("Pick a folder to upload into first.");
+      toast.error(t("Pick a folder to upload into first."));
       return;
     }
     const bundleId = openBundle.id;
     const accepted: Array<{ id: string; file: File }> = [];
     for (const file of list) {
-      const check = validateUpload(file);
+      const check = validateUpload(file, t);
       if (!check.ok) {
         toast.error(check.reason);
         continue;
@@ -413,13 +430,23 @@ export function KnowledgeExplorer({
     // a file, and two "pricing.pdf" side by side is how an agent ends up quoting
     // last year's. Asked once for the whole drop; Cancel keeps both.
     const already = new Map(
-      (bundleDocuments.data ?? []).map((d) => [d.name.toLowerCase(), d] as const),
+      (bundleDocuments.data ?? []).map((d) => [d.name.toLocaleLowerCase(locale), d] as const),
     );
-    const repeats = accepted.filter(({ file }) => already.has(file.name.toLowerCase()));
+    const repeats = accepted.filter(({ file }) => already.has(file.name.toLocaleLowerCase(locale)));
     const replacing =
       repeats.length > 0 &&
       confirm(
-        `${repeats.length === 1 ? `"${repeats[0].file.name}" is` : `${repeats.length} of these files are`} already in ${openBundle.name}. Replace ${repeats.length === 1 ? "it" : "them"} with the new upload? Cancel keeps both.`,
+        // One plural key: the singular names the file, the plural counts them.
+        t(
+          '"{{file}}" is already in {{folder}}. Replace it with the new upload? Cancel keeps both.',
+          {
+            count: repeats.length,
+            file: repeats[0].file.name,
+            folder: openBundle.name,
+            defaultValue_other:
+              "{{count}} of these files are already in {{folder}}. Replace them with the new upload? Cancel keeps both.",
+          },
+        ),
       );
     setUploading((prev) => [
       ...prev,
@@ -449,17 +476,23 @@ export function KnowledgeExplorer({
         return {
           duration: 12000,
           action: {
-            label: `Attach to ${a.name}`,
+            label: t("Attach to {{agent}}", { agent: a.name }),
             onClick: () =>
               void Promise.resolve(store.attachBundle(a.id, bundleId)).then((ok) => {
-                if (ok) toast.success(`${folder.name} is now read by ${a.name}`);
+                if (ok)
+                  toast.success(
+                    t("{{folder}} is now read by {{agent}}", {
+                      folder: folder.name,
+                      agent: a.name,
+                    }),
+                  );
               }),
           },
         };
       }
       return {
         duration: 12000,
-        action: { label: "Choose agents", onClick: () => setAttaching(folder) },
+        action: { label: t("Choose agents"), onClick: () => setAttaching(folder) },
       };
     };
     const added = (message: string) => {
@@ -475,24 +508,28 @@ export function KnowledgeExplorer({
           (pct) => patch(id, { progress: pct }),
           (phase) => patch(id, { phase }),
         );
-        const previous = replacing ? already.get(file.name.toLowerCase()) : undefined;
+        const previous = replacing ? already.get(file.name.toLocaleLowerCase(locale)) : undefined;
         // Only once the new one is safely in: the old one goes to Recently
         // deleted, from where it can still come back.
         if (previous) await store.removeDocument(previous.id).catch(() => undefined);
         if (previous) {
-          toast.success(`Replaced ${file.name} — indexing the new version`);
+          toast.success(t("Replaced {{file}} — indexing the new version", { file: file.name }));
         } else if (doc.indexStatus === "queued" || doc.indexStatus === "indexing") {
-          added(`Added ${file.name} — indexing it now`);
+          added(t("Added {{file}} — indexing it now", { file: file.name }));
         } else if (doc.indexed) {
-          added(`Added ${file.name}`);
+          added(t("Added {{file}}", { file: file.name }));
         } else {
           toast.warning(
-            `${file.name} went in but could not be indexed, so answers won't be grounded in it.`,
+            t("{{file}} went in but could not be indexed, so answers won't be grounded in it.", {
+              file: file.name,
+            }),
           );
         }
       } catch (err) {
         const message = (err as Error | undefined)?.message;
-        toast.error(message ? `Upload failed: ${message}` : "Upload failed");
+        toast.error(
+          message ? t("Upload failed: {{reason}}", { reason: message }) : t("Upload failed"),
+        );
       } finally {
         setUploading((prev) => prev.filter((u) => u.id !== id));
       }
@@ -506,10 +543,11 @@ export function KnowledgeExplorer({
 
   const moveMany = async (docs: ExplorerDocument[], bundleId: string) => {
     if (docs.length === 0) return;
-    const where = bundles.find((b) => b.id === bundleId)?.name ?? "the folder";
+    const where = bundles.find((b) => b.id === bundleId)?.name ?? t("the folder");
     setMoved((prev) => ({ ...prev, ...Object.fromEntries(docs.map((d) => [d.id, bundleId])) }));
-    const outcome = await eachInTurn(docs, {
-      progress: (done, total) => `Moving ${done} of ${total} to ${where}…`,
+    const outcome = await eachInTurn(t, docs, {
+      progress: (done, total) =>
+        t("Moving {{done}} of {{total}} to {{folder}}…", { done, total, folder: where }),
       run: (doc) => store.moveDocument(doc.id, bundleId),
       onSettled: (doc, ok) => {
         markBusy(doc.id, false);
@@ -529,11 +567,17 @@ export function KnowledgeExplorer({
       for (const doc of docs) next.delete(doc.id);
       return next;
     });
-    announce(outcome, {
-      one: (name) => `Moved ${name} to ${where}`,
-      many: (n) => `Moved ${n} files to ${where}`,
-      verb: "Move",
-      partial: (n, total) => `Moved ${n} of ${total} to ${where}.`,
+    announce(t, outcome, {
+      one: (name) => t("Moved {{file}} to {{folder}}", { file: name, folder: where }),
+      many: (n) =>
+        t("Moved {{count}} file to {{folder}}", {
+          count: n,
+          folder: where,
+          defaultValue_other: "Moved {{count}} files to {{folder}}",
+        }),
+      failed: (reason) => t("Move failed: {{reason}}", { reason }),
+      partial: (n, total) =>
+        t("Moved {{done}} of {{total}} to {{folder}}.", { done: n, total, folder: where }),
     });
   };
 
@@ -545,23 +589,40 @@ export function KnowledgeExplorer({
       .reindexDocument(doc.id)
       .then((d) =>
         indexingNow(d)
-          ? toast.success(`Reindexing ${doc.name} — its old passages answer until it finishes`)
+          ? toast.success(
+              t("Reindexing {{file}} — its old passages answer until it finishes", {
+                file: doc.name,
+              }),
+            )
           : toast.success(
-              `Reindexed ${doc.name} — ${d.chunkCount} ${d.chunkCount === 1 ? "passage" : "passages"}`,
+              t("Reindexed {{file}} — {{count}} passage", {
+                file: doc.name,
+                count: d.chunkCount,
+                defaultValue_other: "Reindexed {{file}} — {{count}} passages",
+              }),
             ),
       )
       .catch((err) =>
-        toast.error(err?.message ? `Reindex failed: ${err.message}` : "Reindex failed"),
+        toast.error(
+          err?.message
+            ? t("Reindex failed: {{reason}}", { reason: err.message })
+            : t("Reindex failed"),
+        ),
       )
       .finally(() => markBusy(doc.id, false));
   };
 
   const removeMany = async (docs: ExplorerDocument[]) => {
     if (docs.length === 0) return;
-    const what = docs.length === 1 ? `"${docs[0].name}"` : `${docs.length} files`;
-    if (!confirm(`Delete ${what}? They wait 30 days in Settings → Recently deleted.`)) return;
-    const outcome = await eachInTurn(docs, {
-      progress: (done, total) => `Deleting ${done} of ${total}…`,
+    const ask = t('Delete "{{file}}"? They wait 30 days in Settings → Recently deleted.', {
+      count: docs.length,
+      file: docs[0].name,
+      defaultValue_other:
+        "Delete {{count}} files? They wait 30 days in Settings → Recently deleted.",
+    });
+    if (!confirm(ask)) return;
+    const outcome = await eachInTurn(t, docs, {
+      progress: (done, total) => t("Deleting {{done}} of {{total}}…", { done, total }),
       run: (doc) => store.removeDocument(doc.id),
       onStart: (doc) => markBusy(doc.id, true),
       onSettled: (doc) => markBusy(doc.id, false),
@@ -571,11 +632,12 @@ export function KnowledgeExplorer({
       for (const doc of docs) next.delete(doc.id);
       return next;
     });
-    announce(outcome, {
-      one: (name) => `Deleted ${name}`,
-      many: (n) => `Deleted ${n} files`,
-      verb: "Delete",
-      partial: (n, total) => `Deleted ${n} of ${total}.`,
+    announce(t, outcome, {
+      one: (name) => t("Deleted {{file}}", { file: name }),
+      many: (n) =>
+        t("Deleted {{count}} file", { count: n, defaultValue_other: "Deleted {{count}} files" }),
+      failed: (reason) => t("Delete failed: {{reason}}", { reason }),
+      partial: (n, total) => t("Deleted {{done}} of {{total}}.", { done: n, total }),
     });
   };
 
@@ -666,7 +728,11 @@ export function KnowledgeExplorer({
               it can in a file manager, and the strip at the foot says so. */}
           <section
             aria-label={
-              openBundle ? openBundle.name : agent ? `Everything ${agent.name} reads` : "Folders"
+              openBundle
+                ? openBundle.name
+                : agent
+                  ? t("Everything {{agent}} reads", { agent: agent.name })
+                  : t("Folders")
             }
             className="relative flex min-h-0 min-w-0 flex-1 flex-col"
             onDragOver={(e) => {
@@ -688,7 +754,7 @@ export function KnowledgeExplorer({
             {dropHover && openBundle ? (
               <div className="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-lg border border-dashed border-foreground/40 bg-background/80">
                 <span className="text-base font-semibold">
-                  Drop to upload into {openBundle.name}
+                  {t("Drop to upload into {{folder}}", { folder: openBundle.name })}
                 </span>
               </div>
             ) : null}
@@ -729,13 +795,15 @@ export function KnowledgeExplorer({
                 visibleFolders.length === 0 ? (
                   <div className="p-5">
                     <EmptyWell
-                      title={query ? "Nothing matches" : "No folders yet"}
+                      title={query ? t("Nothing matches") : t("No folders yet")}
                       description={
                         query
-                          ? `No folder is called "${query}".`
+                          ? t('No folder is called "{{query}}".', { query })
                           : canWrite
-                            ? "Make a folder, then drop the team's files into it. Each one is a place an agent can be pointed at."
-                            : "Nobody has made a folder yet."
+                            ? t(
+                                "Make a folder, then drop the team's files into it. Each one is a place an agent can be pointed at.",
+                              )
+                            : t("Nobody has made a folder yet.")
                       }
                     />
                   </div>
@@ -753,26 +821,33 @@ export function KnowledgeExplorer({
                   />
                 )
               ) : loading ? (
-                <p className="px-5 py-12 text-center text-sm text-muted-foreground">Loading…</p>
+                <p className="px-5 py-12 text-center text-sm text-muted-foreground">
+                  {t("Loading…")}
+                </p>
               ) : page && openBundle && canWrite && documents.length === 0 && !query ? (
                 // An empty folder (A24): a well to drop into, and the two ways
                 // to fill it otherwise.
                 <div className="grid place-items-center p-10">
                   <EmptyWell
                     className="w-full max-w-[420px]"
-                    title="Drop files here"
-                    description={`${ACCEPTED_SUMMARY}. Agents that read this folder see them within a minute.`}
+                    title={t("Drop files here")}
+                    description={t(
+                      "{{formats}}. Agents that read this folder see them within a minute.",
+                      { formats: acceptedSummary(t) },
+                    )}
                     actions={
                       <>
                         <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring">
                           <Upload className="size-4" />
-                          Upload
+                          {t("Upload")}
                           <input
                             type="file"
                             multiple
                             className="sr-only"
                             accept={ACCEPT}
-                            aria-label={`Upload files into ${openBundle.name}`}
+                            aria-label={t("Upload files into {{folder}}", {
+                              folder: openBundle.name,
+                            })}
                             onChange={(e) => {
                               const files = Array.from(e.target.files ?? []);
                               e.target.value = "";
@@ -781,7 +856,7 @@ export function KnowledgeExplorer({
                           />
                         </label>
                         <Button asChild variant="secondary">
-                          <Link to="/settings/integrations">Connect Google Drive</Link>
+                          <Link to="/settings/integrations">{t("Connect Google Drive")}</Link>
                         </Button>
                       </>
                     }
@@ -790,22 +865,28 @@ export function KnowledgeExplorer({
               ) : visible.length === 0 ? (
                 <div className="p-5">
                   <EmptyWell
-                    title={query || filter !== "all" ? "Nothing matches" : "Nothing here yet"}
+                    title={query || filter !== "all" ? t("Nothing matches") : t("Nothing here yet")}
                     description={
                       // The filter before the search, because a filter left on from
                       // another folder is the one an empty pane does not explain by
                       // itself.
                       filter !== "all"
                         ? query
-                          ? `No file called "${query}" is ${FILTER_PHRASE[filter]}. Press All to see every file again.`
-                          : `Nothing here is ${FILTER_PHRASE[filter]}. Press All to see every file again.`
+                          ? lookup(t, FILTER_EMPTY[filter].searched, { query })
+                          : lookup(t, FILTER_EMPTY[filter].plain)
                         : query
-                          ? `No file in this ${selection.kind === "all" ? "agent" : "folder"} is called "${query}".`
+                          ? selection.kind === "all"
+                            ? t('No file in this agent is called "{{query}}".', { query })
+                            : t('No file in this folder is called "{{query}}".', { query })
                           : selection.kind === "all"
-                            ? "This agent has no folder attached, or the ones it has are empty. Pick a folder on the left and switch it on."
+                            ? t(
+                                "This agent has no folder attached, or the ones it has are empty. Pick a folder on the left and switch it on.",
+                              )
                             : canWrite
-                              ? "Drop files here and they're chunked and embedded for retrieval in chat."
-                              : "Nothing has been uploaded to this folder yet."
+                              ? t(
+                                  "Drop files here and they're chunked and embedded for retrieval in chat.",
+                                )
+                              : t("Nothing has been uploaded to this folder yet.")
                     }
                   />
                 </div>
@@ -869,8 +950,25 @@ export function KnowledgeExplorer({
               {selection.kind === "root" && footer ? null : (
                 <span>
                   {selection.kind === "root"
-                    ? `${bundles.length} ${bundles.length === 1 ? "folder" : "folders"}`
-                    : `${visible.length === documents.length ? documents.length : `${visible.length} of ${documents.length}`} ${documents.length === 1 ? "file" : "files"}${documents.length > 0 ? ` · ${formatFileSize(bytes)}` : ""}`}
+                    ? t("{{count}} folder", {
+                        count: bundles.length,
+                        defaultValue_other: "{{count}} folders",
+                      })
+                    : [
+                        visible.length === documents.length
+                          ? t("{{count}} file", {
+                              count: documents.length,
+                              defaultValue_other: "{{count}} files",
+                            })
+                          : t("{{shown}} of {{count}} file", {
+                              shown: visible.length,
+                              count: documents.length,
+                              defaultValue_other: "{{shown}} of {{count}} files",
+                            }),
+                        documents.length > 0 ? formatFileSize(bytes, locale) : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                 </span>
               )}
               {page && openBundle ? <FolderSync bundleId={openBundle.id} /> : null}
@@ -879,8 +977,11 @@ export function KnowledgeExplorer({
                   {(() => {
                     const n = (readersByBundle[openBundle.id] ?? []).length;
                     return n === 0
-                      ? "Used by no agent"
-                      : `Used by ${n} ${n === 1 ? "agent" : "agents"}`;
+                      ? t("Used by no agent")
+                      : t("Used by {{count}} agent", {
+                          count: n,
+                          defaultValue_other: "Used by {{count}} agents",
+                        });
                   })()}
                 </span>
               ) : null}
@@ -911,7 +1012,12 @@ export function KnowledgeExplorer({
           <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm">
             <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="max-w-56 truncate">
-              {draggedCount > 1 ? `${draggedCount} files` : draggedName}
+              {draggedCount > 1
+                ? t("{{count}} file", {
+                    count: draggedCount,
+                    defaultValue_other: "{{count}} files",
+                  })
+                : draggedName}
             </span>
           </div>
         ) : null}
@@ -925,6 +1031,7 @@ function compare(
   b: ExplorerDocument,
   key: SortKey,
   counts: Record<string, number>,
+  locale: string,
 ): number {
   switch (key) {
     case "size":
@@ -938,7 +1045,7 @@ function compare(
     default:
       // Locale-aware, so "Ürünler" sorts where a Turkish reader expects it and
       // not after every Z.
-      return a.name.localeCompare(b.name);
+      return a.name.localeCompare(b.name, locale);
   }
 }
 
@@ -946,9 +1053,9 @@ function compare(
 
 type Outcome = { ok: string[]; failed: { name: string; reason: string }[] };
 
-function reasonOf(err: unknown): string {
+function reasonOf(err: unknown, t: Translate): string {
   const message = err instanceof Error ? err.message : "";
-  return message || "something went wrong";
+  return message || t("something went wrong");
 }
 
 function without(record: Record<string, string>, key: string): Record<string, string> {
@@ -971,6 +1078,7 @@ function without(record: Record<string, string>, key: string): Record<string, st
  * it is done, which is what it got before any of this existed.
  */
 async function eachInTurn(
+  t: Translate,
   docs: ExplorerDocument[],
   opts: {
     progress: (done: number, total: number) => string;
@@ -991,7 +1099,7 @@ async function eachInTurn(
       outcome.ok.push(doc.name);
     } catch (err) {
       ok = false;
-      outcome.failed.push({ name: doc.name, reason: reasonOf(err) });
+      outcome.failed.push({ name: doc.name, reason: reasonOf(err, t) });
     }
     opts.onSettled?.(doc, ok);
     if (toastId) {
@@ -1013,11 +1121,13 @@ async function eachInTurn(
  * which three and why — and the reason is usually the whole answer.
  */
 function announce(
+  t: Translate,
   outcome: Outcome,
   words: {
     one: (name: string) => string;
     many: (n: number) => string;
-    verb: string;
+    /** "Move failed: …" — the whole sentence, since the verb's place in it is the language's. */
+    failed: (reason: string) => string;
     partial: (done: number, total: number) => string;
   },
 ) {
@@ -1028,11 +1138,25 @@ function announce(
   }
   const [first, ...rest] = outcome.failed;
   if (total === 1) {
-    toast.error(`${words.verb} failed: ${first.reason}`);
+    toast.error(words.failed(first.reason));
     return;
   }
-  const more = rest.length > 0 ? ` And ${rest.length} more failed.` : "";
-  toast.error(`${words.partial(outcome.ok.length, total)} ${first.name} — ${first.reason}${more}`);
+  const summary = words.partial(outcome.ok.length, total);
+  toast.error(
+    rest.length > 0
+      ? t("{{summary}} {{file}} — {{reason}} And {{count}} more failed.", {
+          summary,
+          file: first.name,
+          reason: first.reason,
+          count: rest.length,
+          defaultValue_other: "{{summary}} {{file}} — {{reason}} And {{count}} more failed.",
+        })
+      : t("{{summary}} {{file}} — {{reason}}", {
+          summary,
+          file: first.name,
+          reason: first.reason,
+        }),
+  );
 }
 
 /**
@@ -1060,16 +1184,17 @@ function SelectionBar({
   onMove: (bundleId: string) => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-hairline bg-surface-muted px-4 py-2 text-meta">
-      <span className="font-medium">{selected.length} selected</span>
+      <span className="font-medium">{t("{{n}} selected", { n: selected.length })}</span>
       {selected.length < total ? (
         <Button type="button" variant="ghost" size="sm" onClick={onSelectAll}>
-          Select all {total}
+          {t("Select all {{total}}", { total })}
         </Button>
       ) : null}
       <Button type="button" variant="ghost" size="sm" onClick={onClear}>
-        Clear
+        {t("Clear")}
       </Button>
 
       <span className="flex-1" />
@@ -1079,7 +1204,7 @@ function SelectionBar({
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="secondary" size="sm">
               <Folder className="mr-2 h-4 w-4" />
-              Move to
+              {t("Move to")}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="max-h-64 w-52 overflow-y-auto">
@@ -1093,7 +1218,7 @@ function SelectionBar({
       ) : null}
       <Button type="button" variant="secondary" size="sm" onClick={onDelete}>
         <Trash2 className="mr-2 h-4 w-4" />
-        Delete
+        {t("Delete")}
       </Button>
     </div>
   );
@@ -1144,15 +1269,17 @@ function Sidebar({
   /** Opens the attach dialog for a folder; null where there is nothing to attach to. */
   onAttach: ((b: ReturnType<typeof useAgentsStore>["bundles"][number]) => void) | null;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const store = useAgentsStore();
   const [railQuery, setRailQuery] = useState("");
 
   // A search rather than a "hide empty folders" switch, which was the other
   // way to make a long list shorter: the empty folder is the one somebody is
   // looking for, because it is the one waiting to be filled.
-  const needle = railQuery.trim().toLocaleLowerCase();
+  const needle = railQuery.trim().toLocaleLowerCase(locale);
   const matching = needle
-    ? bundles.filter((b) => b.name.toLocaleLowerCase().includes(needle))
+    ? bundles.filter((b) => b.name.toLocaleLowerCase(locale).includes(needle))
     : bundles;
   const attached = agent ? matching.filter((b) => agent.bundleIds.includes(b.id)) : matching;
   const detached = agent ? matching.filter((b) => !agent.bundleIds.includes(b.id)) : [];
@@ -1175,7 +1302,7 @@ function Sidebar({
 
   return (
     <aside
-      aria-label="Folders"
+      aria-label={t("Folders")}
       className={cn(
         page
           ? "w-60 shrink-0 flex-col border-r border-hairline bg-background"
@@ -1192,7 +1319,7 @@ function Sidebar({
           page ? "px-3 py-4" : "px-2 py-2",
         )}
       >
-        {page && <SidebarHeading>Folders</SidebarHeading>}
+        {page && <SidebarHeading>{t("Folders")}</SidebarHeading>}
         {agent ? (
           <PlaceRow
             icon={<HardDrive className="h-4 w-4" />}
@@ -1200,7 +1327,7 @@ function Sidebar({
             onClick={() => onSelect({ kind: "all" })}
             count={agent.documents.length}
           >
-            Everything {agent.name} reads
+            {t("Everything {{agent}} reads", { agent: agent.name })}
           </PlaceRow>
         ) : (
           <PlaceRow
@@ -1209,7 +1336,7 @@ function Sidebar({
             onClick={() => onSelect({ kind: "root" })}
             count={total}
           >
-            {page ? "All files" : "Knowledge"}
+            {page ? t("All files") : t("Knowledge")}
           </PlaceRow>
         )}
 
@@ -1219,8 +1346,8 @@ function Sidebar({
             <Input
               value={railQuery}
               onChange={(e) => setRailQuery(e.target.value)}
-              placeholder="Find a folder"
-              aria-label="Find a folder by name"
+              placeholder={t("Find a folder")}
+              aria-label={t("Find a folder by name")}
               className="h-8 bg-background pl-8 text-meta"
             />
           </div>
@@ -1228,25 +1355,25 @@ function Sidebar({
 
         {bundles.length === 0 ? (
           <p className="px-3 py-4 text-meta text-muted-foreground">
-            No folders yet.{canWrite ? " Make the first one below." : ""}
+            {canWrite ? t("No folders yet. Make the first one below.") : t("No folders yet.")}
           </p>
         ) : matching.length === 0 ? (
           <p className="px-3 py-4 text-meta text-muted-foreground">
-            {`No folder is called "${railQuery.trim()}".`}
+            {t('No folder is called "{{query}}".', { query: railQuery.trim() })}
           </p>
         ) : (
           <>
-            {!page && <SidebarHeading>{agent ? "Attached" : "Folders"}</SidebarHeading>}
+            {!page && <SidebarHeading>{agent ? t("Attached") : t("Folders")}</SidebarHeading>}
             {attached.length === 0 ? (
               <p className="px-3 py-2 text-meta text-muted-foreground">
-                Nothing attached, so this agent reads nothing but its persona.
+                {t("Nothing attached, so this agent reads nothing but its persona.")}
               </p>
             ) : (
               attached.map(row)
             )}
             {detached.length > 0 ? (
               <>
-                <SidebarHeading>Not attached</SidebarHeading>
+                <SidebarHeading>{t("Not attached")}</SidebarHeading>
                 {detached.map(row)}
               </>
             ) : null}
@@ -1255,7 +1382,9 @@ function Sidebar({
         {page && <SourceRows onNavigate={() => {}} />}
         {page && openName && canWrite && (
           <p className="mt-auto px-2 pt-6 text-xs leading-[1.5] text-micro-foreground">
-            Drop files anywhere in this window to add them to {openName}.
+            {t("Drop files anywhere in this window to add them to {{folder}}.", {
+              folder: openName,
+            })}
           </p>
         )}
       </div>
@@ -1334,6 +1463,7 @@ function FolderRow({
   store: ReturnType<typeof useAgentsStore>;
   onAttach: ((b: ReturnType<typeof useAgentsStore>["bundles"][number]) => void) | null;
 }) {
+  const { t } = useTranslation();
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(bundle.name);
   const { setNodeRef, isOver } = useDroppable({ id: bundle.id, disabled: !canWrite });
@@ -1341,15 +1471,25 @@ function FolderRow({
   const toggleShared = () => {
     const sharing = bundle.shared === false;
     const ask = sharing
-      ? `Share "${bundle.name}" with the workspace? Everyone in it will be able to read its files, and the agents it is attached to will use it in their conversations too.`
-      : `Stop sharing "${bundle.name}"? Only you will see its files, and agents will use it only in your own private conversations.`;
+      ? t(
+          'Share "{{folder}}" with the workspace? Everyone in it will be able to read its files, and the agents it is attached to will use it in their conversations too.',
+          { folder: bundle.name },
+        )
+      : t(
+          'Stop sharing "{{folder}}"? Only you will see its files, and agents will use it only in your own private conversations.',
+          { folder: bundle.name },
+        );
     if (!confirm(ask)) return;
     store
       .updateBundle(bundle.id, { shared: sharing })
       .then(() =>
-        toast.success(sharing ? `Shared ${bundle.name}` : `${bundle.name} is only yours now`),
+        toast.success(
+          sharing
+            ? t("Shared {{folder}}", { folder: bundle.name })
+            : t("{{folder}} is only yours now", { folder: bundle.name }),
+        ),
       )
-      .catch((err) => toast.error(err?.message ?? "Could not change who sees it"));
+      .catch((err) => toast.error(err?.message ?? t("Could not change who sees it")));
   };
 
   const commit = () => {
@@ -1358,9 +1498,13 @@ function FolderRow({
     if (!name || name === bundle.name) return;
     store
       .updateBundle(bundle.id, { name })
-      .then(() => toast.success(`Renamed to ${name}`))
+      .then(() => toast.success(t("Renamed to {{name}}", { name })))
       .catch((err) =>
-        toast.error(err?.message ? `Rename failed: ${err.message}` : "Rename failed"),
+        toast.error(
+          err?.message
+            ? t("Rename failed: {{reason}}", { reason: err.message })
+            : t("Rename failed"),
+        ),
       );
   };
 
@@ -1370,7 +1514,7 @@ function FolderRow({
         <Input
           autoFocus
           value={draft}
-          aria-label={`Rename ${bundle.name}`}
+          aria-label={t("Rename {{folder}}", { folder: bundle.name })}
           className="h-8 bg-background"
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
@@ -1406,12 +1550,12 @@ function FolderRow({
       <button
         type="button"
         onClick={onSelect}
-        aria-label={`Open ${bundle.name}`}
+        aria-label={t("Open {{folder}}", { folder: bundle.name })}
         aria-current={selected ? "location" : undefined}
         title={
           [
-            bundle.shared === false ? "Only you can see this folder." : null,
-            unread ? "No agent reads this folder." : null,
+            bundle.shared === false ? t("Only you can see this folder.") : null,
+            unread ? t("No agent reads this folder.") : null,
             folderDescription(bundle.description),
           ]
             .filter(Boolean)
@@ -1432,7 +1576,7 @@ function FolderRow({
         {bundle.shared === false ? (
           <>
             <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="sr-only">Only you</span>
+            <span className="sr-only">{t("Only you")}</span>
           </>
         ) : null}
         {unread ? (
@@ -1440,7 +1584,7 @@ function FolderRow({
             {/* The one state worth a mark in a list of folders: a folder no
                 agent has attached is one nothing can read out of. */}
             <StatusDot state="idle" />
-            <span className="sr-only">no agent reads it</span>
+            <span className="sr-only">{t("no agent reads it")}</span>
           </>
         ) : null}
         <span className="shrink-0 pl-1 text-xs text-micro-foreground tabular-nums">
@@ -1458,7 +1602,10 @@ function FolderRow({
           onCheckedChange={(on) =>
             on ? store.attachBundle(agent.id, bundle.id) : store.detachBundle(agent.id, bundle.id)
           }
-          aria-label={`Attach ${bundle.name} to ${agent.name}`}
+          aria-label={t("Attach {{folder}} to {{agent}}", {
+            folder: bundle.name,
+            agent: agent.name,
+          })}
         />
       ) : null}
 
@@ -1466,7 +1613,7 @@ function FolderRow({
         <DropdownMenu>
           <DropdownMenuTrigger
             className="shrink-0 rounded-sm p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100"
-            aria-label={`Actions for ${bundle.name}`}
+            aria-label={t("Actions for {{folder}}", { folder: bundle.name })}
           >
             <MoreHorizontal className="h-4 w-4" />
           </DropdownMenuTrigger>
@@ -1478,12 +1625,12 @@ function FolderRow({
               }}
             >
               <Pencil className="mr-2 h-4 w-4" />
-              Rename
+              {t("Rename")}
             </DropdownMenuItem>
             {onAttach ? (
               <DropdownMenuItem onSelect={() => onAttach(bundle)}>
                 <Bot className="mr-2 h-4 w-4" />
-                Attach to agents…
+                {t("Attach to agents…")}
               </DropdownMenuItem>
             ) : null}
             {/* Only its maker shares it or takes it back (0106). */}
@@ -1494,7 +1641,7 @@ function FolderRow({
                 ) : (
                   <Lock className="mr-2 h-4 w-4" />
                 )}
-                {bundle.shared === false ? "Share with the workspace" : "Stop sharing"}
+                {bundle.shared === false ? t("Share with the workspace") : t("Stop sharing")}
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuSeparator />
@@ -1502,7 +1649,10 @@ function FolderRow({
               onSelect={() => {
                 if (
                   confirm(
-                    `Delete "${bundle.name}"? Its files go with it and it detaches from every agent. It waits 30 days in Settings → Recently deleted, and restoring it brings the files back too.`,
+                    t(
+                      'Delete "{{folder}}"? Its files go with it and it detaches from every agent. It waits 30 days in Settings → Recently deleted, and restoring it brings the files back too.',
+                      { folder: bundle.name },
+                    ),
                   )
                 ) {
                   store.removeBundle(bundle.id);
@@ -1510,7 +1660,7 @@ function FolderRow({
               }}
             >
               <Trash2 className="mr-2 h-4 w-4" />
-              Delete folder
+              {t("Delete folder")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -1526,6 +1676,7 @@ function FolderRow({
  * column of one-line rows, and most visits to this screen make no folder.
  */
 function NewFolderForm({ onCreated }: { onCreated: (id: string) => void }) {
+  const { t } = useTranslation();
   const { createBundle } = useAgentsStore();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -1543,10 +1694,18 @@ function NewFolderForm({ onCreated }: { onCreated: (id: string) => void }) {
         setOpen(false);
         onCreated(bundle.id);
         toast.success(
-          shared ? `Created ${bundle.name}, shared with the workspace` : `Created ${bundle.name}`,
+          shared
+            ? t("Created {{folder}}, shared with the workspace", { folder: bundle.name })
+            : t("Created {{folder}}", { folder: bundle.name }),
         );
       })
-      .catch((err) => toast.error(err?.message ? `Create failed: ${err.message}` : "Create failed"))
+      .catch((err) =>
+        toast.error(
+          err?.message
+            ? t("Create failed: {{reason}}", { reason: err.message })
+            : t("Create failed"),
+        ),
+      )
       .finally(() => setCreating(false));
   };
 
@@ -1558,7 +1717,7 @@ function NewFolderForm({ onCreated }: { onCreated: (id: string) => void }) {
         className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground"
       >
         <FolderPlus className="h-4 w-4 shrink-0" />
-        New folder
+        {t("New folder")}
       </button>
     );
   }
@@ -1568,8 +1727,8 @@ function NewFolderForm({ onCreated }: { onCreated: (id: string) => void }) {
       <div className="flex items-center gap-2">
         <Input
           autoFocus
-          placeholder="Folder name"
-          aria-label="Folder name"
+          placeholder={t("Folder name")}
+          aria-label={t("Folder name")}
           value={name}
           disabled={creating}
           className="h-8 bg-background"
@@ -1592,7 +1751,7 @@ function NewFolderForm({ onCreated }: { onCreated: (id: string) => void }) {
           onClick={create}
           disabled={creating || !name.trim()}
         >
-          Add
+          {t("Add")}
         </Button>
       </div>
       {/* Off by default (0106): a folder is its maker's until they share it. */}
@@ -1600,9 +1759,9 @@ function NewFolderForm({ onCreated }: { onCreated: (id: string) => void }) {
         <Checkbox
           checked={shared}
           onCheckedChange={(on) => setShared(on === true)}
-          aria-label="Share the new folder with the workspace"
+          aria-label={t("Share the new folder with the workspace")}
         />
-        Share with the workspace
+        {t("Share with the workspace")}
       </label>
     </div>
   );
@@ -1641,20 +1800,24 @@ function Toolbar({
   onHome: () => void;
   onFiles: (files: FileList | File[] | null) => void;
 }) {
-  const root = agent ? `Everything ${agent.name} reads` : "Knowledge";
+  const { t } = useTranslation();
+  const root = agent ? t("Everything {{agent}} reads", { agent: agent.name }) : t("Knowledge");
   return (
     <div className="flex items-center gap-2 border-b border-hairline px-2 py-2">
       <button
         type="button"
         onClick={onHome}
         disabled={home}
-        aria-label="Back"
+        aria-label={t("Back")}
         className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent"
       >
         <ArrowLeft className="h-4 w-4" />
       </button>
 
-      <nav aria-label="Where you are" className="flex min-w-0 flex-1 items-center gap-1 text-sm">
+      <nav
+        aria-label={t("Where you are")}
+        className="flex min-w-0 flex-1 items-center gap-1 text-sm"
+      >
         <button
           type="button"
           onClick={onHome}
@@ -1674,7 +1837,10 @@ function Toolbar({
             <span className="flex min-w-0 items-center gap-1.5 px-1 font-semibold">
               <span className="truncate">{openBundle.name}</span>
               {openBundle.shared === false ? (
-                <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Only you" />
+                <Lock
+                  className="h-3 w-3 shrink-0 text-muted-foreground"
+                  aria-label={t("Only you")}
+                />
               ) : null}
             </span>
           </>
@@ -1688,21 +1854,21 @@ function Toolbar({
           onChange={(e) => onQuery(e.target.value)}
           placeholder={
             openBundle
-              ? `Search in ${openBundle.name}`
+              ? t("Search in {{folder}}", { folder: openBundle.name })
               : home && !agent
-                ? "Search folders"
-                : "Search files"
+                ? t("Search folders")
+                : t("Search files")
           }
-          aria-label="Search files by name"
+          aria-label={t("Search files by name")}
           className="h-8 bg-background pl-8 text-meta"
         />
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-hairline p-0.5">
-        <ViewButton active={view === "list"} onClick={() => onView("list")} label="List view">
+        <ViewButton active={view === "list"} onClick={() => onView("list")} label={t("List view")}>
           <List className="h-4 w-4" />
         </ViewButton>
-        <ViewButton active={view === "grid"} onClick={() => onView("grid")} label="Grid view">
+        <ViewButton active={view === "grid"} onClick={() => onView("grid")} label={t("Grid view")}>
           <LayoutGrid className="h-4 w-4" />
         </ViewButton>
       </div>
@@ -1710,13 +1876,13 @@ function Toolbar({
       {canWrite && openBundle ? (
         <label className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-sm font-medium transition-colors hover:bg-surface-hover">
           <Upload className="h-3.5 w-3.5" />
-          <span className="hidden md:inline">Upload</span>
+          <span className="hidden md:inline">{t("Upload")}</span>
           <input
             type="file"
             multiple
             className="hidden"
             accept={ACCEPT}
-            aria-label={`Upload files into ${openBundle.name}`}
+            aria-label={t("Upload files into {{folder}}", { folder: openBundle.name })}
             onChange={(e) => {
               // Copied before the reset — see the strip at the foot of the pane.
               const files = Array.from(e.target.files ?? []);
@@ -1757,12 +1923,14 @@ function PaneNotes({
   /** Opens the attach dialog for the open folder; null where nothing can be attached. */
   onAttach: (() => void) | null;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   // A filter with nothing to find is not offered — except the one that is on,
   // which has to stay on the screen or there would be no way back to All.
   const chips = (
     [
-      { key: "unindexed", label: "Needs indexing", count: tallies.unindexed },
-      { key: "stale", label: "Older than 90 days", count: tallies.stale },
+      { key: "unindexed", label: t("Needs indexing"), count: tallies.unindexed },
+      { key: "stale", label: t("Older than 90 days"), count: tallies.stale },
     ] as const
   ).filter((c) => c.count > 0 || filter === c.key);
   const viewerNote = openBundle && !canWrite;
@@ -1776,32 +1944,32 @@ function PaneNotes({
       {readers ? (
         <span>
           {readers.length > 0 ? (
-            `Read by ${listOf(readers)}.`
+            t("Read by {{agents}}.", { agents: listOf(readers, t, locale) })
           ) : onAttach ? (
             <>
-              No agent reads this folder yet.{" "}
+              {t("No agent reads this folder yet.")}{" "}
               <button
                 type="button"
                 onClick={onAttach}
                 className="font-medium text-foreground underline-offset-2 hover:underline"
               >
-                Attach it to an agent
+                {t("Attach it to an agent")}
               </button>
             </>
           ) : (
-            "No agent reads this folder yet — attach it from an agent's Knowledge tab."
+            t("No agent reads this folder yet — attach it from an agent's Knowledge tab.")
           )}
         </span>
       ) : null}
       {viewerNote ? (
         <span>
-          You can read everything here. Uploading, moving and deleting are a member's job.
+          {t("You can read everything here. Uploading, moving and deleting are a member's job.")}
         </span>
       ) : null}
       {chips.length > 0 ? (
         <span className="flex flex-wrap items-center gap-1.5">
           <FilterChip active={filter === "all"} onClick={() => onFilter("all")}>
-            All
+            {t("All")}
           </FilterChip>
           {chips.map((c) => (
             <FilterChip
@@ -1810,7 +1978,11 @@ function PaneNotes({
               onClick={() => onFilter(c.key)}
               // Spelled out, because the number sits against the label with no
               // space between them and "Needs indexing3" is what is read out.
-              label={`${c.label}, ${c.count} ${c.count === 1 ? "file" : "files"}`}
+              label={t("{{filter}}, {{count}} file", {
+                filter: c.label,
+                count: c.count,
+                defaultValue_other: "{{filter}}, {{count}} files",
+              })}
             >
               {c.label}
               <span className="ml-1.5 tabular-nums opacity-70">{c.count}</span>
@@ -1865,11 +2037,12 @@ function FolderTile({
   readers: string[] | undefined;
   onOpen: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
       onClick={onOpen}
-      aria-label={`Open ${bundle.name}`}
+      aria-label={t("Open {{folder}}", { folder: bundle.name })}
       title={folderDescription(bundle.description) ?? undefined}
       className="flex flex-col items-center gap-1 rounded-lg px-2 py-3 text-center transition-colors hover:bg-surface-hover focus-visible:bg-surface-hover focus-visible:outline-none"
     >
@@ -1878,7 +2051,7 @@ function FolderTile({
         {bundle.shared === false ? (
           <Lock
             className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-surface p-0.5 text-foreground"
-            aria-label="Only you"
+            aria-label={t("Only you")}
           />
         ) : null}
       </span>
@@ -1886,8 +2059,11 @@ function FolderTile({
         {bundle.name}
       </span>
       <span className="text-xs text-muted-foreground">
-        {bundle.documentCount} {bundle.documentCount === 1 ? "file" : "files"}
-        {readers && readers.length === 0 ? " · no agent" : ""}
+        {t("{{count}} file", {
+          count: bundle.documentCount,
+          defaultValue_other: "{{count}} files",
+        })}
+        {readers && readers.length === 0 ? ` · ${t("no agent")}` : ""}
       </span>
     </button>
   );
@@ -1902,14 +2078,16 @@ function FolderList({
   readers: Record<string, string[]> | null;
   onOpen: (id: string) => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   return (
     <div>
       <div className="hidden h-9 items-center gap-3 border-b border-border px-6 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase md:flex">
         <span className="w-4 shrink-0" />
-        <span className="flex-1">Name</span>
-        <span className="w-20 shrink-0">Files</span>
-        {readers ? <span className="hidden w-40 shrink-0 lg:block">Read by</span> : null}
-        <span className="w-28 shrink-0">Created</span>
+        <span className="flex-1">{t("Name")}</span>
+        <span className="w-20 shrink-0">{t("Files")}</span>
+        {readers ? <span className="hidden w-40 shrink-0 lg:block">{t("Read by")}</span> : null}
+        <span className="w-28 shrink-0">{t("Created")}</span>
       </div>
       <div className="divide-y divide-hairline">
         {bundles.map((b) => {
@@ -1919,7 +2097,7 @@ function FolderList({
               key={b.id}
               type="button"
               onClick={() => onOpen(b.id)}
-              aria-label={`Open ${b.name}`}
+              aria-label={t("Open {{folder}}", { folder: b.name })}
               className="flex min-h-11 w-full items-center gap-3 px-6 py-1.5 text-left text-sm transition-colors hover:bg-surface-muted"
             >
               <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -1928,7 +2106,7 @@ function FolderList({
                 {b.shared === false ? (
                   <>
                     <Lock className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
-                    <span className="sr-only">Only you</span>
+                    <span className="sr-only">{t("Only you")}</span>
                   </>
                 ) : null}
                 {folderDescription(b.description) ? (
@@ -1938,7 +2116,10 @@ function FolderList({
                 ) : null}
               </span>
               <span className="w-20 shrink-0 text-xs tabular-nums text-muted-foreground">
-                {b.documentCount} {b.documentCount === 1 ? "file" : "files"}
+                {t("{{count}} file", {
+                  count: b.documentCount,
+                  defaultValue_other: "{{count}} files",
+                })}
               </span>
               {readers ? (
                 <span
@@ -1947,11 +2128,11 @@ function FolderList({
                     who && who.length === 0 && "text-foreground",
                   )}
                 >
-                  {who && who.length > 0 ? listOf(who) : "No agent"}
+                  {who && who.length > 0 ? listOf(who, t, locale) : t("No agent")}
                 </span>
               ) : null}
               <span className="hidden w-28 shrink-0 text-xs text-muted-foreground md:block">
-                {b.createdAt ? documentAge(b.createdAt).label : ""}
+                {b.createdAt ? documentAge(b.createdAt, undefined, t, locale).label : ""}
               </span>
             </button>
           );
@@ -1967,6 +2148,7 @@ function FolderList({
  * generic one dressed up as a preview is the first failure mode in DESIGN.md.
  */
 function FileIcon({ doc, className }: { doc: ExplorerDocument; className?: string }) {
+  // i18n-ignore: a file extension, matched against ASCII ones.
   const ext = doc.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
   if (doc.externalUrl || /^https?:\/\//i.test(doc.name)) return <Globe className={className} />;
   if (["xlsx", "xls", "csv", "tsv", "numbers"].includes(ext))
@@ -1979,10 +2161,14 @@ function FileIcon({ doc, className }: { doc: ExplorerDocument; className?: strin
   return <FileText className={className} />;
 }
 
-/** "Ada", "Ada and Ops bot", "Ada, Ops bot and 2 more". */
-function listOf(names: string[]): string {
-  if (names.length <= 2) return names.join(" and ");
-  return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+/** "Ada", "Ada and Ops bot", "Ada, Ops bot and 2 more" — joined the reader's way. */
+function listOf(names: string[], t: Translate, locale: string): string {
+  const list = new Intl.ListFormat(locale, { type: "conjunction" });
+  if (names.length <= 2) return list.format(names);
+  return list.format([
+    ...names.slice(0, 2),
+    t("{{count}} more", { count: names.length - 2, defaultValue_other: "{{count}} more" }),
+  ]);
 }
 
 function FilterChip({
@@ -2074,6 +2260,7 @@ function DocumentTable({
   onSelectAll: () => void;
   onClearSelection: () => void;
 }) {
+  const { t } = useTranslation();
   const allTicked = documents.length > 0 && documents.every((d) => actions.selected.has(d.id));
 
   return (
@@ -2086,31 +2273,31 @@ function DocumentTable({
           <Checkbox
             checked={allTicked}
             onClick={() => (allTicked ? onClearSelection() : onSelectAll())}
-            aria-label={allTicked ? "Clear the selection" : "Select every file here"}
+            aria-label={allTicked ? t("Clear the selection") : t("Select every file here")}
           />
         ) : null}
         <SortHeader className="flex-1 pl-10" active={sort} sortKey="name" onSort={onSort}>
-          Name
+          {t("Name")}
         </SortHeader>
-        <span className="hidden w-20 shrink-0 lg:block">Kind</span>
+        <span className="hidden w-20 shrink-0 lg:block">{t("Kind")}</span>
         <SortHeader
           className="w-16 shrink-0 justify-end"
           active={sort}
           sortKey="size"
           onSort={onSort}
         >
-          Size
+          {t("Size")}
         </SortHeader>
-        <span className="hidden w-28 shrink-0 lg:block">Added by</span>
+        <span className="hidden w-28 shrink-0 lg:block">{t("Added by")}</span>
         <SortHeader
           className="hidden w-24 shrink-0 lg:flex"
           active={sort}
           sortKey="createdAt"
           onSort={onSort}
         >
-          Modified
+          {t("Modified")}
         </SortHeader>
-        <span className="hidden w-40 shrink-0 xl:block">Used by</span>
+        <span className="hidden w-40 shrink-0 xl:block">{t("Used by")}</span>
         <span className="w-8 shrink-0" />
       </div>
 
@@ -2143,12 +2330,16 @@ function SortHeader({
   onSort: (k: SortKey) => void;
   className?: string;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const on = active.key === sortKey;
   return (
     <button
       type="button"
       onClick={() => onSort(sortKey)}
-      aria-label={`Sort by ${String(children).toLowerCase()}`}
+      aria-label={t("Sort by {{column}}", {
+        column: String(children).toLocaleLowerCase(locale),
+      })}
       className={cn(
         "flex items-center gap-1 text-left tracking-[0.06em] uppercase transition-colors hover:text-foreground",
         on && "text-foreground",
@@ -2187,7 +2378,10 @@ function DocumentRow({
   readers: string[];
   onOpenBundle: (id: string) => void;
 }) {
-  const age = documentAge(doc.createdAt);
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const aRoutine = t("a routine");
+  const age = documentAge(doc.createdAt, undefined, t, locale);
   const bundle = doc.bundleId ? bundles.find((b) => b.id === doc.bundleId) : undefined;
   const ticked = selected.has(doc.id);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -2211,7 +2405,7 @@ function DocumentRow({
           // row is what selects the range between them and only the event
           // knows the shift key was down.
           onClick={(e) => onPick(doc.id, e.shiftKey)}
-          aria-label={`Select ${doc.name}`}
+          aria-label={t("Select {{name}}", { name: doc.name })}
         />
       ) : null}
 
@@ -2223,8 +2417,8 @@ function DocumentRow({
           type="button"
           {...attributes}
           {...listeners}
-          aria-label={`Drag ${doc.name}`}
-          title="Drag onto a folder on the left to move it there"
+          aria-label={t("Drag {{name}}", { name: doc.name })}
+          title={t("Drag onto a folder on the left to move it there")}
           className="grid size-7 shrink-0 cursor-grab place-items-center rounded-md bg-surface text-[9px] font-semibold tracking-[0.04em] text-muted-foreground active:cursor-grabbing"
         >
           {kind.slice(0, 3)}
@@ -2239,7 +2433,7 @@ function DocumentRow({
         type="button"
         onClick={() => onOpen(doc)}
         className="min-w-0 flex-1 text-left"
-        aria-label={`Open ${doc.name}`}
+        aria-label={t("Open {{name}}", { name: doc.name })}
       >
         <span className="flex min-w-0 items-center gap-2">
           <span data-part="name" className="truncate font-medium [overflow-wrap:anywhere]">
@@ -2255,13 +2449,13 @@ function DocumentRow({
             routine, which is a thing the reader cannot be shown. */}
         {doc.routineId ? (
           <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-            Written by {doc.routineName ?? "a routine"}
+            {t("Written by {{routine}}", { routine: doc.routineName ?? aRoutine })}
           </span>
         ) : null}
         {/* The columns that fold away on a narrow screen say themselves here
             instead, so nothing is reachable only at desktop width. */}
         <span className="mt-0.5 block truncate text-xs text-muted-foreground md:hidden">
-          {formatFileSize(doc.size)} · {age.label}
+          {formatFileSize(doc.size, locale)} · {age.label}
         </span>
       </button>
 
@@ -2270,33 +2464,35 @@ function DocumentRow({
           type="button"
           onClick={() => onOpenBundle(bundle.id)}
           className="hidden shrink-0 sm:block"
-          aria-label={`Open ${bundle.name}`}
+          aria-label={t("Open {{folder}}", { folder: bundle.name })}
         >
           <Chip tone="code">{bundle.name}</Chip>
         </button>
       ) : null}
 
-      <span className="hidden w-20 shrink-0 text-muted-foreground lg:block">{kindWord(kind)}</span>
+      <span className="hidden w-20 shrink-0 text-muted-foreground lg:block">
+        {kindWord(kind, t)}
+      </span>
       <span className="hidden w-16 shrink-0 text-right text-muted-foreground tabular-nums md:block">
-        {formatFileSize(doc.size)}
+        {formatFileSize(doc.size, locale)}
       </span>
       <span className="hidden w-28 shrink-0 items-center gap-2 truncate lg:flex">
         {doc.connectionId ? (
           <SourceName connectionId={doc.connectionId} />
         ) : doc.routineId ? (
-          <span className="truncate text-muted-foreground">A routine</span>
+          <span className="truncate text-muted-foreground">{t("A routine")}</span>
         ) : doc.createdBy ? (
           <>
             <Avatar name={doc.createdBy.name} size={20} />
-            <span className="truncate">{shortName(doc.createdBy.name)}</span>
+            <span className="truncate">{shortName(doc.createdBy.name, t, locale)}</span>
           </>
         ) : (
           <span className="text-muted-foreground">—</span>
         )}
       </span>
       <span className="hidden w-24 shrink-0 text-muted-foreground lg:block">
-        {agoShort(doc.createdAt)}
-        {age.stale ? <span className="sr-only"> (older than 90 days)</span> : null}
+        {agoShort(doc.createdAt, undefined, t, locale)}
+        {age.stale ? <span className="sr-only"> ({t("older than 90 days")})</span> : null}
       </span>
       <span className="hidden w-40 shrink-0 gap-1 overflow-hidden xl:flex">
         {readers.length > 0 ? (
@@ -2321,22 +2517,29 @@ function DocumentRow({
   );
 }
 
+/** Format names, the same in every language. */
+const KIND_NAME: Record<string, string> = {
+  DOC: "Word",
+  DOCX: "Word",
+  XLS: "Excel",
+  XLSX: "Excel",
+  CSV: "CSV",
+  MD: "Markdown",
+};
+
+/** Kinds said in words, which are the reader's. */
+const KIND_WORD: Record<string, string> = {
+  TXT: msg("Text"),
+  PPT: msg("Slides"),
+  PPTX: msg("Slides"),
+  HTML: msg("Web page"),
+  WEB: msg("Web page"),
+};
+
 /** "PDF" → "PDF", "DOCX" → "Word": the Kind column (A6). */
-function kindWord(ext: string): string {
-  const words: Record<string, string> = {
-    DOC: "Word",
-    DOCX: "Word",
-    XLS: "Excel",
-    XLSX: "Excel",
-    CSV: "CSV",
-    MD: "Markdown",
-    TXT: "Text",
-    PPT: "Slides",
-    PPTX: "Slides",
-    HTML: "Web page",
-    WEB: "Web page",
-  };
-  return words[ext] ?? ext;
+function kindWord(ext: string, t: Translate): string {
+  const word = KIND_WORD[ext];
+  return word ? lookup(t, word) : (KIND_NAME[ext] ?? ext);
 }
 
 function DocumentGrid({ documents, ...actions }: RowActions & { documents: ExplorerDocument[] }) {
@@ -2361,6 +2564,9 @@ function DocumentTile({
   onReindex,
   onRemove,
 }: RowActions & { doc: ExplorerDocument }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const aRoutine = t("a routine");
   const ticked = selected.has(doc.id);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: doc.id,
@@ -2381,7 +2587,7 @@ function DocumentTile({
             <Checkbox
               checked={ticked}
               onClick={(e) => onPick(doc.id, e.shiftKey)}
-              aria-label={`Select ${doc.name}`}
+              aria-label={t("Select {{name}}", { name: doc.name })}
             />
           ) : null}
         </div>
@@ -2406,8 +2612,8 @@ function DocumentTile({
           type="button"
           {...attributes}
           {...listeners}
-          aria-label={`Drag ${doc.name}`}
-          title="Drag onto a folder on the left to move it there"
+          aria-label={t("Drag {{name}}", { name: doc.name })}
+          title={t("Drag onto a folder on the left to move it there")}
           className="flex cursor-grab flex-col items-center gap-1 self-center active:cursor-grabbing"
         >
           <FileIcon doc={doc} className="h-10 w-10 text-muted-foreground" />
@@ -2422,18 +2628,18 @@ function DocumentTile({
       <button
         type="button"
         onClick={() => onOpen(doc)}
-        aria-label={`Open ${doc.name}`}
+        aria-label={t("Open {{name}}", { name: doc.name })}
         className="line-clamp-2 text-center text-meta font-medium leading-tight [overflow-wrap:anywhere]"
       >
         {doc.name}
       </button>
       {doc.routineId ? (
         <span className="truncate text-center text-xs text-muted-foreground">
-          Written by {doc.routineName ?? "a routine"}
+          {t("Written by {{routine}}", { routine: doc.routineName ?? aRoutine })}
         </span>
       ) : null}
       <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{formatFileSize(doc.size)}</span>
+        <span>{formatFileSize(doc.size, locale)}</span>
         <IndexChip doc={doc} />
       </div>
     </div>
@@ -2442,7 +2648,9 @@ function DocumentTile({
 
 function extensionLabel(name: string): string {
   if (/^https?:\/\//i.test(name)) return "WEB";
+  // i18n-ignore: a file extension, matched against ASCII ones.
   const match = name.toLowerCase().match(/\.([a-z0-9]+)$/);
+  // i18n-ignore: drawn as a code, like the extension it stands in for.
   return match ? match[1].toUpperCase() : "FILE";
 }
 
@@ -2473,15 +2681,16 @@ function DocumentActions({
   onReindex: (d: ExplorerDocument) => void;
   onRemove: (d: ExplorerDocument) => void;
 }) {
+  const { t } = useTranslation();
   const elsewhere = bundles.filter((b) => b.id !== doc.bundleId);
   const queryClient = useQueryClient();
 
   const resync = async () => {
     try {
       await api.documents.resync(doc.id);
-      toast.success(`${doc.name} will be synced in the next minute or two`);
+      toast.success(t("{{name}} will be synced in the next minute or two", { name: doc.name }));
     } catch (err) {
-      toast.error((err as Error)?.message ?? "Could not sync it");
+      toast.error((err as Error)?.message ?? t("Could not sync it"));
     }
   };
 
@@ -2494,10 +2703,10 @@ function DocumentActions({
         queryClient.invalidateQueries({ queryKey: ["bundle-documents"] }),
         queryClient.invalidateQueries({ queryKey: ["agents"] }),
       ]);
-      toast.success(`Renamed to ${next}`);
+      toast.success(t("Renamed to {{name}}", { name: next }));
       return true;
     } catch (err) {
-      toast.error((err as Error)?.message ?? "Rename failed");
+      toast.error((err as Error)?.message ?? t("Rename failed"));
       return false;
     }
   };
@@ -2507,17 +2716,17 @@ function DocumentActions({
       <TextPromptDialog
         open={renaming}
         onOpenChange={setRenaming}
-        title={`Rename ${doc.name}`}
-        label="Name"
+        title={t("Rename {{name}}", { name: doc.name })}
+        label={t("Name")}
         initialValue={doc.name}
-        submitLabel="Rename"
-        busyLabel="Renaming…"
+        submitLabel={t("Rename")}
+        busyLabel={t("Renaming…")}
         onSubmit={rename}
       />
       <DropdownMenu>
         <DropdownMenuTrigger
           className="shrink-0 rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-          aria-label={`Actions for ${doc.name}`}
+          aria-label={t("Actions for {{name}}", { name: doc.name })}
           disabled={busy}
         >
           {busy ? (
@@ -2529,17 +2738,17 @@ function DocumentActions({
         <DropdownMenuContent align="end" className="w-52">
           <DropdownMenuItem onSelect={() => onOpen(doc)}>
             <FileText className="mr-2 h-4 w-4" />
-            Open
+            {t("Open")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void api.documents.download(doc.id, doc.name)}>
             <Download className="mr-2 h-4 w-4" />
-            Download
+            {t("Download")}
           </DropdownMenuItem>
           {doc.externalUrl ? (
             <DropdownMenuItem asChild>
               <a href={doc.externalUrl} target="_blank" rel="noreferrer noopener">
                 <ExternalLink className="mr-2 h-4 w-4" />
-                Open at the source
+                {t("Open at the source")}
               </a>
             </DropdownMenuItem>
           ) : null}
@@ -2551,7 +2760,7 @@ function DocumentActions({
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     <FolderOpen className="mr-2 h-4 w-4" />
-                    Move to
+                    {t("Move to")}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="max-h-64 overflow-y-auto">
                     {elsewhere.map((b) => (
@@ -2566,23 +2775,23 @@ function DocumentActions({
               {!doc.connectionId ? (
                 <DropdownMenuItem onSelect={() => setRenaming(true)}>
                   <Pencil className="mr-2 h-4 w-4" />
-                  Rename
+                  {t("Rename")}
                 </DropdownMenuItem>
               ) : null}
               {doc.connectionId ? (
                 <DropdownMenuItem onSelect={() => void resync()}>
                   <RefreshCw className="mr-2 h-4 w-4" />
-                  Sync now
+                  {t("Sync now")}
                 </DropdownMenuItem>
               ) : null}
               <DropdownMenuItem onSelect={() => onReindex(doc)}>
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Reindex
+                {t("Reindex")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => onRemove(doc)}>
                 <Trash2 className="mr-2 h-4 w-4" />
-                Delete
+                {t("Delete")}
               </DropdownMenuItem>
             </>
           ) : null}
@@ -2598,6 +2807,7 @@ function DocumentActions({
  * snapshot: adding the page again later is how it is refreshed.
  */
 function AddWebPage({ bundleId }: { bundleId: string }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const add = async (typed: string): Promise<boolean> => {
@@ -2610,10 +2820,10 @@ function AddWebPage({ bundleId }: { bundleId: string }) {
         queryClient.invalidateQueries({ queryKey: ["bundles"] }),
         queryClient.invalidateQueries({ queryKey: ["agents"] }),
       ]);
-      toast.success(`Added ${doc.name} — indexing it now`);
+      toast.success(t("Added {{file}} — indexing it now", { file: doc.name }));
       return true;
     } catch (err) {
-      toast.error((err as Error)?.message ?? "Could not add that page");
+      toast.error((err as Error)?.message ?? t("Could not add that page"));
       return false;
     }
   };
@@ -2625,17 +2835,17 @@ function AddWebPage({ bundleId }: { bundleId: string }) {
         className="inline-flex items-center gap-1.5 hover:text-foreground"
       >
         <ExternalLink className="h-3.5 w-3.5" />
-        Add a web page
+        {t("Add a web page")}
       </button>
       <TextPromptDialog
         open={open}
         onOpenChange={setOpen}
-        title="Add a web page"
-        label="Address"
+        title={t("Add a web page")}
+        label={t("Address")}
         type="url"
-        placeholder="https://example.com/page"
-        submitLabel="Add page"
-        busyLabel="Fetching the page…"
+        placeholder={"https://example.com/page"}
+        submitLabel={t("Add page")}
+        busyLabel={t("Fetching the page…")}
         onSubmit={add}
       />
     </>
@@ -2663,6 +2873,7 @@ function UploadStrip({
   uploading: Uploading[];
   onFiles: (files: FileList | File[] | null) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="border-t border-hairline px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -2670,10 +2881,10 @@ function UploadStrip({
           <Upload className="h-3.5 w-3.5" />
           {bundle ? (
             <>
-              <span>Drop files into {bundle.name}</span>
-              <span>or</span>
+              <span>{t("Drop files into {{folder}}", { folder: bundle.name })}</span>
+              <span>{t("or")}</span>
               <label className="cursor-pointer underline underline-offset-2 hover:text-foreground">
-                choose files
+                {t("choose files")}
                 <input
                   type="file"
                   multiple
@@ -2692,7 +2903,7 @@ function UploadStrip({
               </label>
             </>
           ) : (
-            <span>Pick a folder to upload into</span>
+            <span>{t("Pick a folder to upload into")}</span>
           )}
         </span>
         {bundle ? (
@@ -2701,12 +2912,12 @@ function UploadStrip({
                 files and folders, and the drop target already takes both. */}
             <label className="inline-flex cursor-pointer items-center gap-1.5 hover:text-foreground">
               <FolderOpen className="h-3.5 w-3.5" />
-              Upload a folder
+              {t("Upload a folder")}
               <input
                 type="file"
                 multiple
                 className="hidden"
-                aria-label="Upload a folder"
+                aria-label={t("Upload a folder")}
                 {...({ webkitdirectory: "" } as Record<string, string>)}
                 onChange={(e) => {
                   // Copied before the reset: clearing `value` empties the very
@@ -2720,7 +2931,7 @@ function UploadStrip({
               />
             </label>
             <AddWebPage bundleId={bundle.id} />
-            <span className="hidden xl:inline">{ACCEPTED_SUMMARY}</span>
+            <span className="hidden xl:inline">{acceptedSummary(t)}</span>
           </>
         ) : null}
       </div>
@@ -2734,9 +2945,9 @@ function UploadStrip({
                 <span className="flex-1 truncate">{u.name}</span>
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {u.phase === "waiting"
-                    ? "Waiting…"
+                    ? t("Waiting…")
                     : u.phase === "reading"
-                      ? "Reading the PDF…"
+                      ? t("Reading the PDF…")
                       : `${u.progress}%`}
                 </span>
               </div>
@@ -2765,45 +2976,54 @@ function UploadStrip({
  * cut is searchable and nothing after it is.
  */
 function IndexChip({ doc }: { doc: ExplorerDocument }) {
-  const passages = `${doc.chunkCount} ${doc.chunkCount === 1 ? "passage" : "passages"}`;
+  const { t } = useTranslation();
+  const passages = t("{{count}} passage", {
+    count: doc.chunkCount,
+    defaultValue_other: "{{count}} passages",
+  });
   switch (doc.indexStatus) {
     case "queued":
       return (
-        <span title="Waiting to be read and indexed.">
-          <Chip>Queued</Chip>
+        <span title={t("Waiting to be read and indexed.")}>
+          <Chip>{t("Queued")}</Chip>
         </span>
       );
     case "indexing": {
       const p = doc.indexProgress;
       const pct = p && p.total > 0 ? Math.min(99, Math.round((p.done / p.total) * 100)) : null;
       return (
-        <span title="Being indexed. Until it finishes, any passages it had before still answer.">
-          <Chip>{pct === null ? "Indexing…" : `Indexing ${pct}%`}</Chip>
+        <span
+          title={t("Being indexed. Until it finishes, any passages it had before still answer.")}
+        >
+          <Chip>{pct === null ? t("Indexing…") : t("Indexing {{pct}}%", { pct })}</Chip>
         </span>
       );
     }
     case "failed":
       return (
-        <span title={doc.indexError ?? "Indexing failed. Reindex to try again."}>
-          <Chip className="text-destructive">Failed</Chip>
+        <span title={doc.indexError ?? t("Indexing failed. Reindex to try again.")}>
+          <Chip className="text-destructive">{t("Failed")}</Chip>
         </span>
       );
     case "partial":
       return (
         <span
-          title={`${passages}. The document is longer than the indexing limit, so only its first part is searchable.`}
+          title={t(
+            "{{passages}}. The document is longer than the indexing limit, so only its first part is searchable.",
+            { passages },
+          )}
         >
-          <Chip>Partly indexed</Chip>
+          <Chip>{t("Partly indexed")}</Chip>
         </span>
       );
     default:
       return doc.indexed ? (
         <span title={passages}>
-          <Chip>Indexed</Chip>
+          <Chip>{t("Indexed")}</Chip>
         </span>
       ) : (
-        <span title="No embeddings yet — no passage in it can be matched in chat.">
-          <Chip>Not indexed</Chip>
+        <span title={t("No embeddings yet — no passage in it can be matched in chat.")}>
+          <Chip>{t("Not indexed")}</Chip>
         </span>
       );
   }
@@ -2839,6 +3059,7 @@ function KnowledgeTopBar({
   onFiles: (files: FileList | File[] | null) => void;
   onCreated: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const [creating, setCreating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   return (
@@ -2852,18 +3073,21 @@ function KnowledgeTopBar({
                 onClick={onHome}
                 className="shrink-0 text-muted-foreground hover:text-foreground"
               >
-                Knowledge
+                {t("Knowledge")}
               </button>
               <span aria-hidden className="font-normal text-dot-done">
                 /
               </span>
               <span className="truncate">{openBundle.name}</span>
               {openBundle.shared === false ? (
-                <Lock className="size-3 shrink-0 text-muted-foreground" aria-label="Only you" />
+                <Lock
+                  className="size-3 shrink-0 text-muted-foreground"
+                  aria-label={t("Only you")}
+                />
               ) : null}
             </span>
           ) : (
-            "Knowledge"
+            t("Knowledge")
           )
         }
         actions={
@@ -2873,27 +3097,37 @@ function KnowledgeTopBar({
               <Input
                 value={query}
                 onChange={(e) => onQuery(e.target.value)}
-                placeholder={openBundle ? "Search files" : home ? "Search folders" : "Search files"}
-                aria-label="Search files by name"
+                placeholder={
+                  openBundle ? t("Search files") : home ? t("Search folders") : t("Search files")
+                }
+                aria-label={t("Search files by name")}
                 className="pl-8"
               />
             </div>
             <div className="flex shrink-0 overflow-hidden rounded-md border border-input">
-              <ViewButton active={view === "list"} onClick={() => onView("list")} label="List view">
+              <ViewButton
+                active={view === "list"}
+                onClick={() => onView("list")}
+                label={t("List view")}
+              >
                 <List className="size-4" />
               </ViewButton>
-              <ViewButton active={view === "grid"} onClick={() => onView("grid")} label="Grid view">
+              <ViewButton
+                active={view === "grid"}
+                onClick={() => onView("grid")}
+                label={t("Grid view")}
+              >
                 <LayoutGrid className="size-4" />
               </ViewButton>
             </div>
             {canWrite && (
               <Button variant="secondary" onClick={() => setCreating(true)}>
-                New folder
+                {t("New folder")}
               </Button>
             )}
             {canWrite && openBundle && (
               <Button onClick={() => fileRef.current?.click()}>
-                <Upload /> Upload
+                <Upload /> {t("Upload")}
               </Button>
             )}
           </>
@@ -2903,7 +3137,7 @@ function KnowledgeTopBar({
             <Button
               variant="ghost"
               size="icon"
-              aria-label={`Upload files into ${openBundle.name}`}
+              aria-label={t("Upload files into {{folder}}", { folder: openBundle.name })}
               onClick={() => fileRef.current?.click()}
             >
               <Upload />
@@ -2918,7 +3152,7 @@ function KnowledgeTopBar({
           multiple
           className="hidden"
           accept={ACCEPT}
-          aria-label={`Upload files into ${openBundle.name}`}
+          aria-label={t("Upload files into {{folder}}", { folder: openBundle.name })}
           onChange={(e) => {
             // Copied before the reset — see the strip at the foot of the pane.
             const files = Array.from(e.target.files ?? []);
@@ -2945,6 +3179,7 @@ function NewFolderDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const { createBundle } = useAgentsStore();
   const [name, setName] = useState("");
   const [shared, setShared] = useState(false);
@@ -2962,10 +3197,18 @@ function NewFolderDialog({
         onOpenChange(false);
         onCreated(bundle.id);
         toast.success(
-          shared ? `Created ${bundle.name}, shared with the workspace` : `Created ${bundle.name}`,
+          shared
+            ? t("Created {{folder}}, shared with the workspace", { folder: bundle.name })
+            : t("Created {{folder}}", { folder: bundle.name }),
         );
       })
-      .catch((err) => toast.error(err?.message ? `Create failed: ${err.message}` : "Create failed"))
+      .catch((err) =>
+        toast.error(
+          err?.message
+            ? t("Create failed: {{reason}}", { reason: err.message })
+            : t("Create failed"),
+        ),
+      )
       .finally(() => setBusy(false));
   };
 
@@ -2973,39 +3216,39 @@ function NewFolderDialog({
     <Dialog open={open} onOpenChange={(v) => !busy && onOpenChange(v)}>
       <DialogContent size="sm">
         <DialogHeader>
-          <DialogTitle>New folder</DialogTitle>
+          <DialogTitle>{t("New folder")}</DialogTitle>
         </DialogHeader>
         <form onSubmit={create} className="flex flex-col gap-3.5">
           <div className="space-y-1.5">
-            <Label htmlFor="new-folder-name">Name</Label>
+            <Label htmlFor="new-folder-name">{t("Name")}</Label>
             <Input
               id="new-folder-name"
               autoFocus
               value={name}
               disabled={busy}
-              placeholder="Contracts"
+              placeholder={t("Contracts")}
               onChange={(e) => setName(e.target.value)}
             />
           </div>
           <label className="flex items-center justify-between gap-3 text-sm">
             <span>
-              Share with the workspace
+              {t("Share with the workspace")}
               <span className="block text-meta text-muted-foreground">
-                Off, only you see it until you share it.
+                {t("Off, only you see it until you share it.")}
               </span>
             </span>
             <Switch
               checked={shared}
               onCheckedChange={setShared}
-              aria-label="Share the new folder with the workspace"
+              aria-label={t("Share the new folder with the workspace")}
             />
           </label>
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button type="submit" disabled={busy || !name.trim()}>
-              {busy ? "Creating…" : "Create folder"}
+              {busy ? t("Creating…") : t("Create folder")}
             </Button>
           </DialogFooter>
         </form>
@@ -3019,11 +3262,12 @@ function NewFolderDialog({
  * from, each with when it last did, and the way to add one.
  */
 function SourceRows({ onNavigate }: { onNavigate: () => void }) {
+  const { t } = useTranslation();
   const { data } = useConnections();
   const connections = data?.connections ?? [];
   return (
     <>
-      <SidebarHeading>Sources</SidebarHeading>
+      <SidebarHeading>{t("Sources")}</SidebarHeading>
       {connections.map((c) => {
         const label = data?.providers.find((p) => p.id === c.provider)?.label ?? c.provider;
         return (
@@ -3037,7 +3281,7 @@ function SourceRows({ onNavigate }: { onNavigate: () => void }) {
             <span className="min-w-0 flex-1 truncate">{label}</span>
             <span className="flex shrink-0 items-center gap-1.5 text-xs text-micro-foreground">
               <StatusDot state={c.status === "paused" ? "failed" : "done"} />
-              {c.lastSyncAt ? sinceShort(c.lastSyncAt) : "Not yet"}
+              {c.lastSyncAt ? sinceShort(c.lastSyncAt, t) : t("Not yet")}
             </span>
           </Link>
         );
@@ -3048,23 +3292,25 @@ function SourceRows({ onNavigate }: { onNavigate: () => void }) {
         className="flex h-[30px] items-center gap-2 rounded-md px-2 text-sm text-muted-foreground hover:bg-surface hover:text-foreground"
       >
         <Plus className="size-4" />
-        Add a source
+        {t("Add a source")}
       </Link>
     </>
   );
 }
 
 /** "12 min", "1 h", "3 d": how long ago a source last synced. */
-function sinceShort(at: number): string {
+function sinceShort(at: number, t: Translate): string {
   const min = Math.max(0, Math.round((Date.now() - at) / 60_000));
-  if (min < 60) return `${min} min`;
+  if (min < 60) return t("{{minutes}} min", { minutes: min });
   const h = Math.round(min / 60);
-  if (h < 24) return `${h} h`;
-  return `${Math.round(h / 24)} d`;
+  if (h < 24) return t("{{hours}} h", { hours: h });
+  return t("{{days}} d", { days: Math.round(h / 24) });
 }
 
 /** "Drive synced 12 min ago": the open folder's source, when it has one. */
 function FolderSync({ bundleId }: { bundleId: string }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { data } = useConnections();
   const c = data?.connections.find((x) => x.bundleId === bundleId);
   if (!c) return null;
@@ -3073,21 +3319,25 @@ function FolderSync({ bundleId }: { bundleId: string }) {
     <span className="inline-flex items-center gap-1.5">
       <StatusDot state={c.status === "paused" ? "failed" : "done"} />
       {c.status === "paused"
-        ? `${label} paused`
+        ? t("{{source}} paused", { source: label })
         : c.lastSyncAt
-          ? `${label} synced ${lastActivityLabel(c.lastSyncAt).toLowerCase()}`
-          : `${label} has not synced yet`}
+          ? t("{{source}} synced {{when}}", {
+              source: label,
+              when: lastActivityLabel(c.lastSyncAt, undefined, t, locale).toLocaleLowerCase(locale),
+            })
+          : t("{{source}} has not synced yet", { source: label })}
     </span>
   );
 }
 
 /** "GD Drive": a synced file's source, as the Added by column says it (A6). */
 function SourceName({ connectionId }: { connectionId: string }) {
+  const { t } = useTranslation();
   const { data } = useConnections();
   const c = data?.connections.find((x) => x.id === connectionId);
   const label = c
     ? (data?.providers.find((p) => p.id === c.provider)?.label ?? c.provider)
-    : "A source";
+    : t("A source");
   return (
     <>
       <Tile label={label} size={20} />

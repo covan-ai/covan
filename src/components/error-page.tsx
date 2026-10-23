@@ -1,6 +1,7 @@
 import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/chip";
 import { StatusDot } from "@/components/status-dot";
@@ -28,22 +29,24 @@ export function ErrorPage({
   onRetry?: () => void;
   standalone?: boolean;
 }) {
+  const { t } = useTranslation();
   const path = useRouterState({ select: (s) => s.location.href });
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const body =
     kind === "not-found" ? (
       <>
-        <h1 className="m-0 text-title font-semibold">There is nothing here</h1>
+        <h1 className="m-0 text-title font-semibold">{t("There is nothing here")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          The link may be old, or the thread was deleted. Deleted things can be brought back for 30
-          days from Settings.
+          {t(
+            "The link may be old, or the thread was deleted. Deleted things can be brought back for 30 days from Settings.",
+          )}
         </p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
           <Button asChild>
-            <Link to="/app">Go home</Link>
+            <Link to="/app">{t("Go home")}</Link>
           </Button>
           <Button asChild variant="secondary">
-            <Link to="/inbox">Open the Inbox</Link>
+            <Link to="/inbox">{t("Open the Inbox")}</Link>
           </Button>
         </div>
         <Chip tone="code" className="mt-5 max-w-[320px] truncate bg-transparent">
@@ -53,20 +56,21 @@ export function ErrorPage({
     ) : (
       <>
         <StatusDot state="failed" className="mb-4" />
-        <h1 className="m-0 text-title font-semibold">Something went wrong on this page</h1>
+        <h1 className="m-0 text-title font-semibold">{t("Something went wrong on this page")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Nothing you did was lost; threads and documents are saved as they go. Reloading usually
-          fixes it. If it keeps happening, send us the id below.
+          {t(
+            "Nothing you did was lost; threads and documents are saved as they go. Reloading usually fixes it. If it keeps happening, send us the id below.",
+          )}
         </p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
-          <Button onClick={onRetry ?? (() => window.location.reload())}>Reload</Button>
+          <Button onClick={onRetry ?? (() => window.location.reload())}>{t("Reload")}</Button>
           {standalone ? (
             <Button asChild variant="secondary">
-              <a href="/app">Go home</a>
+              <a href="/app">{t("Go home")}</a>
             </Button>
           ) : (
             <Button variant="secondary" onClick={() => setFeedbackOpen(true)}>
-              Send feedback
+              {t("Send feedback")}
             </Button>
           )}
         </div>
@@ -81,11 +85,11 @@ export function ErrorPage({
               onClick={() =>
                 void navigator.clipboard
                   ?.writeText(errorId)
-                  .then(() => toast.success("Copied"))
+                  .then(() => toast.success(t("Copied")))
                   .catch(() => {})
               }
             >
-              Copy
+              {t("Copy")}
             </button>
           </div>
         )}

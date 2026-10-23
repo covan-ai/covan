@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useTranslation, type TFunction } from "@/i18n";
 
 /**
  * The card at a login wall, inside the browser panel (Task 2.4).
@@ -99,38 +100,50 @@ export function SignInCard({
    */
   onSaved: (siteHost: string, credentialId: string) => void;
 }) {
+  const { t } = useTranslation();
   const [saving, setSaving] = useState<"owner" | "agent" | null>(null);
   const reuse = !carriedSavedLogin && savedLogin ? savedLogin : null;
   const canSave = !!host && !!agentId && !reuse;
   const updating = carriedSavedLogin && canSave;
+  // The second way through, when there is one: a sentence of its own.
+  let orElse: string | null = null;
+  if (reuse) {
+    orElse = t("Or try again with your saved login, {{label}}, and the agent signs in by itself.", {
+      label: reuse.label,
+    });
+  } else if (canSave && updating) {
+    orElse = t("Or update the saved login, and the agent tries again with it.");
+  } else if (canSave) {
+    orElse = t("Or save the login, and the agent signs in by itself from now on.");
+  }
 
   return (
     <div className="rounded-xl border border-border bg-card p-3">
       <p className="text-sm font-medium">
         {carriedSavedLogin
-          ? `The saved login for ${host ?? "this site"} didn't get past the sign-in.`
-          : `${host ?? "This site"} needs you to sign in.`}
+          ? host
+            ? t("The saved login for {{host}} didn't get past the sign-in.", { host })
+            : t("The saved login for this site didn't get past the sign-in.")
+          : host
+            ? t("{{host}} needs you to sign in.", { host })
+            : t("This site needs you to sign in.")}
       </p>
       {/* The network-address sentence was added after the first real run: a
           hand-performed LinkedIn sign-in saved, attached and ran again from
           another address in the same country, and LinkedIn asked for the
           password again. The person deciding is the one who should know. */}
       <p className="mt-1 text-meta text-muted-foreground">
-        Just this once: take over and sign in in the browser, then press Done. You type your
-        password at the site; Covan never receives it.
-        {reuse
-          ? ` Or try again with your saved login, ${reuse.label}, and the agent signs in by itself.`
-          : canSave
-            ? updating
-              ? " Or update the saved login, and the agent tries again with it."
-              : " Or save the login, and the agent signs in by itself from now on."
-            : ""}{" "}
-        No charge for the second attempt. Some sites tie a sign-in to one network address and will
-        ask again anyway; LinkedIn is one of them.
+        {t(
+          "Just this once: take over and sign in in the browser, then press Done. You type your password at the site; Covan never receives it.",
+        )}
+        {orElse && ` ${orElse}`}{" "}
+        {t(
+          "No charge for the second attempt. Some sites tie a sign-in to one network address and will ask again anyway; LinkedIn is one of them.",
+        )}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button variant="secondary" size="sm" disabled={opening} onClick={onJustThisOnce}>
-          Just this once
+          {t("Just this once")}
         </Button>
         {reuse && (
           <Button
@@ -139,7 +152,7 @@ export function SignInCard({
             disabled={opening}
             onClick={() => onSaved(reuse.siteHost, reuse.id)}
           >
-            Try again with the saved login
+            {t("Try again with the saved login")}
           </Button>
         )}
         {canSave && (
@@ -150,7 +163,7 @@ export function SignInCard({
               disabled={opening}
               onClick={() => setSaving("owner")}
             >
-              {updating ? "Update for me" : "Save for me"}
+              {updating ? t("Update for me") : t("Save for me")}
             </Button>
             {canShare && (
               <Button
@@ -160,8 +173,8 @@ export function SignInCard({
                 onClick={() => setSaving("agent")}
               >
                 {updating
-                  ? "Update for everyone using this agent"
-                  : "Save for everyone using this agent"}
+                  ? t("Update for everyone using this agent")
+                  : t("Save for everyone using this agent")}
               </Button>
             )}
           </>
@@ -175,7 +188,7 @@ export function SignInCard({
         disabled={opening}
         onClick={onOpenWindow}
       >
-        Open in a new window
+        {t("Open in a new window")}
       </button>
 
       {host && agentId && (
@@ -198,8 +211,8 @@ export function SignInCard({
   );
 }
 
-function messageOf(err: unknown): string {
-  return err instanceof Error && err.message ? err.message : "Couldn't save that login.";
+function messageOf(err: unknown, t: TFunction): string {
+  return err instanceof Error && err.message ? err.message : t("Couldn't save that login.");
 }
 
 /**
@@ -250,6 +263,7 @@ function SaveLoginDialog({
   onClose: () => void;
   onSaved: (siteHost: string, credentialId: string) => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   // The same key `SavedLoginsList` reads one agent's logins under.
   const { data: existing } = useQuery({
@@ -264,13 +278,16 @@ function SaveLoginDialog({
   // (R25) and answers the host it kept, which the hand-back then names.
   const [site, setSite] = useState(host);
   const shown = site.trim() || host;
+  // i18n-ignore: a hostname, lowered the ASCII way.
   const siteHost = shown.toLowerCase().replace(/^www\./, "");
   const replaces = !!existing?.logins.some(
     (l) => l.own && l.scope === scope && l.siteHost === siteHost,
   );
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [label, setLabel] = useState(`${host} — ${scope === "agent" ? "shared" : "personal"}`);
+  const [label, setLabel] = useState(() =>
+    scope === "agent" ? t("{{host}} — shared", { host }) : t("{{host}} — personal", { host }),
+  );
   const [problem, setProblem] = useState<string | null>(null);
 
   const save = useMutation({
@@ -300,17 +317,17 @@ function SaveLoginDialog({
       onSaved(saved.credential.siteHost, saved.credential.id);
     } catch (err) {
       forgetTyped();
-      setProblem(messageOf(err));
+      setProblem(messageOf(err, t));
     } finally {
       save.reset();
     }
   }
 
   const title = replaces
-    ? `Update the saved login for ${shown}`
+    ? t("Update the saved login for {{site}}", { site: shown })
     : scope === "agent"
-      ? `Save a login for ${shown}, for everyone`
-      : `Save a login for ${shown}`;
+      ? t("Save a login for {{site}}, for everyone", { site: shown })
+      : t("Save a login for {{site}}", { site: shown });
 
   return (
     <Dialog
@@ -328,13 +345,16 @@ function SaveLoginDialog({
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>
               {scope === "agent"
-                ? `Anyone who uses this agent can have it sign in and act as this account on ${shown}. The list shows them only its name, but they can see what the browser types and what the account shows.`
-                : `Only your runs of this agent sign in to ${shown} with it.`}
+                ? t(
+                    "Anyone who uses this agent can have it sign in and act as this account on {{site}}. The list shows them only its name, but they can see what the browser types and what the account shows.",
+                    { site: shown },
+                  )
+                : t("Only your runs of this agent sign in to {{site}} with it.", { site: shown })}
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-1.5">
-            <Label htmlFor="save-login-site">Site</Label>
+            <Label htmlFor="save-login-site">{t("Site")}</Label>
             <Input
               id="save-login-site"
               autoComplete="off"
@@ -344,12 +364,13 @@ function SaveLoginDialog({
               aria-describedby="save-login-site-check"
             />
             <p id="save-login-site-check" className="text-meta text-muted-foreground">
-              Check this is the site you mean — the login will only ever be typed on this site and
-              its subdomains.
+              {t(
+                "Check this is the site you mean — the login will only ever be typed on this site and its subdomains.",
+              )}
             </p>
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="save-login-username">Username</Label>
+            <Label htmlFor="save-login-username">{t("Username")}</Label>
             <Input
               id="save-login-username"
               autoComplete="off"
@@ -359,7 +380,7 @@ function SaveLoginDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="save-login-password">Password</Label>
+            <Label htmlFor="save-login-password">{t("Password")}</Label>
             <Input
               id="save-login-password"
               type="password"
@@ -369,7 +390,7 @@ function SaveLoginDialog({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="save-login-label">Name</Label>
+            <Label htmlFor="save-login-label">{t("Name")}</Label>
             <Input
               id="save-login-label"
               autoComplete="off"
@@ -380,7 +401,7 @@ function SaveLoginDialog({
 
           {/* V4's inline bindings carry no one-time codes; only 1Password does. */}
           <p className="text-meta text-muted-foreground">
-            Codes, SMS and passkeys still need you — the browser will ask.
+            {t("Codes, SMS and passkeys still need you — the browser will ask.")}
           </p>
 
           {problem && (
@@ -399,7 +420,7 @@ function SaveLoginDialog({
                 onClose();
               }}
             >
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="submit"
@@ -407,13 +428,15 @@ function SaveLoginDialog({
                 save.isPending || !site.trim() || !username.trim() || !password || !label.trim()
               }
             >
-              Save and continue
+              {t("Save and continue")}
             </Button>
           </DialogFooter>
 
           <p className="text-meta text-muted-foreground">
-            Covan never gives your password to the AI model. It is encrypted, and typed into {shown}{" "}
-            by the browser provider only.
+            {t(
+              "Covan never gives your password to the AI model. It is encrypted, and typed into {{site}} by the browser provider only.",
+              { site: shown },
+            )}
           </p>
         </form>
       </DialogContent>

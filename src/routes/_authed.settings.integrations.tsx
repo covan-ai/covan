@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Code2, Database, Search } from "lucide-react";
+import { Trans, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { SectionLabel, SectionTitle } from "@/components/section";
 import { BrowserSignInsSection } from "@/components/browser-signins-section";
 import { DocsLink } from "@/components/docs-link";
@@ -59,12 +61,13 @@ const CONNECTED_LABEL: Record<string, string> = {
  * expired) and are read the way they always were.
  */
 function useGrantOutcome() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const error = params.get("error");
     if (error) {
-      toast.error(connectErrorMessage(error));
+      toast.error(connectErrorMessage(error, t));
       window.history.replaceState({}, "", window.location.pathname);
     }
 
@@ -79,33 +82,37 @@ function useGrantOutcome() {
           const done = await api.composio.complete(pending.nonce);
           toast.success(
             done.status === "active"
-              ? `${pending.toolkit} connected.`
-              : `Finishing ${pending.toolkit}…`,
+              ? t("{{app}} connected.", { app: pending.toolkit })
+              : t("Finishing {{app}}…", { app: pending.toolkit }),
           );
         } else if (!nonce) {
-          toast.error(connectErrorMessage("not_yours"));
+          toast.error(connectErrorMessage("not_yours", t));
           return;
         } else if (pending.for === "slack") {
           await api.slack.complete({ grant: pending.grant, nonce });
-          toast.success("Slack connected.");
+          toast.success(t("Slack connected."));
         } else {
           const done = await api.connections.complete({ grant: pending.grant, nonce });
           const label = CONNECTED_LABEL[done.provider] ?? done.provider;
           // A reconnect comes back under its own name, because "Notion
           // connected" after replacing a grant reads as a second connection
           // having appeared — which is exactly what used to happen.
-          toast.success(done.reconnected ? `${label} reconnected.` : `${label} connected.`);
+          toast.success(
+            done.reconnected
+              ? t("{{app}} reconnected.", { app: label })
+              : t("{{app}} connected.", { app: label }),
+          );
         }
       } catch (e) {
         toast.error(
-          connectErrorMessage(e instanceof ApiError ? apiErrorCode(e.message) : "save_failed"),
+          connectErrorMessage(e instanceof ApiError ? apiErrorCode(e.message) : "save_failed", t),
         );
       } finally {
         await queryClient.invalidateQueries();
       }
     };
     void settle();
-  }, [queryClient]);
+  }, [queryClient, t]);
 }
 
 /** The API answers `{ error: "<code>" }`; `ApiError` carries the code as its message. */
@@ -130,6 +137,8 @@ function apiErrorCode(message: string): string {
  */
 function IntegrationsPage() {
   useGrantOutcome();
+  const { t } = useTranslation();
+  const locale = useLocale();
 
   const [query, setQuery] = useState("");
   const [addingService, setAddingService] = useState(false);
@@ -142,13 +151,13 @@ function IntegrationsPage() {
 
   const firstNameOf = (id: string | null | undefined) => {
     if (!id) return null;
-    if (id === me?.user.id) return "you";
+    if (id === me?.user.id) return t("you");
     const name = me?.members.find((m) => m.id === id)?.name;
     return name ? (name.split(/\s+/)[0] ?? name) : null;
   };
-  const q = query.trim().toLowerCase();
+  const q = query.trim().toLocaleLowerCase(locale);
   const matches = (...texts: Array<string | null | undefined>) =>
-    !q || texts.some((t) => t?.toLowerCase().includes(q));
+    !q || texts.some((text) => text?.toLocaleLowerCase(locale).includes(q));
 
   const toolConnections = tools.data?.connections ?? [];
   const sources = (connections.data?.connections ?? []).filter((c) =>
@@ -190,11 +199,13 @@ function IntegrationsPage() {
               <Database className="size-3.5" aria-hidden />
             </span>
           }
-          name="Databases and APIs"
-          description="Anything with a base address and a token: a Postgres, a Supabase project, a REST API. Read only unless you allow more."
+          name={t("Databases and APIs")}
+          description={t(
+            "Anything with a base address and a token: a Postgres, a Supabase project, a REST API. Read only unless you allow more.",
+          )}
           action={
             <Button size="sm" variant="secondary" onClick={() => setAddingService(true)}>
-              Add
+              {t("Add")}
             </Button>
           }
         />
@@ -206,11 +217,13 @@ function IntegrationsPage() {
               <Code2 className="size-3.5" aria-hidden />
             </span>
           }
-          name="API"
-          description="Keys for your own scripts and tools, and webhooks for what happens here."
+          name={t("API")}
+          description={t(
+            "Keys for your own scripts and tools, and webhooks for what happens here.",
+          )}
           action={
             <Button size="sm" variant="ghost" asChild>
-              <Link to="/settings/api-keys">API keys</Link>
+              <Link to="/settings/api-keys">{t("API keys")}</Link>
             </Button>
           }
         />
@@ -221,35 +234,39 @@ function IntegrationsPage() {
   return (
     <>
       <SectionTitle
-        title="Integrations"
-        lede="What the agents can read and where they can write. Each one is turned on per agent in its Configuration."
+        title={t("Integrations")}
+        lede={t(
+          "What the agents can read and where they can write. Each one is turned on per agent in its Configuration.",
+        )}
         action={
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-[220px] items-center gap-2 rounded-md border border-input bg-card px-2.5 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring">
               <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <input
-                aria-label="Search integrations"
-                placeholder="Search"
+                aria-label={t("Search integrations")}
+                placeholder={t("Search")}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
             </div>
             <Button variant="ghost" onClick={() => setRequesting(true)}>
-              Request one
+              {t("Request one")}
             </Button>
           </div>
         }
       />
 
-      <SectionLabel className="mt-6">Connected · {count}</SectionLabel>
+      <SectionLabel className="mt-6">{t("Connected · {{total}}", { total: count })}</SectionLabel>
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
       ) : count === 0 ? (
         <p className="text-sm text-muted-foreground">
           {q
-            ? `Nothing connected matches “${query.trim()}”.`
-            : "Nothing is connected yet. Connect a source and a folder in Knowledge keeps itself current; connect an app and an agent can call it while it answers."}
+            ? t("Nothing connected matches “{{query}}”.", { query: query.trim() })
+            : t(
+                "Nothing is connected yet. Connect a source and a folder in Knowledge keeps itself current; connect an app and an agent can call it while it answers.",
+              )}
         </p>
       ) : (
         <ul className="m-0 list-none p-0">
@@ -280,7 +297,7 @@ function IntegrationsPage() {
           things to press. What the workspace already reaches is above. */}
       {canWrite ? (
         <section data-coach="integrations-catalogue" className="mt-8">
-          <SectionLabel>Available</SectionLabel>
+          <SectionLabel>{t("Available")}</SectionLabel>
           <AppCatalogue connected={already} query={query} leading={leading} />
         </section>
       ) : null}
@@ -292,13 +309,14 @@ function IntegrationsPage() {
       ) : null}
 
       <p className="mt-6 mb-0 text-meta text-muted-foreground">
-        What each source can read, and what it deliberately cannot, is in{" "}
-        <DocsLink page="integrations">the integrations guide</DocsLink>. Where routines send their
-        results is under{" "}
-        <Link to="/settings/preferences" className="underline underline-offset-4">
-          delivery channels
-        </Link>
-        .
+        <Trans
+          t={t}
+          i18nKey="What each source can read, and what it deliberately cannot, is in <docs>the integrations guide</docs>. Where routines send their results is under <a>delivery channels</a>."
+          components={{
+            docs: <DocsLink page="integrations">{null}</DocsLink>,
+            a: <Link to="/settings/preferences" className="underline underline-offset-4" />,
+          }}
+        />
       </p>
 
       <AddServiceDialog open={addingService} onOpenChange={setAddingService} />

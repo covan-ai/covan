@@ -1,5 +1,6 @@
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/i18n";
 
 /**
  * A question the agent stopped to ask (A2): the amber ring, who is asking,
@@ -21,15 +22,17 @@ export function AskCard({
   busy: boolean;
   onReply: (reply: string) => void;
 }) {
+  const { t } = useTranslation();
+  const asking = t("{{name}} is asking you", { name: agentName });
   return (
     <div
       role="group"
-      aria-label={`${agentName} is asking you`}
+      aria-label={asking}
       className="mt-2 flex items-start gap-3 rounded-xl border border-border p-4"
     >
       <StatusDot state="waiting" className="mt-[7px]" />
       <div className="min-w-0 flex-1">
-        <div className="mb-1 text-sm font-medium">{agentName} is asking you</div>
+        <div className="mb-1 text-sm font-medium">{asking}</div>
         <div className="text-sm text-muted-foreground">{question}</div>
         {replies.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">

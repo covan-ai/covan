@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Download, ExternalLink, X } from "lucide-react";
 
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { api } from "@/lib/api-client";
 import { Markdown } from "@/components/markdown";
 import { Chip } from "@/components/chip";
@@ -15,6 +17,7 @@ import { cn } from "@/lib/utils";
 
 /** The extension, lowercased, with no dot. The same read the upload gate makes. */
 function extensionOf(name: string): string {
+  // i18n-ignore: a file extension, compared against ASCII names.
   const match = name.toLowerCase().match(/\.([a-z0-9]+)$/);
   return match ? match[1] : "";
 }
@@ -84,6 +87,8 @@ export function DocumentPreviewDialog({
   name: string;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const ext = extensionOf(name);
   const drawable = DRAWABLE.has(ext);
   const [tab, setTab] = useState<Tab>(drawable ? "file" : "indexed");
@@ -118,21 +123,23 @@ export function DocumentPreviewDialog({
           <span className="hidden shrink-0 items-center gap-x-2 text-meta text-muted-foreground md:flex">
             {preview.data ? (
               <>
-                <span>{formatFileSize(preview.data.size)}</span>
+                <span>{formatFileSize(preview.data.size, locale)}</span>
                 <span aria-hidden>·</span>
                 <AgeLabel createdAt={preview.data.createdAt} />
                 <span aria-hidden>·</span>
                 {preview.data.indexed ? (
                   <span>
-                    {preview.data.chunkCount}{" "}
-                    {preview.data.chunkCount === 1 ? "passage" : "passages"}
+                    {t("{{count}} passage", {
+                      count: preview.data.chunkCount,
+                      defaultValue_other: "{{count}} passages",
+                    })}
                   </span>
                 ) : (
-                  <Chip>Not indexed</Chip>
+                  <Chip>{t("Not indexed")}</Chip>
                 )}
               </>
             ) : (
-              <span>Loading…</span>
+              <span>{t("Loading…")}</span>
             )}
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
@@ -140,7 +147,7 @@ export function DocumentPreviewDialog({
               <Button variant="secondary" size="sm" asChild>
                 <a href={preview.data.externalUrl} target="_blank" rel="noreferrer noopener">
                   <ExternalLink />
-                  Source
+                  {t("Source")}
                 </a>
               </Button>
             ) : null}
@@ -150,7 +157,7 @@ export function DocumentPreviewDialog({
               onClick={() => void api.documents.download(documentId, name)}
             >
               <Download />
-              Download
+              {t("Download")}
             </Button>
             {/* A Markdown document — every report and filed summary is one —
                 also goes out as the formats people pass around. */}
@@ -161,21 +168,22 @@ export function DocumentPreviewDialog({
                   size="sm"
                   onClick={() => void saveDocument(documentId, name, "docx")}
                 >
-                  Word
+                  {/* Format names, the same in every language. */}
+                  {"Word"}
                 </Button>
                 <Button
                   variant="secondary"
                   size="sm"
                   onClick={() => void saveDocument(documentId, name, "pdf")}
                 >
-                  PDF
+                  {"PDF"}
                 </Button>
               </>
             ) : null}
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="Close"
+              aria-label={t("Close")}
               className="text-muted-foreground"
               onClick={onClose}
             >
@@ -186,10 +194,10 @@ export function DocumentPreviewDialog({
 
         <div className="flex h-10 shrink-0 items-stretch gap-4 border-b border-hairline px-5">
           <TabButton active={tab === "file"} onClick={() => setTab("file")}>
-            File
+            {t("File")}
           </TabButton>
           <TabButton active={tab === "indexed"} onClick={() => setTab("indexed")}>
-            What the agent reads
+            {t("What the agent reads")}
           </TabButton>
         </div>
 
@@ -198,13 +206,16 @@ export function DocumentPreviewDialog({
             {tab === "file" ? (
               !drawable ? (
                 <Note>
-                  A .{ext} file can't be shown here. Download it to open it, or see what the agent
-                  reads of it in the next tab.
+                  {t(
+                    "A .{{ext}} file can't be shown here. Download it to open it, or see what the agent reads of it in the next tab.",
+                    { ext },
+                  )}
                 </Note>
               ) : preview.data && preview.data.size > MAX_DRAWN_BYTES ? (
                 <Note>
-                  This file is too large to show here. Download it to open it, or see what the agent
-                  reads of it in the next tab.
+                  {t(
+                    "This file is too large to show here. Download it to open it, or see what the agent reads of it in the next tab.",
+                  )}
                 </Note>
               ) : (
                 <FileTab
@@ -225,11 +236,14 @@ export function DocumentPreviewDialog({
 }
 
 function AgeLabel({ createdAt }: { createdAt: number }) {
-  const age = documentAge(createdAt);
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const age = documentAge(createdAt, undefined, t, locale);
   return (
     <span className={cn(age.stale && "text-foreground")}>
-      uploaded {age.label}
-      {age.stale ? " · worth checking" : ""}
+      {age.stale
+        ? t("uploaded {{age}} · worth checking", { age: age.label })
+        : t("uploaded {{age}}", { age: age.label })}
     </span>
   );
 }
@@ -272,6 +286,8 @@ function FileTab({
   loading: boolean;
   failed: boolean;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [text, setText] = useState<string | null>(null);
   const isPdf = ext === "pdf";
 
@@ -309,19 +325,23 @@ function FileTab({
   }, [blob, isPdf]);
 
   if (failed) {
-    return <Note>Couldn't load the file. It may have been deleted from storage.</Note>;
+    return <Note>{t("Couldn't load the file. It may have been deleted from storage.")}</Note>;
   }
-  if (loading || !blob) return <Note>Loading the file…</Note>;
+  if (loading || !blob) return <Note>{t("Loading the file…")}</Note>;
 
   if (isPdf) {
     return objectUrl ? (
-      <iframe src={objectUrl} title="Document" className="h-full min-h-[24rem] w-full rounded-lg" />
+      <iframe
+        src={objectUrl}
+        title={t("Document")}
+        className="h-full min-h-[24rem] w-full rounded-lg"
+      />
     ) : (
-      <Note>Opening…</Note>
+      <Note>{t("Opening…")}</Note>
     );
   }
 
-  if (text === null) return <Note>Reading…</Note>;
+  if (text === null) return <Note>{t("Reading…")}</Note>;
 
   const truncated = text.length > MAX_TEXT_CHARS;
   const shown = truncated ? text.slice(0, MAX_TEXT_CHARS) : text;
@@ -339,8 +359,10 @@ function FileTab({
       )}
       {truncated ? (
         <Note className="mt-4">
-          Showing the first {MAX_TEXT_CHARS.toLocaleString("en")} characters. Download the file to
-          read the rest — the whole of it was indexed either way.
+          {t(
+            "Showing the first {{chars}} characters. Download the file to read the rest — the whole of it was indexed either way.",
+            { chars: MAX_TEXT_CHARS.toLocaleString(locale) },
+          )}
         </Note>
       ) : null}
     </>
@@ -357,10 +379,11 @@ function prettyJson(text: string): string {
 }
 
 function CsvTable({ text }: { text: string }) {
+  const { t } = useTranslation();
   // One row past the cap, so the notice below can tell the difference between a
   // file that ends at the cap and one that was cut by it.
   const rows = useMemo(() => parseCsv(text, MAX_CSV_ROWS + 1), [text]);
-  if (rows.length === 0) return <Note>This file has no rows.</Note>;
+  if (rows.length === 0) return <Note>{t("This file has no rows.")}</Note>;
 
   const cut = rows.length > MAX_CSV_ROWS;
   const [header, ...body] = cut ? rows.slice(0, MAX_CSV_ROWS) : rows;
@@ -397,8 +420,12 @@ function CsvTable({ text }: { text: string }) {
       {/* The first row is drawn as a header because a spreadsheet almost always
           has one, and saying so is cheaper than being wrong silently. */}
       <Note className="mt-3">
-        The first row is shown as the header.
-        {cut ? ` Only the first ${MAX_CSV_ROWS} rows are drawn here.` : ""}
+        {cut
+          ? t(
+              "The first row is shown as the header. Only the first {{rows}} rows are drawn here.",
+              { rows: MAX_CSV_ROWS },
+            )
+          : t("The first row is shown as the header.")}
       </Note>
     </>
   );
@@ -412,15 +439,17 @@ function IndexedTab({
   preview: import("@/lib/api-client").DocumentPreview | undefined;
   loading: boolean;
 }) {
-  if (loading) return <Note>Loading…</Note>;
-  if (!preview) return <Note>Couldn't load what was indexed for this document.</Note>;
+  const { t } = useTranslation();
+  const locale = useLocale();
+  if (loading) return <Note>{t("Loading…")}</Note>;
+  if (!preview) return <Note>{t("Couldn't load what was indexed for this document.")}</Note>;
 
   if (!preview.excerpt) {
     return (
       <Note>
-        Nothing was stored for this document. Files with no readable text are refused now, so this
-        is one that went in before that — re-uploading it is the way to give the agent something to
-        read.
+        {t(
+          "Nothing was stored for this document. Files with no readable text are refused now, so this is one that went in before that — re-uploading it is the way to give the agent something to read.",
+        )}
       </Note>
     );
   }
@@ -428,27 +457,29 @@ function IndexedTab({
   return (
     <>
       <p className="mb-3 text-meta leading-[1.5] text-muted-foreground">
-        {preview.indexed ? (
-          <>
-            Cut into {preview.chunkCount} {preview.chunkCount === 1 ? "passage" : "passages"}, each
-            of which retrieval can match on its own. The text below is what grounds an answer when
-            no passage matches the question.
-          </>
-        ) : (
-          <>
-            No passages, so nothing in this document can be matched to a question. The text is
-            stored and still grounds an answer when nothing else matches — reindexing is what makes
-            it searchable.
-          </>
-        )}
+        {preview.indexed
+          ? t(
+              "Cut into {{count}} passage, each of which retrieval can match on its own. The text below is what grounds an answer when no passage matches the question.",
+              {
+                count: preview.chunkCount,
+                defaultValue_other:
+                  "Cut into {{count}} passages, each of which retrieval can match on its own. The text below is what grounds an answer when no passage matches the question.",
+              },
+            )
+          : t(
+              "No passages, so nothing in this document can be matched to a question. The text is stored and still grounds an answer when nothing else matches — reindexing is what makes it searchable.",
+            )}
       </p>
       <pre className="whitespace-pre-wrap break-words rounded-lg border border-hairline bg-surface p-4 font-mono text-meta leading-relaxed">
         {preview.excerpt}
       </pre>
       <Note className="mt-3">
         {preview.excerptTruncated
-          ? `The stored text stops at ${preview.excerptLimit.toLocaleString("en")} characters. The passages above were cut from the whole document, so the rest of the file is still searchable — it just cannot be read back here.`
-          : "This is the whole of the document's text."}
+          ? t(
+              "The stored text stops at {{chars}} characters. The passages above were cut from the whole document, so the rest of the file is still searchable — it just cannot be read back here.",
+              { chars: preview.excerptLimit.toLocaleString(locale) },
+            )
+          : t("This is the whole of the document's text.")}
       </Note>
     </>
   );

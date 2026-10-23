@@ -1,3 +1,4 @@
+import { useLocale } from "@/i18n/provider";
 import { cn } from "@/lib/utils";
 import { avatarSrc } from "@/lib/avatar-src";
 import { getInitials } from "@/lib/monogram";
@@ -31,6 +32,7 @@ export function Avatar({
   dashed?: boolean;
   className?: string;
 }) {
+  const locale = useLocale();
   const src = avatarSrc(url);
   if (src) {
     return (
@@ -53,7 +55,7 @@ export function Avatar({
         className,
       )}
     >
-      {dashed ? "?" : getInitials(name)}
+      {dashed ? "?" : getInitials(name, "–", locale)}
     </span>
   );
 }

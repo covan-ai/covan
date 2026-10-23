@@ -2,6 +2,7 @@ import { useMemo, type MouseEvent, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Check } from "lucide-react";
+import { lookup, msg, useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { useAgentsStore } from "@/lib/agents-store";
 import { useIsHosted } from "@/lib/credits";
@@ -20,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /** The reward the hosted build pays for a workspace's first document. */
-const REWARD = "earns 200 credits";
+const REWARD = msg("earns 200 credits");
 
 function CheckRow({
   done,
@@ -33,6 +34,7 @@ function CheckRow({
   note?: ReactNode;
   action?: ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <li className="flex min-h-8 items-center gap-2.5 text-sm">
       <span
@@ -46,7 +48,7 @@ function CheckRow({
       </span>
       <span className={cn("min-w-0", done && "text-muted-foreground line-through")}>
         {children}
-        <span className="sr-only">{done ? " (done)" : ""}</span>
+        <span className="sr-only">{done ? ` ${t("(done)")}` : ""}</span>
       </span>
       {note && <span className="text-xs text-muted-foreground">{note}</span>}
       {action && <span className="ml-2">{action}</span>}
@@ -59,6 +61,7 @@ function CheckRow({
  * one already done. The words are the board's; only the ticks are read.
  */
 export function FirstSteps({ memberCount }: { memberCount: number }) {
+  const { t } = useTranslation();
   const hosted = useIsHosted();
   return (
     <section aria-labelledby="first-steps" className="w-full">
@@ -66,15 +69,15 @@ export function FirstSteps({ memberCount }: { memberCount: number }) {
         id="first-steps"
         className="mb-1 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase"
       >
-        Getting started
+        {t("Getting started")}
       </h3>
       <ul className="m-0 list-none p-0">
-        <CheckRow done>Create the workspace</CheckRow>
-        <CheckRow done={false}>Create an agent</CheckRow>
-        <CheckRow done={false} note={hosted === true ? REWARD : undefined}>
-          Add the first documents to Knowledge
+        <CheckRow done>{t("Create the workspace")}</CheckRow>
+        <CheckRow done={false}>{t("Create an agent")}</CheckRow>
+        <CheckRow done={false} note={hosted === true ? lookup(t, REWARD) : undefined}>
+          {t("Add the first documents to Knowledge")}
         </CheckRow>
-        <CheckRow done={memberCount > 1}>Invite the team</CheckRow>
+        <CheckRow done={memberCount > 1}>{t("Invite the team")}</CheckRow>
       </ul>
     </section>
   );
@@ -92,6 +95,7 @@ export function FirstSteps({ memberCount }: { memberCount: number }) {
  * once everything is done, and once somebody has put it down.
  */
 export function GettingStarted({ className }: { className?: string }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { agents, sessions, canWrite } = useAgentsStore();
@@ -210,14 +214,17 @@ export function GettingStarted({ className }: { className?: string }) {
           id="getting-started"
           className="m-0 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase"
         >
-          Getting started · {rows.length - remaining} of {rows.length}
+          {t("Getting started · {{done}} of {{total}}", {
+            done: rows.length - remaining,
+            total: rows.length,
+          })}
         </h3>
         <button
           type="button"
           onClick={dismiss}
           className="text-meta font-medium text-muted-foreground hover:text-foreground"
         >
-          Hide this list
+          {t("Hide this list")}
         </button>
       </div>
       <ul className="m-0 grid list-none gap-x-8 p-0 lg:grid-cols-2">
@@ -225,7 +232,7 @@ export function GettingStarted({ className }: { className?: string }) {
           <CheckRow
             key={row.cfg.key}
             done={row.done}
-            note={row.cfg.rewarded && !row.done && hosted === true ? REWARD : undefined}
+            note={row.cfg.rewarded && !row.done && hosted === true ? lookup(t, REWARD) : undefined}
             action={
               row.done ? undefined : (
                 <Button
@@ -233,14 +240,14 @@ export function GettingStarted({ className }: { className?: string }) {
                   size="sm"
                   className="text-muted-foreground"
                   onClick={(e) => tryStep(row, e)}
-                  aria-label={`${CTA.try}: ${row.cfg.label(setupCtx)}`}
+                  aria-label={`${lookup(t, CTA.try)}: ${row.cfg.label(setupCtx, t)}`}
                 >
-                  {CTA.try}
+                  {lookup(t, CTA.try)}
                 </Button>
               )
             }
           >
-            {row.cfg.label(setupCtx)}
+            {row.cfg.label(setupCtx, t)}
           </CheckRow>
         ))}
       </ul>

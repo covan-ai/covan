@@ -5,6 +5,7 @@ import { ToolLogo } from "@/components/integrations/tool-logo";
 import { Button } from "@/components/ui/button";
 import type { ToolEntry } from "@/lib/onboarding-config";
 import { cn } from "@/lib/utils";
+import { lookup, useTranslation } from "@/i18n";
 
 /**
  * The one next step, under the assistant's opening line.
@@ -35,11 +36,12 @@ export function KickoffCard({
   onDismiss: () => void;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const composio = useConnectComposio();
   const source = useStartConnection();
   const busy = composio.isPending || source.isPending;
 
-  const failed = () => toast.error("Couldn't start that connection. Try it from Integrations.");
+  const failed = () => toast.error(t("Couldn't start that connection. Try it from Integrations."));
 
   const action = (() => {
     const connect = tool.connect;
@@ -50,7 +52,7 @@ export function KickoffCard({
           disabled={busy}
           onClick={() => composio.mutate({ toolkit: connect.slug }, { onError: failed })}
         >
-          {busy ? "Opening…" : "Connect"}
+          {busy ? t("Opening…") : t("Connect")}
         </Button>
       );
     }
@@ -63,13 +65,13 @@ export function KickoffCard({
             source.mutate({ provider: connect.provider, bundleId }, { onError: failed })
           }
         >
-          {busy ? "Opening…" : "Connect"}
+          {busy ? t("Opening…") : t("Connect")}
         </Button>
       );
     }
     return (
       <Button size="sm" asChild>
-        <Link to="/integrations">Connect</Link>
+        <Link to="/integrations">{t("Connect")}</Link>
       </Button>
     );
   })();
@@ -84,15 +86,20 @@ export function KickoffCard({
     >
       <ToolLogo tool={tool} size={36} />
       <span className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="text-base font-semibold leading-tight">Connect {tool.name}</span>
+        <span className="text-base font-semibold leading-tight">
+          {t("Connect {{name}}", { name: tool.name })}
+        </span>
         <span className="text-meta leading-tight text-muted-foreground">
-          {tool.line}. You sign in with {tool.name} itself; nothing is shared with anyone else.
+          {t("{{line}}. You sign in with {{name}} itself; nothing is shared with anyone else.", {
+            line: lookup(t, tool.line),
+            name: tool.name,
+          })}
         </span>
       </span>
       <span className="flex shrink-0 items-center gap-1.5">
         {action}
         <Button size="sm" variant="ghost" onClick={onDismiss} className="text-muted-foreground">
-          Not now
+          {t("Not now")}
         </Button>
       </span>
     </div>

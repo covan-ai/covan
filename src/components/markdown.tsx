@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
 import { highlight } from "@/lib/highlighter";
 import { peekMath, renderMath } from "@/lib/katex";
 
@@ -495,6 +496,7 @@ function parseInline(text: string): ReactNode[] {
 }
 
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [html, setHtml] = useState<string | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -526,14 +528,14 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   return (
     <div ref={wrapperRef} className="overflow-hidden rounded-lg border border-border bg-muted/50">
       <div className="flex items-center justify-between border-b border-border px-3 py-1.5">
-        <span className="font-mono text-xs text-muted-foreground">{lang || "code"}</span>
+        <span className="font-mono text-xs text-muted-foreground">{lang || t("code")}</span>
         <button
           onClick={copy}
           className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          aria-label="Copy code"
+          aria-label={t("Copy code")}
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("Copied") : t("Copy")}
         </button>
       </div>
       {html ? (

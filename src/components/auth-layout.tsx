@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { useTranslation } from "@/i18n";
 import { BrandLockup } from "@/components/brand-mark";
 import { LegalAnchor } from "@/components/legal-anchor";
 import { privacyLink, statusLink, termsLink } from "@/lib/legal";
@@ -24,6 +25,7 @@ export function AuthLayout({
   footer?: ReactNode;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const status = statusLink();
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-sidebar px-4 py-10">
@@ -46,14 +48,14 @@ export function AuthLayout({
 
       <p className="m-0 flex gap-4 text-xs text-micro-foreground">
         <LegalAnchor link={termsLink()} variant="plain">
-          Terms
+          {t("Terms")}
         </LegalAnchor>
         <LegalAnchor link={privacyLink()} variant="plain">
-          Privacy
+          {t("Privacy")}
         </LegalAnchor>
         {status ? (
           <LegalAnchor link={status} variant="plain" newTab>
-            Status
+            {t("Status")}
           </LegalAnchor>
         ) : null}
       </p>

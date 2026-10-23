@@ -31,11 +31,17 @@
  * reads "Pricing: TBD" matches almost nothing anybody would actually ask.
  */
 
+import { msg } from "@/i18n";
+
 export type KnowledgeTemplate = {
   /** Stable, and used as the download's filename. */
   filename: string;
+  /** A `msg()` key: drawn with `lookup(t, template.title)`. */
   title: string;
-  /** One line, shown next to the title. Says what the file is for, not what is in it. */
+  /**
+   * A `msg()` key, like the title. One line, shown next to the title. Says what
+   * the file is for, not what is in it.
+   */
   blurb: string;
   body: string;
 };
@@ -43,8 +49,8 @@ export type KnowledgeTemplate = {
 export const KNOWLEDGE_TEMPLATES: KnowledgeTemplate[] = [
   {
     filename: "company-overview.md",
-    title: "Company overview",
-    blurb: "What you do and who for — the file every other answer leans on.",
+    title: msg("Company overview"),
+    blurb: msg("What you do and who for — the file every other answer leans on."),
     body: `# Company overview
 
 ## What we do
@@ -73,8 +79,8 @@ inventing a feature we do not have.]
   },
   {
     filename: "product-notes.md",
-    title: "Product notes",
-    blurb: "What it does, what it cannot do yet, and the limits people hit.",
+    title: msg("Product notes"),
+    blurb: msg("What it does, what it cannot do yet, and the limits people hit."),
     body: `# Product notes
 
 ## What the product does
@@ -100,8 +106,8 @@ somebody quotes back.]
   },
   {
     filename: "faq.md",
-    title: "FAQ",
-    blurb: "Real questions with real answers — the highest-value file to upload first.",
+    title: msg("FAQ"),
+    blurb: msg("Real questions with real answers — the highest-value file to upload first."),
     body: `# FAQ
 
 [Write the questions in the words people actually use, including the clumsy
@@ -126,8 +132,8 @@ a customer types it is worth more than a tidy one.]
   },
   {
     filename: "how-we-work.md",
-    title: "How we work",
-    blurb: "Process, ownership and tools — what a new teammate asks in week one.",
+    title: msg("How we work"),
+    blurb: msg("Process, ownership and tools — what a new teammate asks in week one."),
     body: `# How we work
 
 ## Who owns what
@@ -151,8 +157,8 @@ section that pays for itself.]
   },
   {
     filename: "glossary.md",
-    title: "Glossary",
-    blurb: "Your internal words, so the agent answers in your vocabulary.",
+    title: msg("Glossary"),
+    blurb: msg("Your internal words, so the agent answers in your vocabulary."),
     body: `# Glossary
 
 [Every team invents words. An agent that does not know them answers questions
@@ -171,8 +177,8 @@ wider industry uses the word differently.]
   },
   {
     filename: "meeting-notes.md",
-    title: "Meeting notes",
-    blurb: "A shape to reuse — the notes a team already takes, made retrievable.",
+    title: msg("Meeting notes"),
+    blurb: msg("A shape to reuse — the notes a team already takes, made retrievable."),
     body: `# [Meeting name] — [YYYY-MM-DD]
 
 **Present:** [names]

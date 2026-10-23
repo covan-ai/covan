@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -23,6 +24,7 @@ export function RevealedSecret({
   inline?: boolean;
   children?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   const copy = () => {
@@ -33,7 +35,7 @@ export function RevealedSecret({
         // being one — a permanently ticked button stops looking pressable.
         setTimeout(() => setCopied(false), 2000);
       },
-      () => toast.error("Couldn't copy — your browser blocked it."),
+      () => toast.error(t("Couldn't copy — your browser blocked it.")),
     );
   };
 
@@ -44,7 +46,7 @@ export function RevealedSecret({
           {value}
         </code>
         <Button size="sm" onClick={copy} aria-label={label}>
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("Copied") : t("Copy")}
         </Button>
         {children}
       </div>

@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { englishT, type Translate } from "@/i18n";
 import { api } from "@/lib/api-client";
 
 /**
@@ -22,6 +23,7 @@ export async function saveDocument(
   documentId: string,
   name: string,
   format: ExportFormat,
+  t: Translate = englishT,
 ): Promise<void> {
   try {
     if (format === "md") {
@@ -29,10 +31,13 @@ export async function saveDocument(
       return;
     }
     const outcome = await api.documents.export(documentId, format);
-    if (outcome === "print") printInPlace(documentId);
+    if (outcome === "print") printInPlace(documentId, t);
   } catch (err) {
-    const message = err instanceof Error && err.message ? `: ${err.message}` : "";
-    toast.error(`Couldn't save the document${message}`);
+    toast.error(
+      err instanceof Error && err.message
+        ? t("Couldn't save the document: {{message}}", { message: err.message })
+        : t("Couldn't save the document"),
+    );
   }
 }
 
@@ -44,9 +49,9 @@ export async function saveDocument(
  * The page prints itself once the document is on it, and the frame is cleared
  * away a while after — long enough for anybody to finish the print dialog.
  */
-function printInPlace(documentId: string): void {
+function printInPlace(documentId: string, t: Translate): void {
   const frame = document.createElement("iframe");
-  frame.title = "Print document";
+  frame.title = t("Print document");
   frame.setAttribute("aria-hidden", "true");
   frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
   frame.src = printPath(documentId);

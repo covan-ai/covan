@@ -8,23 +8,25 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { lookup, msg, useTranslation } from "@/i18n";
 import { BrandLockup } from "@/components/brand-mark";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /** The documents this build carries, as the header's tabs (A34). */
 const DOCUMENTS = [
-  { to: "/terms", label: "Terms of service" },
-  { to: "/privacy", label: "Privacy policy" },
-  { to: "/license", label: "Licence" },
+  { to: "/terms", label: msg("Terms of service") },
+  { to: "/privacy", label: msg("Privacy policy") },
+  { to: "/license", label: msg("Licence") },
 ] as const;
 
 type LegalPath = (typeof DOCUMENTS)[number]["to"];
 
 /** "What is stored" → "what-is-stored", for a heading's anchor. */
 function slug(title: string): string {
+  // An anchor made from the documents' own English headings, ASCII by the next line. i18n-ignore
   return title
-    .toLowerCase()
+    .toLowerCase() // i18n-ignore
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 }
@@ -56,10 +58,11 @@ export function LegalLayout({
   contact?: string;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   const sectionTitles = Children.toArray(children)
     .filter((child) => isValidElement(child) && child.type === LegalSection)
     .map((child) => (child as ReactElement<SectionProps>).props.title);
-  const toc = sectionTitles.map((t) => ({ id: slug(t), title: t }));
+  const toc = sectionTitles.map((s) => ({ id: slug(s), title: s }));
   const body = Children.map(children, (child) => {
     if (!isValidElement(child) || child.type !== LegalSection) return child;
     const { title: sectionTitle } = child.props as SectionProps;
@@ -68,7 +71,7 @@ export function LegalLayout({
       number: sectionTitles.indexOf(sectionTitle) + 1,
     });
   });
-  const active = useActiveSection(toc.map((t) => t.id));
+  const active = useActiveSection(toc.map((s) => s.id));
   const doc = DOCUMENTS.find((d) => d.to === current)!;
 
   return (
@@ -77,64 +80,64 @@ export function LegalLayout({
         <Link to="/" aria-label="Covan">
           <BrandLockup />
         </Link>
-        <nav aria-label="Legal pages" className="ml-4 hidden h-14 items-stretch gap-1 sm:flex">
+        <nav aria-label={t("Legal pages")} className="ml-4 hidden h-14 items-stretch gap-1 sm:flex">
           <Link
             to="/terms"
             aria-current={current === "/terms" ? "page" : undefined}
             className={tab(current === "/terms")}
           >
-            Terms of service
+            {t("Terms of service")}
           </Link>
           <Link
             to="/privacy"
             aria-current={current === "/privacy" ? "page" : undefined}
             className={tab(current === "/privacy")}
           >
-            Privacy policy
+            {t("Privacy policy")}
           </Link>
           <Link
             to="/license"
             aria-current={current === "/license" ? "page" : undefined}
             className={tab(current === "/license")}
           >
-            Licence
+            {t("Licence")}
           </Link>
         </nav>
         <Button variant="secondary" asChild className="ml-auto">
-          <Link to="/sign-in">Sign in</Link>
+          <Link to="/sign-in">{t("Sign in")}</Link>
         </Button>
       </header>
 
       <main className="mx-auto flex w-full max-w-[1120px] flex-wrap gap-12 px-4 pt-10 pb-16 sm:px-8">
         <nav
-          aria-label="On this page"
+          aria-label={t("On this page")}
           className="w-full lg:sticky lg:top-6 lg:w-[220px] lg:flex-none lg:self-start"
         >
           <div className="px-2.5 pb-2 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-            On this page
+            {t("On this page")}
           </div>
           <ul className="m-0 list-none p-0">
-            {toc.map((t) => (
-              <li key={t.id}>
+            {toc.map((s) => (
+              <li key={s.id}>
                 <a
-                  href={`#${t.id}`}
-                  aria-current={active === t.id ? "location" : undefined}
+                  href={`#${s.id}`}
+                  aria-current={active === s.id ? "location" : undefined}
                   className={cn(
                     "block rounded-md px-2.5 py-1.5 text-sm",
-                    active === t.id
+                    active === s.id
                       ? "bg-sidebar-accent font-medium text-foreground"
                       : "text-nav-foreground hover:bg-sidebar-hover",
                   )}
                 >
-                  {t.title}
+                  {s.title}
                 </a>
               </li>
             ))}
           </ul>
           <p className="mt-5 mb-0 border-t border-hairline px-2.5 pt-3 text-meta leading-[1.5] text-muted-foreground">
-            Last updated {updated}.
+            {t("Last updated {{date}}.", { date: updated })}
             <br />
-            Questions:{" "}
+            {t("Questions:")}{" "}
             <a href={`mailto:${contact}`} className="underline underline-offset-4">
               {contact}
             </a>
@@ -143,7 +146,7 @@ export function LegalLayout({
 
         <article className="min-w-0 max-w-[720px] flex-[1_1_480px]">
           <div className="mb-2.5 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-            {doc.label}
+            {lookup(t, doc.label)}
           </div>
           <h1 className="m-0 mb-2 text-2xl font-semibold">{title}</h1>
           {lede ? (

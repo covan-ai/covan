@@ -11,27 +11,42 @@ export function niceCeiling(max: number): number {
   return 10 * step;
 }
 
+/**
+ * `locale` is the tag `useLocale()` gives, defaulting to the one these were
+ * always formatted in so an untranslated caller reads as before.
+ */
+
 /** A gridline's number: "120", "1.5k" past ten thousand, "$2.50" for dollars. */
-export function tickLabel(value: number, unit: "credits" | "usd"): string {
+export function tickLabel(
+  value: number,
+  unit: "credits" | "usd",
+  locale: string = "en-US",
+): string {
   if (unit === "usd") {
-    return `$${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+    return value.toLocaleString(locale, {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
   }
-  if (value >= 10_000)
-    return `${(value / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}k`;
-  return value.toLocaleString("en-US", { maximumFractionDigits: 1 });
+  if (value >= 10_000) {
+    return `${(value / 1000).toLocaleString(locale, { maximumFractionDigits: 1 })}k`;
+  }
+  return value.toLocaleString(locale, { maximumFractionDigits: 1 });
 }
 
 /** "Tue 21 Oct" for a `YYYY-MM-DD` day, read as the calendar day it names. */
-export function chartDay(day: string): string {
+export function chartDay(day: string, locale: string = "en-GB"): string {
   const d = new Date(`${day}T12:00:00Z`);
-  const weekday = d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
-  const date = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  const weekday = d.toLocaleDateString(locale, { weekday: "short", timeZone: "UTC" });
+  const date = d.toLocaleDateString(locale, { day: "numeric", month: "short", timeZone: "UTC" });
   return `${weekday} ${date}`;
 }
 
 /** "9 Oct" for a `YYYY-MM-DD` day. */
-export function chartDate(day: string): string {
-  return new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", {
+export function chartDate(day: string, locale: string = "en-GB"): string {
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString(locale, {
     day: "numeric",
     month: "short",
     timeZone: "UTC",

@@ -1,3 +1,4 @@
+import { useTranslation } from "@/i18n";
 import { RevealedSecret } from "@/components/revealed-secret";
 import { useRoutineEventSetup } from "@/hooks/use-routines";
 
@@ -17,13 +18,15 @@ export function EmailAddressSetup({
   routineId: string;
   senders: string | null;
 }) {
+  const { t } = useTranslation();
   const { data, isPending, isError } = useRoutineEventSetup(routineId, true);
 
-  if (isPending) return <p className="text-meta text-muted-foreground">Loading the address…</p>;
+  if (isPending)
+    return <p className="text-meta text-muted-foreground">{t("Loading the address…")}</p>;
   if (isError) {
     return (
       <p className="text-meta text-muted-foreground">
-        Couldn't load the address. Reload to try again.
+        {t("Couldn't load the address. Reload to try again.")}
       </p>
     );
   }
@@ -31,13 +34,13 @@ export function EmailAddressSetup({
 
   return (
     <div className="space-y-3 rounded-lg border border-hairline p-4">
-      <p className="text-sm">This routine's address</p>
-      <RevealedSecret value={data.address} label="Copy address" />
+      <p className="text-sm">{t("This routine's address")}</p>
+      <RevealedSecret value={data.address} label={t("Copy address")} />
       <p className="text-meta text-muted-foreground">
         {senders
-          ? `Mail from ${senders} starts it. Anything else is ignored.`
-          : "Mail from the members of this workspace starts it. Anything else is ignored."}{" "}
-        Forward a message here, or set up a rule that does.
+          ? t("Mail from {{senders}} starts it. Anything else is ignored.", { senders })
+          : t("Mail from the members of this workspace starts it. Anything else is ignored.")}{" "}
+        {t("Forward a message here, or set up a rule that does.")}
       </p>
     </div>
   );

@@ -4,6 +4,7 @@ import { EmptyPage } from "@/components/empty-page";
 import { Button } from "@/components/ui/button";
 import { useRoutines } from "@/hooks/use-routines";
 import { useAgentsStore } from "@/lib/agents-store";
+import { useTranslation } from "@/i18n";
 
 // An index route, not `.routines.tsx`: as a plain `routines.tsx` this file
 // would be the PARENT of routines.$routineId.tsx, and the routine would render
@@ -21,6 +22,7 @@ export const Route = createFileRoute("/_authed/agents/$agentId/routines/")({
  * first routine beside it — or what a routine is for, when it has none.
  */
 function RoutinesTab() {
+  const { t } = useTranslation();
   const { agentId } = Route.useParams();
   const { template } = Route.useSearch();
   const { canWrite } = useAgentsStore();
@@ -49,13 +51,15 @@ function RoutinesTab() {
       <div className="min-w-0 flex-1">
         {!isLoading && (
           <EmptyPage
-            title="No routines yet"
-            description="A routine is work this agent does on its own: a weekly brief, a daily digest, a check when something arrives."
+            title={t("No routines yet")}
+            description={t(
+              "A routine is work this agent does on its own: a weekly brief, a daily digest, a check when something arrives.",
+            )}
             actions={
               canWrite ? (
                 <Button asChild>
                   <Link to="/routines/new" search={{ agent: agentId }}>
-                    New routine
+                    {t("New routine")}
                   </Link>
                 </Button>
               ) : undefined

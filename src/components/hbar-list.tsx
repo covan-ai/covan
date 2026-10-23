@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useLocale } from "@/i18n/provider";
 import { cn } from "@/lib/utils";
 
 export type HBar = {
@@ -31,6 +32,7 @@ export function HBarList({
   valueWidth?: number;
   className?: string;
 }) {
+  const locale = useLocale();
   const max = Math.max(0, ...rows.map((r) => r.value));
   return (
     <ul aria-label={label} className={cn("m-0 list-none p-0", className)}>
@@ -57,7 +59,7 @@ export function HBarList({
               }}
             />
             <span className="text-right text-meta text-foreground tabular-nums">
-              {r.display ?? r.value.toLocaleString("en-US")}
+              {r.display ?? r.value.toLocaleString(locale)}
             </span>
           </li>
         );

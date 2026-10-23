@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { lookup, msg, useTranslation, type TFunction } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { DocsLink } from "@/components/docs-link";
 import { Field } from "@/components/field";
 import { RevealedSecret } from "@/components/revealed-secret";
@@ -33,10 +35,10 @@ import { useWorkspaceRole } from "@/lib/workspace-role";
 
 /** What each event means, beside its name (A26). */
 const EVENT_WORDS: Record<WebhookEvent, string> = {
-  "thread.finished": "an agent has an answer",
-  "agent.needs_you": "a question or an approval is waiting",
-  "routine.failed": "a shared routine's run failed",
-  "document.created": "a file was added to a workspace folder",
+  "thread.finished": msg("an agent has an answer"),
+  "agent.needs_you": msg("a question or an approval is waiting"),
+  "routine.failed": msg("a shared routine's run failed"),
+  "document.created": msg("a file was added to a workspace folder"),
 };
 
 const KEY = ["webhooks"];
@@ -51,6 +53,7 @@ const KEY = ["webhooks"];
  * "I have saved it" and nowhere else.
  */
 export function WebhooksSection() {
+  const { t } = useTranslation();
   const { me, isAdmin } = useWorkspaceRole();
   const { data } = useQuery({
     queryKey: KEY,
@@ -61,8 +64,10 @@ export function WebhooksSection() {
   const [secret, setSecret] = useState<{ endpointId: string; value: string } | null>(null);
 
   const heading = (
-    <SectionLabel action={<span className="font-normal">Signed with a secret you keep</span>}>
-      Webhooks
+    <SectionLabel
+      action={<span className="font-normal">{t("Signed with a secret you keep")}</span>}
+    >
+      {t("Webhooks")}
     </SectionLabel>
   );
 
@@ -72,7 +77,7 @@ export function WebhooksSection() {
       <>
         {heading}
         <p className="text-sm text-muted-foreground">
-          Owners and admins set up webhooks for the workspace.
+          {t("Owners and admins set up webhooks for the workspace.")}
         </p>
       </>
     );
@@ -104,7 +109,7 @@ export function WebhooksSection() {
         />
       ) : (
         <Button variant="ghost" size="sm" className="mt-2" onClick={() => setAdding(true)}>
-          Add another endpoint
+          {t("Add another endpoint")}
         </Button>
       )}
     </>
@@ -120,6 +125,7 @@ function EventChecks({
   onChange: (next: WebhookEvent[]) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-2.5">
       {WEBHOOK_EVENTS.map((ev) => (
@@ -130,15 +136,16 @@ function EventChecks({
             onCheckedChange={(on) => onChange(on ? [...value, ev] : value.filter((x) => x !== ev))}
           />
           <span className="font-mono text-meta">{ev}</span>
-          <span className="text-meta text-muted-foreground">{EVENT_WORDS[ev]}</span>
+          <span className="text-meta text-muted-foreground">{lookup(t, EVENT_WORDS[ev])}</span>
         </label>
       ))}
     </div>
   );
 }
 
-const ENDPOINT_HELP =
-  "We POST JSON here. Retried three times over an hour, then listed below as failed.";
+const ENDPOINT_HELP = msg(
+  "We POST JSON here. Retried three times over an hour, then listed below as failed.",
+);
 
 function NewEndpoint({
   onCancel,
@@ -147,6 +154,7 @@ function NewEndpoint({
   onCancel?: () => void;
   onCreated: (endpoint: WebhookEndpoint & { secret: string }) => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>(["thread.finished", "agent.needs_you"]);
@@ -160,7 +168,7 @@ function NewEndpoint({
       await queryClient.invalidateQueries({ queryKey: KEY });
       onCreated(endpoint);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't add that endpoint");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't add that endpoint"));
     } finally {
       setSaving(false);
     }
@@ -168,7 +176,7 @@ function NewEndpoint({
 
   return (
     <>
-      <Field label="Endpoint" help={ENDPOINT_HELP} htmlFor="webhook-new-url">
+      <Field label={t("Endpoint")} help={lookup(t, ENDPOINT_HELP)} htmlFor="webhook-new-url">
         <Input
           id="webhook-new-url"
           type="url"
@@ -181,17 +189,17 @@ function NewEndpoint({
           }}
         />
       </Field>
-      <Field label="Events" help="Only what you tick.">
+      <Field label={t("Events")} help={t("Only what you tick.")}>
         <EventChecks value={events} onChange={setEvents} />
       </Field>
       <Field label="" className="py-4">
         <div className="flex items-center gap-2">
           <Button onClick={() => void create()} disabled={saving || !url.trim()}>
-            {saving ? "Adding…" : "Add endpoint"}
+            {saving ? t("Adding…") : t("Add endpoint")}
           </Button>
           {onCancel && (
             <Button variant="ghost" onClick={onCancel}>
-              Cancel
+              {t("Cancel")}
             </Button>
           )}
         </div>
@@ -211,6 +219,8 @@ function EndpointFields({
   secret: string | null;
   onSecret: (value: string | null) => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const [url, setUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -226,7 +236,7 @@ function EndpointFields({
       await queryClient.invalidateQueries({ queryKey: KEY });
       if (done) toast.success(done);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't save that");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't save that"));
     } finally {
       setBusy(null);
     }
@@ -235,26 +245,35 @@ function EndpointFields({
   const saveUrl = () => {
     const next = shownUrl.trim();
     if (!next || next === endpoint.url) return setUrl(null);
-    void run("url", () => api.webhooks.update(endpoint.id, { url: next }), "Endpoint saved").then(
-      () => setUrl(null),
-    );
+    void run(
+      "url",
+      () => api.webhooks.update(endpoint.id, { url: next }),
+      t("Endpoint saved"),
+    ).then(() => setUrl(null));
   };
 
   const test = () =>
     run("test", async () => {
       const r = await api.webhooks.test(endpoint.id);
       if (r.status === "ok") {
-        toast.success(`Test delivered · ${r.statusCode ?? 200}${ms(r.latencyMs)}`);
+        toast.success(
+          t("Test delivered · {{outcome}}", {
+            outcome: `${r.statusCode ?? 200}${ms(r.latencyMs, t)}`,
+          }),
+        );
       } else {
-        toast.error(`Test not delivered${r.statusCode ? ` · ${r.statusCode}` : ""}`, {
-          description: r.error ?? undefined,
-        });
+        toast.error(
+          r.statusCode
+            ? t("Test not delivered · {{status}}", { status: r.statusCode })
+            : t("Test not delivered"),
+          { description: r.error ?? undefined },
+        );
       }
     });
 
   return (
     <>
-      <Field label="Endpoint" help={ENDPOINT_HELP} htmlFor={id}>
+      <Field label={t("Endpoint")} help={lookup(t, ENDPOINT_HELP)} htmlFor={id}>
         <Input
           id={id}
           type="url"
@@ -269,7 +288,7 @@ function EndpointFields({
         />
         <div className="mt-2 flex flex-wrap items-center gap-1">
           <Button variant="secondary" size="sm" onClick={() => void test()} disabled={!!busy}>
-            {busy === "test" ? "Sending…" : "Send a test"}
+            {busy === "test" ? t("Sending…") : t("Send a test")}
           </Button>
           <Button
             variant="ghost"
@@ -279,11 +298,11 @@ function EndpointFields({
               void run(
                 "enabled",
                 () => api.webhooks.update(endpoint.id, { enabled: !endpoint.enabled }),
-                endpoint.enabled ? "Endpoint turned off" : "Endpoint turned on",
+                endpoint.enabled ? t("Endpoint turned off") : t("Endpoint turned on"),
               )
             }
           >
-            {endpoint.enabled ? "Turn off" : "Turn on"}
+            {endpoint.enabled ? t("Turn off") : t("Turn on")}
           </Button>
           <Button
             variant="ghost"
@@ -292,17 +311,17 @@ function EndpointFields({
             disabled={!!busy}
             onClick={() => setConfirm("remove")}
           >
-            Remove
+            {t("Remove")}
           </Button>
           {!endpoint.enabled && (
             <span className="ml-1 inline-flex items-center gap-1.5 text-meta text-muted-foreground">
-              <StatusDot state="idle" /> Off — events are listed as not sent
+              <StatusDot state="idle" /> {t("Off — events are listed as not sent")}
             </span>
           )}
         </div>
       </Field>
 
-      <Field label="Events" help="Only what you tick.">
+      <Field label={t("Events")} help={t("Only what you tick.")}>
         <EventChecks
           value={endpoint.events}
           disabled={busy === "events"}
@@ -313,24 +332,26 @@ function EndpointFields({
       </Field>
 
       <Field
-        label="Signing secret"
-        help="Verify the signature header with it. Shown once when made; rotate to get a new one."
+        label={t("Signing secret")}
+        help={t(
+          "Verify the signature header with it. Shown once when made; rotate to get a new one.",
+        )}
       >
         {secret ? (
           <div className="max-w-[560px] rounded-xl border border-foreground p-4">
             <div className="mb-2.5 flex items-center gap-2 text-sm font-medium">
-              <StatusDot state="waiting" /> Copy it now; it is not shown again.
+              <StatusDot state="waiting" /> {t("Copy it now; it is not shown again.")}
             </div>
-            <RevealedSecret value={secret} label="Copy signing secret" inline>
+            <RevealedSecret value={secret} label={t("Copy signing secret")} inline>
               <Button variant="ghost" size="sm" onClick={() => onSecret(null)}>
-                I have saved it
+                {t("I have saved it")}
               </Button>
             </RevealedSecret>
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-md border border-input bg-surface-muted px-2.5 py-1.5 font-mono text-meta">
-              whsec_••••••••••••••••••••
+              {SECRET_MASK}
             </span>
             <Button
               variant="secondary"
@@ -338,18 +359,18 @@ function EndpointFields({
               disabled={!!busy}
               onClick={() => setConfirm("rotate")}
             >
-              Rotate
+              {t("Rotate")}
             </Button>
             <DocsLink page="api" section="webhooks">
-              How to verify
+              {t("How to verify")}
             </DocsLink>
           </div>
         )}
       </Field>
 
-      <Field label="Recent deliveries" help="Last 24 hours.">
+      <Field label={t("Recent deliveries")} help={t("Last 24 hours.")}>
         {deliveries.length === 0 ? (
-          <p className="pt-1 text-sm text-muted-foreground">Nothing sent in the last day.</p>
+          <p className="pt-1 text-sm text-muted-foreground">{t("Nothing sent in the last day.")}</p>
         ) : (
           <ul className="m-0 list-none p-0">
             {deliveries.map((d) => (
@@ -358,7 +379,11 @@ function EndpointFields({
                 delivery={d}
                 busy={busy === d.id}
                 onResend={() =>
-                  void run(d.id, () => api.webhooks.resend(d.id), "Sent again from the first try")
+                  void run(
+                    d.id,
+                    () => api.webhooks.resend(d.id),
+                    t("Sent again from the first try"),
+                  )
                 }
               />
             ))}
@@ -370,16 +395,20 @@ function EndpointFields({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirm === "rotate" ? "Rotate the signing secret?" : "Remove this endpoint?"}
+              {confirm === "rotate" ? t("Rotate the signing secret?") : t("Remove this endpoint?")}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirm === "rotate"
-                ? "The old secret stops working at once, so update your receiver in the same sitting. The new one is shown once."
-                : `Nothing more is sent to ${hostOf(endpoint.url)}. Deliveries already listed stay for a day.`}
+                ? t(
+                    "The old secret stops working at once, so update your receiver in the same sitting. The new one is shown once.",
+                  )
+                : t("Nothing more is sent to {{host}}. Deliveries already listed stay for a day.", {
+                    host: hostOf(endpoint.url, t),
+                  })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
             <AlertDialogAction
               variant={confirm === "remove" ? "danger" : "default"}
               onClick={() =>
@@ -388,10 +417,14 @@ function EndpointFields({
                       const r = await api.webhooks.rotate(endpoint.id);
                       onSecret(r.secret);
                     })
-                  : void run("remove", () => api.webhooks.remove(endpoint.id), "Endpoint removed")
+                  : void run(
+                      "remove",
+                      () => api.webhooks.remove(endpoint.id),
+                      t("Endpoint removed"),
+                    )
               }
             >
-              {confirm === "rotate" ? "Rotate" : "Remove"}
+              {confirm === "rotate" ? t("Rotate") : t("Remove")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -400,13 +433,14 @@ function EndpointFields({
   );
 }
 
-const ms = (latency: number | null | undefined) => (latency != null ? ` · ${latency} ms` : "");
+const ms = (latency: number | null | undefined, t: TFunction) =>
+  latency != null ? ` · ${t("{{latency}} ms", { latency })}` : "";
 
-function hostOf(url: string): string {
+function hostOf(url: string, t: TFunction): string {
   try {
     return new URL(url).host;
   } catch {
-    return "this address";
+    return t("this address");
   }
 }
 
@@ -418,17 +452,30 @@ const DOT: Record<WebhookDelivery["status"], DotState> = {
 };
 
 /** "· 200 · 84 ms", "· 503 after 4 tries", "· trying again", "· not sent, the endpoint is off". */
-function outcomeWords(d: WebhookDelivery): string {
-  const tries = `${d.attempt} ${d.attempt === 1 ? "try" : "tries"}`;
+/** A redacted secret, not words. */
+const SECRET_MASK = "whsec_••••••••••••••••••••";
+
+function outcomeWords(d: WebhookDelivery, t: TFunction): string {
   switch (d.status) {
     case "ok":
-      return ` · ${d.statusCode ?? 200}${ms(d.latencyMs)}`;
-    case "failed":
-      return ` · ${d.statusCode ?? d.error ?? "no answer"} after ${tries}`;
+      return ` · ${d.statusCode ?? 200}${ms(d.latencyMs, t)}`;
+    case "failed": {
+      const noAnswer = t("no answer");
+      return ` · ${t("{{outcome}} after {{count}} try", {
+        outcome: d.statusCode ?? d.error ?? noAnswer,
+        count: d.attempt,
+        defaultValue_other: "{{outcome}} after {{count}} tries",
+      })}`;
+    }
     case "pending":
-      return d.attempt > 0 ? ` · trying again after ${tries}` : " · sending";
+      return d.attempt > 0
+        ? ` · ${t("trying again after {{count}} try", {
+            count: d.attempt,
+            defaultValue_other: "trying again after {{count}} tries",
+          })}`
+        : ` · ${t("sending")}`;
     case "dropped":
-      return " · not sent, the endpoint is off";
+      return ` · ${t("not sent, the endpoint is off")}`;
   }
 }
 
@@ -441,19 +488,21 @@ function DeliveryRow({
   busy: boolean;
   onResend: () => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   return (
     <li className="flex min-h-11 items-center gap-3 border-b border-hairline text-sm last:border-b-0">
       <StatusDot state={DOT[delivery.status]} />
       <span className="min-w-0 flex-1 truncate">
         <span className="font-mono text-meta">{delivery.event}</span>
-        <span className="text-muted-foreground">{outcomeWords(delivery)}</span>
+        <span className="text-muted-foreground">{outcomeWords(delivery, t)}</span>
       </span>
       <span className="text-meta text-muted-foreground tabular-nums">
-        {clockTime(delivery.createdAt)}
+        {clockTime(delivery.createdAt, undefined, t, locale)}
       </span>
       {(delivery.status === "failed" || delivery.status === "dropped") && (
         <Button variant="ghost" size="sm" onClick={onResend} disabled={busy}>
-          {busy ? "Sending…" : "Resend"}
+          {busy ? t("Sending…") : t("Resend")}
         </Button>
       )}
     </li>

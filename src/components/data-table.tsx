@@ -1,4 +1,6 @@
 import type { KeyboardEvent, ReactNode } from "react";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -101,14 +103,19 @@ export function Pagination({
   pageCount: number;
   onPage: (page: number) => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   return (
     <div className="mt-4 flex items-center justify-between text-meta text-muted-foreground">
       <span>
-        Showing {shown.toLocaleString("en-US")} of {total.toLocaleString("en-US")}
+        {t("Showing {{shown}} of {{total}}", {
+          shown: shown.toLocaleString(locale),
+          total: total.toLocaleString(locale),
+        })}
       </span>
       <div className="flex gap-2">
         <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-          Previous
+          {t("Previous")}
         </Button>
         <Button
           variant="secondary"
@@ -116,7 +123,7 @@ export function Pagination({
           disabled={page >= pageCount}
           onClick={() => onPage(page + 1)}
         >
-          Next
+          {t("Next")}
         </Button>
       </div>
     </div>

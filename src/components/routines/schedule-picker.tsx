@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { englishT, lookup, msg, useTranslation, type Translate } from "@/i18n";
 import { Chip } from "@/components/chip";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,27 +24,34 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 /** Monday first, as a week is read; the number is cron's (0 = Sunday). */
 const DAYS = [
-  { n: 1, label: "Mon" },
-  { n: 2, label: "Tue" },
-  { n: 3, label: "Wed" },
-  { n: 4, label: "Thu" },
-  { n: 5, label: "Fri" },
-  { n: 6, label: "Sat" },
-  { n: 0, label: "Sun" },
+  { n: 1, label: msg("Mon") },
+  { n: 2, label: msg("Tue") },
+  { n: 3, label: msg("Wed") },
+  { n: 4, label: msg("Thu") },
+  { n: 5, label: msg("Fri") },
+  { n: 6, label: msg("Sat") },
+  { n: 0, label: msg("Sun") },
 ];
 
 const UNITS: Array<{ value: ScheduleMode; label: string }> = [
-  { value: "minutes", label: "minutes" },
-  { value: "hours", label: "hours" },
-  { value: "daily", label: "day" },
-  { value: "weekdays", label: "weekday" },
-  { value: "weekly", label: "week" },
+  { value: "minutes", label: msg("minutes") },
+  { value: "hours", label: msg("hours") },
+  { value: "daily", label: msg("day") },
+  { value: "weekdays", label: msg("weekday") },
+  { value: "weekly", label: msg("week") },
 ];
 
-export function scheduleError(expr: string): string | null {
+export function scheduleError(expr: string, t: Translate = englishT): string | null {
   const form = fromCron(expr);
   if (form?.mode === "minutes" && form.every < MIN_MINUTES) {
-    return `The engine checks every ${MIN_MINUTES} minutes, so that is the shortest interval it can honour.`;
+    return t(
+      "The engine checks every {{count}} minute, so that is the shortest interval it can honour.",
+      {
+        count: MIN_MINUTES,
+        defaultValue_other:
+          "The engine checks every {{count}} minutes, so that is the shortest interval it can honour.",
+      },
+    );
   }
   return null;
 }
@@ -66,6 +74,7 @@ export function SchedulePicker({
   timezone?: string;
   onTimezone?: (tz: string) => void;
 }) {
+  const { t } = useTranslation();
   const seed = fromCron(value);
   // A schedule the row cannot draw opens as the cron it is, rather than being
   // rounded to something it is not.
@@ -118,24 +127,26 @@ export function SchedulePicker({
     return form === null ? "" : toCron(form);
   };
 
-  const error = scheduleError(value);
+  const error = scheduleError(value, t);
   const sel = "h-8 w-auto gap-1.5";
 
   return (
     <div>
       {raw ? (
         <Input
-          aria-label="Cron expression"
+          aria-label={t("Cron expression")}
           className="max-w-[220px] font-mono"
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground">Every</span>
+          <span className="text-muted-foreground">
+            {t("Every", { context: "schedule", defaultValue: "Every" })}
+          </span>
           {mode === "minutes" && (
             <Input
-              aria-label="Minutes between runs"
+              aria-label={t("Minutes between runs")}
               className="w-20 tabular-nums"
               type="number"
               min={MIN_MINUTES}
@@ -149,7 +160,7 @@ export function SchedulePicker({
           )}
           {mode === "hours" && (
             <Input
-              aria-label="Hours between runs"
+              aria-label={t("Hours between runs")}
               className="w-20 tabular-nums"
               type="number"
               min={1}
@@ -169,21 +180,23 @@ export function SchedulePicker({
               onChange(build({ mode: next }));
             }}
           >
-            <SelectTrigger aria-label="How often" className={sel}>
+            <SelectTrigger aria-label={t("How often")} className={sel}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {UNITS.map((u) => (
                 <SelectItem key={u.value} value={u.value}>
-                  {u.label}
+                  {lookup(t, u.label)}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           {mode === "weekly" && (
             <>
-              <span className="text-muted-foreground">on</span>
-              <span role="group" aria-label="Days" className="inline-flex gap-1">
+              <span className="text-muted-foreground">
+                {t("on", { context: "schedule", defaultValue: "on" })}
+              </span>
+              <span role="group" aria-label={t("Days")} className="inline-flex gap-1">
                 {DAYS.map((d) => {
                   const on = days.includes(d.n);
                   return (
@@ -203,7 +216,7 @@ export function SchedulePicker({
                           : "border-input bg-background text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      {d.label}
+                      {lookup(t, d.label)}
                     </button>
                   );
                 })}
@@ -212,11 +225,13 @@ export function SchedulePicker({
           )}
           {(mode === "daily" || mode === "weekdays" || mode === "weekly") && (
             <>
-              <span className="text-muted-foreground">at</span>
+              <span className="text-muted-foreground">
+                {t("at", { context: "schedule", defaultValue: "at" })}
+              </span>
               {/* Text, not `type="time"`, so it reads 08:30 whatever the
                   browser's locale would make of it (A28). */}
               <Input
-                aria-label="Time of day"
+                aria-label={t("Time of day")}
                 className="w-[76px] tabular-nums"
                 inputMode="numeric"
                 placeholder="09:00"
@@ -231,7 +246,7 @@ export function SchedulePicker({
           )}
           {timezone !== undefined && onTimezone && (
             <Select value={timezone} onValueChange={onTimezone}>
-              <SelectTrigger aria-label="Time zone" className={sel}>
+              <SelectTrigger aria-label={t("Time zone")} className={sel}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="max-h-72">
@@ -249,10 +264,10 @@ export function SchedulePicker({
         {error ? (
           <span className="text-destructive">{error}</span>
         ) : value.trim() === "" ? (
-          <span>Pick how often this should run.</span>
+          <span>{t("Pick how often this should run.")}</span>
         ) : (
           <>
-            <span>{cronToProse(value)}</span>
+            <span>{cronToProse(value, t)}</span>
             <Chip tone="code">{value}</Chip>
           </>
         )}
@@ -266,7 +281,7 @@ export function SchedulePicker({
           }}
           className="font-medium text-muted-foreground hover:text-foreground"
         >
-          {raw ? "Use the picker" : "Edit as cron"}
+          {raw ? t("Use the picker") : t("Edit as cron")}
         </button>
       </div>
     </div>

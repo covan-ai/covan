@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, type DocumentJob } from "@/lib/api-client";
 import { documentJobsKey } from "@/components/chat/use-document-jobs";
@@ -32,6 +33,7 @@ export function useReportWriter(
   sessionId: string | null,
   onStarted: (jobId: string) => void,
 ): ReportWriter {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -53,13 +55,15 @@ export function useReportWriter(
       } catch (err) {
         const message = err instanceof Error ? err.message : "";
         toast.error(
-          message ? `Couldn't start the report: ${message}` : "Couldn't start the report",
+          message
+            ? t("Couldn't start the report: {{message}}", { message })
+            : t("Couldn't start the report"),
         );
       } finally {
         setPending(false);
       }
     },
-    [sessionId, pending, queryClient, onStarted],
+    [sessionId, pending, queryClient, onStarted, t],
   );
 
   return { pending, dialogOpen, setDialogOpen, write };

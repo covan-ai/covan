@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
+import { Trans, useTranslation } from "@/i18n";
 import { SlackMark } from "./brand-marks";
 import type { SlackState } from "@/lib/connections-api";
 import type { Agent } from "@/lib/agents-store";
@@ -41,6 +42,7 @@ export function SlackRow({
   agents: Agent[];
   installedBy?: string | null;
 }) {
+  const { t } = useTranslation();
   const [managing, setManaging] = useState(false);
   const install = useStartSlackInstall();
   const setAgent = useSetSlackAgent();
@@ -51,7 +53,7 @@ export function SlackRow({
   const reinstall = () =>
     install.mutate(undefined, {
       onError: (err) =>
-        toast.error(err instanceof Error ? err.message : "Could not start the install"),
+        toast.error(err instanceof Error ? err.message : t("Could not start the install")),
     });
 
   return (
@@ -61,21 +63,23 @@ export function SlackRow({
         name="Slack"
         description={[
           installation.teamName,
-          agent ? `${agent.name} answers mentions and messages` : "no agent answers yet",
-          installedBy ? `installed by ${installedBy}` : null,
+          agent
+            ? t("{{agent}} answers mentions and messages", { agent: agent.name })
+            : t("no agent answers yet"),
+          installedBy ? t("installed by {{name}}", { name: installedBy }) : null,
         ]
           .filter(Boolean)
           .join(" · ")}
         status={
           !installation.agentId
-            ? { state: "waiting", text: "Needs an agent" }
+            ? { state: "waiting", text: t("Needs an agent") }
             : missing
-              ? { state: "waiting", text: "Needs a reconnect" }
-              : { state: "done", text: "Working" }
+              ? { state: "waiting", text: t("Needs a reconnect") }
+              : { state: "done", text: t("Working") }
         }
         action={
           <Button size="sm" variant="secondary" onClick={() => setManaging(true)}>
-            Manage
+            {t("Manage")}
           </Button>
         }
       />
@@ -83,13 +87,14 @@ export function SlackRow({
       <Dialog open={managing} onOpenChange={setManaging}>
         <DialogContent size="md">
           <DialogHeader>
-            <DialogTitle>Slack · {installation.teamName}</DialogTitle>
+            <DialogTitle>{`Slack · ${installation.teamName}`}</DialogTitle>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-4">
             {installation.agentId ? null : (
               <p className="m-0 rounded-lg border border-hairline px-4 py-3 text-meta leading-[1.45] text-muted-foreground">
-                The agent this was pointing at is gone, so the app answers every question by saying
-                so. Choose another one.
+                {t(
+                  "The agent this was pointing at is gone, so the app answers every question by saying so. Choose another one.",
+                )}
               </p>
             )}
 
@@ -99,8 +104,9 @@ export function SlackRow({
             {missing ? (
               <div className="flex flex-wrap items-center gap-3 rounded-lg border border-hairline px-4 py-3">
                 <p className="m-0 min-w-0 flex-1 text-meta leading-[1.45] text-muted-foreground">
-                  Routines can't start on channel messages or reactions yet. This install was made
-                  before Covan asked to hear them — reconnect to allow it.
+                  {t(
+                    "Routines can't start on channel messages or reactions yet. This install was made before Covan asked to hear them — reconnect to allow it.",
+                  )}
                 </p>
                 <Button
                   size="sm"
@@ -108,27 +114,27 @@ export function SlackRow({
                   disabled={install.isPending}
                   onClick={reinstall}
                 >
-                  {install.isPending ? "Opening…" : "Reconnect"}
+                  {install.isPending ? t("Opening…") : t("Reconnect")}
                 </Button>
               </div>
             ) : null}
 
             <div className="space-y-1.5">
-              <Label>Which agent answers</Label>
+              <Label>{t("Which agent answers")}</Label>
               <Select
                 value={installation.agentId ?? ""}
                 onValueChange={(agentId) =>
                   setAgent.mutate(agentId, {
-                    onSuccess: () => toast.success("Slack will ask that agent from now on."),
+                    onSuccess: () => toast.success(t("Slack will ask that agent from now on.")),
                     onError: (err) =>
                       toast.error(
-                        err instanceof Error ? err.message : "Could not change the agent",
+                        err instanceof Error ? err.message : t("Could not change the agent"),
                       ),
                   })
                 }
               >
-                <SelectTrigger aria-label="Which agent answers">
-                  <SelectValue placeholder="Choose an agent" />
+                <SelectTrigger aria-label={t("Which agent answers")}>
+                  <SelectValue placeholder={t("Choose an agent")} />
                 </SelectTrigger>
                 <SelectContent>
                   {agents.map((a) => (
@@ -140,7 +146,9 @@ export function SlackRow({
               </Select>
               {installation.agentId ? (
                 <p className="m-0 text-meta leading-[1.45] text-muted-foreground">
-                  Anyone the agent isn't shared with gets a polite no in Slack instead of an answer.
+                  {t(
+                    "Anyone the agent isn't shared with gets a polite no in Slack instead of an answer.",
+                  )}
                 </p>
               ) : null}
             </div>
@@ -154,9 +162,12 @@ export function SlackRow({
                 onClick={() => {
                   if (
                     !window.confirm(
-                      `Disconnect Slack from ${installation.teamName}?\n\n` +
-                        "The conversations it created stay in Covan. Remove the app from Slack itself " +
-                        "to revoke its access there.",
+                      [
+                        t("Disconnect Slack from {{team}}?", { team: installation.teamName }),
+                        t(
+                          "The conversations it created stay in Covan. Remove the app from Slack itself to revoke its access there.",
+                        ),
+                      ].join("\n\n"),
                     )
                   ) {
                     return;
@@ -164,14 +175,14 @@ export function SlackRow({
                   remove.mutate(undefined, {
                     onSuccess: () => {
                       setManaging(false);
-                      toast.success("Slack disconnected.");
+                      toast.success(t("Slack disconnected."));
                     },
                     onError: (err) =>
-                      toast.error(err instanceof Error ? err.message : "Could not disconnect"),
+                      toast.error(err instanceof Error ? err.message : t("Could not disconnect")),
                   });
                 }}
               >
-                Disconnect
+                {t("Disconnect")}
               </Button>
             </div>
           </DialogBody>
@@ -186,6 +197,7 @@ export function SlackRow({
  * variables that would turn it on rather than hiding.
  */
 export function SlackCard({ state }: { state: SlackState }) {
+  const { t } = useTranslation();
   const install = useStartSlackInstall();
   if (state.installation) return null;
 
@@ -193,18 +205,16 @@ export function SlackCard({ state }: { state: SlackState }) {
     <IntegrationCard
       logo={<AppLogo mark={SlackMark} name="Slack" size={28} />}
       name="Slack"
-      note={state.configured ? null : <Chip size="sm">Not configured</Chip>}
+      note={state.configured ? null : <Chip size="sm">{t("Not configured")}</Chip>}
       description={
         state.configured ? (
-          "Mention an agent in a channel or message it. Whoever asks is answered as themselves."
+          t("Mention an agent in a channel or message it. Whoever asks is answered as themselves.")
         ) : (
-          <>
-            An operator registers a Slack app and sets{" "}
-            <span className="font-mono text-xs">
-              SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET
-            </span>{" "}
-            to turn it on.
-          </>
+          <Trans
+            t={t}
+            i18nKey="An operator registers a Slack app and sets <code>SLACK_CLIENT_ID, SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET</code> to turn it on."
+            components={{ code: <span className="font-mono text-xs" /> }}
+          />
         )
       }
       action={
@@ -216,11 +226,13 @@ export function SlackCard({ state }: { state: SlackState }) {
             onClick={() =>
               install.mutate(undefined, {
                 onError: (err) =>
-                  toast.error(err instanceof Error ? err.message : "Could not start the install"),
+                  toast.error(
+                    err instanceof Error ? err.message : t("Could not start the install"),
+                  ),
               })
             }
           >
-            {install.isPending ? "Opening…" : "Add to Slack"}
+            {install.isPending ? t("Opening…") : t("Add to Slack")}
           </Button>
         ) : undefined
       }

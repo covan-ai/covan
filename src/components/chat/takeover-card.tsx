@@ -5,6 +5,7 @@ import { api, type BrowserTask, type ConversationBrowser, type Takeover } from "
 import { Button } from "@/components/ui/button";
 import { useConversationBrowser } from "./use-conversation-browser";
 import { safeNavigationUrl } from "@/lib/safe-url";
+import { Trans, useTranslation } from "@/i18n";
 
 /**
  * The v2 takeover card — the legacy path, kept in the transcript (ruling R18).
@@ -40,6 +41,7 @@ function remaining(expiresAt: string, now: number): { minutes: number; seconds: 
  * `GET /browser/takeovers/current` exists to recover.
  */
 export function TakeoverCard({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   /**
    * What this tab minted, if it minted anything.
@@ -146,7 +148,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
       const result = await api.takeovers.takeOver(browserTaskId);
       const liveUrl = safeNavigationUrl(result.liveUrl);
       if (!liveUrl) {
-        throw new Error("That browser started but there is no address to open it at.");
+        throw new Error(t("That browser started but there is no address to open it at."));
       }
       return { ...result, liveUrl };
     },
@@ -160,7 +162,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
         // The tab was blocked or closed before the address arrived. The
         // browser is running either way, so the address is offered as a link
         // rather than lost.
-        toast.info("Your browser is ready — use the link on the card to open it.");
+        toast.info(t("Your browser is ready — use the link on the card to open it."));
       }
     },
     onError: (err: Error) => {
@@ -200,11 +202,13 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
     const left = remaining(takeover.expiresAt, now);
     return (
       <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
-        <p className="font-medium">Sign in, then press done</p>
+        <p className="font-medium">{t("Sign in, then press done")}</p>
         <p className="mt-1 text-muted-foreground">
-          The browser opened in a new tab. Sign in there, at the site itself — Covan cannot see what
-          you type. <strong>Nothing is saved until you press done below</strong>, so press it even
-          if the site looks finished.
+          <Trans
+            t={t}
+            i18nKey="The browser opened in a new tab. Sign in there, at the site itself — Covan cannot see what you type. <b>Nothing is saved until you press done below</b>, so press it even if the site looks finished."
+            components={{ b: <strong /> }}
+          />
         </p>
         {safeNavigationUrl(takeover.liveUrl) && (
           <p className="mt-2">
@@ -214,14 +218,16 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
               target="_blank"
               rel="noopener noreferrer"
             >
-              Open the browser again
+              {t("Open the browser again")}
             </a>
           </p>
         )}
         <p className="mt-2 font-mono text-xs text-muted-foreground">
           {left
-            ? `${left.minutes}:${String(left.seconds).padStart(2, "0")} left`
-            : "the window has closed — press done, or start again"}
+            ? t("{{time}} left", {
+                time: `${left.minutes}:${String(left.seconds).padStart(2, "0")}`,
+              })
+            : t("the window has closed — press done, or start again")}
         </p>
         <Button
           className="mt-3"
@@ -229,7 +235,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
           disabled={close.isPending}
           onClick={() => close.mutate(takeover.id)}
         >
-          {close.isPending ? "Saving your sign-in…" : "Done, I've signed in"}
+          {close.isPending ? t("Saving your sign-in…") : t("Done, I've signed in")}
         </Button>
       </div>
     );
@@ -239,7 +245,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
-      <p className="font-medium">That needed a sign-in</p>
+      <p className="font-medium">{t("That needed a sign-in")}</p>
       {/* The last sentence was added after the first real run, and it is there
           because the alternative is wasting somebody's time. A hand-performed
           LinkedIn sign-in saved correctly, attached correctly, and ran again
@@ -248,10 +254,9 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
           and the person deciding whether to go and sign in is the one who
           should know that before they do it rather than after. */}
       <p className="mt-1 text-muted-foreground">
-        The browser could not get past a login. You can sign in yourself in a new tab, and the task
-        will run again — no charge for the second attempt. You type your password at the site; Covan
-        never receives it. Some sites tie a sign-in to one network address and will ask again
-        anyway; LinkedIn is one of them.
+        {t(
+          "The browser could not get past a login. You can sign in yourself in a new tab, and the task will run again — no charge for the second attempt. You type your password at the site; Covan never receives it. Some sites tie a sign-in to one network address and will ask again anyway; LinkedIn is one of them.",
+        )}
       </p>
       <Button
         className="mt-3"
@@ -263,7 +268,7 @@ export function TakeoverCard({ sessionId }: { sessionId: string }) {
           open.mutate(offer.id);
         }}
       >
-        {open.isPending ? "Opening a browser…" : "Sign in myself"}
+        {open.isPending ? t("Opening a browser…") : t("Sign in myself")}
       </Button>
     </div>
   );

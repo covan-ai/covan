@@ -6,16 +6,18 @@ import type { Idea, IdeaStage } from "@/lib/agents-store";
 import { supabase } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { lookup, msg, useTranslation } from "@/i18n";
 import { Trash2 } from "lucide-react";
 
 const STAGES: { key: IdeaStage; label: string }[] = [
-  { key: "review", label: "To review" },
-  { key: "promising", label: "Promising" },
-  { key: "in_progress", label: "In progress" },
-  { key: "parked", label: "Parked" },
+  { key: "review", label: msg("To review") },
+  { key: "promising", label: msg("Promising") },
+  { key: "in_progress", label: msg("In progress") },
+  { key: "parked", label: msg("Parked") },
 ];
 
 export function IdeaBoard({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const key = ["ideas", sessionId] as const;
 
@@ -55,7 +57,7 @@ export function IdeaBoard({ sessionId }: { sessionId: string }) {
     },
     onError: (_e, _v, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(key, ctx.prev);
-      toast.error("Could not move the card.");
+      toast.error(t("Could not move the card."));
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
@@ -63,7 +65,7 @@ export function IdeaBoard({ sessionId }: { sessionId: string }) {
   const removeMutation = useMutation({
     mutationFn: (id: string) => api.ideas.remove(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: key }),
-    onError: () => toast.error("Could not delete the card."),
+    onError: () => toast.error(t("Could not delete the card.")),
   });
 
   const onDragEnd = (e: DragEndEvent) => {
@@ -82,7 +84,7 @@ export function IdeaBoard({ sessionId }: { sessionId: string }) {
           <Column
             key={s.key}
             stage={s.key}
-            label={s.label}
+            label={lookup(t, s.label)}
             ideas={ideas.filter((i) => i.stage === s.key)}
             onRemove={(id) => removeMutation.mutate(id)}
           />
@@ -125,6 +127,7 @@ function Column({
 }
 
 function IdeaCard({ idea, onRemove }: { idea: Idea; onRemove: (id: string) => void }) {
+  const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: idea.id,
   });
@@ -147,7 +150,7 @@ function IdeaCard({ idea, onRemove }: { idea: Idea; onRemove: (id: string) => vo
         </button>
         <button
           onClick={() => onRemove(idea.id)}
-          aria-label="Delete card"
+          aria-label={t("Delete card")}
           className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
         >
           <Trash2 className="h-3.5 w-3.5" />

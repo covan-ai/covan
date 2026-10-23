@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { Trans, useTranslation } from "@/i18n";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +27,7 @@ function readUrlError(): string | null {
 const RETRY_AFTER_MS = 3000;
 
 function ResetPassword() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -119,7 +121,7 @@ function ResetPassword() {
     const confirmPassword = String(form.get("confirmPassword") ?? "");
 
     if (password !== confirmPassword) {
-      setError("Passwords don't match.");
+      setError(t("Passwords don't match."));
       return;
     }
 
@@ -142,11 +144,11 @@ function ResetPassword() {
   if (status === "done") {
     return (
       <AuthLayout
-        title="Password saved"
-        subtitle="Every session was signed out, this one too. Sign in with the new password."
+        title={t("Password saved")}
+        subtitle={t("Every session was signed out, this one too. Sign in with the new password.")}
       >
         <Button asChild size="lg" className="w-full">
-          <Link to="/sign-in">Sign in</Link>
+          <Link to="/sign-in">{t("Sign in")}</Link>
         </Button>
       </AuthLayout>
     );
@@ -155,15 +157,15 @@ function ResetPassword() {
   if (status === "invalid") {
     return (
       <AuthLayout
-        title="This link no longer works"
-        subtitle="A reset link works for one hour and once."
+        title={t("This link no longer works")}
+        subtitle={t("A reset link works for one hour and once.")}
       >
         {error && <p className="mt-0 mb-3 text-sm text-destructive">{error}</p>}
         <Button asChild size="lg" className="w-full">
-          <Link to="/forgot-password">Send a new link</Link>
+          <Link to="/forgot-password">{t("Send a new link")}</Link>
         </Button>
         <Button asChild variant="ghost" size="lg" className="mt-2 w-full">
-          <Link to="/sign-in">Back to sign in</Link>
+          <Link to="/sign-in">{t("Back to sign in")}</Link>
         </Button>
       </AuthLayout>
     );
@@ -171,27 +173,32 @@ function ResetPassword() {
 
   if (status === "checking") {
     return (
-      <AuthLayout title="Opening your reset link" subtitle="One moment.">
+      <AuthLayout title={t("Opening your reset link")} subtitle={t("One moment.")}>
         <div className="flex min-h-16 items-center justify-center text-sm text-muted-foreground">
-          Loading…
+          {t("Loading…")}
         </div>
       </AuthLayout>
     );
   }
 
-  const strength = passwordStrength(password, MIN_PASSWORD);
+  const strength = passwordStrength(password, t, MIN_PASSWORD);
 
   return (
     <AuthLayout
-      title="Choose a new password"
+      title={t("Choose a new password")}
       subtitle={
         <>
           {email ? (
             <>
-              For <span className="font-medium text-foreground">{email}</span>.{" "}
+              <Trans
+                t={t}
+                i18nKey="For <b>{{email}}</b>."
+                values={{ email }}
+                components={{ b: <span className="font-medium text-foreground" /> }}
+              />{" "}
             </>
           ) : null}
-          Every session is signed out when you save, this one too.
+          {t("Every session is signed out when you save, this one too.")}
         </>
       }
     >
@@ -201,7 +208,7 @@ function ResetPassword() {
       <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-3.5">
         <div className="space-y-1.5">
           <Label htmlFor="password" className="text-meta">
-            New password
+            {t("New password")}
           </Label>
           <div className="relative">
             <Input
@@ -219,7 +226,7 @@ function ResetPassword() {
               type="button"
               onClick={() => setShowPassword((v) => !v)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? t("Hide password") : t("Show password")}
             >
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -237,7 +244,7 @@ function ResetPassword() {
 
         <div className="space-y-1.5">
           <Label htmlFor="confirmPassword" className="text-meta">
-            Again, to be sure
+            {t("Again, to be sure")}
           </Label>
           <Input
             id="confirmPassword"
@@ -253,7 +260,7 @@ function ResetPassword() {
         {error && <p className="m-0 text-sm text-destructive">{error}</p>}
 
         <Button type="submit" size="lg" className="mt-1 w-full" disabled={submitting}>
-          {submitting ? "Saving…" : "Save the password"}
+          {submitting ? t("Saving…") : t("Save the password")}
         </Button>
       </form>
     </AuthLayout>

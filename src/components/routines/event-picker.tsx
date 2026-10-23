@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { Trans, useTranslation } from "@/i18n";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -36,13 +37,15 @@ export function EventPicker({
   onChange: (choice: EventChoice | null) => void;
   idPrefix?: string;
 }) {
+  const { t } = useTranslation();
   if (catalog.length === 0) {
     // Not an error: the catalogue is what this deployment can listen for, and
     // a self-hosted one may have set up none of it.
     return (
       <p className="text-meta text-muted-foreground">
-        This workspace cannot listen for app events yet. Connect an app from Integrations, or start
-        the routine on a schedule or a webhook instead.
+        {t(
+          "This workspace cannot listen for app events yet. Connect an app from Integrations, or start the routine on a schedule or a webhook instead.",
+        )}
       </p>
     );
   }
@@ -70,10 +73,10 @@ export function EventPicker({
   return (
     <div className="space-y-3">
       <div className="space-y-2">
-        <Label htmlFor={`${idPrefix}-app`}>App</Label>
+        <Label htmlFor={`${idPrefix}-app`}>{t("App")}</Label>
         <Select value={app} onValueChange={pickApp}>
           <SelectTrigger id={`${idPrefix}-app`}>
-            <SelectValue placeholder="Pick an app" />
+            <SelectValue placeholder={t("Pick an app")} />
           </SelectTrigger>
           <SelectContent>
             {appsOf(catalog).map((name) => (
@@ -87,7 +90,7 @@ export function EventPicker({
 
       {entry && (
         <div className="space-y-2">
-          <Label htmlFor={`${idPrefix}-type`}>When</Label>
+          <Label htmlFor={`${idPrefix}-type`}>{t("When")}</Label>
           <Select value={entry.type} onValueChange={pickEvent}>
             <SelectTrigger id={`${idPrefix}-type`}>
               <SelectValue />
@@ -108,14 +111,19 @@ export function EventPicker({
         // The one thing standing between this choice and a routine that
         // works, said where the choice is made.
         <p className="text-meta text-muted-foreground">
-          {entry.app} is not connected yet.{" "}
-          <Link
-            to="/settings/integrations"
-            className="text-foreground underline underline-offset-2"
-          >
-            Connect {entry.app}
-          </Link>{" "}
-          and come back to finish.
+          <Trans
+            t={t}
+            i18nKey="{{app}} is not connected yet. <a>Connect {{app}}</a> and come back to finish."
+            values={{ app: entry.app }}
+            components={{
+              a: (
+                <Link
+                  to="/settings/integrations"
+                  className="text-foreground underline underline-offset-2"
+                />
+              ),
+            }}
+          />
         </p>
       )}
 
@@ -133,7 +141,9 @@ export function EventPicker({
 
       {entry && entry.connected && advanced.length > 0 && (
         <details className="text-sm">
-          <summary className="cursor-pointer text-xs text-muted-foreground">More options</summary>
+          <summary className="cursor-pointer text-xs text-muted-foreground">
+            {t("More options")}
+          </summary>
           <div className="mt-3 space-y-3">
             {advanced.map((f) => (
               <FieldInput
@@ -162,7 +172,8 @@ function FieldInput({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
-  const label = field.optional ? `${field.label} (optional)` : field.label;
+  const { t } = useTranslation();
+  const label = field.optional ? t("{{label}} (optional)", { label: field.label }) : field.label;
   const help = field.help ? <p className="text-meta text-muted-foreground">{field.help}</p> : null;
 
   if (field.kind === "boolean") {
@@ -187,7 +198,7 @@ function FieldInput({
         <Label htmlFor={id}>{label}</Label>
         <Select value={typeof value === "string" ? value : ""} onValueChange={onChange}>
           <SelectTrigger id={id}>
-            <SelectValue placeholder={field.placeholder ?? "Pick one"} />
+            <SelectValue placeholder={field.placeholder ?? t("Pick one")} />
           </SelectTrigger>
           <SelectContent>
             {(field.options ?? []).map((o) => (

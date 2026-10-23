@@ -23,6 +23,10 @@ Guidance for coding agents and for humans who want the short version.
   Do not reach for `env.DOCS` or `c.executionCtx` in a route.
 - **Never commit** real `wrangler.toml`, `.env`, `.dev.vars`, account IDs, or
   keys.
+- **Every word the interface says goes through `t()`.** The English is the
+  key; `src/i18n/locales/tr.json` is the only file allowed to hold Turkish.
+  Import `useTranslation` from `@/i18n`, run `bun run i18n:extract`, and add
+  the Turkish for every new key. `src/i18n/README.md` has the recipe.
 - **No real person's data in the repository.** Not in code comments, tests,
   fixtures, eval cases or commit messages: no customer or workspace names, email
   addresses, message text, subjects, document contents or ids copied from a

@@ -13,11 +13,16 @@ import type { ChatSession } from "./agents-store";
  * draw. `kind` is optional for the one caller that does not have it: a browser
  * place carries its conversation's title and nothing else, so an untitled
  * brainstorm there reads as a thread until the API says which it is.
+ *
+ * `t` is the caller's translator, passed in the way `now` is elsewhere so
+ * this stays a pure function. A caller that has not been translated yet may
+ * leave it out and gets the English, which is what it showed before.
  */
 export function sessionLabel(
   session: Pick<ChatSession, "title"> & { kind?: ChatSession["kind"] | null },
+  t: (key: string) => string = (key) => key,
 ): string {
   const title = session.title?.trim();
   if (title) return title;
-  return session.kind === "brainstorm" ? "New brainstorm" : "New thread";
+  return session.kind === "brainstorm" ? t("New brainstorm") : t("New thread");
 }

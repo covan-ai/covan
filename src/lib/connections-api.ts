@@ -2,6 +2,8 @@
 // in their own file so api-client.ts stays a transport layer, the same
 // arrangement routines-api.ts already uses.
 
+import { englishT, lookup, msg, type Translate } from "@/i18n";
+
 export type ProviderId = "notion" | "google_drive";
 
 /**
@@ -189,6 +191,7 @@ export function canConnectToolkit(toolkit: ComposioToolkit): boolean {
 export function mightConnectToolkit(toolkit: ComposioToolkit): boolean {
   return (
     canConnectToolkit(toolkit) ||
+    // A scheme id like "api_key", not a word. i18n-ignore
     toolkit.authSchemes.some((scheme) => SELF_SUPPLIED.has(scheme.toUpperCase()))
   );
 }
@@ -442,41 +445,43 @@ export type SlackState = {
  * use than "something went wrong".
  */
 export const CONNECT_ERRORS: Record<string, string> = {
-  cancelled: "You cancelled that before granting access. Nothing was connected.",
-  expired: "That took longer than ten minutes, so the request expired. Try again.",
-  missing_code: "The provider sent us back without an authorisation code. Try again.",
-  unavailable: "This deployment is not configured for that provider.",
-  not_a_member: "You are no longer a member of that workspace.",
-  read_only: "Your role in this workspace is read-only, so you cannot connect a source.",
-  admin_only: "Only a workspace admin can install the Slack app.",
-  team_taken:
-    "That Slack workspace is already connected to a different Covan workspace. " +
-    "An admin there has to remove the installation before it can be connected here.",
-  bundle_gone: "The bundle you were connecting to no longer exists.",
-  grant_failed: "The provider refused the grant. Try connecting again.",
-  exchange_failed: "We could not complete the exchange with the provider. Try again.",
-  save_failed: "The grant worked but we could not save it. Try again.",
-  connection_gone:
-    "The connection you were reconnecting has been removed, or moved to another workspace. " +
-    "Nothing was changed — connect the source again to start over.",
-  wrong_provider:
-    "That grant is for a different provider than the connection you were reconnecting. " +
-    "Nothing was changed.",
-  not_yours:
-    "That connection was started by somebody else, or in another tab, so nothing was " +
-    "connected. If someone sent you that link, do not use it — start the connection yourself.",
-  try_again: "We could not check that with the provider just now. Try again in a moment.",
+  cancelled: msg("You cancelled that before granting access. Nothing was connected."),
+  expired: msg("That took longer than ten minutes, so the request expired. Try again."),
+  missing_code: msg("The provider sent us back without an authorisation code. Try again."),
+  unavailable: msg("This deployment is not configured for that provider."),
+  not_a_member: msg("You are no longer a member of that workspace."),
+  read_only: msg("Your role in this workspace is read-only, so you cannot connect a source."),
+  admin_only: msg("Only a workspace admin can install the Slack app."),
+  team_taken: msg(
+    "That Slack workspace is already connected to a different Covan workspace. An admin there has to remove the installation before it can be connected here.",
+  ),
+  bundle_gone: msg("The bundle you were connecting to no longer exists."),
+  grant_failed: msg("The provider refused the grant. Try connecting again."),
+  exchange_failed: msg("We could not complete the exchange with the provider. Try again."),
+  save_failed: msg("The grant worked but we could not save it. Try again."),
+  connection_gone: msg(
+    "The connection you were reconnecting has been removed, or moved to another workspace. Nothing was changed — connect the source again to start over.",
+  ),
+  wrong_provider: msg(
+    "That grant is for a different provider than the connection you were reconnecting. Nothing was changed.",
+  ),
+  not_yours: msg(
+    "That connection was started by somebody else, or in another tab, so nothing was connected. If someone sent you that link, do not use it — start the connection yourself.",
+  ),
+  try_again: msg("We could not check that with the provider just now. Try again in a moment."),
 };
 
-export function connectErrorMessage(code: string): string {
-  return CONNECT_ERRORS[code] ?? `The connection failed: ${code}`;
+/** The sentence for a callback's `?error=` code, in the caller's language. */
+export function connectErrorMessage(code: string, t: Translate = englishT): string {
+  const known = CONNECT_ERRORS[code];
+  return known ? lookup(t, known) : t("The connection failed: {{code}}", { code });
 }
 
 /** "only you", "shared with the workspace", "personal": whose a connection is (A8). */
-export function scopeWords(connection: ToolConnection): string {
+export function scopeWords(connection: ToolConnection, t: Translate = englishT): string {
   return connection.scope === "workspace"
-    ? "shared with the workspace"
+    ? t("shared with the workspace")
     : connection.mine
-      ? "only you"
-      : "personal";
+      ? t("only you")
+      : t("personal");
 }

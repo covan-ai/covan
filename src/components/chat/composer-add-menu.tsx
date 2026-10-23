@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { lookup, msg, useTranslation } from "@/i18n";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,11 +26,12 @@ export function ComposerAddMenu({
   /** On a phone, where the mic has no room of its own. */
   onDictate?: () => void;
 }) {
+  const { t } = useTranslation();
   const items = [
-    onAttach && { label: "Attach a file", run: onAttach },
-    onUpload && { label: "Upload to Knowledge", run: onUpload },
-    onReport && { label: "Write a report", run: onReport },
-    onDictate && { label: "Dictate", run: onDictate },
+    onAttach && { label: msg("Attach a file"), run: onAttach },
+    onUpload && { label: msg("Upload to Knowledge"), run: onUpload },
+    onReport && { label: msg("Write a report"), run: onReport },
+    onDictate && { label: msg("Dictate"), run: onDictate },
   ].filter((i): i is { label: string; run: () => void } => Boolean(i));
   if (items.length === 0) return null;
   return (
@@ -38,7 +40,7 @@ export function ComposerAddMenu({
         <Button
           variant="ghost"
           size="icon"
-          aria-label="Add to this message"
+          aria-label={t("Add to this message")}
           className="text-muted-foreground data-[state=open]:bg-surface"
           data-coach="attach"
         >
@@ -48,7 +50,7 @@ export function ComposerAddMenu({
       <DropdownMenuContent align="start" side="top" className="w-52">
         {items.map((i) => (
           <DropdownMenuItem key={i.label} onSelect={i.run}>
-            {i.label}
+            {lookup(t, i.label)}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

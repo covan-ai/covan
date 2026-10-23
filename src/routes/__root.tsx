@@ -18,6 +18,8 @@ import { AgentsProvider } from "../lib/agents-store";
 import { THEME_INIT_SCRIPT } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { takeSensitiveParams } from "../lib/sensitive-url";
+import { requestLocale } from "@/i18n/request-locale";
+import { LocaleProvider, useHtmlLang } from "@/i18n/provider";
 
 // Before the router renders and before the first page view is sent: a connect
 // flow's grant comes back in the address bar, and it is taken out of it here.
@@ -54,6 +56,12 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  // The language the page is served in, decided once per request from the
+  // cookie and the browser (`i18n/request-locale.ts`). Returned from
+  // `beforeLoad` so it is dehydrated into the page and the client's first
+  // render is the server's — the same reason the theme is read before
+  // hydration below.
+  beforeLoad: () => ({ locale: requestLocale() }),
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -135,9 +143,25 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   errorComponent: ErrorComponent,
 });
 
+/*
+ * The shell renders outside the matched routes, so the language cannot
+ * come from a provider the page renders: it is read straight from the root
+ * route's context here, and the provider goes around `<html>` itself —
+ * which puts the document's own `lang` inside it too.
+ */
 function RootShell({ children }: { children: ReactNode }) {
+  const locale = Route.useRouteContext({ select: (c) => c.locale });
   return (
-    <html lang="en">
+    <LocaleProvider locale={locale}>
+      <Document>{children}</Document>
+    </LocaleProvider>
+  );
+}
+
+function Document({ children }: { children: ReactNode }) {
+  const lang = useHtmlLang();
+  return (
+    <html lang={lang}>
       <head>
         {/* Runs before hydration to set the theme class and avoid a flash. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />

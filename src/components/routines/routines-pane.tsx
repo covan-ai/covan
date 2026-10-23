@@ -2,6 +2,8 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Menu, Plus } from "lucide-react";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { api } from "@/lib/api-client";
 import type { RoutineListItem } from "@/lib/routines-api";
 import { useAgentsStore } from "@/lib/agents-store";
@@ -33,6 +35,8 @@ export function RoutinesPane({
   /** The "+" to the editor (A28); off for a viewer. */
   canCreate?: boolean;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const shell = useShell();
   const { agents } = useAgentsStore();
   const [filter, setFilter] = useState<PaneFilter>("all");
@@ -58,7 +62,7 @@ export function RoutinesPane({
 
   return (
     <section
-      aria-label="Routines list"
+      aria-label={t("Routines list")}
       className="flex shrink-0 flex-col border-border bg-background max-lg:border-b lg:w-[340px] lg:border-r"
     >
       <div className="flex h-14 items-center gap-2 border-b border-border pr-3 pl-4 lg:h-12">
@@ -68,19 +72,19 @@ export function RoutinesPane({
           <button
             type="button"
             onClick={shell.openDrawer}
-            aria-label="Open the menu"
+            aria-label={t("Open the menu")}
             className="-ml-1.5 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-surface lg:hidden"
           >
             <Menu className="size-4" strokeWidth={1.75} />
           </button>
         )}
-        <h2 className="m-0 text-lead font-semibold">Routines</h2>
+        <h2 className="m-0 text-lead font-semibold">{t("Routines")}</h2>
         <span className="text-meta text-muted-foreground">{mine.length}</span>
         {canCreate && (
           <Link
             to="/routines/new"
             search={agentId ? { agent: agentId } : {}}
-            aria-label="New routine"
+            aria-label={t("New routine")}
             data-coach="new-routine"
             className="ml-auto grid size-8 place-items-center rounded-md text-foreground hover:bg-surface"
           >
@@ -90,24 +94,24 @@ export function RoutinesPane({
       </div>
       <div className="overflow-x-auto border-b border-hairline px-3 py-2">
         <Pills
-          label="Show"
+          label={t("Show")}
           value={filter}
           onChange={setFilter}
           options={[
-            { value: "all", label: "All" },
-            { value: "active", label: "Active" },
-            { value: "paused", label: "Paused" },
-            { value: "failed", label: "Failed" },
+            { value: "all", label: t("All") },
+            { value: "active", label: t("Active") },
+            { value: "paused", label: t("Paused") },
+            { value: "failed", label: t("Failed") },
           ]}
           className="flex-nowrap"
         />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto max-lg:max-h-72">
         {isPending ? (
-          <p className="px-4 py-3 text-sm text-muted-foreground">Loading…</p>
+          <p className="px-4 py-3 text-sm text-muted-foreground">{t("Loading…")}</p>
         ) : shown.length === 0 ? (
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            {mine.length === 0 ? "No routines yet." : "None here."}
+            {mine.length === 0 ? t("No routines yet.") : t("None here.")}
           </p>
         ) : (
           shown.map((r) => {
@@ -122,21 +126,21 @@ export function RoutinesPane({
                   r.id === selectedId ? "bg-surface-muted" : "hover:bg-surface-muted",
                 )}
               >
-                <AgentMark agent={agent ?? { name: "Agent" }} size={24} />
+                <AgentMark agent={agent ?? { name: t("Agent") }} size={24} />
                 <span className="min-w-0 flex-1">
                   <span className="mb-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">{agent?.name ?? "Agent"}</span>
+                    <span className="font-medium text-foreground">{agent?.name ?? t("Agent")}</span>
                     <span className="ml-auto truncate whitespace-nowrap">
                       {r.triggerKind === "schedule" || r.triggerKind === "both"
-                        ? cronToShort(r.scheduleCron)
+                        ? cronToShort(r.scheduleCron, t)
                         : r.triggerKind === "event"
-                          ? "On an app event"
-                          : "On a webhook"}
+                          ? t("On an app event")
+                          : t("On a webhook")}
                     </span>
                   </span>
                   <span className="block truncate text-sm font-medium">{r.name}</span>
                   <span className="mt-0.5 block truncate text-meta text-muted-foreground">
-                    {routineLine(r)}
+                    {routineLine(r, undefined, t, locale)}
                   </span>
                 </span>
                 <StatusDot state={routineDot(r)} className="mt-1.5" />
@@ -147,7 +151,7 @@ export function RoutinesPane({
       </div>
       {stats && (
         <div className="border-t border-hairline px-4 py-3 text-xs leading-normal text-micro-foreground">
-          {statsLine(stats)}
+          {statsLine(stats, t, locale)}
         </div>
       )}
     </section>

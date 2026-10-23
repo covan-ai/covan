@@ -1,43 +1,52 @@
+import { englishT, lookup, msg, type Translate } from "@/i18n";
+
 /**
  * The words at the top of Home (Main, A24): the greeting, the date, and one
  * sentence that says what needs you, what is running and what the week cost.
  *
  * Pure, so the clock and the zone are arguments: the profile's time zone when
- * it has one, else whatever the browser is in.
+ * it has one, else whatever the browser is in. `t` and `locale` the same way,
+ * defaulting to the English and the region it has always been written in.
  */
 
+const EN = "en-GB";
+
+/**
+ * The numbers the sentence spells out, as keys, so the translation can spell
+ * them out too. "no" is a count here, never an answer; an answer would be
+ * capitalised and its own key.
+ */
 const NUMBER_WORDS = [
-  "no",
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
-  "ten",
-  "eleven",
-  "twelve",
+  msg("no"),
+  msg("one"),
+  msg("two"),
+  msg("three"),
+  msg("four"),
+  msg("five"),
+  msg("six"),
+  msg("seven"),
+  msg("eight"),
+  msg("nine"),
+  msg("ten"),
+  msg("eleven"),
+  msg("twelve"),
 ];
 
 /** "three" up to twelve, then digits: "48". */
-export function countWord(n: number): string {
-  return Number.isInteger(n) && n >= 0 && n < NUMBER_WORDS.length
-    ? NUMBER_WORDS[n]!
-    : n.toLocaleString("en-US");
+export function countWord(n: number, t: Translate = englishT, locale: string = EN): string {
+  const word = Number.isInteger(n) && n >= 0 ? NUMBER_WORDS[n] : undefined;
+  return word ? lookup(t, word) : n.toLocaleString(locale);
 }
 
-function capitalise(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
+function capitalise(s: string, locale: string): string {
+  return s.charAt(0).toLocaleUpperCase(locale) + s.slice(1);
 }
 
 /** A zone the browser knows, or undefined so `Intl` uses its own. */
 function knownZone(timeZone: string | null | undefined): string | undefined {
   if (!timeZone) return undefined;
   try {
-    new Intl.DateTimeFormat("en-GB", { timeZone });
+    new Intl.DateTimeFormat(EN, { timeZone });
     return timeZone;
   } catch {
     return undefined;
@@ -45,10 +54,10 @@ function knownZone(timeZone: string | null | undefined): string | undefined {
 }
 
 /** "Wednesday, 22 October". */
-export function homeDate(now: Date, timeZone?: string | null): string {
+export function homeDate(now: Date, timeZone?: string | null, locale: string = EN): string {
   const zone = knownZone(timeZone);
-  const weekday = new Intl.DateTimeFormat("en-GB", { weekday: "long", timeZone: zone }).format(now);
-  const date = new Intl.DateTimeFormat("en-GB", {
+  const weekday = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: zone }).format(now);
+  const date = new Intl.DateTimeFormat(locale, {
     day: "numeric",
     month: "long",
     timeZone: zone,
@@ -57,36 +66,58 @@ export function homeDate(now: Date, timeZone?: string | null): string {
 }
 
 /** "Good morning, Mina." — the first name only, and "there" without one. */
-export function greeting(now: Date, name: string | null | undefined, timeZone?: string | null) {
+export function greeting(
+  now: Date,
+  name: string | null | undefined,
+  timeZone?: string | null,
+  t: Translate = englishT,
+): string {
   const hour = Number(
-    new Intl.DateTimeFormat("en-GB", {
+    new Intl.DateTimeFormat(EN, {
       hour: "numeric",
       hourCycle: "h23",
       timeZone: knownZone(timeZone),
     }).format(now),
   );
-  const part =
-    hour >= 5 && hour < 12 ? "morning" : hour >= 12 && hour < 18 ? "afternoon" : "evening";
-  return `Good ${part}, ${firstName(name)}.`;
+  const first = firstName(name);
+  // Separate keys with and without a name: "Good morning, there." has no
+  // Turkish, where the greeting simply stands alone.
+  if (hour >= 5 && hour < 12) {
+    return first ? t("Good morning, {{name}}.", { name: first }) : t("Good morning, there.");
+  }
+  if (hour >= 12 && hour < 18) {
+    return first ? t("Good afternoon, {{name}}.", { name: first }) : t("Good afternoon, there.");
+  }
+  return first ? t("Good evening, {{name}}.", { name: first }) : t("Good evening, there.");
 }
 
+/** The first word of a name, or nothing. */
 export function firstName(name: string | null | undefined): string {
-  return name?.trim().split(/\s+/)[0] || "there";
+  return name?.trim().split(/\s+/)[0] || "";
 }
 
 export type SpendUnit = "credits" | "usd";
 
 /** The figure alone, for a stat: "612", "$4.12". */
-export function amountValue(amount: number, unit: SpendUnit): string {
+export function amountValue(amount: number, unit: SpendUnit, locale: string = "en-US"): string {
   return unit === "usd"
-    ? `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : amount.toLocaleString("en-US");
+    ? amount.toLocaleString(locale, { style: "currency", currency: "USD" })
+    : amount.toLocaleString(locale);
 }
 
 /** The figure in a sentence: "612 credits", "1 credit", "$4.12". */
-export function amountWords(amount: number, unit: SpendUnit): string {
-  if (unit === "usd") return amountValue(amount, unit);
-  return `${amount.toLocaleString("en-US")} ${amount === 1 ? "credit" : "credits"}`;
+export function amountWords(
+  amount: number,
+  unit: SpendUnit,
+  t: Translate = englishT,
+  locale: string = "en-US",
+): string {
+  if (unit === "usd") return amountValue(amount, unit, locale);
+  return t("{{amount}} credit", {
+    count: amount,
+    amount: amount.toLocaleString(locale),
+    defaultValue_other: "{{amount}} credits",
+  });
 }
 
 /** A thread's title inside a sentence, without the stop it may end on. */
@@ -102,6 +133,8 @@ export type HomeSentenceInput = {
   running: Array<{ agent: string; title: string | null }>;
   /** Left out for anybody who is not shown what the workspace spends. */
   spend?: { amount: number; unit: SpendUnit; days: number } | null;
+  t?: Translate;
+  locale?: string;
 };
 
 /**
@@ -109,33 +142,62 @@ export type HomeSentenceInput = {
  * Weekly competitor brief, and the team has spent 612 credits in the last
  * seven days."
  */
-export function homeSentence({ now, timeZone, needsYou, running, spend }: HomeSentenceInput) {
+export function homeSentence({
+  now,
+  timeZone,
+  needsYou,
+  running,
+  spend,
+  t = englishT,
+  locale = EN,
+}: HomeSentenceInput): string {
   const clauses: string[] = [
     needsYou === 0
-      ? "nothing needs you"
-      : `${countWord(needsYou)} ${needsYou === 1 ? "thing needs" : "things need"} you`,
+      ? t("nothing needs you")
+      : t("{{n}} thing needs you", {
+          count: needsYou,
+          n: countWord(needsYou, t, locale),
+          defaultValue_other: "{{n}} things need you",
+        }),
   ];
   if (running.length === 1) {
     const only = running[0]!;
     clauses.push(
       only.title
-        ? `${only.agent} is working on ${inSentence(only.title)}`
-        : `${only.agent} is working`,
+        ? t("{{agent}} is working on {{title}}", {
+            agent: only.agent,
+            title: inSentence(only.title),
+          })
+        : t("{{agent}} is working", { agent: only.agent }),
     );
   } else if (running.length === 2) {
-    clauses.push(`${running[0]!.agent} and ${running[1]!.agent} are working`);
+    clauses.push(
+      t("{{first}} and {{second}} are working", {
+        first: running[0]!.agent,
+        second: running[1]!.agent,
+      }),
+    );
   } else if (running.length > 2) {
-    clauses.push(`${countWord(running.length)} agents are working`);
+    clauses.push(t("{{n}} agents are working", { n: countWord(running.length, t, locale) }));
   }
   if (spend && spend.amount > 0) {
-    const days = spend.days === 1 ? "day" : `${countWord(spend.days)} days`;
-    clauses.push(`the team has spent ${amountWords(spend.amount, spend.unit)} in the last ${days}`);
+    const days =
+      spend.days === 1 ? t("day") : t("{{n}} days", { n: countWord(spend.days, t, locale) });
+    clauses.push(
+      t("the team has spent {{amount}} in the last {{days}}", {
+        amount: amountWords(spend.amount, spend.unit, t, locale === EN ? "en-US" : locale),
+        days,
+      }),
+    );
   }
   const body =
     clauses.length === 1
       ? clauses[0]!
-      : `${clauses.slice(0, -1).join(", ")}, and ${clauses[clauses.length - 1]}`;
-  return `${homeDate(now, timeZone)}. ${capitalise(body)}.`;
+      : t("{{rest}}, and {{last}}", {
+          rest: clauses.slice(0, -1).join(", "),
+          last: clauses[clauses.length - 1],
+        });
+  return `${homeDate(now, timeZone, locale)}. ${capitalise(body, locale)}.`;
 }
 
 /**
@@ -148,6 +210,8 @@ export function spendNote(
   nameOf: (agentId: string) => string | undefined,
   unit: SpendUnit,
   windowDays = 7,
+  t: Translate = englishT,
+  locale: string = "en-US",
 ): string | null {
   const current = new Map<string, number>();
   const previous = new Map<string, number>();
@@ -173,36 +237,86 @@ export function spendNote(
   const name = nameOf(best.agentId);
   if (!name) return null;
   const round = (n: number) => (unit === "usd" ? Math.round(n * 100) / 100 : Math.round(n));
-  return `${name} is up this week: ${amountWords(round(best.now), unit)} against ${amountValue(round(best.before), unit)} the week before.`;
+  return t("{{name}} is up this week: {{now}} against {{before}} the week before.", {
+    name,
+    now: amountWords(round(best.now), unit, t, locale),
+    before: amountValue(round(best.before), unit, locale),
+  });
 }
 
-/** "12 min ago", "3 h ago", "10:00" earlier today, "Yesterday", "Mon", "12 Oct". */
-export function feedTime(at: number, now: number = Date.now()): string {
+/**
+ * A moment in the feed, sorted before it is worded, so the sentence helpers
+ * below can pick a key by what it is rather than by reading the output.
+ */
+type FeedMoment =
+  | { kind: "just-now" }
+  | { kind: "minutes"; n: number }
+  | { kind: "hours"; n: number }
+  | { kind: "clock"; text: string }
+  | { kind: "yesterday" }
+  | { kind: "weekday"; text: string }
+  | { kind: "date"; text: string };
+
+function feedMoment(at: number, now: number, locale: string): FeedMoment {
   const MINUTE = 60_000;
   const ago = now - at;
-  if (ago < MINUTE) return "just now";
-  if (ago < 60 * MINUTE) return `${Math.floor(ago / MINUTE)} min ago`;
-  if (ago < 6 * 60 * MINUTE) return `${Math.floor(ago / (60 * MINUTE))} h ago`;
+  if (ago < MINUTE) return { kind: "just-now" };
+  if (ago < 60 * MINUTE) return { kind: "minutes", n: Math.floor(ago / MINUTE) };
+  if (ago < 6 * 60 * MINUTE) return { kind: "hours", n: Math.floor(ago / (60 * MINUTE)) };
   const d = new Date(at);
   const today = new Date(now);
   today.setHours(0, 0, 0, 0);
   if (at >= today.getTime()) {
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    return {
+      kind: "clock",
+      text: `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+    };
   }
-  if (at >= today.getTime() - 24 * 60 * MINUTE) return "Yesterday";
+  if (at >= today.getTime() - 24 * 60 * MINUTE) return { kind: "yesterday" };
   if (at >= today.getTime() - 6 * 24 * 60 * MINUTE) {
-    return d.toLocaleDateString("en-GB", { weekday: "short" });
+    return { kind: "weekday", text: d.toLocaleDateString(locale, { weekday: "short" }) };
   }
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return { kind: "date", text: d.toLocaleDateString(locale, { day: "numeric", month: "short" }) };
+}
+
+/** "12 min ago", "3 h ago", "10:00" earlier today, "Yesterday", "Mon", "12 Oct". */
+export function feedTime(
+  at: number,
+  now: number = Date.now(),
+  t: Translate = englishT,
+  locale: string = EN,
+): string {
+  const m = feedMoment(at, now, locale);
+  switch (m.kind) {
+    case "just-now":
+      return t("just now");
+    case "minutes":
+      return t("{{count}} min ago", { count: m.n, defaultValue_other: "{{count}} min ago" });
+    case "hours":
+      return t("{{count}} h ago", { count: m.n, defaultValue_other: "{{count}} h ago" });
+    case "clock":
+      return m.text;
+    case "yesterday":
+      return t("Yesterday");
+    default:
+      return m.text;
+  }
 }
 
 /** The same moment inside a sentence: "12 min ago", "at 10:00", "yesterday". */
-function sinceWords(at: number, now: number): string {
-  const t = feedTime(at, now);
-  if (/^\d{2}:\d{2}$/.test(t)) return `at ${t}`;
-  if (/ago$|^just now$/.test(t)) return t;
-  if (t === "Yesterday") return "yesterday";
-  return `on ${t}`;
+function sinceWords(at: number, now: number, t: Translate, locale: string): string {
+  const m = feedMoment(at, now, locale);
+  switch (m.kind) {
+    case "clock":
+      return t("at {{time}}", { time: m.text });
+    case "yesterday":
+      return t("yesterday");
+    case "weekday":
+    case "date":
+      return t("on {{day}}", { day: m.text });
+    default:
+      return feedTime(at, now, t, locale);
+  }
 }
 
 export type WorkingOn = {
@@ -216,21 +330,30 @@ export type WorkingOn = {
  * What follows the thread's title in Right now (Main): "step 3, reading 6
  * pages", "asked you a question 12 min ago", "waiting for your approval".
  */
-export function workingOnDetail(w: WorkingOn, now: number = Date.now()): string {
+export function workingOnDetail(
+  w: WorkingOn,
+  now: number = Date.now(),
+  t: Translate = englishT,
+  locale: string = EN,
+): string {
   switch (w.kind) {
     case "running":
-      if (w.stepsDone) return `step ${w.stepsDone}${w.note ? `, ${w.note}` : ""}`;
-      return w.note ?? `started ${sinceWords(w.since, now)}`;
+      if (w.stepsDone) {
+        return w.note
+          ? t("step {{step}}, {{note}}", { step: w.stepsDone, note: w.note })
+          : t("step {{step}}", { step: w.stepsDone });
+      }
+      return w.note ?? t("started {{when}}", { when: sinceWords(w.since, now, t, locale) });
     case "question":
-      return `asked you a question ${sinceWords(w.since, now)}`;
+      return t("asked you a question {{when}}", { when: sinceWords(w.since, now, t, locale) });
     case "approval":
-      return "waiting for your approval";
+      return t("waiting for your approval");
     case "login":
-      return "needs you to sign in";
+      return t("needs you to sign in");
     case "routine_failed":
-      return `failed ${sinceWords(w.since, now)}`;
+      return t("failed {{when}}", { when: sinceWords(w.since, now, t, locale) });
     case "last":
-      return sinceWords(w.since, now);
+      return sinceWords(w.since, now, t, locale);
   }
 }
 
@@ -242,46 +365,75 @@ export type FeedItem = {
 };
 
 /**
- * One row of Recent activity after the actor's name, split so the subject
- * can be a link: "shared · Cancellation flow questions · with the team".
+ * One row of Recent activity after the actor's name: a sentence with the
+ * subject marked `<s>…</s>` so the caller can draw it as a link — with
+ * `<Trans i18nKey={line.key} values={line.values} components={{ s: <Link/> }}>`.
+ * A key rather than words, because where the subject sits in the sentence
+ * is the translation's to decide.
  */
-export function activityLine(item: FeedItem): { before: string; subject: string; after: string } {
-  const label = item.subjectLabel;
+export type ActivityLine = {
+  key: string;
+  values: { subject: string; count?: number; folder?: string };
+};
+
+export function activityLine(item: FeedItem): ActivityLine {
+  const subject = item.subjectLabel;
   switch (item.action) {
     case "session.shared":
-      return { before: "shared", subject: label, after: "with the team" };
+      return { key: msg("shared <s>{{subject}}</s> with the team"), values: { subject } };
     case "turn.approved":
-      return { before: "approved", subject: label, after: "" };
+      return { key: msg("approved <s>{{subject}}</s>"), values: { subject } };
     case "routine.run_finished":
-      return { before: "finished", subject: label, after: "" };
+      return { key: msg("finished <s>{{subject}}</s>"), values: { subject } };
     case "routine.run_failed":
-      return { before: "could not finish", subject: label, after: "" };
+      return { key: msg("could not finish <s>{{subject}}</s>"), values: { subject } };
     case "document.added": {
       const folder =
         typeof item.detail?.bundle_name === "string" && item.detail.bundle_name
           ? `Knowledge / ${item.detail.bundle_name}`
           : "Knowledge";
       return item.count > 1
-        ? { before: `added ${item.count} files to`, subject: folder, after: "" }
-        : { before: "added", subject: label, after: `to ${folder}` };
+        ? {
+            key: msg("added {{count}} files to <s>{{subject}}</s>"),
+            values: { subject: folder, count: item.count },
+          }
+        : { key: msg("added <s>{{subject}}</s> to {{folder}}"), values: { subject, folder } };
     }
     default:
-      return { before: "", subject: label, after: "" };
+      return { key: msg("<s>{{subject}}</s>"), values: { subject } };
   }
 }
 
 /** "2 questions, 1 approval" — the parts of Needs you that are there. */
-export function needsYouParts(n: { questions: number; approvals: number; other: number }): string {
+export function needsYouParts(
+  n: { questions: number; approvals: number; other: number },
+  t: Translate = englishT,
+): string {
   const parts: string[] = [];
-  if (n.questions) parts.push(`${n.questions} ${n.questions === 1 ? "question" : "questions"}`);
-  if (n.approvals) parts.push(`${n.approvals} ${n.approvals === 1 ? "approval" : "approvals"}`);
-  if (n.other) parts.push(`${n.other} more`);
+  if (n.questions) {
+    parts.push(
+      t("{{count}} question", { count: n.questions, defaultValue_other: "{{count}} questions" }),
+    );
+  }
+  if (n.approvals) {
+    parts.push(
+      t("{{count}} approval", { count: n.approvals, defaultValue_other: "{{count}} approvals" }),
+    );
+  }
+  if (n.other)
+    parts.push(t("{{count}} more", { count: n.other, defaultValue_other: "{{count}} more" }));
   return parts.join(", ");
 }
 
 /** "+12 vs the week before", "−3 vs the week before", "Same as the week before". */
-export function weekDelta(now: number, before: number): string {
+export function weekDelta(
+  now: number,
+  before: number,
+  t: Translate = englishT,
+  locale: string = "en-US",
+): string {
   const d = now - before;
-  if (d === 0) return "Same as the week before";
-  return `${d > 0 ? "+" : "−"}${Math.abs(d).toLocaleString("en-US")} vs the week before`;
+  if (d === 0) return t("Same as the week before");
+  const delta = `${d > 0 ? "+" : "−"}${Math.abs(d).toLocaleString(locale)}`;
+  return t("{{delta}} vs the week before", { delta });
 }

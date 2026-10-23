@@ -1,3 +1,4 @@
+import { englishT, type Translate } from "@/i18n";
 import { api, ApiError } from "./api-client";
 import { invitationNotice, type InvitationNotice } from "./invitation-notice";
 import type { InviteToSend } from "./invite-text";
@@ -19,6 +20,7 @@ export function parseEmails(text: string): string[] {
   for (const raw of text.split(/[\s,;]+/)) {
     const email = raw.trim();
     if (!email) continue;
+    // An address, not a word: lower-cased the same way in every language. i18n-ignore
     const key = email.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -35,7 +37,11 @@ export type SendOutcome = {
   notice: InvitationNotice;
 };
 
-export async function sendInvitations(emails: string[]): Promise<SendOutcome> {
+export async function sendInvitations(
+  emails: string[],
+  t: Translate = englishT,
+  locale: string = "en",
+): Promise<SendOutcome> {
   const invited: string[] = [];
   const failed: string[] = [];
   // Which ones, not just how many: these are the addresses the copy action
@@ -59,10 +65,14 @@ export async function sendInvitations(emails: string[]): Promise<SendOutcome> {
     }
   }
 
-  const notice = invitationNotice({
-    invited,
-    emailed: invited.length - unmailed.length,
-    failed,
-  });
+  const notice = invitationNotice(
+    {
+      invited,
+      emailed: invited.length - unmailed.length,
+      failed,
+    },
+    t,
+    locale,
+  );
   return { invited, failed, copyable, notice };
 }

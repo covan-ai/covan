@@ -1,4 +1,5 @@
 import { Archive } from "lucide-react";
+import { lookup, msg, Trans, useTranslation } from "@/i18n";
 import { SectionLabel } from "@/components/section";
 import {
   Select,
@@ -22,10 +23,10 @@ const NONE = "none";
  * out to and the number stays exact.
  */
 const RETENTIONS = [
-  { value: 12, label: "12 — about three months of weekly" },
-  { value: 26, label: "26 — about six months of weekly" },
-  { value: 52, label: "52 — about a year of weekly" },
-  { value: 104, label: "104 — about two years of weekly" },
+  { value: 12, label: msg("12 — about three months of weekly") },
+  { value: 26, label: msg("26 — about six months of weekly") },
+  { value: 52, label: msg("52 — about a year of weekly") },
+  { value: 104, label: msg("104 — about two years of weekly") },
 ] as const;
 
 /**
@@ -69,6 +70,7 @@ export function RoutineOutputCard({
   onSave: (patch: UpdateRoutineInput) => void;
   saving: boolean;
 }) {
+  const { t } = useTranslation();
   const selected = routine.outputBundleId;
   const bundle = bundles.find((b) => b.id === selected);
 
@@ -80,15 +82,15 @@ export function RoutineOutputCard({
 
   return (
     <section className="mt-2">
-      <SectionLabel>Keep a copy</SectionLabel>
+      <SectionLabel>{t("Keep a copy")}</SectionLabel>
       <p className="mt-0 mb-3 text-meta text-muted-foreground">
-        File each delivered summary into a bundle, so the agent can be asked about it later.
+        {t("File each delivered summary into a bundle, so the agent can be asked about it later.")}
       </p>
 
       <div className="space-y-4">
         <div className="space-y-2">
           <label className="text-xs text-muted-foreground" htmlFor="routine-output-bundle">
-            Bundle
+            {t("Bundle")}
           </label>
           <Select
             value={selected ?? NONE}
@@ -96,10 +98,10 @@ export function RoutineOutputCard({
             disabled={saving}
           >
             <SelectTrigger id="routine-output-bundle" className="w-full">
-              <SelectValue placeholder="Keep nothing" />
+              <SelectValue placeholder={t("Keep nothing")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={NONE}>Keep nothing</SelectItem>
+              <SelectItem value={NONE}>{t("Keep nothing")}</SelectItem>
               {bundles.map((b) => (
                 <SelectItem key={b.id} value={b.id}>
                   {b.name}
@@ -111,14 +113,15 @@ export function RoutineOutputCard({
 
         {selected === null ? (
           <p className="text-sm text-muted-foreground">
-            Each run is delivered and then forgotten — the run history keeps the text it sent, and
-            nothing else does.
+            {t(
+              "Each run is delivered and then forgotten — the run history keeps the text it sent, and nothing else does.",
+            )}
           </p>
         ) : (
           <>
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground" htmlFor="routine-output-retention">
-                Keep the last
+                {t("Keep the last")}
               </label>
               <Select
                 value={String(routine.outputRetention)}
@@ -131,7 +134,7 @@ export function RoutineOutputCard({
                 <SelectContent>
                   {RETENTIONS.map((r) => (
                     <SelectItem key={r.value} value={String(r.value)}>
-                      {r.label}
+                      {lookup(t, r.label)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -142,23 +145,36 @@ export function RoutineOutputCard({
               <Archive className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
               {canWrite ? (
                 <span>
-                  Every run that delivers something files one document into{" "}
-                  <strong className="font-medium">{bundle?.name ?? "that bundle"}</strong>, named
-                  after this routine and the day. Older ones are removed once there are more than{" "}
-                  {routine.outputRetention}.
+                  {bundle ? (
+                    <Trans
+                      t={t}
+                      i18nKey="Every run that delivers something files one document into <b>{{bundle}}</b>, named after this routine and the day. Older ones are removed once there are more than {{retention}}."
+                      values={{ bundle: bundle.name, retention: routine.outputRetention }}
+                      components={{ b: <strong className="font-medium" /> }}
+                    />
+                  ) : (
+                    <Trans
+                      t={t}
+                      i18nKey="Every run that delivers something files one document into <b>that bundle</b>, named after this routine and the day. Older ones are removed once there are more than {{retention}}."
+                      values={{ retention: routine.outputRetention }}
+                      components={{ b: <strong className="font-medium" /> }}
+                    />
+                  )}
                 </span>
               ) : (
                 <span>
-                  You are a viewer, so nothing is filed — runs deliver as usual, and the setting
-                  starts working if your role changes.
+                  {t(
+                    "You are a viewer, so nothing is filed — runs deliver as usual, and the setting starts working if your role changes.",
+                  )}
                 </span>
               )}
             </p>
 
             {readsItsOwnOutput && (
               <p className="text-meta text-muted-foreground">
-                This bundle is also attached to this routine's agent, so later runs will read what
-                earlier ones wrote.
+                {t(
+                  "This bundle is also attached to this routine's agent, so later runs will read what earlier ones wrote.",
+                )}
               </p>
             )}
           </>

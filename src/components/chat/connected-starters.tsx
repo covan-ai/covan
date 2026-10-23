@@ -3,6 +3,7 @@ import { useConnections, useToolConnections } from "@/hooks/use-connections";
 import { assetSrc } from "@/lib/api-client";
 import { mergeConnectedApps } from "@/lib/connected-apps";
 import { appStartersFor } from "@/lib/chat-starters";
+import { useTranslation } from "@/i18n";
 import { AppLogo } from "@/components/integrations/app-logo";
 import { PROVIDER_MARK } from "@/components/integrations/brand-marks";
 
@@ -24,6 +25,7 @@ import { PROVIDER_MARK } from "@/components/integrations/brand-marks";
  * that has connected nothing — most of them, on the day somebody signs up.
  */
 export function ConnectedStarters({ onPick }: { onPick: (starter: string) => void }) {
+  const { t } = useTranslation();
   // Both endpoints answer with a wrapper, not a list: `connections` beside the
   // catalogue of what this deployment COULD connect, which is the Integrations
   // page's question and not this one's.
@@ -34,8 +36,9 @@ export function ConnectedStarters({ onPick }: { onPick: (starter: string) => voi
     () =>
       appStartersFor(
         mergeConnectedApps(toolData?.connections ?? [], sourceData?.connections ?? []),
+        t,
       ),
-    [toolData, sourceData],
+    [toolData, sourceData, t],
   );
 
   if (starters.length === 0) return null;
@@ -43,7 +46,7 @@ export function ConnectedStarters({ onPick }: { onPick: (starter: string) => voi
   return (
     <div className="mt-10 text-left">
       <h4 className="text-xs font-medium uppercase tracking-[0.06em] text-micro-foreground">
-        Connected apps
+        {t("Connected apps")}
       </h4>
       <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
         {starters.map(({ app, starter }) => (

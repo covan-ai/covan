@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Zap } from "lucide-react";
 import { toast } from "sonner";
+import { lookup, msg, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Chip } from "@/components/chip";
 import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
@@ -37,11 +39,11 @@ import type { EventChoice, Routine, RoutineEventStatus } from "@/lib/routines-ap
  * is what the owner acts on, and a red chip would be a second accent.
  */
 const STATUS_WORD: Record<RoutineEventStatus, string> = {
-  pending: "Setting up",
-  active: "Listening",
-  failed: "Not connected yet",
-  expired: "Needs reconnecting",
-  disabled: "Paused",
+  pending: msg("Setting up"),
+  active: msg("Listening"),
+  failed: msg("Not connected yet"),
+  expired: msg("Needs reconnecting"),
+  disabled: msg("Paused"),
 };
 
 /**
@@ -52,6 +54,8 @@ const STATUS_WORD: Record<RoutineEventStatus, string> = {
  * routine would get an empty card.
  */
 export function RoutineEventCard({ routine }: { routine: Routine }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const event = routine.event;
   const [editing, setEditing] = useState(event === null);
   const [choice, setChoice] = useState<EventChoice | null>(
@@ -67,10 +71,11 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
     try {
       const updated = await setEvent.mutateAsync({ id: routine.id, choice });
       setEditing(false);
-      if (updated.event?.status === "active") toast.success(`Listening to ${updated.event.app}`);
+      if (updated.event?.status === "active")
+        toast.success(t("Listening to {{app}}", { app: updated.event.app }));
       else if (updated.event?.statusDetail) toast.message(updated.event.statusDetail);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not set that up");
+      toast.error(err instanceof ApiError ? err.message : t("Could not set that up"));
     }
   };
 
@@ -79,9 +84,9 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
       await removeEvent.mutateAsync(routine.id);
       setChoice(null);
       setEditing(true);
-      toast.success("Stopped listening");
+      toast.success(t("Stopped listening"));
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not stop it");
+      toast.error(err instanceof ApiError ? err.message : t("Could not stop it"));
     }
   };
 
@@ -90,24 +95,25 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
       const result = await testEvent.mutateAsync(routine.id);
       toast.success(
         result.status === "ok"
-          ? "Test event sent — the result is in the run history"
+          ? t("Test event sent — the result is in the run history")
           : result.status === "skipped"
-            ? "The agent read the test event and found nothing to send"
+            ? t("The agent read the test event and found nothing to send")
             : result.status === "waiting"
-              ? "Test running — the report is sent when the browser answers"
-              : "The test run failed — see the run history",
+              ? t("Test running — the report is sent when the browser answers")
+              : t("The test run failed — see the run history"),
       );
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not send a test event");
+      toast.error(err instanceof ApiError ? err.message : t("Could not send a test event"));
     }
   };
 
   return (
     <section className="mt-2">
-      <SectionLabel>Starts when</SectionLabel>
+      <SectionLabel>{t("Starts when")}</SectionLabel>
       <p className="mt-0 mb-3 text-meta text-muted-foreground">
-        Something happening in an app starts this routine, and the agent reads a short account of
-        it.
+        {t(
+          "Something happening in an app starts this routine, and the agent reads a short account of it.",
+        )}
       </p>
 
       <div className="space-y-4">
@@ -120,11 +126,11 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
                 onClick={() => void save()}
                 disabled={!eventChoiceReady(catalog, choice) || setEvent.isPending}
               >
-                {setEvent.isPending ? "Setting up…" : "Start listening"}
+                {setEvent.isPending ? t("Setting up…") : t("Start listening")}
               </Button>
               {event && (
                 <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
-                  Cancel
+                  {t("Cancel")}
                 </Button>
               )}
             </div>
@@ -138,7 +144,7 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
                   {event.app} · {event.label}
                 </span>
                 <Chip tone={event.status === "active" ? "ink" : "neutral"}>
-                  {STATUS_WORD[event.status]}
+                  {lookup(t, STATUS_WORD[event.status])}
                 </Chip>
               </div>
               {event.statusDetail && (
@@ -146,8 +152,10 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
               )}
               <p className="text-meta text-muted-foreground">
                 {event.lastEventAt === null
-                  ? "Nothing has arrived yet."
-                  : `Last event ${formatRelative(event.lastEventAt)}.`}
+                  ? t("Nothing has arrived yet.")
+                  : t("Last event {{when}}.", {
+                      when: formatRelative(event.lastEventAt, undefined, t, locale),
+                    })}
               </p>
             </div>
             {event.provider === "github" && (
@@ -169,29 +177,34 @@ export function RoutineEventCard({ routine }: { routine: Routine }) {
                 onClick={() => void test()}
                 disabled={testEvent.isPending}
               >
-                {testEvent.isPending ? "Running…" : "Send a test event"}
+                {testEvent.isPending ? t("Running…") : t("Send a test event")}
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
-                {event.status === "expired" || event.status === "failed" ? "Reconnect" : "Change"}
+                {event.status === "expired" || event.status === "failed"
+                  ? t("Reconnect")
+                  : t("Change")}
               </Button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="ghost" size="sm" disabled={removeEvent.isPending}>
-                    Stop listening
+                    {t("Stop listening")}
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Stop listening to {event.app}?</AlertDialogTitle>
+                    <AlertDialogTitle>
+                      {t("Stop listening to {{app}}?", { app: event.app })}
+                    </AlertDialogTitle>
                     <AlertDialogDescription>
-                      Nothing will start this routine until you choose an event again. The routine
-                      and its history stay.
+                      {t(
+                        "Nothing will start this routine until you choose an event again. The routine and its history stay.",
+                      )}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
                     <AlertDialogAction onClick={() => void stop()}>
-                      Stop listening
+                      {t("Stop listening")}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>

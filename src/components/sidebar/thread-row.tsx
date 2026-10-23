@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { api, ApiError } from "@/lib/api-client";
 import type { ChatSession } from "@/lib/agents-store";
 import { sessionLabel } from "@/lib/session-label";
@@ -37,7 +38,9 @@ export function ThreadRow({
   onChanged: () => void;
   onNavigate?: () => void;
 }) {
+  const { t } = useTranslation();
   const [renaming, setRenaming] = useState(false);
+  const label = sessionLabel(session, t);
   const dot =
     session.state === "needs_you" ? "waiting" : session.state === "running" ? "running" : "done";
   const share = async () => {
@@ -48,7 +51,7 @@ export function ThreadRow({
       );
       onChanged();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't change who can see it.");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't change who can see it."));
     }
   };
   return (
@@ -70,7 +73,7 @@ export function ThreadRow({
         )}
       >
         <StatusDot state={dot} />
-        <span className="min-w-0 truncate">{sessionLabel(session)}</span>
+        <span className="min-w-0 truncate">{label}</span>
         {(session.unread ?? 0) > 0 && !active && (
           <span className="ml-auto pr-1 text-xs font-medium text-muted-foreground">
             {session.unread}
@@ -82,20 +85,20 @@ export function ThreadRow({
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              aria-label={`More for ${sessionLabel(session)}`}
+              aria-label={t("More for {{thread}}", { thread: label })}
               className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-surface focus-visible:opacity-100 data-[state=open]:opacity-100"
             >
               <MoreHorizontal className="size-4" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="right">
-            <DropdownMenuItem onClick={() => setRenaming(true)}>Rename</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setRenaming(true)}>{t("Rename")}</DropdownMenuItem>
             <DropdownMenuItem onClick={() => void share()}>
-              {session.visibility === "shared" ? "Make private" : "Share with workspace"}
+              {session.visibility === "shared" ? t("Make private") : t("Share with workspace")}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-destructive" onClick={() => onDelete(session.id)}>
-              Delete
+              {t("Delete")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -103,11 +106,11 @@ export function ThreadRow({
       <TextPromptDialog
         open={renaming}
         onOpenChange={setRenaming}
-        title="Rename thread"
-        label="Name"
+        title={t("Rename thread")}
+        label={t("Name")}
         initialValue={session.title ?? ""}
-        submitLabel="Rename"
-        busyLabel="Renaming…"
+        submitLabel={t("Rename")}
+        busyLabel={t("Renaming…")}
         onSubmit={async (title) => {
           onRename(session.id, title);
           return true;

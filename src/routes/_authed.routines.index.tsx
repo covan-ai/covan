@@ -2,6 +2,7 @@ import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { EmptyPage } from "@/components/empty-page";
+import { useTranslation } from "@/i18n";
 
 export const Route = createFileRoute("/_authed/routines/")({
   component: RoutinesIndex,
@@ -9,6 +10,7 @@ export const Route = createFileRoute("/_authed/routines/")({
 
 /** The first routine, or what a routine is for when there is none yet. */
 function RoutinesIndex() {
+  const { t } = useTranslation();
   const { data: routines, isPending } = useQuery({
     queryKey: ["routines"],
     queryFn: () => api.routines.list(),
@@ -18,8 +20,10 @@ function RoutinesIndex() {
   if (first) return <Navigate to="/routines/$routineId" params={{ routineId: first.id }} replace />;
   return (
     <EmptyPage
-      title="No routines yet"
-      description="A routine is work an agent does on its own: a weekly brief, a daily digest, a check when something arrives. Make one from an agent's Routines tab."
+      title={t("No routines yet")}
+      description={t(
+        "A routine is work an agent does on its own: a weekly brief, a daily digest, a check when something arrives. Make one from an agent's Routines tab.",
+      )}
     />
   );
 }

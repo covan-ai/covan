@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { useAgentsStore, type Agent } from "@/lib/agents-store";
 import { useInboxCounts } from "@/hooks/use-inbox";
@@ -22,6 +23,7 @@ const SIDEBAR_THREADS = 8;
  * threads.
  */
 export function AgentRows({ agentId, onNavigate }: { agentId?: string; onNavigate?: () => void }) {
+  const { t } = useTranslation();
   const { agents, favorites } = useAgentsStore();
   const { data: counts } = useInboxCounts();
   const sorted = useMemo(
@@ -33,7 +35,7 @@ export function AgentRows({ agentId, onNavigate }: { agentId?: string; onNavigat
   );
   if (sorted.length === 0) return null;
   return (
-    <nav aria-label="Agents" className="flex flex-col gap-0.5">
+    <nav aria-label={t("Agents")} className="flex flex-col gap-0.5">
       {sorted.map((a) => {
         const c = counts?.byAgent[a.id];
         const open = a.id === agentId;
@@ -53,7 +55,7 @@ export function AgentRows({ agentId, onNavigate }: { agentId?: string; onNavigat
               ) : c && c.unread > 0 ? (
                 <span className="text-xs font-medium text-muted-foreground">{c.unread}</span>
               ) : c && c.running > 0 ? (
-                <StatusDot state="running" label={`${a.name} is working`} />
+                <StatusDot state="running" label={t("{{name}} is working", { name: a.name })} />
               ) : null}
             </Link>
             {open && <AgentThreads agent={a} onNavigate={onNavigate} />}
@@ -65,6 +67,7 @@ export function AgentRows({ agentId, onNavigate }: { agentId?: string; onNavigat
 }
 
 function AgentThreads({ agent, onNavigate }: { agent: Agent; onNavigate?: () => void }) {
+  const { t } = useTranslation();
   const { sessions, startSession, deleteSession, renameSession, canWrite } = useAgentsStore();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const queryClient = useQueryClient();
@@ -88,7 +91,7 @@ function AgentThreads({ agent, onNavigate }: { agent: Agent; onNavigate?: () => 
         search: { s: s.id },
       });
     } catch {
-      toast.error("Couldn't start a new thread.");
+      toast.error(t("Couldn't start a new thread."));
     } finally {
       setStarting(false);
     }
@@ -114,7 +117,7 @@ function AgentThreads({ agent, onNavigate }: { agent: Agent; onNavigate?: () => 
           className={cn(sub, "text-left")}
         >
           <Plus className="size-3.5 shrink-0" strokeWidth={1.75} />
-          <span>New thread</span>
+          <span>{t("New thread")}</span>
         </button>
       )}
       {threads.map((s) => (
@@ -135,7 +138,7 @@ function AgentThreads({ agent, onNavigate }: { agent: Agent; onNavigate?: () => 
         onClick={onNavigate}
         className={sub}
       >
-        All threads
+        {t("All threads")}
       </Link>
     </>
   );

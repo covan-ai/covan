@@ -3,6 +3,8 @@ import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/prom
 import { StepTrail, type AgentStepView } from "@/components/agent-steps";
 import { stepTime } from "@/lib/step-summary";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /**
  * The reply that is still arriving.
@@ -62,6 +64,8 @@ export function LiveAnswer({
   // Still arriving, as against having arrived. `thinkingMs` is set by the
   // route the moment the first answer token lands, which is the moment the
   // model stopped reasoning for this pass.
+  const { t } = useTranslation();
+  const locale = useLocale();
   const reasoningLive = streaming && thinkingMs === null;
 
   return (
@@ -86,8 +90,8 @@ export function LiveAnswer({
           <Reasoning className="mb-3" isStreaming={reasoningLive}>
             <ReasoningTrigger className="text-meta font-medium text-muted-foreground hover:text-foreground">
               {thinkingMs === null || thinkingMs === undefined
-                ? "Thinking"
-                : `Thinking · ${stepTime(thinkingMs)}`}
+                ? t("Thinking")
+                : t("Thinking · {{time}}", { time: stepTime(thinkingMs, t, locale) })}
             </ReasoningTrigger>
             <ReasoningContent className="mt-1.5">
               <Markdown content={thinkingText} className="text-xs" />
@@ -158,7 +162,7 @@ export function LiveAnswer({
               className="typing-dot h-1.5 w-1.5 rounded-full bg-muted-foreground"
               style={{ animationDelay: "0.3s" }}
             />
-            <span className="ml-1">Thinking…</span>
+            <span className="ml-1">{t("Thinking…")}</span>
           </div>
         )}
       </div>

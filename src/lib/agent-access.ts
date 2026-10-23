@@ -11,6 +11,8 @@
  * it — taking every component that asks "can I edit this?" down too.
  */
 
+import { englishT, lookup, msg, type Translate } from "@/i18n";
+
 export const AGENT_ACCESS = ["use", "edit", "manage"] as const;
 
 export type AgentAccess = (typeof AGENT_ACCESS)[number];
@@ -25,18 +27,18 @@ export type AgentShare = { userId: string; access: AgentAccess };
  */
 export type AgentSharing = { workspaceAccess: AgentAccess | null; shares: AgentShare[] };
 
-/** One name per level, on every screen that shows one. */
+/** One name per level, on every screen that shows one. English keys: `lookup(t, ACCESS_LABEL[a])`. */
 export const ACCESS_LABEL: Record<AgentAccess, string> = {
-  use: "Can use",
-  edit: "Can edit",
-  manage: "Full access",
+  use: msg("Can use"),
+  edit: msg("Can edit"),
+  manage: msg("Full access"),
 };
 
 /** What each level adds, for the picker. Cumulative, like the levels. */
 export const ACCESS_HINT: Record<AgentAccess, string> = {
-  use: "Chat with it. Its settings are read-only.",
-  edit: "Also change its persona, model and knowledge.",
-  manage: "Also share it, and delete it.",
+  use: msg("Chat with it. Its settings are read-only."),
+  edit: msg("Also change its persona, model and knowledge."),
+  manage: msg("Also share it, and delete it."),
 };
 
 /** 0 for no access, then 1–3. Mirrors `agent_access_rank`. */
@@ -97,18 +99,23 @@ export function sharingFor(
 export function sharingSummary(
   agent: AgentSharing & { createdBy: string | null },
   myId: string | undefined,
+  t: Translate = englishT,
 ): { mode: SharingMode; label: string } {
   const mode = sharingMode(agent);
   if (mode === "workspace") {
-    return { mode, label: `Everyone · ${ACCESS_LABEL[agent.workspaceAccess!]}` };
+    const access = lookup(t, ACCESS_LABEL[agent.workspaceAccess!]);
+    return { mode, label: t("Everyone · {{access}}", { access }) };
   }
   if (mode === "people") {
-    const n = agent.shares.length;
-    return { mode, label: `${n} ${n === 1 ? "person" : "people"}` };
+    const count = agent.shares.length;
+    return {
+      mode,
+      label: t("{{count}} person", { count, defaultValue_other: "{{count}} people" }),
+    };
   }
   return {
     mode,
-    label: agent.createdBy && agent.createdBy === myId ? "Only you" : "Only the owner",
+    label: agent.createdBy && agent.createdBy === myId ? t("Only you") : t("Only the owner"),
   };
 }
 
@@ -121,10 +128,11 @@ export const NEW_AGENT_SHARING = ["only", "use", "edit"] as const;
 
 export type NewAgentSharing = (typeof NEW_AGENT_SHARING)[number];
 
+/** English keys: `lookup(t, NEW_AGENT_SHARING_LABEL[choice])`. */
 export const NEW_AGENT_SHARING_LABEL: Record<NewAgentSharing, string> = {
-  only: "Only me",
-  use: `Whole workspace · ${ACCESS_LABEL.use}`,
-  edit: `Whole workspace · ${ACCESS_LABEL.edit}`,
+  only: msg("Only me"),
+  use: msg("Whole workspace · Can use"),
+  edit: msg("Whole workspace · Can edit"),
 };
 
 export function newAgentSharing(choice: NewAgentSharing): AgentSharing {
@@ -132,37 +140,50 @@ export function newAgentSharing(choice: NewAgentSharing): AgentSharing {
 }
 
 /** What the chip beside the tabs says about who else can use the agent. */
-export function sharingWords(agent: AgentSharing): string {
+export function sharingWords(agent: AgentSharing, t: Translate = englishT): string {
   const mode = sharingMode(agent);
-  if (mode === "workspace") return "Shared with team";
+  if (mode === "workspace") return t("Shared with team");
   if (mode === "people") {
-    const n = agent.shares.length;
-    return `Shared with ${n} ${n === 1 ? "person" : "people"}`;
+    return t("Shared with {{count}} person", {
+      count: agent.shares.length,
+      defaultValue_other: "Shared with {{count}} people",
+    });
   }
-  return "Private";
+  return t("Private");
 }
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * What a delete takes with it, in the delete dialog's words (A25): "Its 19
  * threads stay readable for 30 days under Recently deleted, then go. The 2
  * routines pointed at it stop now. The 3 folders it reads are not touched."
  */
-export function deleteSummarySentence(s: {
-  threads: number;
-  routines: number;
-  folders: number;
-}): string {
+export function deleteSummarySentence(
+  s: {
+    threads: number;
+    routines: number;
+    folders: number;
+  },
+  t: Translate = englishT,
+): string {
   const parts = [
     s.threads > 0
-      ? `Its ${plural(s.threads, "thread stays", "threads stay")} readable for 30 days under Recently deleted, then ${s.threads === 1 ? "goes" : "go"}.`
-      : "It waits 30 days under Recently deleted, then goes.",
+      ? t("Its {{count}} thread stays readable for 30 days under Recently deleted, then goes.", {
+          count: s.threads,
+          defaultValue_other:
+            "Its {{count}} threads stay readable for 30 days under Recently deleted, then go.",
+        })
+      : t("It waits 30 days under Recently deleted, then goes."),
     s.routines > 0
-      ? `The ${plural(s.routines, "routine", "routines")} pointed at it stop${s.routines === 1 ? "s" : ""} now.`
+      ? t("The {{count}} routine pointed at it stops now.", {
+          count: s.routines,
+          defaultValue_other: "The {{count}} routines pointed at it stop now.",
+        })
       : null,
     s.folders > 0
-      ? `The ${plural(s.folders, "folder", "folders")} it reads ${s.folders === 1 ? "is" : "are"} not touched.`
+      ? t("The {{count}} folder it reads is not touched.", {
+          count: s.folders,
+          defaultValue_other: "The {{count}} folders it reads are not touched.",
+        })
       : null,
   ];
   return parts.filter(Boolean).join(" ");
@@ -173,12 +194,18 @@ export function whoCanUse(
   agent: AgentSharing & { createdBy: string | null },
   workspaceName: string,
   myId: string | undefined,
+  t: Translate = englishT,
 ): string {
-  if (agent.workspaceAccess) return `Everyone in ${workspaceName}`;
-  const n = agent.shares.length;
-  const owner = agent.createdBy && agent.createdBy === myId ? "you" : "its owner";
-  if (n === 0) return owner === "you" ? "Only you" : "Only its owner";
-  return `${owner === "you" ? "You" : "Its owner"} and ${plural(n, "person", "people")}`;
+  if (agent.workspaceAccess) return t("Everyone in {{workspace}}", { workspace: workspaceName });
+  const count = agent.shares.length;
+  const mine = Boolean(agent.createdBy && agent.createdBy === myId);
+  if (count === 0) return mine ? t("Only you") : t("Only its owner");
+  return mine
+    ? t("You and {{count}} person", { count, defaultValue_other: "You and {{count}} people" })
+    : t("Its owner and {{count}} person", {
+        count,
+        defaultValue_other: "Its owner and {{count}} people",
+      });
 }
 
 /**
@@ -190,18 +217,27 @@ export function whoCanEdit(
   workspaceName: string,
   nameOf: (userId: string) => string | null,
   myId: string | undefined,
+  t: Translate = englishT,
 ): string {
   if (accessRank(agent.workspaceAccess) >= accessRank("edit"))
-    return `Everyone in ${workspaceName}`;
+    return t("Everyone in {{workspace}}", { workspace: workspaceName });
+  const you = t("you");
   const ids = [
     ...(agent.createdBy ? [agent.createdBy] : []),
     ...agent.shares.filter((s) => accessRank(s.access) >= accessRank("edit")).map((s) => s.userId),
   ];
   const names = [...new Set(ids)].map((id) =>
-    id === myId ? "you" : (nameOf(id)?.split(/\s+/)[0] ?? null),
+    id === myId ? you : (nameOf(id)?.split(/\s+/)[0] ?? null),
   );
   const known = names.filter((n): n is string => !!n);
-  if (known.length === 0) return "Admins";
-  if (known.length <= 2) return `Admins and ${known.join(" and ")}`;
-  return `Admins, ${known[0]} and ${plural(known.length - 1, "other", "others")}`;
+  if (known.length === 0) return t("Admins");
+  if (known.length === 1) return t("Admins and {{name}}", { name: known[0] });
+  if (known.length === 2) {
+    return t("Admins and {{first}} and {{second}}", { first: known[0], second: known[1] });
+  }
+  return t("Admins, {{name}} and {{count}} other", {
+    name: known[0],
+    count: known.length - 1,
+    defaultValue_other: "Admins, {{name}} and {{count}} others",
+  });
 }

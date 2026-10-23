@@ -1,19 +1,22 @@
 import { Folder, House, Inbox, MessageSquare, Repeat, SlidersVertical, Users } from "lucide-react";
+import { msg } from "@/i18n";
 
 /**
  * The workspace's pages, in the sidebar's order (DESIGN.md §6, the boards'
  * sidebar): Home, Inbox, Threads, Knowledge, Routines, Team. Settings is the
  * row at the foot of the sidebar, not one of these — listed with `bottom` so
  * the label rule below still knows what to call its pages.
+ *
+ * `label` is the English key; whoever renders it says `t(label)`.
  */
 export const PRIMARY_NAV = [
-  { to: "/app", label: "Home", icon: House },
-  { to: "/inbox", label: "Inbox", icon: Inbox },
-  { to: "/threads", label: "Threads", icon: MessageSquare },
-  { to: "/knowledge", label: "Knowledge", icon: Folder },
-  { to: "/routines", label: "Routines", icon: Repeat },
-  { to: "/team", label: "Team", icon: Users },
-  { to: "/settings", label: "Settings", icon: SlidersVertical, bottom: true },
+  { to: "/app", label: msg("Home"), icon: House },
+  { to: "/inbox", label: msg("Inbox"), icon: Inbox },
+  { to: "/threads", label: msg("Threads"), icon: MessageSquare },
+  { to: "/knowledge", label: msg("Knowledge"), icon: Folder },
+  { to: "/routines", label: msg("Routines"), icon: Repeat },
+  { to: "/team", label: msg("Team"), icon: Users },
+  { to: "/settings", label: msg("Settings"), icon: SlidersVertical, bottom: true },
 ] as const;
 
 /** The rows at the top of the sidebar: everything but Settings. */

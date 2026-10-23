@@ -4,6 +4,8 @@ import { ChevronDown } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { msg, lookup, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /*
  * prompt-kit's `tool`, copied and substantially rewritten.
@@ -103,16 +105,16 @@ export function hasPayload(part: ToolPart): boolean {
  * this says where to look.
  */
 function returnedLabel(status: ToolPart["status"]): string {
-  if (status === "failed") return "What went wrong";
-  if (status === "refused") return "Why it was not allowed";
+  if (status === "failed") return msg("What went wrong");
+  if (status === "refused") return msg("Why it was not allowed");
   // A `pending` step has not returned anything: the harness stores the
   // PROPOSAL's summary in `result_excerpt` for one, so the text here is the
   // question somebody is being asked. "Returned" over it is the screen saying
   // something untrue about what happened, on the one surface where the thing
   // being approved is an email about to be sent. A confirmation nobody ever
   // answers stays `pending` in the stored transcript, so this is reachable.
-  if (status === "pending") return "What it is asking";
-  return "Returned";
+  if (status === "pending") return msg("What it is asking");
+  return msg("Returned");
 }
 
 function Block({ title, body }: { title: string; body: string }) {
@@ -137,6 +139,8 @@ export type ToolProps = {
 };
 
 function Tool({ part, trigger, defaultOpen = false, className }: ToolProps) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [open, setOpen] = useState(defaultOpen);
   const sent = sentText(part);
   const returned = part.resultExcerpt?.trim() ? part.resultExcerpt : null;
@@ -155,15 +159,20 @@ function Tool({ part, trigger, defaultOpen = false, className }: ToolProps) {
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down motion-reduce:animate-none">
         <div className="mt-1.5 mb-2 flex min-w-0 flex-col gap-2.5 border-l border-hairline pl-3">
-          {sent && <Block title="Sent" body={sent} />}
+          {sent && <Block title={t("Sent")} body={sent} />}
           {/* No empty Returned block. A step recorded before 0060 and a step
               still waiting both have nothing here, and an empty bordered box
               reads as "the tool returned nothing", which is a different and
               false claim. */}
-          {returned && <Block title={returnedLabel(part.status)} body={returned} />}
+          {returned && <Block title={lookup(t, returnedLabel(part.status))} body={returned} />}
           {typeof part.durationMs === "number" && (
             <span className="text-xs text-muted-foreground/70">
-              took {(part.durationMs / 1000).toFixed(1)}s
+              {t("took {{seconds}}s", {
+                seconds: new Intl.NumberFormat(locale, {
+                  minimumFractionDigits: 1,
+                  maximumFractionDigits: 1,
+                }).format(part.durationMs / 1000),
+              })}
             </span>
           )}
         </div>

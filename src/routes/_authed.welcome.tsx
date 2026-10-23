@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { lookup, useTranslation } from "@/i18n";
 import { api, type Me, type OnboardingState } from "@/lib/api-client";
 import {
   EMPTY_ANSWERS,
@@ -55,6 +56,7 @@ const FORM_ID = "welcome-step";
  * agent arrives in the address, and leaving it either way leaves the run.
  */
 function Welcome() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const hosted = useIsHosted();
@@ -217,7 +219,7 @@ function Welcome() {
         replace: true,
       });
     } catch {
-      toast.error("Couldn't set up the agent. Try again.");
+      toast.error(t("Couldn't set up the agent. Try again."));
     } finally {
       finishing.current = false;
       setEnding(false);
@@ -255,13 +257,14 @@ function Welcome() {
   if (!step || (completed && !noWorkspace && !ending && !agentId)) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-sidebar">
-        <div className="text-sm text-muted-foreground">Loading…</div>
+        <div className="text-sm text-muted-foreground">{t("Loading…")}</div>
       </div>
     );
   }
 
   const progress = progressFor(step);
-  const back = prevStep(step, ctx) && !ending ? { label: CTA.back, onClick: goBack } : null;
+  const back =
+    prevStep(step, ctx) && !ending ? { label: lookup(t, CTA.back), onClick: goBack } : null;
   const valid = validity[step] ?? true;
   const busy = ending || (busyness[step] ?? false);
   const exit = noWorkspace || completed ? undefined : () => void complete();
@@ -271,10 +274,10 @@ function Welcome() {
       <WelcomeLayout
         progress={null}
         stepKey={step}
-        title="You've been invited"
-        subtitle="Join the team that asked, or start a workspace of your own."
+        title={t("You've been invited")}
+        subtitle={t("Join the team that asked, or start a workspace of your own.")}
         skip={{
-          label: noWorkspace ? "Start my own workspace instead" : "Not now",
+          label: noWorkspace ? t("Start my own workspace instead") : t("Not now"),
           onClick: () => {
             if (noWorkspace) {
               rememberDeclined();
@@ -299,13 +302,18 @@ function Welcome() {
       <WelcomeLayout
         progress={progress}
         stepKey={step}
-        title="Name your workspace"
-        subtitle="After your team or your company. Everything here can be changed later in Settings."
+        title={t("Name your workspace")}
+        subtitle={t(
+          "After your team or your company. Everything here can be changed later in Settings.",
+        )}
         back={back}
         formId={FORM_ID}
         onExit={exit}
-        primary={{ label: busy ? "Saving…" : CTA.continue, disabled: !valid || busy }}
-        below="Next: set up your first agent."
+        primary={{
+          label: busy ? t("Saving…") : lookup(t, CTA.continue),
+          disabled: !valid || busy,
+        }}
+        below={t("Next: set up your first agent.")}
       >
         <WorkspaceStep
           formId={FORM_ID}
@@ -352,18 +360,29 @@ function Welcome() {
       stepKey={step}
       wide
       lead={agent ? <AgentMark agent={agent} size={36} /> : null}
-      title={`What should ${agent?.name ?? "it"} know?`}
-      subtitle="Until it has read something, it is a chat window. These are files most teams already have. Drop them in; nothing leaves the workspace."
-      skip={{ label: CTA.skip, onClick: () => void navigate({ to: "/app", replace: true }) }}
-      primary={{ label: `Open ${agent?.name ?? "it"}`, onClick: open, disabled: !agentId }}
+      title={
+        agent ? t("What should {{agent}} know?", { agent: agent.name }) : t("What should it know?")
+      }
+      subtitle={t(
+        "Until it has read something, it is a chat window. These are files most teams already have. Drop them in; nothing leaves the workspace.",
+      )}
+      skip={{
+        label: lookup(t, CTA.skip),
+        onClick: () => void navigate({ to: "/app", replace: true }),
+      }}
+      primary={{
+        label: agent ? t("Open {{agent}}", { agent: agent.name }) : t("Open it"),
+        onClick: open,
+        disabled: !agentId,
+      }}
       below={
-        hosted ? "The first document in Knowledge earns the workspace 200 credits." : undefined
+        hosted ? t("The first document in Knowledge earns the workspace 200 credits.") : undefined
       }
     >
       {agent ? (
         <FirstDocsStep agent={agent} />
       ) : (
-        <p className="m-0 text-sm text-muted-foreground">Loading…</p>
+        <p className="m-0 text-sm text-muted-foreground">{t("Loading…")}</p>
       )}
     </WelcomeLayout>
   );
@@ -391,21 +410,29 @@ function AssistantScreen({
   onValidity: ((valid: boolean) => void) | undefined;
   onSubmit: (a: AssistantAnswer) => void;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(answers.assistantName ?? "");
+  const typed = name.trim();
   return (
     <WelcomeLayout
       progress={progress}
       stepKey="assistant"
-      title="Set up your first agent"
-      subtitle="Give it a name, a face and a job. Everything here can be changed later in its Configuration."
+      title={t("Set up your first agent")}
+      subtitle={t(
+        "Give it a name, a face and a job. Everything here can be changed later in its Configuration.",
+      )}
       back={back}
       formId={FORM_ID}
       onExit={exit}
       primary={{
-        label: busy ? CTA.finishing : `Create ${name.trim() || "it"}`,
+        label: busy
+          ? lookup(t, CTA.finishing)
+          : typed
+            ? t("Create {{name}}", { name: typed })
+            : t("Create it"),
         disabled: !valid || busy,
       }}
-      below="Next: add the first documents it should know."
+      below={t("Next: add the first documents it should know.")}
     >
       <AssistantStep
         formId={FORM_ID}

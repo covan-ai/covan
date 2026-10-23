@@ -1,5 +1,6 @@
+import { i18n } from "@/i18n";
 import { supabase } from "./supabase/client";
-import { ApiError, errorMessage, isNoWorkspace, requestIdOf } from "./api-error";
+import { ApiError, errorMessage, isNoWorkspace, requestIdOf, statedError } from "./api-error";
 import { assetSrc } from "./asset-src";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message, SessionTuning } from "./agents-store";
@@ -548,7 +549,7 @@ async function fetchDocumentBytes(id: string): Promise<{ blob: Blob; contentType
   const res = await fetch(`${import.meta.env.VITE_API_URL}/documents/${id}/download`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res.ok) throw new ApiError(res.status, "failed to download");
+  if (!res.ok) throw new ApiError(res.status, i18n.t("failed to download"));
   return { blob: await res.blob(), contentType: res.headers.get("Content-Type") ?? "" };
 }
 
@@ -567,12 +568,14 @@ async function exportDocument(id: string, format: "docx" | "pdf"): Promise<"save
   if (res.status === 501 && format === "pdf") return "print";
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      message = errorMessage(res.status, await res.json(), res.statusText);
+      body = await res.json();
+      message = errorMessage(res.status, body, res.statusText);
     } catch {
       // not JSON; the status text stands
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, undefined, statedError(body) ?? undefined);
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -616,7 +619,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
-    throw new ApiError(res.status, message, requestIdOf(res, body));
+    throw new ApiError(res.status, message, requestIdOf(res, body), statedError(body) ?? undefined);
   }
 
   if (res.status === 204) {
@@ -656,7 +659,7 @@ async function sendForm<T>(method: string, path: string, file: Blob): Promise<T>
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
-    throw new ApiError(res.status, message, requestIdOf(res, body));
+    throw new ApiError(res.status, message, requestIdOf(res, body), statedError(body) ?? undefined);
   }
   return (await res.json()) as T;
 }
@@ -722,7 +725,7 @@ async function putPart(
           }
           reject(new ApiError(xhr.status, message));
         };
-        xhr.onerror = () => reject(new ApiError(0, "network error"));
+        xhr.onerror = () => reject(new ApiError(0, i18n.t("network error")));
         xhr.send(body);
       });
     } catch (e) {
@@ -803,7 +806,7 @@ function uploadWithProgress<T>(
             try {
               resolve(JSON.parse(xhr.responseText));
             } catch {
-              reject(new ApiError(xhr.status, "invalid server response"));
+              reject(new ApiError(xhr.status, i18n.t("invalid server response")));
             }
           } else {
             let message = xhr.statusText;
@@ -815,14 +818,14 @@ function uploadWithProgress<T>(
             reject(new ApiError(xhr.status, message));
           }
         };
-        xhr.onerror = () => reject(new ApiError(0, "network error"));
+        xhr.onerror = () => reject(new ApiError(0, i18n.t("network error")));
         xhr.send(form);
       })
       .catch((e) => {
         reject(
           e instanceof ApiError
             ? e
-            : new ApiError(0, e instanceof Error ? e.message : "upload failed"),
+            : new ApiError(0, e instanceof Error ? e.message : i18n.t("upload failed")),
         );
       });
   });
@@ -843,12 +846,14 @@ async function downloadArchive(path: string): Promise<void> {
   });
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      message = errorMessage(res.status, await res.json(), res.statusText);
+      body = await res.json();
+      message = errorMessage(res.status, body, res.statusText);
     } catch {
       // A failure that is not JSON is still a failure; keep the status text.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, undefined, statedError(body) ?? undefined);
   }
 
   const blob = await res.blob();
@@ -1045,6 +1050,7 @@ export const api = {
       // pdf.js can't run on the Workers runtime, so PDFs are parsed here in the
       // browser and the extracted text is sent alongside the file for indexing.
       let text = "";
+      // A file extension, not a word. i18n-ignore
       if (file.name.toLowerCase().endsWith(".pdf")) {
         onPhase?.("reading");
         try {
@@ -1054,7 +1060,10 @@ export const api = {
           // text" and call a locked or damaged PDF a scan.
           throw new ApiError(
             0,
-            `${file.name}: this PDF could not be opened — it may be password-protected or damaged`,
+            i18n.t(
+              "{{file}}: this PDF could not be opened — it may be password-protected or damaged",
+              { file: file.name },
+            ),
           );
         }
       }

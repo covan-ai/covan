@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
+import { Trans, useTranslation } from "@/i18n";
+import { lookup, msg } from "@/i18n";
 import {
   Dialog,
   DialogContent,
@@ -34,9 +36,9 @@ import { api, type FeedbackKind } from "@/lib/api-client";
  */
 
 const KINDS: { key: FeedbackKind; label: string }[] = [
-  { key: "problem", label: "Something's broken" },
-  { key: "idea", label: "An idea" },
-  { key: "other", label: "Something else" },
+  { key: "problem", label: msg("Something's broken") },
+  { key: "idea", label: msg("An idea") },
+  { key: "other", label: msg("Something else") },
 ];
 
 /** Matches the check constraint on `feedback.message`. */
@@ -58,6 +60,7 @@ export function FeedbackDialog({
   about?: FeedbackAbout | null;
   initialKind?: FeedbackKind | null;
 }) {
+  const { t } = useTranslation();
   /**
    * Null until somebody picks, and stored as "other" if they never do.
    *
@@ -84,12 +87,12 @@ export function FeedbackDialog({
       });
       setMessage("");
       onOpenChange(false);
-      toast.success("Sent. Thank you — somebody reads these.");
+      toast.success(t("Sent. Thank you — somebody reads these."));
     } catch {
       // Deliberately keeps the box open and the words in it. Somebody who just
       // typed three paragraphs about a bug and hit a failed request must not
       // lose them to the thing they were reporting.
-      toast.error("Couldn't send that. It's still here — try again in a moment.");
+      toast.error(t("Couldn't send that. It's still here — try again in a moment."));
     } finally {
       setSending(false);
     }
@@ -99,10 +102,11 @@ export function FeedbackDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Send feedback</DialogTitle>
+          <DialogTitle>{t("Send feedback")}</DialogTitle>
           <DialogDescription>
-            This goes to whoever runs this Covan, and to nobody in your workspace. There's no reply
-            — it's a note, not a ticket.
+            {t(
+              "This goes to whoever runs this Covan, and to nobody in your workspace. There's no reply — it's a note, not a ticket.",
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -120,13 +124,13 @@ export function FeedbackDialog({
                   : "bg-muted text-muted-foreground hover:text-foreground",
               )}
             >
-              {option.label}
+              {lookup(t, option.label)}
             </button>
           ))}
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="feedback-message">What happened</Label>
+          <Label htmlFor="feedback-message">{t("What happened")}</Label>
           <Textarea
             id="feedback-message"
             autoFocus
@@ -134,8 +138,8 @@ export function FeedbackDialog({
             maxLength={MAX_MESSAGE}
             placeholder={
               about
-                ? "What was wrong with it, or what you expected instead."
-                : "What you were doing, and what you expected instead."
+                ? t("What was wrong with it, or what you expected instead.")
+                : t("What you were doing, and what you expected instead.")
             }
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -145,26 +149,32 @@ export function FeedbackDialog({
               nor the answer is an exception to that. */}
           <p className="text-meta text-muted-foreground">
             {about ? (
-              <>
-                Sent about <span className="font-medium text-foreground">{about.label}</span> and
-                the page you're on (<span className="font-mono">{path}</span>), so nobody has to
-                describe which one.
-              </>
+              <Trans
+                t={t}
+                i18nKey="Sent about <b>{{label}}</b> and the page you're on (<code>{{path}}</code>), so nobody has to describe which one."
+                values={{ label: about.label, path }}
+                components={{
+                  b: <span className="font-medium text-foreground" />,
+                  code: <span className="font-mono" />,
+                }}
+              />
             ) : (
-              <>
-                Sent with the page you're on (<span className="font-mono">{path}</span>) so nobody
-                has to describe where they were.
-              </>
+              <Trans
+                t={t}
+                i18nKey="Sent with the page you're on (<code>{{path}}</code>) so nobody has to describe where they were."
+                values={{ path }}
+                components={{ code: <span className="font-mono" /> }}
+              />
             )}
           </p>
         </div>
 
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={sending}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button onClick={() => void send()} disabled={!message.trim() || sending}>
-            {sending ? "Sending…" : "Send"}
+            {sending ? t("Sending…") : t("Send")}
           </Button>
         </DialogFooter>
       </DialogContent>

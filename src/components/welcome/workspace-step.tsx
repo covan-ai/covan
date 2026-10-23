@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +34,7 @@ export function WorkspaceStep({
   onValidityChange?: (valid: boolean) => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   // Null until somebody types. Until then the field shows the name given at
   // sign-up, which is read from the session and can arrive after the step is
@@ -69,7 +71,7 @@ export function WorkspaceStep({
         await queryClient.invalidateQueries();
         onDone();
       } catch {
-        toast.error("Couldn't create the workspace.");
+        toast.error(t("Couldn't create the workspace."));
         setSaving(false);
       }
       return;
@@ -79,7 +81,7 @@ export function WorkspaceStep({
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       onDone();
     } catch {
-      toast.error("Couldn't rename the workspace.");
+      toast.error(t("Couldn't rename the workspace."));
       setSaving(false);
     }
   }
@@ -87,19 +89,19 @@ export function WorkspaceStep({
   return (
     <form id={formId} onSubmit={handleSubmit} className="space-y-5">
       <div className="space-y-1.5">
-        <Label htmlFor="workspace-name">Name</Label>
+        <Label htmlFor="workspace-name">{t("Name")}</Label>
         <Input
           id="workspace-name"
           value={name}
           onChange={(e) => setTyped(e.target.value)}
           maxLength={100}
-          placeholder="Acme"
+          placeholder={t("Acme")}
           className="max-w-[360px]"
           required
           autoFocus
         />
         <p className="m-0 text-meta text-muted-foreground">
-          Your team sees it in the sidebar and in the invitations you send.
+          {t("Your team sees it in the sidebar and in the invitations you send.")}
         </p>
       </div>
     </form>

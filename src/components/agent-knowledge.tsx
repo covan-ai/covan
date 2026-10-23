@@ -3,6 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Folder, FolderPlus, Globe, Blocks } from "lucide-react";
 import { toast } from "sonner";
+import { Trans, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Chip } from "@/components/chip";
 import { DocumentPreviewDialog } from "@/components/document-preview-dialog";
 import { PageBody } from "@/components/page";
@@ -22,10 +24,9 @@ import { useWorkspaceRole } from "@/lib/workspace-role";
 
 const SOURCE_NAME: Record<string, string> = { notion: "Notion", google_drive: "Google Drive" };
 
-/** "Research and Finance", "Research, Finance and Support". */
-function listOf(names: string[]): string {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+/** "Research and Finance", "Research, Finance and Support" — in the reader's language. */
+function listOf(names: string[], locale: string): string {
+  return new Intl.ListFormat(locale, { type: "conjunction" }).format(names);
 }
 
 /**
@@ -35,6 +36,8 @@ function listOf(names: string[]): string {
  * written was close to. The files themselves are on the Knowledge page.
  */
 export function AgentKnowledge({ agent }: { agent: Agent }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { agents, bundles, attachBundle, detachBundle, createBundle, uploadToBundle } =
     useAgentsStore();
   const { isAdmin } = useWorkspaceRole();
@@ -60,24 +63,36 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
   const firstRead = bundles.find((b) => reads.has(b.id)) ?? null;
 
   const describe = (bundleId: string, documentCount: number): string => {
-    const parts = [`${documentCount} ${documentCount === 1 ? "file" : "files"}`];
+    const parts = [
+      t("{{count}} file", { count: documentCount, defaultValue_other: "{{count}} files" }),
+    ];
     const source = (connections.data?.connections ?? []).find((c) => c.bundleId === bundleId);
-    if (source) parts.push(`synced from ${SOURCE_NAME[source.provider] ?? source.provider}`);
+    if (source)
+      parts.push(
+        t("synced from {{source}}", { source: SOURCE_NAME[source.provider] ?? source.provider }),
+      );
     if ((routines.data ?? []).some((r) => r.outputBundleId === bundleId))
-      parts.push("written by routines");
+      parts.push(t("written by routines"));
     if (reads.has(bundleId)) {
       const replies = usage.data?.byBundle[bundleId]?.replies ?? 0;
       if (replies > 0)
-        parts.push(`used in ${replies} ${replies === 1 ? "reply" : "replies"} this month`);
+        parts.push(
+          t("used in {{count}} reply this month", {
+            count: replies,
+            defaultValue_other: "used in {{count}} replies this month",
+          }),
+        );
     } else {
       const others = agents
         .filter((a) => a.id !== agent.id && a.bundleIds.includes(bundleId))
         .map((a) => a.name);
-      if (others.length > 0) parts.push(`read by ${listOf(others)}`);
+      if (others.length > 0)
+        parts.push(t("read by {{agents}}", { agents: listOf(others, locale) }));
     }
     return parts.join(" · ");
   };
 
+  const connectedApp = t("connected app");
   const alsoReads = [
     ...(tools.data?.connections ?? [])
       .filter((c) => c.status === "active" && !(agent.connectionsOff ?? []).includes(c.id))
@@ -87,16 +102,30 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
         name: c.label,
         note:
           c.transport === "composio"
-            ? `${c.toolkitSlug ?? "connected app"} · asks before its first action`
+            ? t("{{app}} · asks before its first action", { app: c.toolkitSlug ?? connectedApp })
             : c.transport === "http"
-              ? "an HTTP API"
-              : "a database",
+              ? t("an HTTP API")
+              : t("a database"),
       })),
     ...(agent.webSearch
-      ? [{ key: "web", icon: Globe, name: "The web, when asked", note: "web search on" }]
+      ? [
+          {
+            key: "web",
+            icon: Globe,
+            name: t("The web, when asked"),
+            note: t("web search on"),
+          },
+        ]
       : []),
     ...(!agent.browserOff
-      ? [{ key: "browser", icon: Globe, name: "Pages in a browser", note: "asks before each task" }]
+      ? [
+          {
+            key: "browser",
+            icon: Globe,
+            name: t("Pages in a browser"),
+            note: t("asks before each task"),
+          },
+        ]
       : []),
   ];
 
@@ -109,7 +138,7 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
     if (!files || !firstRead) return;
     let added = 0;
     for (const file of Array.from(files)) {
-      const check = validateUpload(file);
+      const check = validateUpload(file, t);
       if (!check.ok) {
         toast.error(check.reason);
         continue;
@@ -118,32 +147,42 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
         await uploadToBundle(firstRead.id, file);
         added += 1;
       } catch {
-        toast.error(`Couldn't upload ${file.name}`);
+        toast.error(t("Couldn't upload {{file}}", { file: file.name }));
       }
     }
     if (added > 0)
-      toast.success(`Added ${added} ${added === 1 ? "file" : "files"} to ${firstRead.name}`);
+      toast.success(
+        t("Added {{count}} file to {{folder}}", {
+          count: added,
+          folder: firstRead.name,
+          defaultValue_other: "Added {{count}} files to {{folder}}",
+        }),
+      );
   };
 
   return (
     <>
       <TopBarPortal>
         <Button variant="secondary" asChild>
-          <Link to="/knowledge">Open Knowledge</Link>
+          <Link to="/knowledge">{t("Open Knowledge")}</Link>
         </Button>
       </TopBarPortal>
 
       <PageBody width="wide" className="lg:pt-7">
         <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
           <div>
-            <h2 className="m-0 text-xl font-semibold">What {agent.name} reads</h2>
+            <h2 className="m-0 text-xl font-semibold">
+              {t("What {{agent}} reads", { agent: agent.name })}
+            </h2>
             <p className="mt-1.5 mb-4 text-sm text-muted-foreground">
-              Folders are shared by the whole workspace; this is only which of them {agent.name}{" "}
-              looks at before it answers. It sees new files within a minute.
+              {t(
+                "Folders are shared by the whole workspace; this is only which of them {{agent}} looks at before it answers. It sees new files within a minute.",
+                { agent: agent.name },
+              )}
             </p>
             {bundles.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No folders yet. Make one, and {agent.name} can read it.
+                {t("No folders yet. Make one, and {{agent}} can read it.", { agent: agent.name })}
               </p>
             ) : (
               <ul className="m-0 list-none overflow-hidden rounded-[10px] border border-border p-0">
@@ -173,7 +212,10 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
                       <Switch
                         checked={on}
                         disabled={!canEdit}
-                        aria-label={`${agent.name} reads ${b.name}`}
+                        aria-label={t("{{agent}} reads {{folder}}", {
+                          agent: agent.name,
+                          folder: b.name,
+                        })}
                         onCheckedChange={(next) => {
                           if (next) void attachBundle(agent.id, b.id);
                           else detachBundle(agent.id, b.id);
@@ -187,11 +229,11 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
             {canEdit ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => setCreating(true)}>
-                  <FolderPlus /> New folder
+                  <FolderPlus /> {t("New folder")}
                 </Button>
                 {firstRead ? (
                   <Button variant="ghost" onClick={() => uploadInput.current?.click()}>
-                    Upload to {firstRead.name}
+                    {t("Upload to {{folder}}", { folder: firstRead.name })}
                   </Button>
                 ) : null}
                 <input
@@ -200,7 +242,11 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
                   multiple
                   accept={ACCEPT}
                   className="hidden"
-                  aria-label={`Upload to ${firstRead?.name ?? "a folder"}`}
+                  aria-label={
+                    firstRead
+                      ? t("Upload to {{folder}}", { folder: firstRead.name })
+                      : t("Upload to a folder")
+                  }
                   onChange={(e) => {
                     void upload(e.target.files);
                     e.target.value = "";
@@ -211,7 +257,7 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
 
             {alsoReads.length > 0 ? (
               <>
-                <SectionLabel>Also reads</SectionLabel>
+                <SectionLabel>{t("Also reads")}</SectionLabel>
                 <ul className="m-0 list-none p-0">
                   {alsoReads.map((r) => (
                     <li
@@ -225,7 +271,7 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
                       </span>
                       <Button variant="ghost" size="sm" asChild>
                         <Link to="/agents/$agentId/configuration" params={{ agentId: agent.id }}>
-                          Tools
+                          {t("Tools")}
                         </Link>
                       </Button>
                     </li>
@@ -240,13 +286,16 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
               <>
                 <SectionLabel
                   className="lg:mt-1"
-                  action={isAdmin ? <Link to="/settings/coverage">Coverage</Link> : undefined}
+                  action={
+                    isAdmin ? <Link to="/settings/coverage">{t("Coverage")}</Link> : undefined
+                  }
                 >
-                  Worth revisiting
+                  {t("Worth revisiting")}
                 </SectionLabel>
                 <p className="mt-0 mb-2 text-meta text-muted-foreground">
-                  Old enough to doubt, used enough to matter. Shown only on the days there is
-                  something.
+                  {t(
+                    "Old enough to doubt, used enough to matter. Shown only on the days there is something.",
+                  )}
                 </p>
                 <ul className="m-0 list-none p-0">
                   {documents.map((d) => (
@@ -258,15 +307,19 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
                         {d.name}
                       </Chip>
                       <span className="flex-1 text-meta text-muted-foreground">
-                        {ageWords(d.createdAt)} · {d.uses} {d.uses === 1 ? "reply" : "replies"}
+                        {t("{{age}} · {{count}} reply", {
+                          age: ageWords(d.createdAt, undefined, t),
+                          count: d.uses,
+                          defaultValue_other: "{{age}} · {{count}} replies",
+                        })}
                       </span>
                       <Button
                         variant="ghost"
                         size="sm"
-                        aria-label={`Open ${d.name}`}
+                        aria-label={t("Open {{name}}", { name: d.name })}
                         onClick={() => setOpened(d)}
                       >
-                        Open
+                        {t("Open")}
                       </Button>
                     </li>
                   ))}
@@ -277,11 +330,19 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
             {grounding && answers > 0 ? (
               <>
                 <SectionLabel className={documents.length === 0 ? "lg:mt-1" : undefined}>
-                  Asked, not covered
+                  {t("Asked, not covered")}
                 </SectionLabel>
                 <div
                   role="img"
-                  aria-label={`${agent.name}, last 30 days: ${pct(grounding.covered)}% found a passage, ${pct(grounding.fallback)}% fell back to whole documents, ${pct(grounding.ungrounded)}% nothing close`}
+                  aria-label={t(
+                    "{{agent}}, last 30 days: {{covered}}% found a passage, {{fallback}}% fell back to whole documents, {{ungrounded}}% nothing close",
+                    {
+                      agent: agent.name,
+                      covered: pct(grounding.covered),
+                      fallback: pct(grounding.fallback),
+                      ungrounded: pct(grounding.ungrounded),
+                    },
+                  )}
                   className="mb-2 flex h-3.5 gap-0.5"
                 >
                   {[
@@ -299,22 +360,25 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
                     ))}
                 </div>
                 <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
-                  In the last 30 days, {usage.data?.notCoveredPct ?? 0}% of what {agent.name} was
-                  asked had no close passage in these folders. Adding the documents people keep
-                  asking about is the fix
                   {isAdmin ? (
-                    <>
-                      ; the{" "}
-                      <Link
-                        to="/settings/coverage"
-                        className="font-medium underline-offset-4 hover:underline"
-                      >
-                        Coverage
-                      </Link>{" "}
-                      page shows which agents are in the same place.
-                    </>
+                    <Trans
+                      t={t}
+                      i18nKey="In the last 30 days, {{pct}}% of what {{agent}} was asked had no close passage in these folders. Adding the documents people keep asking about is the fix; the <coverage>Coverage</coverage> page shows which agents are in the same place."
+                      values={{ pct: usage.data?.notCoveredPct ?? 0, agent: agent.name }}
+                      components={{
+                        coverage: (
+                          <Link
+                            to="/settings/coverage"
+                            className="font-medium underline-offset-4 hover:underline"
+                          />
+                        ),
+                      }}
+                    />
                   ) : (
-                    "."
+                    t(
+                      "In the last 30 days, {{pct}}% of what {{agent}} was asked had no close passage in these folders. Adding the documents people keep asking about is the fix.",
+                      { pct: usage.data?.notCoveredPct ?? 0, agent: agent.name },
+                    )
                   )}
                 </p>
               </>
@@ -326,19 +390,21 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
       <TextPromptDialog
         open={creating}
         onOpenChange={setCreating}
-        title="New folder"
-        label="Name"
-        placeholder="Policies"
-        submitLabel="Create folder"
-        busyLabel="Creating…"
+        title={t("New folder")}
+        label={t("Name")}
+        placeholder={t("Policies")}
+        submitLabel={t("Create folder")}
+        busyLabel={t("Creating…")}
         onSubmit={async (name) => {
           try {
             const bundle = await createBundle(name.trim());
             await attachBundle(agent.id, bundle.id);
-            toast.success(`${agent.name} reads ${bundle.name}`);
+            toast.success(
+              t("{{agent}} reads {{folder}}", { agent: agent.name, folder: bundle.name }),
+            );
             return true;
           } catch {
-            toast.error("Couldn't create that folder");
+            toast.error(t("Couldn't create that folder"));
             return false;
           }
         }}

@@ -12,6 +12,8 @@ import {
   UserPlus,
   Trash2,
 } from "lucide-react";
+import { lookup, msg, Trans, useTranslation, type TFunction } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { api, type WorkspaceEvent } from "@/lib/api-client";
@@ -34,6 +36,8 @@ import { formatRelative } from "@/lib/relative-time";
  * under a stream nobody reads.
  */
 export function WorkspaceActivitySection({ isAdmin }: { isAdmin: boolean }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [expanded, setExpanded] = useState(false);
   const limit = expanded ? 100 : 12;
 
@@ -46,17 +50,19 @@ export function WorkspaceActivitySection({ isAdmin }: { isAdmin: boolean }) {
   if (!isAdmin) return null;
 
   const events = data?.events ?? [];
+  const someoneGone = t("Someone no longer here");
 
   // "Recent activity" on Team (A3): one 40px row per event — what, who, when.
   return (
     <section className="mt-10">
-      <SectionLabel as="h2">Recent activity</SectionLabel>
+      <SectionLabel as="h2">{t("Recent activity")}</SectionLabel>
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
       ) : events.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Once somebody deletes an agent, changes a role or sends an invitation, it lands here with
-          their name on it — written by the database, so nothing that skips the app can skip it.
+          {t(
+            "Once somebody deletes an agent, changes a role or sends an invitation, it lands here with their name on it — written by the database, so nothing that skips the app can skip it.",
+          )}
         </p>
       ) : (
         <>
@@ -70,11 +76,10 @@ export function WorkspaceActivitySection({ isAdmin }: { isAdmin: boolean }) {
                   <EventIcon action={e.action} />
                 </span>
                 <span className="min-w-0 flex-1 truncate">
-                  <span className="font-medium">{e.actor ?? "Someone no longer here"}</span>{" "}
-                  {lowerFirst(describe(e))}
+                  <EventLine e={e} t={t} actor={e.actor ?? someoneGone} />
                 </span>
                 <span className="shrink-0 text-meta text-muted-foreground">
-                  {formatRelative(e.createdAt)}
+                  {formatRelative(e.createdAt, undefined, t, locale)}
                 </span>
               </li>
             ))}
@@ -82,7 +87,7 @@ export function WorkspaceActivitySection({ isAdmin }: { isAdmin: boolean }) {
           {(data?.hasMore || expanded) && (
             <div className="mt-3">
               <Button variant="ghost" size="sm" onClick={() => setExpanded(!expanded)}>
-                {expanded ? "Show less" : "Show more"}
+                {expanded ? t("Show less") : t("Show more")}
               </Button>
             </div>
           )}
@@ -90,11 +95,6 @@ export function WorkspaceActivitySection({ isAdmin }: { isAdmin: boolean }) {
       )}
     </section>
   );
-}
-
-/** "Deleted the agent …" after a name reads "Ada deleted the agent …". */
-function lowerFirst(s: string): string {
-  return /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s;
 }
 
 function EventIcon({ action }: { action: string }) {
@@ -111,50 +111,94 @@ function EventIcon({ action }: { action: string }) {
   return <Trash2 className={cls} />;
 }
 
+/** A role inside a sentence ("joined as member"), not the capitalised label. */
+const ROLE_NOUN: Record<string, string> = {
+  admin: msg("admin"),
+  member: msg("member"),
+  viewer: msg("viewer"),
+};
+
 /**
- * One sentence per event, in the past tense, naming the thing.
+ * One sentence per event, in the past tense, naming the thing — with the
+ * person who did it inside it, `<b>{{actor}}</b>`, because where the doer
+ * stands in a sentence is the language's business, not this file's.
  *
  * `subjectLabel` is the name the thing had at the time, stored on the row
  * rather than joined — thirty days after a deletion the sweeper takes the row
  * and `subjectId` points nowhere, and a log that can only say "an agent was
  * deleted" is not a log.
  *
- * The default branch prints the raw action rather than swallowing it. An
- * unknown action means the database learned to write one this file has not
- * learned to read, and showing it is how that gets noticed.
+ * An unknown action has no sentence: the line prints the raw action rather
+ * than swallowing it. It means the database learned to write one this file
+ * has not learned to read, and showing it is how that gets noticed.
  */
-function describe(e: WorkspaceEvent): string {
-  const what = e.subjectLabel;
+function EventLine({ e, t, actor }: { e: WorkspaceEvent; t: TFunction; actor: string }) {
   const role = (e.detail?.role as string | undefined) ?? null;
+  const roleNoun = (r: unknown) =>
+    typeof r === "string" ? lookup(t, ROLE_NOUN[r] ?? r) : String(r);
+  const line = sentenceKey(e.action, role);
+  if (!line) {
+    return (
+      <>
+        <span className="font-medium">{actor}</span> {e.action} — {e.subjectLabel}
+      </>
+    );
+  }
+  return (
+    <Trans
+      t={t}
+      i18nKey={line.key}
+      values={{
+        actor,
+        what: e.subjectLabel,
+        role: role ? roleNoun(role) : "",
+        from: roleNoun(e.detail?.from),
+        to: roleNoun(e.detail?.to),
+      }}
+      components={{ b: <span className="font-medium" /> }}
+    />
+  );
+}
 
-  switch (e.action) {
+/** The sentence's key, held in an object so `<Trans>` reads it as a lookup, not a literal. */
+function sentenceKey(action: string, role: string | null): { key: string } | null {
+  const key = sentenceFor(action, role);
+  return key ? { key } : null;
+}
+
+function sentenceFor(action: string, role: string | null): string | null {
+  switch (action) {
     case "agent.deleted":
-      return `Deleted the agent ${what}`;
+      return msg("<b>{{actor}}</b> deleted the agent {{what}}");
     case "agent.restored":
-      return `Restored the agent ${what}`;
+      return msg("<b>{{actor}}</b> restored the agent {{what}}");
     case "bundle.deleted":
-      return `Deleted the knowledge bundle ${what}`;
+      return msg("<b>{{actor}}</b> deleted the knowledge bundle {{what}}");
     case "bundle.restored":
-      return `Restored the knowledge bundle ${what}`;
+      return msg("<b>{{actor}}</b> restored the knowledge bundle {{what}}");
     case "document.deleted":
-      return `Deleted the document ${what}`;
+      return msg("<b>{{actor}}</b> deleted the document {{what}}");
     case "document.restored":
-      return `Restored the document ${what}`;
+      return msg("<b>{{actor}}</b> restored the document {{what}}");
     case "member.role_changed":
-      return `Changed ${what} from ${e.detail?.from} to ${e.detail?.to}`;
+      return msg("<b>{{actor}}</b> changed {{what}} from {{from}} to {{to}}");
     case "member.joined":
-      return `${what} joined${role ? ` as ${role}` : ""}`;
+      return role
+        ? msg("<b>{{actor}}</b> {{what}} joined as {{role}}")
+        : msg("<b>{{actor}}</b> {{what}} joined");
     case "member.left":
-      return `${what} left the workspace`;
+      return msg("<b>{{actor}}</b> {{what}} left the workspace");
     case "member.removed":
-      return `Removed ${what} from the workspace`;
+      return msg("<b>{{actor}}</b> removed {{what}} from the workspace");
     case "invitation.created":
-      return `Invited ${what}${role ? ` as ${role}` : ""}`;
+      return role
+        ? msg("<b>{{actor}}</b> invited {{what}} as {{role}}")
+        : msg("<b>{{actor}}</b> invited {{what}}");
     case "invitation.revoked":
-      return `Revoked the invitation to ${what}`;
+      return msg("<b>{{actor}}</b> revoked the invitation to {{what}}");
     case "invitation.resent":
-      return `Sent a new invitation link to ${what}`;
+      return msg("<b>{{actor}}</b> sent a new invitation link to {{what}}");
     default:
-      return `${e.action} — ${what}`;
+      return null;
   }
 }

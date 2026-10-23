@@ -16,6 +16,8 @@ import {
 import { useAgentsStore, type Agent } from "@/lib/agents-store";
 import { ACCEPT } from "@/lib/uploads";
 import { useChatUploads } from "@/lib/use-chat-uploads";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /**
  * Home's one line for asking (Main): the agent, what to ask it, a file, send.
@@ -35,6 +37,8 @@ export function AskBar({
   selected: Agent;
   onSelect: (id: string) => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { startSession } = useAgentsStore();
   const navigate = useNavigate();
   const uploads = useChatUploads(selected);
@@ -66,7 +70,7 @@ export function AskBar({
         search: { s: session.id },
       });
     } catch {
-      toast.error("Couldn't start the thread.");
+      toast.error(t("Couldn't start the thread."));
       setSending(false);
     }
   };
@@ -74,7 +78,7 @@ export function AskBar({
   return (
     <div>
       <label htmlFor="home-ask" className="sr-only">
-        Ask an agent
+        {t("Ask an agent")}
       </label>
       <div className="flex h-12 items-center gap-2 rounded-lg border border-input bg-background px-2 shadow-xs transition-colors focus-within:border-muted-foreground">
         <DropdownMenu>
@@ -82,7 +86,7 @@ export function AskBar({
             <Button
               variant="ghost"
               className="h-8 shrink-0 gap-2 pr-2 pl-1.5 text-foreground disabled:opacity-100"
-              aria-label={`Ask ${selected.name}. Change agent`}
+              aria-label={t("Ask {{name}}. Change agent", { name: selected.name })}
             >
               <AgentMark agent={selected} size={24} />
               <span className="max-w-[10rem] truncate">{selected.name}</span>
@@ -91,7 +95,7 @@ export function AskBar({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-60">
             <DropdownMenuLabel className="text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-              Ask
+              {t("Ask")}
             </DropdownMenuLabel>
             <div className="max-h-72 overflow-y-auto">
               {agents.map((a) => (
@@ -114,13 +118,18 @@ export function AskBar({
               void launch();
             }
           }}
-          placeholder={`Ask ${selected.name}…`}
+          placeholder={t("Ask {{name}}…", { name: selected.name })}
           autoComplete="off"
           className="h-8 min-w-0 flex-1 border-0 bg-transparent text-lead outline-none placeholder:text-muted-foreground"
         />
         {/* The composer's "+", with Attach alone (A2). */}
         <ComposerAddMenu onAttach={() => fileRef.current?.click()} />
-        <Button size="icon" aria-label="Send" disabled={!canSend} onClick={() => void launch()}>
+        <Button
+          size="icon"
+          aria-label={t("Send")}
+          disabled={!canSend}
+          onClick={() => void launch()}
+        >
           <ArrowUp />
         </Button>
         <input
@@ -128,7 +137,7 @@ export function AskBar({
           type="file"
           multiple
           accept={ACCEPT}
-          aria-label="Choose files to attach"
+          aria-label={t("Choose files to attach")}
           className="hidden"
           onChange={(e) => {
             const files = Array.from(e.target.files ?? []);
@@ -138,21 +147,23 @@ export function AskBar({
         />
       </div>
       {uploads.receipts.length > 0 && (
-        <ul aria-label="Attached files" className="mt-2 flex flex-wrap gap-1.5">
+        <ul aria-label={t("Attached files")} className="mt-2 flex flex-wrap gap-1.5">
           {uploads.receipts.map((r) => (
             <li key={r.id}>
               <Chip className="pr-1">
                 <span className="max-w-[16rem] truncate">{r.name}</span>
                 <span className="text-muted-foreground">
                   {r.state === "uploading"
-                    ? `${Math.round(r.progress)}%`
+                    ? new Intl.NumberFormat(locale, { style: "percent" }).format(
+                        Math.round(r.progress) / 100,
+                      )
                     : r.state === "failed"
-                      ? "failed"
-                      : "added"}
+                      ? t("failed")
+                      : t("added")}
                 </span>
                 <button
                   type="button"
-                  aria-label={`Remove ${r.name}`}
+                  aria-label={t("Remove {{name}}", { name: r.name })}
                   onClick={() =>
                     r.state === "done" ? void uploads.remove(r.id) : uploads.dismiss(r.id)
                   }

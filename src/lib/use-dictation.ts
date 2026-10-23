@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 
 /**
@@ -76,6 +77,7 @@ function pickFormat(): string | undefined {
  * gets to correct.
  */
 export function useDictation(onText: (text: string) => void): Dictation {
+  const { t } = useTranslation();
   const [state, setState] = useState<DictationState>("idle");
   const [seconds, setSeconds] = useState(0);
 
@@ -107,7 +109,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
     }
     // Until every track is stopped the browser keeps telling the person their
     // microphone is live, whatever this hook believes.
-    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     recorderRef.current = null;
     setSeconds(0);
@@ -145,8 +147,8 @@ export function useDictation(onText: (text: string) => void): Dictation {
       const name = e instanceof Error ? e.name : "";
       toast.error(
         name === "NotFoundError" || name === "DevicesNotFoundError"
-          ? "No microphone found."
-          : "Covan needs permission to use your microphone.",
+          ? t("No microphone found.")
+          : t("Covan needs permission to use your microphone."),
       );
       return;
     }
@@ -187,7 +189,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
           // The server's sentence, not a status code: over-quota and heard-nothing
           // both arrive here already written for a person to read.
           toast.error(
-            e instanceof Error && e.message ? e.message : "Couldn't turn that into text.",
+            e instanceof Error && e.message ? e.message : t("Couldn't turn that into text."),
           );
         })
         .finally(() => setState("idle"));
@@ -204,7 +206,7 @@ export function useDictation(onText: (text: string) => void): Dictation {
       setSeconds(elapsed);
       if (elapsed >= MAX_RECORDING_SECONDS) stop();
     }, 1000);
-  }, [release, stop]);
+  }, [release, stop, t]);
 
   // Read at render rather than at module load: `mediaDevices` is absent on an
   // insecure origin, and the server render has neither.

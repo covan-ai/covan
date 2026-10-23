@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Search } from "lucide-react";
+import { lookup, msg, useTranslation } from "@/i18n";
 import { TopBar } from "@/components/top-bar";
 import { PageBody } from "@/components/page";
 import { Pills } from "@/components/pills";
@@ -16,10 +17,17 @@ import {
 } from "@/components/ui/select";
 import { useInbox, useMarkAllRead, useMarkRead } from "@/hooks/use-inbox";
 import { useAgentsStore } from "@/lib/agents-store";
-import { groupByDay } from "@/lib/day-groups";
+import { groupByDay, type DayGroup } from "@/lib/day-groups";
 import type { InboxFilter } from "@/lib/api-client";
 
 const FILTERS: InboxFilter[] = ["all", "unread", "needs_you", "running", "mine"];
+
+/** `groupByDay` hands back its eyebrows as keys; declared here so the catalogue has them. */
+const DAY_LABELS: Record<DayGroup<unknown>["label"], string> = {
+  Today: msg("Today"),
+  Yesterday: msg("Yesterday"),
+  Earlier: msg("Earlier"),
+};
 
 type InboxSearch = { filter?: InboxFilter; agent?: string };
 
@@ -39,6 +47,7 @@ export const Route = createFileRoute("/_authed/inbox")({
  * you first, under date eyebrows. Opening a row reads it.
  */
 function InboxPage() {
+  const { t } = useTranslation();
   const { filter = "all", agent } = Route.useSearch();
   const navigate = useNavigate();
   const { agents } = useAgentsStore();
@@ -51,8 +60,12 @@ function InboxPage() {
     void navigate({ to: "/inbox", search: { filter, agent, ...next }, replace: true });
 
   const meta = [
-    counts.unread > 0 ? `${counts.unread} unread` : null,
-    counts.running > 0 ? `${counts.running} running` : null,
+    counts.unread > 0
+      ? t("{{count}} unread", { count: counts.unread, defaultValue_other: "{{count}} unread" })
+      : null,
+    counts.running > 0
+      ? t("{{count}} running", { count: counts.running, defaultValue_other: "{{count}} running" })
+      : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -60,7 +73,7 @@ function InboxPage() {
   return (
     <>
       <TopBar
-        title="Inbox"
+        title={t("Inbox")}
         meta={meta || undefined}
         phoneMeta={counts.unread > 0 ? counts.unread : undefined}
         actions={
@@ -70,7 +83,7 @@ function InboxPage() {
               disabled={counts.unread === 0 || markAllRead.isPending}
               onClick={() => markAllRead.mutate()}
             >
-              Mark all read
+              {t("Mark all read")}
             </Button>
             <NewThreadButton />
           </>
@@ -80,7 +93,7 @@ function InboxPage() {
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Search"
+              aria-label={t("Search")}
               onClick={() => window.dispatchEvent(new Event("open-command-palette"))}
             >
               <Search />
@@ -92,15 +105,15 @@ function InboxPage() {
       <PageBody width="list" className="lg:px-7 lg:pt-4">
         <div className="flex flex-wrap items-center gap-2 lg:px-3">
           <Pills
-            label="Show"
+            label={t("Show")}
             value={filter}
             onChange={(f) => set({ filter: f === "all" ? undefined : f })}
             options={[
-              { value: "all", label: "All" },
-              { value: "unread", label: "Unread", count: counts.unread },
-              { value: "needs_you", label: "Needs you", count: counts.needsYou },
-              { value: "running", label: "Running", count: counts.running },
-              { value: "mine", label: "Mine" },
+              { value: "all", label: t("All") },
+              { value: "unread", label: t("Unread"), count: counts.unread },
+              { value: "needs_you", label: t("Needs you"), count: counts.needsYou },
+              { value: "running", label: t("Running"), count: counts.running },
+              { value: "mine", label: t("Mine") },
             ]}
           />
           <span className="flex-1" />
@@ -109,11 +122,15 @@ function InboxPage() {
               value={agent ?? "all"}
               onValueChange={(v) => set({ agent: v === "all" ? undefined : v })}
             >
-              <SelectTrigger size="sm" aria-label="Agent" className="w-auto min-w-32 max-lg:hidden">
+              <SelectTrigger
+                size="sm"
+                aria-label={t("Agent")}
+                className="w-auto min-w-32 max-lg:hidden"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="end">
-                <SelectItem value="all">All agents</SelectItem>
+                <SelectItem value="all">{t("All agents")}</SelectItem>
                 {agents.map((a) => (
                   <SelectItem key={a.id} value={a.id}>
                     {a.name}
@@ -125,17 +142,19 @@ function InboxPage() {
         </div>
 
         {isPending ? (
-          <p className="mt-8 text-sm text-muted-foreground lg:px-3">Loading…</p>
+          <p className="mt-8 text-sm text-muted-foreground lg:px-3">{t("Loading…")}</p>
         ) : !data || data.items.length === 0 ? (
           <EmptyPage
             dot="done"
-            title="Nothing needs you"
-            description="When an agent asks a question, finishes a job or a routine fails, it shows up here. You will also get an email if you are away for an hour."
+            title={t("Nothing needs you")}
+            description={t(
+              "When an agent asks a question, finishes a job or a routine fails, it shows up here. You will also get an email if you are away for an hour.",
+            )}
             actions={
               <>
                 <NewThreadButton variant="secondary" />
                 <Button asChild variant="secondary">
-                  <Link to="/threads">All threads</Link>
+                  <Link to="/threads">{t("All threads")}</Link>
                 </Button>
               </>
             }
@@ -143,9 +162,9 @@ function InboxPage() {
         ) : (
           <>
             {groupByDay(data.items, (i) => i.lastActivityAt).map((g) => (
-              <section key={g.label} aria-label={g.label}>
+              <section key={g.label} aria-label={lookup(t, DAY_LABELS[g.label])}>
                 <h2 className="m-0 px-3 pt-5 pb-1.5 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase max-lg:px-0">
-                  {g.label}
+                  {lookup(t, DAY_LABELS[g.label])}
                 </h2>
                 {g.items.map((item) => (
                   <InboxRow
@@ -164,7 +183,7 @@ function InboxPage() {
                 to="/threads"
                 className="text-meta font-medium text-muted-foreground hover:text-foreground"
               >
-                Older threads
+                {t("Older threads")}
               </Link>
             </div>
           </>

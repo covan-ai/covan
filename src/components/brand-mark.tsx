@@ -1,3 +1,4 @@
+import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,11 +15,12 @@ import { cn } from "@/lib/utils";
  * public/ are rendered from.
  */
 export function BrandMark({ className }: { className?: string }) {
+  const { t } = useTranslation();
   return (
     <div className={cn("grid h-8 w-8 place-items-center text-foreground", className)}>
       <svg
         role="img"
-        aria-label="Covan logo"
+        aria-label={t("Covan logo")}
         viewBox="0 0 150 135"
         fill="currentColor"
         // 2/3 of the tile, matching the icons in public/. The old mark sat at

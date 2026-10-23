@@ -6,6 +6,8 @@ import { stepTime, stepsSummary } from "@/lib/step-summary";
 import type { DotState } from "@/lib/dot-states";
 import { Tool, hasPayload, type ToolPart } from "@/components/prompt-kit/tool";
 import { cn } from "@/lib/utils";
+import { lookup, msg, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 
 /**
  * What an answer did before it wrote, and the card that stops it doing
@@ -63,11 +65,11 @@ export type AgentStepView = {
 };
 
 const WORDS: Record<AgentStepView["status"], string> = {
-  running: "running",
-  ok: "done",
-  failed: "failed",
-  refused: "not allowed",
-  pending: "waiting for you",
+  running: msg("running"),
+  ok: msg("done"),
+  failed: msg("failed"),
+  refused: msg("not allowed"),
+  pending: msg("waiting for you"),
 };
 
 /**
@@ -90,6 +92,8 @@ const MARK: Record<AgentStepView["status"], DotState> = {
  * — or, with no time recorded, how it ended.
  */
 function Row({ step }: { step: AgentStepView }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   return (
     <>
       <StatusDot state={MARK[step.status]} />
@@ -102,7 +106,9 @@ function Row({ step }: { step: AgentStepView }) {
         {step.label || step.tool}
       </span>
       <span className="ml-auto shrink-0 pl-2 text-muted-foreground tabular-nums">
-        {typeof step.durationMs === "number" ? stepTime(step.durationMs) : WORDS[step.status]}
+        {typeof step.durationMs === "number"
+          ? stepTime(step.durationMs, t, locale)
+          : lookup(t, WORDS[step.status])}
       </span>
     </>
   );
@@ -202,6 +208,8 @@ export function SettledSteps({
   sources?: number;
   className?: string;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [open, setOpen] = useState(false);
   if (steps.length === 0) return null;
   return (
@@ -216,7 +224,7 @@ export function SettledSteps({
           aria-hidden
           className={cn("size-4 shrink-0 transition-transform", open && "rotate-90")}
         />
-        <span>{stepsSummary(steps, sources)}</span>
+        <span>{stepsSummary(steps, sources, t, locale)}</span>
       </button>
       {open && <StepTrail steps={steps} className="mt-1 mb-2 pl-1" />}
     </div>
@@ -344,6 +352,7 @@ function ProposalRows({ proposal, nested }: { proposal: unknown; nested?: boolea
             {key
               .replace(/[_-]+/g, " ")
               .replace(/([A-Z])/g, " $1")
+              // i18n-ignore: a parameter name, not a word
               .toLowerCase()
               .trim()}
           </dt>
@@ -402,19 +411,20 @@ export function ConfirmCard({
   /** Who is asking: "Support is asking you". */
   agentName?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="mt-2 flex items-start gap-3 rounded-xl border border-border p-4">
       <StatusDot state="waiting" className="mt-[7px]" />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <span className="text-sm font-medium">
-            {agentName ? `${agentName} is asking you` : "Waiting for you"}
+            {agentName ? t("{{name}} is asking you", { name: agentName }) : t("Waiting for you")}
           </span>
           <span className="text-sm text-muted-foreground">
-            {pending.summary || "The agent wants to do something."}
+            {pending.summary || t("The agent wants to do something.")}
           </span>
           <span className="text-xs text-micro-foreground">
-            {pending.tool} · nothing happens until you say so
+            {t("{{tool}} · nothing happens until you say so", { tool: pending.tool })}
           </span>
         </div>
 
@@ -422,10 +432,10 @@ export function ConfirmCard({
 
         <div className="flex flex-wrap items-center gap-2">
           <Button disabled={busy} onClick={() => onAnswer(true)}>
-            {busy ? "Working…" : "Approve"}
+            {busy ? t("Working…") : t("Approve")}
           </Button>
           <Button variant="secondary" disabled={busy} onClick={() => onAnswer(false)}>
-            Not now
+            {t("Not now")}
           </Button>
           {standing ? (
             <Button variant="ghost" disabled={busy} onClick={standing.onChoose}>
@@ -442,9 +452,9 @@ export function ConfirmCard({
            standing action for every well-formed run_tool proposal — so a person
            reading it is reading it at the moment they are deciding. #201. */
           <p className="text-meta leading-[1.45] text-muted-foreground">
-            Approving covers this service for the rest of this conversation, except for anything
-            that changes data there — that asks again each time. The third option applies to this
-            operation on this agent until somebody removes it, on the Integrations page.
+            {t(
+              "Approving covers this service for the rest of this conversation, except for anything that changes data there — that asks again each time. The third option applies to this operation on this agent until somebody removes it, on the Integrations page.",
+            )}
           </p>
         ) : null}
       </div>

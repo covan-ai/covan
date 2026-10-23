@@ -7,6 +7,7 @@ import {
   type ConversationBrowser,
 } from "@/lib/api-client";
 import { safeNavigationUrl } from "@/lib/safe-url";
+import type { Translate } from "@/i18n";
 
 /**
  * What the chat screen and the browser panel both read about the browser
@@ -306,18 +307,23 @@ export function useBrowserPanel(sessionId: string | undefined, narrow: boolean) 
  * The address is a credential — *"Treat the URL as a credential"* — so it goes
  * into the tab's address bar and nowhere else: not a link on the page, not a
  * toast, and not this function's error messages.
+ *
+ * `t` words the two refusals this function makes itself; English by default.
  */
-export async function openInNewWindow(mint: () => Promise<string>): Promise<void> {
+export async function openInNewWindow(
+  mint: () => Promise<string>,
+  t: Translate = (key) => key,
+): Promise<void> {
   const tab = window.open("", "_blank");
   try {
     const url = await mint();
     if (!tab || tab.closed) {
       throw new Error(
-        "Your browser blocked the new window. Allow pop-ups for Covan and try again.",
+        t("Your browser blocked the new window. Allow pop-ups for Covan and try again."),
       );
     }
     const safe = safeNavigationUrl(url);
-    if (!safe) throw new Error("That browser sent back an address Covan won't open.");
+    if (!safe) throw new Error(t("That browser sent back an address Covan won't open."));
     tab.opener = null;
     tab.location.replace(safe);
   } catch (err) {

@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { lookup, msg, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,16 +29,16 @@ export const AGENT_MARKS = [
 
 export type AgentMarkName = (typeof AGENT_MARKS)[number];
 
-/** What the picker calls each mark, for its accessible name. */
+/** What the picker calls each mark, for its accessible name. English keys: `lookup(t, …)`. */
 export const AGENT_MARK_LABELS: Record<AgentMarkName, string> = {
-  headset: "Headset",
-  fox: "Fox",
-  owl: "Owl",
-  bear: "Bear",
-  cat: "Cat",
-  robot: "Robot",
-  penguin: "Penguin",
-  blob: "Blob",
+  headset: msg("Headset"),
+  fox: msg("Fox"),
+  owl: msg("Owl"),
+  bear: msg("Bear"),
+  cat: msg("Cat"),
+  robot: msg("Robot"),
+  penguin: msg("Penguin"),
+  blob: msg("Blob"),
 };
 
 export function isAgentMark(value: unknown): value is AgentMarkName {
@@ -142,11 +144,11 @@ const SIZES: Record<AgentMarkSize, string> = {
  * "Support" → "SU", "Sales ops" → "SO": two letters from the name, the first
  * of the first two words or the first two of a single word.
  */
-export function agentMonogram(name: string | null | undefined): string {
+export function agentMonogram(name: string | null | undefined, locale: string = "en"): string {
   const words = (name ?? "").trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "–";
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
-  return (words[0]!.charAt(0) + words[1]!.charAt(0)).toUpperCase();
+  if (words.length === 1) return words[0]!.slice(0, 2).toLocaleUpperCase(locale);
+  return (words[0]!.charAt(0) + words[1]!.charAt(0)).toLocaleUpperCase(locale);
 }
 
 /** The bare mark, for a place that draws its own tile (the picker). */
@@ -175,6 +177,7 @@ export function AgentMark({
   size?: AgentMarkSize;
   className?: string;
 }) {
+  const locale = useLocale();
   const mark = isAgentMark(agent.avatar) ? agent.avatar : null;
   if (!mark) {
     return (
@@ -186,7 +189,7 @@ export function AgentMark({
           className,
         )}
       >
-        {agentMonogram(agent.name)}
+        {agentMonogram(agent.name, locale)}
       </span>
     );
   }
@@ -214,13 +217,14 @@ export function AgentMarkPicker({
   value,
   onChange,
   size = 40,
-  label = "Face",
+  label,
 }: {
   value: string | null | undefined;
   onChange: (mark: AgentMarkName) => void;
   size?: 40 | 56;
   label?: string;
 }) {
+  const { t } = useTranslation();
   const selected = isAgentMark(value) ? value : null;
   const move = (from: AgentMarkName, step: number) => {
     const i = AGENT_MARKS.indexOf(from);
@@ -231,7 +235,7 @@ export function AgentMarkPicker({
   return (
     <div
       role="radiogroup"
-      aria-label={label}
+      aria-label={label ?? t("Face")}
       className={cn("flex flex-wrap", size === 56 ? "gap-3" : "gap-2")}
     >
       {AGENT_MARKS.map((mark, i) => {
@@ -244,7 +248,7 @@ export function AgentMarkPicker({
             type="button"
             role="radio"
             aria-checked={checked}
-            aria-label={AGENT_MARK_LABELS[mark]}
+            aria-label={lookup(t, AGENT_MARK_LABELS[mark])}
             tabIndex={tabbable ? 0 : -1}
             onClick={() => onChange(mark)}
             onKeyDown={(e) => {
@@ -259,7 +263,9 @@ export function AgentMarkPicker({
               const next = move(mark, step);
               const group = e.currentTarget.parentElement;
               group
-                ?.querySelector<HTMLButtonElement>(`[aria-label="${AGENT_MARK_LABELS[next]}"]`)
+                ?.querySelector<HTMLButtonElement>(
+                  `[aria-label="${lookup(t, AGENT_MARK_LABELS[next])}"]`,
+                )
                 ?.focus();
             }}
             className={cn(

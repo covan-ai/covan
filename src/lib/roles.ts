@@ -10,6 +10,8 @@
  * thing on the screen.
  */
 
+import { msg } from "@/i18n";
+
 export const WORKSPACE_ROLES = ["admin", "member", "viewer"] as const;
 
 export type WorkspaceRole = (typeof WORKSPACE_ROLES)[number];
@@ -32,9 +34,22 @@ export function isAdminRole(role: string | null | undefined): boolean {
 /**
  * One line each, for the role picker. These are the promises the policies
  * keep — if one of them stops being true, the policy is what changed.
+ * English keys: `lookup(t, ROLE_SUMMARY[role])` where they are drawn.
  */
 export const ROLE_SUMMARY: Record<WorkspaceRole, string> = {
-  admin: "Runs the workspace: people, roles and settings.",
-  member: "Builds: agents, knowledge and documents.",
-  viewer: "Uses the agents. Changes none of them.",
+  admin: msg("Runs the workspace: people, roles and settings."),
+  member: msg("Builds: agents, knowledge and documents."),
+  viewer: msg("Uses the agents. Changes none of them."),
 };
+
+/** The role as a word, capitalised: `lookup(t, ROLE_WORD[role])`. */
+export const ROLE_WORD: Record<WorkspaceRole, string> = {
+  admin: msg("Admin"),
+  member: msg("Member"),
+  viewer: msg("Viewer"),
+};
+
+/** The role word for a value that may not be one of ours: a key, or the value itself. */
+export function roleWordKey(role: string): string {
+  return (ROLE_WORD as Record<string, string>)[role] ?? role;
+}

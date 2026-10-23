@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type UsageResponse } from "./api-client";
+import { englishT, type Translate } from "@/i18n";
 
 /**
  * The workspace's credits, in the terms an interface needs to show them.
@@ -98,10 +99,14 @@ export function wholeCredits(n: number): number {
  * screen saying the workspace has nothing while it still has something, which
  * the pilot found on 2026-10-16 (covan-cloud#407).
  */
-export function creditsPhrase(n: number): string {
-  if (n > 0 && n < 1) return "<1 credit";
+export function creditsPhrase(n: number, t: Translate = englishT, locale?: string): string {
+  if (n > 0 && n < 1) return t("<1 credit");
   const whole = wholeCredits(n);
-  return `${whole.toLocaleString()} ${whole === 1 ? "credit" : "credits"}`;
+  return t("{{balance}} credit", {
+    count: whole,
+    balance: whole.toLocaleString(locale),
+    defaultValue_other: "{{balance}} credits",
+  });
 }
 
 export function creditsFrom(usage: UsageResponse | undefined): CreditsView | null {
@@ -150,18 +155,26 @@ export function creditsFrom(usage: UsageResponse | undefined): CreditsView | nul
  * One sentence for a surface that has room for exactly one — the banner above
  * the composer. Screens with more space phrase their own.
  */
-export function creditsSentence(c: CreditsView): string {
-  if (c.level === "spent") return "This workspace is out of credits.";
-  const credits = `${creditsPhrase(c.balance)} left`;
+export function creditsSentence(c: CreditsView, t: Translate = englishT, locale?: string): string {
+  if (c.level === "spent") return t("This workspace is out of credits.");
+  const credits = t("{{credits}} left", { credits: creditsPhrase(c.balance, t, locale) });
   if (c.level === "low") {
     // Exact here, whatever `approximateReplies` would do with it: the low band
     // is where the number becomes something to plan around.
     const n = c.repliesLeft;
-    return `${credits} · about ${n} ${n === 1 ? "reply" : "replies"}`;
+    return t("{{credits}} · about {{count}} reply", {
+      credits,
+      count: n,
+      defaultValue_other: "{{credits}} · about {{count}} replies",
+    });
   }
   // The balance alone until the estimate has something to stand on.
   if (!c.repliesKnown) return credits;
-  return `${credits} · about ${approximateReplies(c.repliesLeft).toLocaleString()} replies`;
+  const replies = approximateReplies(c.repliesLeft);
+  return t("{{credits}} · about {{replies}} replies", {
+    credits,
+    replies: replies.toLocaleString(locale),
+  });
 }
 
 /**

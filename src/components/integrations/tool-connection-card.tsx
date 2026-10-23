@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Database, Globe } from "lucide-react";
+import { Trans, useTranslation } from "@/i18n";
 import { scopeWords, type ToolAvailability, type ToolConnection } from "@/lib/connections-api";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/chip";
@@ -37,12 +38,14 @@ import { IntegrationRow } from "./integration-row";
  * its parent.
  */
 export function ToolConnectionRow({ connection }: { connection: ToolConnection }) {
+  const { t } = useTranslation();
   const remove = useRemoveToolConnection();
   const [managing, setManaging] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const Mark = connection.transport === "http" ? Globe : Database;
   const writes = connection.allowedMethods.some((m) => !["GET", "HEAD"].includes(m));
-  const kind = connection.transport === "http" ? "HTTP API" : "Database";
+  const kind = connection.transport === "http" ? t("HTTP API") : t("Database");
+  const rpc = connection.rpc ?? "covan_query";
 
   return (
     <>
@@ -56,13 +59,13 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
         description={[
           kind,
           connection.baseUrl,
-          writes ? "can write" : "read only",
-          scopeWords(connection),
+          writes ? t("can write") : t("read only"),
+          scopeWords(connection, t),
         ].join(" · ")}
-        status={{ state: "done", text: "Working" }}
+        status={{ state: "done", text: t("Working") }}
         action={
           <Button size="sm" variant="secondary" onClick={() => setManaging(true)}>
-            Manage
+            {t("Manage")}
           </Button>
         }
       />
@@ -81,7 +84,7 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
           <DialogBody className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-1.5">
               <Chip>{kind}</Chip>
-              <Chip>{writes ? "Can write" : "Read only"}</Chip>
+              <Chip>{writes ? t("Can write") : t("Read only")}</Chip>
               <Chip tone="code">{connection.baseUrl}</Chip>
             </div>
 
@@ -90,20 +93,29 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
             <Disclosure
               label={
                 connection.transport === "sql"
-                  ? `Read through ${connection.rpc ?? "covan_query"}`
-                  : `Allowed methods: ${connection.allowedMethods.join(", ") || "none"}`
+                  ? t("Read through {{rpc}}", { rpc })
+                  : t("Allowed methods: {{methods}}", {
+                      methods: connection.allowedMethods.join(", ") || t("none"),
+                    })
               }
             >
               {connection.transport === "sql" ? (
                 <p className="m-0">
-                  The agent&apos;s SQL runs inside{" "}
-                  <span className="font-mono">{connection.rpc ?? "covan_query"}</span>, and that
-                  function is what decides whether it can write — the method is a POST either way.
+                  <Trans
+                    t={t}
+                    i18nKey="The agent's SQL runs inside <code>{{rpc}}</code>, and that function is what decides whether it can write — the method is a POST either way."
+                    values={{ rpc }}
+                    components={{ code: <span className="font-mono" /> }}
+                  />
                 </p>
               ) : (
                 <p className="m-0">
-                  Every request stays inside <span className="font-mono">{connection.baseUrl}</span>
-                  . The agent names a path, never a URL, and cannot widen the method list.
+                  <Trans
+                    t={t}
+                    i18nKey="Every request stays inside <code>{{url}}</code>. The agent names a path, never a URL, and cannot widen the method list."
+                    values={{ url: connection.baseUrl }}
+                    components={{ code: <span className="font-mono" /> }}
+                  />
                 </p>
               )}
               {connection.summary ? (
@@ -114,7 +126,7 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
             </Disclosure>
 
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">Who can use it</span>
+              <span className="text-sm font-medium">{t("Who can use it")}</span>
               <ConnectionScope connection={connection} />
             </div>
 
@@ -122,10 +134,10 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
               {confirming ? (
                 <>
                   <span className="flex-1 text-meta text-muted-foreground">
-                    Remove it? Agents lose this service immediately.
+                    {t("Remove it? Agents lose this service immediately.")}
                   </span>
                   <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-                    Keep
+                    {t("Keep")}
                   </Button>
                   <Button
                     variant="danger"
@@ -134,14 +146,16 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
                       remove.mutate(connection.id, {
                         onSuccess: () => {
                           setManaging(false);
-                          toast.success(`${connection.label} removed.`);
+                          toast.success(t("{{app}} removed.", { app: connection.label }));
                         },
                         onError: (err) =>
-                          toast.error(err instanceof Error ? err.message : "Could not remove that"),
+                          toast.error(
+                            err instanceof Error ? err.message : t("Could not remove that"),
+                          ),
                       })
                     }
                   >
-                    {remove.isPending ? "Removing…" : "Remove"}
+                    {remove.isPending ? t("Removing…") : t("Remove")}
                   </Button>
                 </>
               ) : (
@@ -151,7 +165,7 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
                   className="text-destructive"
                   onClick={() => setConfirming(true)}
                 >
-                  Remove {connection.label}…
+                  {t("Remove {{app}}…", { app: connection.label })}
                 </Button>
               )}
             </div>
@@ -182,9 +196,10 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
  * connections are already in.
  */
 export function ToolList({ tools }: { tools: ToolAvailability[] }) {
+  const { t } = useTranslation();
   if (tools.length === 0) return null;
   return (
-    <Disclosure label="What an agent can do with these">
+    <Disclosure label={t("What an agent can do with these")}>
       <ul className="flex flex-col gap-2.5 py-1">
         {tools.map((tool) => (
           <li key={tool.name} className="flex items-start gap-2.5">
@@ -196,8 +211,8 @@ export function ToolList({ tools }: { tools: ToolAvailability[] }) {
             <span className="flex min-w-0 flex-col gap-[3px]">
               <span className="flex flex-wrap items-center gap-1.5">
                 <span className="font-mono text-xs">{tool.name}</span>
-                {tool.destructive ? <Chip size="sm">Can change things</Chip> : null}
-                {tool.configured ? null : <Chip size="sm">Not configured here</Chip>}
+                {tool.destructive ? <Chip size="sm">{t("Can change things")}</Chip> : null}
+                {tool.configured ? null : <Chip size="sm">{t("Not configured here")}</Chip>}
               </span>
               <span className="text-meta leading-[1.45] text-muted-foreground">
                 {tool.description}

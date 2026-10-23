@@ -3,6 +3,7 @@ import { RoutinesPane } from "@/components/routines/routines-pane";
 import { RoutinePage } from "@/components/routines/routine-page";
 import { Button } from "@/components/ui/button";
 import { useAgentsStore } from "@/lib/agents-store";
+import { useTranslation } from "@/i18n";
 
 export const Route = createFileRoute("/_authed/agents/$agentId/routines/$routineId")({
   component: AgentRoutinePage,
@@ -10,6 +11,7 @@ export const Route = createFileRoute("/_authed/agents/$agentId/routines/$routine
 
 /** One of an agent's routines, beside the agent's own list (A7, under the agent's bar). */
 function AgentRoutinePage() {
+  const { t } = useTranslation();
   const { agentId, routineId } = Route.useParams();
   const navigate = useNavigate();
   const { canWrite } = useAgentsStore();
@@ -28,7 +30,7 @@ function AgentRoutinePage() {
           notFoundAction={
             <Button asChild variant="secondary">
               <Link to="/agents/$agentId/routines" params={{ agentId }}>
-                Back to routines
+                {t("Back to routines")}
               </Link>
             </Button>
           }

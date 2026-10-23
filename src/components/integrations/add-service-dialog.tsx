@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Trans, useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -57,6 +58,7 @@ export function AddServiceDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const create = useCreateToolConnection();
   const [label, setLabel] = useState("");
   const [transport, setTransport] = useState<"http" | "sql">("sql");
@@ -92,16 +94,17 @@ export function AddServiceDialog({
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : reset())}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Connect a service</DialogTitle>
+          <DialogTitle>{t("Connect a service")}</DialogTitle>
           <DialogDescription>
-            A database or an API an agent can query while it answers. There is no per-service code
-            behind this — what you fill in here is the whole of it.
+            {t(
+              "A database or an API an agent can query while it answers. There is no per-service code behind this — what you fill in here is the whole of it.",
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="tc-label">Name</Label>
+            <Label htmlFor="tc-label">{t("Name")}</Label>
             <Input
               id="tc-label"
               value={label}
@@ -109,26 +112,26 @@ export function AddServiceDialog({
               placeholder="Covan Supabase"
             />
             <p className="text-meta text-muted-foreground">
-              What the agent calls it. Anything you would say out loud.
+              {t("What the agent calls it. Anything you would say out loud.")}
             </p>
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="tc-transport">Kind</Label>
+            <Label htmlFor="tc-transport">{t("Kind")}</Label>
             <Select value={transport} onValueChange={(v) => setTransport(v as "http" | "sql")}>
               <SelectTrigger id="tc-transport" className="h-9 text-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="sql">Postgres behind PostgREST</SelectItem>
-                <SelectItem value="http">HTTP API</SelectItem>
+                <SelectItem value="sql">{t("Postgres behind PostgREST")}</SelectItem>
+                <SelectItem value="http">{t("HTTP API")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="tc-url">Base address</Label>
+          <Label htmlFor="tc-url">{t("Base address")}</Label>
           <Input
             id="tc-url"
             value={baseUrl}
@@ -138,27 +141,28 @@ export function AddServiceDialog({
             }
           />
           <p className="text-meta leading-[1.45] text-muted-foreground">
-            Every request stays inside this address. The agent names a path, never a URL, so it
-            cannot reach anywhere else.
+            {t(
+              "Every request stays inside this address. The agent names a path, never a URL, so it cannot reach anywhere else.",
+            )}
             {transport === "sql"
-              ? " For hosted Supabase that is the project URL with /rest/v1 on the end."
+              ? ` ${t("For hosted Supabase that is the project URL with /rest/v1 on the end.")}`
               : null}
           </p>
         </div>
 
         {transport === "sql" ? (
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="tc-rpc">Read-only function</Label>
+            <Label htmlFor="tc-rpc">{t("Read-only function")}</Label>
             <Input id="tc-rpc" value={rpc} onChange={(e) => setRpc(e.target.value)} />
             <p className="text-meta leading-[1.45] text-muted-foreground">
-              The function the agent's SQL runs inside. It is what makes the connection read-only —
-              the method is a POST either way, and the function is what refuses a write. The SQL to
-              install it is in the integrations guide.
+              {t(
+                "The function the agent's SQL runs inside. It is what makes the connection read-only — the method is a POST either way, and the function is what refuses a write. The SQL to install it is in the integrations guide.",
+              )}
             </p>
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            <Label>Methods you allow</Label>
+            <Label>{t("Methods you allow")}</Label>
             <div className="flex flex-wrap gap-1.5">
               {METHODS.map((method) => {
                 const on = methods.includes(method);
@@ -183,14 +187,15 @@ export function AddServiceDialog({
               })}
             </div>
             <p className="text-meta leading-[1.45] text-muted-foreground">
-              This is your decision, not the agent's — it cannot widen the list. Leaving it at GET
-              means nothing it does here can change anything.
+              {t(
+                "This is your decision, not the agent's — it cannot widen the list. Leaving it at GET means nothing it does here can change anything.",
+              )}
             </p>
           </div>
         )}
 
         <div className="flex flex-col gap-2">
-          <Label>Credential headers</Label>
+          <Label>{t("Credential headers")}</Label>
           {headers.map((header, i) => (
             <div key={i} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
               <Input
@@ -200,7 +205,7 @@ export function AddServiceDialog({
                     rows.map((r, j) => (i === j ? { ...r, name: e.target.value } : r)),
                   )
                 }
-                placeholder="Header name"
+                placeholder={t("Header name")}
               />
               <Input
                 type="password"
@@ -210,7 +215,7 @@ export function AddServiceDialog({
                     rows.map((r, j) => (i === j ? { ...r, value: e.target.value } : r)),
                   )
                 }
-                placeholder="Value"
+                placeholder={t("Value")}
               />
             </div>
           ))}
@@ -219,20 +224,20 @@ export function AddServiceDialog({
             className="self-start text-meta text-muted-foreground underline underline-offset-4 hover:text-foreground"
             onClick={() => setHeaders((rows) => [...rows, { name: "", value: "" }])}
           >
-            Another header
+            {t("Another header")}
           </button>
           <p className="text-meta leading-[1.45] text-muted-foreground">
-            Encrypted before it reaches the database and never sent back to this screen. A token
-            that needs the word "Bearer" in front of it is stored with the word in front of it.
-            Supabase wants two: <span className="font-mono text-xs">Authorization</span> with{" "}
-            <span className="font-mono text-xs">Bearer …</span> and{" "}
-            <span className="font-mono text-xs">apikey</span> with the key on its own.
+            <Trans
+              t={t}
+              i18nKey='Encrypted before it reaches the database and never sent back to this screen. A token that needs the word "Bearer" in front of it is stored with the word in front of it. Supabase wants two: <code>Authorization</code> with <code>Bearer …</code> and <code>apikey</code> with the key on its own.'
+              components={{ code: <span className="font-mono text-xs" /> }}
+            />
           </p>
         </div>
 
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="tc-summary">
-            What it holds {transport === "sql" ? "(optional)" : ""}
+            {transport === "sql" ? t("What it holds (optional)") : t("What it holds")}
           </Label>
           <Textarea
             id="tc-summary"
@@ -241,15 +246,15 @@ export function AddServiceDialog({
             onChange={(e) => setSummary(e.target.value)}
             placeholder={
               transport === "sql"
-                ? "Left empty, the agent reads the schema itself the first time it asks."
-                : "Which paths exist and what they return. The agent has no other way to know."
+                ? t("Left empty, the agent reads the schema itself the first time it asks.")
+                : t("Which paths exist and what they return. The agent has no other way to know.")
             }
           />
         </div>
 
         <DialogFooter>
           <Button variant="ghost" onClick={reset}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button
             disabled={!ready || create.isPending}
@@ -266,16 +271,16 @@ export function AddServiceDialog({
                 },
                 {
                   onSuccess: () => {
-                    toast.success(`${label.trim()} connected.`);
+                    toast.success(t("{{app}} connected.", { app: label.trim() }));
                     reset();
                   },
                   onError: (err) =>
-                    toast.error(err instanceof Error ? err.message : "Could not connect that"),
+                    toast.error(err instanceof Error ? err.message : t("Could not connect that")),
                 },
               )
             }
           >
-            {create.isPending ? "Connecting…" : "Connect"}
+            {create.isPending ? t("Connecting…") : t("Connect")}
           </Button>
         </DialogFooter>
       </DialogContent>

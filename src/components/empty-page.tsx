@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
+import { useTranslation } from "@/i18n";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 import { StatusDot } from "@/components/status-dot";
@@ -74,20 +75,24 @@ export function ReadOnlyNotice({
   workspaceName: string;
   viewerName?: string | null;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="mx-auto flex max-w-[420px] flex-col items-center py-12 text-center">
       <Avatar name={viewerName} size={32} />
-      <h2 className="mt-3 text-title font-semibold">You can read {workspaceName}, not change it</h2>
+      <h2 className="mt-3 text-title font-semibold">
+        {t("You can read {{workspace}}, not change it", { workspace: workspaceName })}
+      </h2>
       <p className="mt-2 text-sm text-muted-foreground">
-        Viewers see what is shared with them and can follow along in any thread. Starting threads,
-        uploading and editing agents need a Member role, which an admin can give in a minute.
+        {t(
+          "Viewers see what is shared with them and can follow along in any thread. Starting threads, uploading and editing agents need a Member role, which an admin can give in a minute.",
+        )}
       </p>
       <div className="mt-5 flex flex-wrap justify-center gap-2">
         <Button asChild>
-          <Link to="/team">See who the admins are</Link>
+          <Link to="/team">{t("See who the admins are")}</Link>
         </Button>
         <Button asChild variant="secondary">
-          <Link to="/threads">Browse threads</Link>
+          <Link to="/threads">{t("Browse threads")}</Link>
         </Button>
       </div>
     </div>

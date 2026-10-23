@@ -2,6 +2,8 @@ import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Search, UserPlus } from "lucide-react";
+import { lookup, msg, Trans, useTranslation, type Translate } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { toast } from "sonner";
 import { TopBar } from "@/components/top-bar";
 import { PageBody } from "@/components/page";
@@ -39,7 +41,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { api, ApiError, type PendingInvitation, type TeamMember } from "@/lib/api-client";
 import { invalidateWorkspaceScoped } from "@/lib/workspace-queries";
-import { ROLE_SUMMARY, WORKSPACE_ROLES, type WorkspaceRole } from "@/lib/roles";
+import {
+  ROLE_SUMMARY,
+  ROLE_WORD,
+  WORKSPACE_ROLES,
+  roleWordKey,
+  type WorkspaceRole,
+} from "@/lib/roles";
 import { copyInviteText } from "@/lib/invite-text";
 import { lastActivityLabel } from "@/lib/day-groups";
 import { InviteMemberDialog } from "@/components/invite-member-dialog";
@@ -72,17 +80,24 @@ export const Route = createFileRoute("/_authed/team")({
   }),
 });
 
-const roleWord = (r: WorkspaceRole) => r.charAt(0).toUpperCase() + r.slice(1);
+/** The role filter's options: every admin, every member, every viewer. */
+const ROLE_PLURAL: Record<WorkspaceRole, string> = {
+  admin: msg("Admins"),
+  member: msg("Members"),
+  viewer: msg("Viewers"),
+};
 
 /** "Expires in 5 d", "Expired". */
-function expiresWords(at: number | null | undefined, now: number): string | null {
+function expiresWords(at: number | null | undefined, now: number, t: Translate): string | null {
   if (!at) return null;
   const days = Math.ceil((at - now) / 86_400_000);
-  if (days <= 0) return "Expired";
-  return `Expires in ${days} d`;
+  if (days <= 0) return t("Expired");
+  return t("Expires in {{count}} d", { count: days, defaultValue_other: "Expires in {{count}} d" });
 }
 
 function TeamPage() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { tab = "members", invite } = Route.useSearch();
@@ -115,15 +130,20 @@ function TeamPage() {
    */
   const cannotLeave =
     workspaces.length <= 1
-      ? "This is your only workspace. Leaving it would leave you nowhere to go — create or join another one first."
+      ? t(
+          "This is your only workspace. Leaving it would leave you nowhere to go — create or join another one first.",
+        )
       : isAdmin && adminCount === 1
-        ? "You are the only admin. Make someone else an admin first — a workspace cannot be left without one."
+        ? t(
+            "You are the only admin. Make someone else an admin first — a workspace cannot be left without one.",
+          )
         : null;
 
   const [inviteOpen, setInviteOpen] = useState(Boolean(invite));
   const [query, setQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<WorkspaceRole | "all">("all");
   const [removing, setRemoving] = useState<TeamMember | null>(null);
+  const thisMember = t("this member");
   const [leavingOpen, setLeavingOpen] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
@@ -141,9 +161,9 @@ function TeamPage() {
       // The server has already repointed the session to another membership;
       // refetching the workspace-scoped queries rebinds the app to it.
       await invalidateWorkspaceScoped(queryClient);
-      toast.success("You have left the workspace");
+      toast.success(t("You have left the workspace"));
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't leave the workspace");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't leave the workspace"));
     } finally {
       setLeaving(false);
     }
@@ -153,9 +173,9 @@ function TeamPage() {
     try {
       await api.workspace.members.updateRole(userId, role);
       await refresh();
-      toast.success("Role updated");
+      toast.success(t("Role updated"));
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't update role");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't update role"));
     }
   };
 
@@ -163,9 +183,9 @@ function TeamPage() {
     try {
       await api.workspace.members.remove(userId);
       await refresh();
-      toast.success("Member removed");
+      toast.success(t("Member removed"));
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't remove member");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't remove member"));
     }
   };
 
@@ -178,20 +198,25 @@ function TeamPage() {
       await queryClient.invalidateQueries({ queryKey: ["invitations"] });
       const url = sent.inviteUrl;
       if (sent.emailed) {
-        toast.success(`Sent a new link to ${sent.email}`);
+        toast.success(t("Sent a new link to {{email}}", { email: sent.email }));
       } else {
-        toast.warning(`New link ready for ${sent.email} — no email went out, so pass it on`, {
-          duration: 12000,
-          action: url
-            ? {
-                label: "Copy invite text",
-                onClick: () => copyInviteText([{ email: sent.email, url }]),
-              }
-            : undefined,
-        });
+        toast.warning(
+          t("New link ready for {{email}} — no email went out, so pass it on", {
+            email: sent.email,
+          }),
+          {
+            duration: 12000,
+            action: url
+              ? {
+                  label: t("Copy invite text"),
+                  onClick: () => copyInviteText([{ email: sent.email, url }], t),
+                }
+              : undefined,
+          },
+        );
       }
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't resend the invitation");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't resend the invitation"));
     }
   };
 
@@ -199,25 +224,26 @@ function TeamPage() {
     try {
       await api.invitations.revoke(id);
       await queryClient.invalidateQueries({ queryKey: ["invitations"] });
-      toast.success("Invitation revoked");
+      toast.success(t("Invitation revoked"));
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't revoke invitation");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't revoke invitation"));
     }
   };
 
-  const needle = query.trim().toLowerCase();
+  const needle = query.trim().toLocaleLowerCase(locale);
   const shown = members.filter(
     (m) =>
       (roleFilter === "all" || m.role === roleFilter) &&
       (!needle ||
-        (m.name ?? "").toLowerCase().includes(needle) ||
-        (m.email ?? "").toLowerCase().includes(needle)),
+        (m.name ?? "").toLocaleLowerCase(locale).includes(needle) ||
+        (m.email ?? "").toLocaleLowerCase(locale).includes(needle)),
   );
+  const someone = t("member");
 
   const memberColumns: Column<TeamMember>[] = [
     {
       key: "member",
-      header: "Member",
+      header: t("Member"),
       className: "w-[40%]",
       cell: (m) => (
         <span className="flex min-w-0 items-center gap-2.5">
@@ -226,7 +252,7 @@ function TeamPage() {
             <span className="block truncate font-medium">
               {m.name ?? m.email ?? "—"}
               {m.id === currentUserId && (
-                <span className="font-normal text-muted-foreground"> (you)</span>
+                <span className="font-normal text-muted-foreground"> {t("(you)")}</span>
               )}
             </span>
             <span className="block truncate text-meta text-muted-foreground">{m.email ?? "—"}</span>
@@ -236,44 +262,44 @@ function TeamPage() {
     },
     {
       key: "role",
-      header: "Role",
+      header: t("Role"),
       cell: (m) =>
         m.isOwner ? (
-          <Chip>Owner</Chip>
+          <Chip>{t("Owner")}</Chip>
         ) : isAdmin && m.id !== currentUserId ? (
           <Select value={m.role} onValueChange={(v) => void changeRole(m.id, v as WorkspaceRole)}>
             <SelectTrigger
               size="sm"
               className="w-auto gap-1.5"
-              aria-label={`Role for ${m.name ?? m.email ?? "member"}`}
+              aria-label={t("Role for {{name}}", { name: m.name ?? m.email ?? someone })}
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {WORKSPACE_ROLES.map((r) => (
                 <SelectItem key={r} value={r}>
-                  {roleWord(r)}
+                  {lookup(t, ROLE_WORD[r])}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         ) : (
-          <Chip>{roleWord(m.role)}</Chip>
+          <Chip>{lookup(t, roleWordKey(m.role))}</Chip>
         ),
     },
-    { key: "agents", header: "Agents", cell: (m) => m.agents.toLocaleString("en-US") },
+    { key: "agents", header: t("Agents"), cell: (m) => m.agents.toLocaleString(locale) },
     {
       key: "seen",
-      header: "Last active",
+      header: t("Last active"),
       cell: (m) => (
         <span className="text-muted-foreground">
-          {m.lastSeenAt ? lastActivityLabel(m.lastSeenAt) : "Not yet"}
+          {m.lastSeenAt ? lastActivityLabel(m.lastSeenAt, undefined, t, locale) : t("Not yet")}
         </span>
       ),
     },
     {
       key: "more",
-      header: <span className="sr-only">Actions</span>,
+      header: <span className="sr-only">{t("Actions")}</span>,
       className: "w-12",
       cell: (m) => {
         const self = m.id === currentUserId;
@@ -284,7 +310,7 @@ function TeamPage() {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label={`More for ${m.name ?? m.email ?? "member"}`}
+                aria-label={t("More for {{name}}", { name: m.name ?? m.email ?? someone })}
               >
                 <MoreHorizontal />
               </Button>
@@ -292,11 +318,11 @@ function TeamPage() {
             <DropdownMenuContent align="end">
               {self ? (
                 <DropdownMenuItem className="text-destructive" onClick={() => setLeavingOpen(true)}>
-                  Leave this workspace
+                  {t("Leave this workspace")}
                 </DropdownMenuItem>
               ) : (
                 <DropdownMenuItem className="text-destructive" onClick={() => setRemoving(m)}>
-                  Remove from the workspace
+                  {t("Remove from the workspace")}
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>
@@ -306,6 +332,8 @@ function TeamPage() {
     },
   ];
 
+  const anAdmin = t("an admin");
+  const linkExpired = t("link expired, resend it");
   const invitationRows = (
     <ul className="m-0 list-none p-0">
       {pending.map((inv: PendingInvitation) => (
@@ -318,16 +346,17 @@ function TeamPage() {
             <span className="min-w-0">
               <span className="block truncate font-medium">{inv.email}</span>
               <span className="block truncate text-meta text-muted-foreground">
-                Invited by {inv.invitedBy?.name ?? "an admin"} · {lastActivityLabel(inv.createdAt)}
-                {inv.needsResend ? " · link expired, resend it" : ""}
+                {t("Invited by {{name}}", { name: inv.invitedBy?.name ?? anAdmin })} ·{" "}
+                {lastActivityLabel(inv.createdAt, undefined, t, locale)}
+                {inv.needsResend ? ` · ${linkExpired}` : ""}
               </span>
             </span>
           </span>
           <span>
-            <Chip>{roleWord(inv.role as WorkspaceRole)}</Chip>
+            <Chip>{lookup(t, roleWordKey(inv.role))}</Chip>
           </span>
           <span className="text-muted-foreground">
-            {inv.needsResend ? "Expired" : expiresWords(inv.expiresAt, dataUpdatedAt)}
+            {inv.needsResend ? t("Expired") : expiresWords(inv.expiresAt, dataUpdatedAt, t)}
           </span>
           <span className="flex shrink-0 gap-1.5">
             <Button
@@ -335,10 +364,10 @@ function TeamPage() {
               size="sm"
               onClick={() => void resendInvite(inv.id)}
             >
-              Resend
+              {t("Resend")}
             </Button>
             <Button variant="ghost" size="sm" onClick={() => void revokeInvite(inv.id)}>
-              Revoke
+              {t("Revoke")}
             </Button>
           </span>
         </li>
@@ -349,26 +378,26 @@ function TeamPage() {
   return (
     <>
       <TopBar
-        title="Team"
+        title={t("Team")}
         actions={
           isAdmin ? (
             <Button onClick={() => setInviteOpen(true)} data-coach="invite-member">
-              <UserPlus /> Invite member
+              <UserPlus /> {t("Invite member")}
             </Button>
           ) : undefined
         }
       />
       <PageBody width="table">
         <TabsRow
-          label="Team pages"
+          label={t("Team pages")}
           value={tab}
-          onChange={(t) => void navigate({ to: "/team", search: { tab: t }, replace: true })}
+          onChange={(next) => void navigate({ to: "/team", search: { tab: next }, replace: true })}
           items={[
-            { value: "members", label: "Members", count: members.length },
+            { value: "members", label: t("Members"), count: members.length },
             ...(isAdmin
-              ? [{ value: "invitations" as const, label: "Invitations", count: pending.length }]
+              ? [{ value: "invitations" as const, label: t("Invitations"), count: pending.length }]
               : []),
-            { value: "roles", label: "Roles" },
+            { value: "roles", label: t("Roles") },
           ]}
         />
 
@@ -378,8 +407,8 @@ function TeamPage() {
               <div className="relative w-full max-w-[280px]">
                 <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  aria-label="Filter members"
-                  placeholder="Filter by name or email"
+                  aria-label={t("Filter members")}
+                  placeholder={t("Filter by name or email")}
                   className="pl-8"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
@@ -389,30 +418,32 @@ function TeamPage() {
                 value={roleFilter}
                 onValueChange={(v) => setRoleFilter(v as WorkspaceRole | "all")}
               >
-                <SelectTrigger size="sm" className="w-auto gap-1.5" aria-label="Show roles">
+                <SelectTrigger size="sm" className="w-auto gap-1.5" aria-label={t("Show roles")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All roles</SelectItem>
+                  <SelectItem value="all">{t("All roles")}</SelectItem>
                   {WORKSPACE_ROLES.map((r) => (
                     <SelectItem key={r} value={r}>
-                      {roleWord(r)}s
+                      {lookup(t, ROLE_PLURAL[r])}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             {isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading members…</p>
+              <p className="text-sm text-muted-foreground">{t("Loading members…")}</p>
             ) : (
               <div className="overflow-x-auto">
                 <DataTable
-                  label="Members"
+                  label={t("Members")}
                   columns={memberColumns}
                   rows={shown}
                   rowKey={(m) => m.id}
                   empty={
-                    <p className="py-6 text-sm text-muted-foreground">Nobody here matches that.</p>
+                    <p className="py-6 text-sm text-muted-foreground">
+                      {t("Nobody here matches that.")}
+                    </p>
                   }
                 />
               </div>
@@ -420,7 +451,9 @@ function TeamPage() {
 
             {isAdmin && pending.length > 0 && (
               <section className="mt-10">
-                <SectionLabel as="h2">Pending invitations · {pending.length}</SectionLabel>
+                <SectionLabel as="h2">
+                  {t("Pending invitations · {{n}}", { n: pending.length.toLocaleString(locale) })}
+                </SectionLabel>
                 {invitationRows}
               </section>
             )}
@@ -434,11 +467,13 @@ function TeamPage() {
         {tab === "invitations" &&
           (pending.length === 0 ? (
             <EmptyPage
-              title="No invitations out"
-              description="Invite a teammate and they land in this workspace with every agent shared with everyone."
+              title={t("No invitations out")}
+              description={t(
+                "Invite a teammate and they land in this workspace with every agent shared with everyone.",
+              )}
               actions={
                 isAdmin ? (
-                  <Button onClick={() => setInviteOpen(true)}>Invite member</Button>
+                  <Button onClick={() => setInviteOpen(true)}>{t("Invite member")}</Button>
                 ) : undefined
               }
             />
@@ -454,18 +489,23 @@ function TeamPage() {
                   key={r}
                   className="grid min-h-[52px] items-center gap-x-6 border-b border-hairline px-3 py-2 last:border-b-0 sm:grid-cols-[160px_minmax(0,1fr)_120px]"
                 >
-                  <span className="font-medium">{roleWord(r)}</span>
-                  <span className="text-muted-foreground">{ROLE_SUMMARY[r]}</span>
+                  <span className="font-medium">{lookup(t, ROLE_WORD[r])}</span>
+                  <span className="text-muted-foreground">{lookup(t, ROLE_SUMMARY[r])}</span>
                   <span className="text-meta text-muted-foreground sm:text-right">
-                    {members.filter((m) => m.role === r).length}{" "}
-                    {members.filter((m) => m.role === r).length === 1 ? "person" : "people"}
+                    {t("{{count}} person", {
+                      count: members.filter((m) => m.role === r).length,
+                      defaultValue_other: "{{count}} people",
+                    })}
                   </span>
                 </li>
               ))}
             </ul>
             <p className="mt-4 text-meta text-muted-foreground">
-              The workspace&rsquo;s owner is the admin who made it; it is a label, not a fourth
-              role. <DocsLink page="team">What each role actually gates</DocsLink>
+              <Trans
+                t={t}
+                i18nKey="The workspace’s owner is the admin who made it; it is a label, not a fourth role. <docs>What each role actually gates</docs>"
+                components={{ docs: <DocsLink page="team">{null}</DocsLink> }}
+              />
             </p>
           </section>
         )}
@@ -477,23 +517,24 @@ function TeamPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Remove {removing?.name ?? removing?.email ?? "this member"}?
+              {t("Remove {{name}}?", { name: removing?.name ?? removing?.email ?? thisMember })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              They lose access to this workspace, its agents and their own conversations here.
-              Nothing is deleted: invite them back and it all returns.
+              {t(
+                "They lose access to this workspace, its agents and their own conversations here. Nothing is deleted: invite them back and it all returns.",
+              )}
             </AlertDialogDescription>
             {/* The exception to "nothing is deleted": a key acts as its owner,
                 so it stops working the moment they do. */}
             {removing && <LiveKeyWarning userId={removing.id} />}
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
             <AlertDialogAction
               variant="danger"
               onClick={() => removing && void removeMember(removing.id)}
             >
-              Remove
+              {t("Remove")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -505,22 +546,24 @@ function TeamPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {cannotLeave ? "You can't leave yet" : "Leave this workspace?"}
+              {cannotLeave ? t("You can't leave yet") : t("Leave this workspace?")}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {cannotLeave ??
-                "You lose access to this workspace's agents and knowledge, and to the conversations you had with them here — your own private ones included. Nothing is deleted: it all comes back if an admin invites you back."}
+                t(
+                  "You lose access to this workspace's agents and knowledge, and to the conversations you had with them here — your own private ones included. Nothing is deleted: it all comes back if an admin invites you back.",
+                )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{cannotLeave ? "Close" : "Cancel"}</AlertDialogCancel>
+            <AlertDialogCancel>{cannotLeave ? t("Close") : t("Cancel")}</AlertDialogCancel>
             {cannotLeave ? null : (
               <AlertDialogAction
                 variant="danger"
                 onClick={() => void leaveWorkspace()}
                 disabled={leaving}
               >
-                Leave
+                {t("Leave")}
               </AlertDialogAction>
             )}
           </AlertDialogFooter>

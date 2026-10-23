@@ -11,11 +11,20 @@
  * is a worse answer than "412 B" for the only thing the number is for: telling
  * two rows apart at a glance.
  */
-export function formatFileSize(bytes: number): string {
+export function formatFileSize(bytes: number, locale: string = "en"): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
-  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  // No grouping: "1023 B" is how the ladder reads just under a kilobyte, and the
+  // separator is the reader's (a Turkish reader sees "1,5 KB").
+  const whole = new Intl.NumberFormat(locale, { maximumFractionDigits: 0, useGrouping: false });
+  const tenth = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+    useGrouping: false,
+  });
+  const number = (n: number) => (n < 10 ? tenth.format(n) : whole.format(n));
+  if (bytes < 1024) return `${whole.format(bytes)} B`;
   const kb = bytes / 1024;
-  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+  if (kb < 1024) return `${number(kb)} KB`;
   const mb = kb / 1024;
-  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+  return `${number(mb)} MB`;
 }

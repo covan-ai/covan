@@ -136,6 +136,20 @@ try {
       console.log(`${ok ? "✓" : "✗"} ${String(status)}  ${route}`);
       if (!ok) failed = true;
     }
+    // The language is decided on the server, from the request. Rendering is
+    // the only place that can go wrong — the locale module has unit tests,
+    // but whether the root route's `beforeLoad` reaches `<html lang>` through
+    // the Nitro build is a question only the artifact answers.
+    const turkish = await fetch(`http://127.0.0.1:${PORT}/sign-in`, {
+      headers: { "accept-language": "tr-TR,tr;q=0.9,en;q=0.5" },
+    });
+    const html = await turkish.text();
+    const lang = /<html[^>]*\slang="([^"]*)"/.exec(html)?.[1];
+    const served = lang === "tr-TR";
+    console.log(
+      `${served ? "✓" : "✗"} lang=${lang ?? "(none)"}  /sign-in with Accept-Language: tr-TR`,
+    );
+    if (!served) failed = true;
   }
 } finally {
   server.kill("SIGKILL");

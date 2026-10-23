@@ -1,19 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { AgentMark } from "@/components/agent-mark";
 import { DataTable } from "@/components/data-table";
 import { SectionLabel } from "@/components/section";
 import { api, type AgentUsage } from "@/lib/api-client";
 
-const compact = (v: number) =>
+const fixed = (v: number, digits: number, locale: string) =>
+  v.toLocaleString(locale, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+const compact = (v: number, locale: string) =>
   v >= 1_000_000
-    ? `${(v / 1_000_000).toFixed(1)}M`
+    ? `${fixed(v / 1_000_000, 1, locale)}M`
     : v >= 1_000
-      ? `${(v / 1_000).toFixed(v >= 10_000 ? 0 : 1)}k`
-      : String(v);
+      ? `${fixed(v / 1_000, v >= 10_000 ? 0 : 1, locale)}k`
+      : v.toLocaleString(locale);
 
 // `<$0.01` is for an amount too small to print, not for the absence of one: an
-// agent that really spent nothing reads `$0.00`.
-const usd = (v: number) => (v === 0 ? "$0.00" : v < 0.01 ? "<$0.01" : `$${v.toFixed(2)}`);
+// agent that really spent nothing reads `$0.00`. The narrow symbol, because
+// the wide one is "US$" outside the United States and the column is dollars
+// whichever region reads it.
+const dollars = (v: number, locale: string) =>
+  new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "USD",
+    currencyDisplay: "narrowSymbol",
+  }).format(v);
+const usd = (v: number, locale: string) =>
+  v === 0 ? dollars(0, locale) : v < 0.01 ? `<${dollars(0.01, locale)}` : dollars(v, locale);
 
 /**
  * Settings › Usage, on an install that charges nobody (A15, self-hosted): one
@@ -25,6 +39,8 @@ const usd = (v: number) => (v === 0 ? "$0.00" : v < 0.01 ? "<$0.01" : `$${v.toFi
  * sentence under the table says which it is.
  */
 export function WorkspaceUsageSection({ isAdmin }: { isAdmin: boolean }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   // `["usage"]` is already loaded — it is how the page knows it is not hosted.
   const own = useQuery({ queryKey: ["usage"], queryFn: api.usage });
   const all = useQuery({
@@ -41,24 +57,24 @@ export function WorkspaceUsageSection({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <section>
-      <SectionLabel>By agent</SectionLabel>
+      <SectionLabel>{t("By agent")}</SectionLabel>
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
       ) : (
         <div className="overflow-x-auto">
           <DataTable<AgentUsage>
-            label="Usage by agent"
+            label={t("Usage by agent")}
             rows={used}
             rowKey={(a) => a.agentId}
             empty={
               <p className="text-sm text-muted-foreground">
-                Once anybody talks to an agent, what it costs shows up here.
+                {t("Once anybody talks to an agent, what it costs shows up here.")}
               </p>
             }
             columns={[
               {
                 key: "agent",
-                header: "Agent",
+                header: t("Agent"),
                 cell: (a) => (
                   <span className="flex items-center gap-2.5 font-medium">
                     <AgentMark agent={a} size={24} />
@@ -68,28 +84,28 @@ export function WorkspaceUsageSection({ isAdmin }: { isAdmin: boolean }) {
               },
               {
                 key: "model",
-                header: "Model now",
+                header: t("Model now"),
                 hideBelow: "md",
                 cell: (a) => <span className="text-muted-foreground">{a.model}</span>,
               },
               {
                 key: "replies",
-                header: "Replies",
+                header: t("Replies"),
                 num: true,
-                cell: (a) => a.messageCount.toLocaleString("en-US"),
+                cell: (a) => a.messageCount.toLocaleString(locale),
               },
               {
                 key: "tokens",
-                header: "Tokens",
+                header: t("Tokens"),
                 num: true,
                 hideBelow: "md",
-                cell: (a) => compact(a.totalTokens),
+                cell: (a) => compact(a.totalTokens, locale),
               },
               {
                 key: "cost",
-                header: "At list price",
+                header: t("At list price"),
                 num: true,
-                cell: (a) => usd(a.estCostUsd),
+                cell: (a) => usd(a.estCostUsd, locale),
               },
             ]}
           />
@@ -97,9 +113,11 @@ export function WorkspaceUsageSection({ isAdmin }: { isAdmin: boolean }) {
       )}
       <p className="mt-3 text-meta text-muted-foreground">
         {workspaceWide
-          ? "Everyone's conversations together, by agent — never by person."
-          : "Your own conversations."}{" "}
-        Nothing here is charged to anyone: an install on its own keys pays its providers directly.
+          ? t("Everyone's conversations together, by agent — never by person.")
+          : t("Your own conversations.")}{" "}
+        {t(
+          "Nothing here is charged to anyone: an install on its own keys pays its providers directly.",
+        )}
       </p>
     </section>
   );

@@ -3,6 +3,7 @@ import eslintPluginPrettier from "eslint-plugin-prettier/recommended";
 import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
+import i18next from "eslint-plugin-i18next";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
@@ -67,6 +68,13 @@ export default tseslint.config(
               name: "server-only",
               message:
                 "TanStack Start does not use the Next.js `server-only` package. Rename the module to `*.server.ts` or mark it with `@tanstack/react-start/server-only`.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["**/i18n/locales/*"],
+              message:
+                "The catalogues are read by src/i18n/resources.ts alone; a component gets its words from t().",
             },
           ],
         },
@@ -137,6 +145,63 @@ export default tseslint.config(
     files: ["src/components/ui/**"],
     rules: {
       "react-refresh/only-export-components": "off",
+    },
+  },
+  {
+    // The one file that is allowed to read the catalogues (see the
+    // `no-restricted-imports` pattern above). The glob it uses is not an
+    // import statement, so this is as much documentation as exemption.
+    files: ["src/i18n/resources.ts"],
+    rules: {
+      "no-restricted-imports": "off",
+    },
+  },
+  {
+    // Words in JSX go through `t()`. Scoped to the files that have been
+    // translated, the same list `src/i18n/migrated.static.test.ts` keeps
+    // for what this rule cannot see; it widens with every phase and
+    // becomes `src/{components,routes}/**` when the last one lands.
+    files: ["src/i18n/**/*.tsx"],
+    ignores: ["**/*.test.tsx"],
+    plugins: { i18next },
+    rules: {
+      "i18next/no-literal-string": [
+        "error",
+        {
+          mode: "jsx-only",
+          "jsx-attributes": {
+            include: [
+              "aria-label",
+              "placeholder",
+              "title",
+              "alt",
+              "label",
+              "description",
+              "help",
+              "hint",
+              "empty",
+            ],
+          },
+          "jsx-components": { exclude: ["Trans", "Kbd", "code"] },
+          words: {
+            // Punctuation and symbols are not words; product and vendor
+            // names are not translated.
+            exclude: [
+              "[0-9!-/:-@[-`{-~]+",
+              "[·—–…×✓✗→←]+",
+              "Covan",
+              "Slack",
+              "Notion",
+              "Google Drive",
+              "Composio",
+              "Telegram",
+              "GitHub",
+              "API",
+              "OK",
+            ],
+          },
+        },
+      ],
     },
   },
   eslintPluginPrettier,

@@ -7,3 +7,4 @@ package-lock.json
 bun.lock
 routeTree.gen.ts
 src/fonts.css
+src/i18n/locales/

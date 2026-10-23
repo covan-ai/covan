@@ -6,6 +6,7 @@ import { useTheme, type ThemePreference } from "@/lib/theme";
 import { Field } from "@/components/field";
 import { Segmented } from "@/components/segmented";
 import { LOCALES } from "@/lib/locales";
+import { applyLocale } from "@/i18n/provider";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -62,7 +63,11 @@ function LanguageField({ locale }: { locale: string | null }) {
   const save = async (value: string) => {
     setSaving(true);
     try {
-      await api.profile.update({ locale: value === FOLLOW_BROWSER ? null : value });
+      const preference = value === FOLLOW_BROWSER ? null : value;
+      await api.profile.update({ locale: preference });
+      // Switch now rather than when /me comes back: the words on this very
+      // page are the first thing the choice should change.
+      applyLocale(preference);
       await queryClient.invalidateQueries({ queryKey: ["me"] });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to save");

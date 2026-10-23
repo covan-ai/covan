@@ -1,5 +1,5 @@
 import { supabase } from "./supabase/client";
-import { ApiError, errorMessage, isNoWorkspace, requestIdOf } from "./api-error";
+import { ApiError, errorMessage, isNoWorkspace, requestIdOf, statedError } from "./api-error";
 import { assetSrc } from "./asset-src";
 import type { WorkspaceRole } from "./roles";
 import type { Agent, ChatSession, Idea, Message, SessionTuning } from "./agents-store";
@@ -567,12 +567,14 @@ async function exportDocument(id: string, format: "docx" | "pdf"): Promise<"save
   if (res.status === 501 && format === "pdf") return "print";
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      message = errorMessage(res.status, await res.json(), res.statusText);
+      body = await res.json();
+      message = errorMessage(res.status, body, res.statusText);
     } catch {
       // not JSON; the status text stands
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, undefined, statedError(body) ?? undefined);
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -616,7 +618,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
-    throw new ApiError(res.status, message, requestIdOf(res, body));
+    throw new ApiError(res.status, message, requestIdOf(res, body), statedError(body) ?? undefined);
   }
 
   if (res.status === 204) {
@@ -656,7 +658,7 @@ async function sendForm<T>(method: string, path: string, file: Blob): Promise<T>
     } catch {
       // ignore JSON parse failure, fall back to statusText
     }
-    throw new ApiError(res.status, message, requestIdOf(res, body));
+    throw new ApiError(res.status, message, requestIdOf(res, body), statedError(body) ?? undefined);
   }
   return (await res.json()) as T;
 }
@@ -843,12 +845,14 @@ async function downloadArchive(path: string): Promise<void> {
   });
   if (!res.ok) {
     let message = res.statusText;
+    let body: unknown;
     try {
-      message = errorMessage(res.status, await res.json(), res.statusText);
+      body = await res.json();
+      message = errorMessage(res.status, body, res.statusText);
     } catch {
       // A failure that is not JSON is still a failure; keep the status text.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, undefined, statedError(body) ?? undefined);
   }
 
   const blob = await res.blob();

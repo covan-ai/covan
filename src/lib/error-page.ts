@@ -1,11 +1,21 @@
+import { LOCALE_COOKIE, isLocaleTag, readCookie } from "@/i18n/locale";
+
 /**
  * The page the server sends when rendering failed before the app could (the
  * same words as A31's crash page, `components/error-page.tsx`), with no
  * script of ours and nothing from the app's bundle.
+ *
+ * Its words stay English on purpose. This is the page for when the bundle
+ * itself could not be served, and the translation lives in that bundle;
+ * a second, dependency-free copy of four Turkish strings would be a second
+ * thing to keep in step. Only the document's `lang` follows the cookie, so
+ * a screen reader at least pronounces the English as English.
  */
-export function renderErrorPage(): string {
+export function renderErrorPage(request?: Request): string {
+  const cookie = readCookie(request?.headers.get("cookie"), LOCALE_COOKIE);
+  const lang = isLocaleTag(cookie) ? cookie : "en";
   return `<!doctype html>
-<html lang="en">
+<html lang="${lang}">
   <head>
     <meta charset="utf-8" />
     <title>Something went wrong on this page</title>

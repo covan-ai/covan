@@ -1,4 +1,10 @@
 import "@testing-library/jest-dom/vitest";
+// Initialises the interface's words in English for every test, so a
+// component renders the same copy a test has always asserted on. jsdom has
+// no `<html lang>`, which the instance reads as English; a test that wants
+// Turkish wraps itself in `inTurkish()` from `src/test/in-turkish.ts`.
+// Imported by name: the package is marked side-effect free.
+import { i18n as _i18n } from "@/i18n";
 
 // Radix measures its own parts with ResizeObserver, which jsdom does not
 // implement — rendering a Checkbox, Select or Tooltip throws without this.

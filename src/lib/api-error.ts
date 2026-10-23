@@ -6,6 +6,8 @@
  * down the other is the kind of difference nobody notices until someone is
  * looking at it.
  */
+import { i18n } from "@/i18n";
+
 /**
  * A refusal that reached a server and came back with a number.
  *
@@ -24,12 +26,18 @@ export class ApiError extends Error {
    * line; absent when the request never reached the API.
    */
   requestId?: string;
+  /**
+   * The server's own words, whatever language the page is in. `message` is
+   * what a person is shown; this is what a bug report should quote.
+   */
+  detail?: string;
 
-  constructor(status: number, message: string, requestId?: string) {
+  constructor(status: number, message: string, requestId?: string, detail?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     if (requestId) this.requestId = requestId;
+    if (detail && detail !== message) this.detail = detail;
   }
 }
 
@@ -39,17 +47,49 @@ export function requestIdOf(res: Response, body?: unknown): string | undefined {
   return res.headers.get("X-Request-Id") ?? (typeof fromBody === "string" ? fromBody : undefined);
 }
 
-export function errorMessage(status: number, body: unknown, fallback: string): string {
+/** The `error` string a refusal's body carries, if it carries one. */
+export function statedError(body: unknown): string | null {
   const shape = body as { error?: unknown } | null | undefined;
-  const stated = typeof shape?.error === "string" ? shape.error : null;
+  return typeof shape?.error === "string" ? shape.error : null;
+}
 
-  // 402 is the one refusal with a machine-readable shape, and its `error` field
-  // is a code rather than a sentence. Turned into prose here so every caller
-  // reports it the same way without knowing about credits.
-  if (status === 402 && stated === "credits_exhausted") {
-    return "This workspace is out of credits. An admin can ask for more from Settings.";
+/**
+ * What to show for a refusal.
+ *
+ * A handful of refusals are codes rather than sentences, and those are turned
+ * into prose here so every caller reports them the same way without knowing
+ * about credits or rate limits. Everything else the API says, it says in
+ * English — mostly in the register of "not found" — so when the page is in
+ * another language the caller's own, translated fallback is shown instead,
+ * and the server's words stay on the error as `detail` for whoever is
+ * debugging. In English the server's sentence is still passed through, as it
+ * always was.
+ *
+ * Client only (it reads the page's language); the server never shows one.
+ */
+export function errorMessage(
+  status: number,
+  body: unknown,
+  fallback: string,
+  language: string = i18n.resolvedLanguage ?? "en",
+): string {
+  const stated = statedError(body);
+
+  switch (stated) {
+    case "credits_exhausted":
+      if (status === 402) {
+        return i18n.t("This workspace is out of credits. An admin can ask for more from Settings.");
+      }
+      break;
+    case "rate_limited":
+      return i18n.t("Too many requests. Wait a moment and try again.");
+    case "not_yours":
+      return i18n.t("This isn't yours to change.");
+    case "save_failed":
+      return i18n.t("Couldn't save. Try again.");
   }
 
+  if (stated !== null && language !== "en") return fallback;
   return stated ?? fallback;
 }
 

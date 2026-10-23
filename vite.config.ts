@@ -92,6 +92,11 @@ export default defineConfig(({ command }) => ({
       "@tanstack/react-start",
       "@tanstack/react-query",
       "@tanstack/query-core",
+      // react-i18next keeps the instance `initReactI18next` was handed at
+      // module level; a second copy would answer `useTranslation()` with
+      // "no instance" exactly the way the router reports a missing provider.
+      "i18next",
+      "react-i18next",
     ],
   },
   server: { port: 3000 },

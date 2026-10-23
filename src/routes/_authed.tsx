@@ -11,6 +11,7 @@ import { stashedInviteLink } from "@/lib/invite-stash";
 import { CoachMarkLayer } from "@/components/coach-mark";
 import { AppShell } from "@/components/app-shell";
 import { shellFor } from "@/lib/shell-context";
+import { applyLocale } from "@/i18n/provider";
 
 export const Route = createFileRoute("/_authed")({
   component: AuthedLayout,
@@ -105,6 +106,16 @@ function AuthedLayout() {
     queryFn: () => api.me(),
     enabled: Boolean(session),
   });
+
+  // The profile's language follows the account: a preference saved on one
+  // device is applied here on the next, and remembered in this browser's
+  // cookie so the page after this one is served in it. `null` means follow
+  // the browser, which clears the cookie.
+  useEffect(() => {
+    // `/me` answers null for an account with no workspace, and a profile
+    // with no preference says null too; both mean "follow the browser".
+    if (me) applyLocale(me.user?.locale ?? null);
+  }, [me]);
 
   // `undefined` while loading, and deliberately `undefined` on failure too: a
   // /me that 404s must not lock the account into a wizard it cannot leave.

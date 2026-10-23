@@ -36,6 +36,15 @@ import { join } from "node:path";
  * dünya" and the export tests round-trip "toplantı-notları.md", because
  * non-ASCII input is exactly what those two exist to prove survives. The rule is
  * about what the product says, not about what it can carry.
+ *
+ * The interface now has a Turkish translation, and this rule still stands —
+ * it is what makes the translation findable. All of it lives in
+ * `src/i18n/locales/tr.json`, which is JSON and so outside the `.ts`/`.tsx`
+ * glob below; a Turkish string anywhere else is still one somebody typed into
+ * the source instead of into the catalogue. The second test here keeps the
+ * catalogue from being pulled into a component by a different door: nothing
+ * imports it but `src/i18n/resources.ts`, so the words reach the page through
+ * `t()` or not at all.
  */
 
 const SRC = join(import.meta.dirname ?? "src", ".");
@@ -145,6 +154,16 @@ describe("interface language", () => {
     expect(turkishHit("Add to board")).toBeNull();
     expect(turkishHit("Don't have an account?")).toBeNull();
     expect(turkishHit("the workspace's documents")).toBeNull();
+  });
+
+  it("reads the catalogue from one place only", () => {
+    const IMPORTS_CATALOGUE =
+      /^\s*import\b[^;]*["'][^"']*\/locales\/[^"']*["']|import\.meta\.glob\([^)]*locales/m;
+    const readers = sourceFiles(SRC)
+      .filter((path) => IMPORTS_CATALOGUE.test(readFileSync(path, "utf8")))
+      .map((path) => path.slice(SRC.length + 1));
+
+    expect(readers).toEqual(["i18n/resources.ts"]);
   });
 
   it("lets the legal pages keep the Turkish that has to stay", () => {

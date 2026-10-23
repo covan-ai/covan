@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { useTranslation } from "@/i18n";
 import { Avatar } from "@/components/avatar";
 import { Button } from "@/components/ui/button";
 
@@ -21,6 +22,7 @@ export function AvatarPicker({
   onUpload: (file: File) => void;
   onRemove: () => void;
 }) {
+  const { t } = useTranslation();
   const input = useRef<HTMLInputElement>(null);
 
   // A16: the photo at 48px, then Upload photo and Remove.
@@ -33,11 +35,11 @@ export function AvatarPicker({
         disabled={busy}
         onClick={() => input.current?.click()}
       >
-        {busy ? "Saving…" : url ? "Change photo" : "Upload photo"}
+        {busy ? t("Saving…") : url ? t("Change photo") : t("Upload photo")}
       </Button>
       {url ? (
         <Button type="button" variant="ghost" disabled={busy} onClick={onRemove}>
-          Remove
+          {t("Remove")}
         </Button>
       ) : null}
       <input
@@ -45,7 +47,7 @@ export function AvatarPicker({
         type="file"
         accept="image/png,image/jpeg,image/webp"
         className="hidden"
-        aria-label="Photo"
+        aria-label={t("Photo")}
         onChange={(e) => {
           const file = e.target.files?.[0];
           // Cleared so picking the same file again still fires a change.

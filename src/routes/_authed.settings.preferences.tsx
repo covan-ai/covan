@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { SectionTitle } from "@/components/section";
 import { PersonalPreferencesSection } from "@/components/preferences-section";
@@ -17,10 +18,14 @@ export const Route = createFileRoute("/_authed/settings/preferences")({
 });
 
 function PreferencesSettingsPage() {
+  const { t } = useTranslation();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   return (
     <>
-      <SectionTitle title="Preferences" lede="How Covan looks, and what it tells you about." />
+      <SectionTitle
+        title={t("Preferences")}
+        lede={t("How Covan looks, and what it tells you about.")}
+      />
       <div className="mt-5">
         <PersonalPreferencesSection me={me ?? undefined} />
         {/* Where routines deliver is a person's: a channel belongs to whoever

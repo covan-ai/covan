@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Field } from "@/components/field";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
@@ -13,6 +15,8 @@ import { lastActivityLabel } from "@/lib/day-groups";
  * place names: GoTrue keeps an address, and a guessed city would be one.
  */
 export function SessionsList() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const { data: sessions = [], isLoading } = useQuery({
     queryKey: ["account", "sessions"],
@@ -25,9 +29,9 @@ export function SessionsList() {
     try {
       await api.account.revokeSession(id);
       await queryClient.invalidateQueries({ queryKey: ["account", "sessions"] });
-      toast.success("Signed out of that browser");
+      toast.success(t("Signed out of that browser"));
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't sign that browser out");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't sign that browser out"));
     } finally {
       setRevoking(null);
     }
@@ -36,9 +40,12 @@ export function SessionsList() {
   const ordered = [...sessions].sort((a, b) => Number(b.current) - Number(a.current));
 
   return (
-    <Field label="Sessions" help="Where you are signed in. Sign out of any you do not recognise.">
+    <Field
+      label={t("Sessions")}
+      help={t("Where you are signed in. Sign out of any you do not recognise.")}
+    >
       {isLoading ? (
-        <p className="pt-1.5 text-sm text-muted-foreground">Loading…</p>
+        <p className="pt-1.5 text-sm text-muted-foreground">{t("Loading…")}</p>
       ) : (
         <ul className="m-0 max-w-[560px] list-none p-0">
           {ordered.map((s) => (
@@ -51,14 +58,21 @@ export function SessionsList() {
                 className={s.current ? "bg-foreground" : ""}
               />
               <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium">{s.current ? "This device" : s.device}</span>
+                <span className="font-medium">{s.current ? t("This device") : s.device}</span>
                 <span className="text-meta text-muted-foreground">
                   {" "}
-                  · {s.current ? `${s.browser} on ${s.device}` : s.browser}
+                  ·{" "}
+                  {s.current
+                    ? t("{{browser}} on {{device}}", { browser: s.browser, device: s.device })
+                    : s.browser}
                 </span>
               </span>
               <span className="shrink-0 text-meta text-muted-foreground">
-                {s.current ? "Now" : s.lastSeenAt ? lastActivityLabel(s.lastSeenAt) : "—"}
+                {s.current
+                  ? t("Now")
+                  : s.lastSeenAt
+                    ? lastActivityLabel(s.lastSeenAt, undefined, t, locale)
+                    : "—"}
               </span>
               {!s.current && (
                 <Button
@@ -67,7 +81,7 @@ export function SessionsList() {
                   disabled={revoking !== null}
                   onClick={() => void signOut(s.id)}
                 >
-                  Sign out
+                  {t("Sign out")}
                 </Button>
               )}
             </li>

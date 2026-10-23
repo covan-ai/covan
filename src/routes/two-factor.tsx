@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
+import { Trans, useTranslation } from "@/i18n";
 import { AuthLayout } from "@/components/auth-layout";
 import { CodeInput } from "@/components/code-input";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ export const Route = createFileRoute("/two-factor")({
  * (0108). This page is the only thing it is good for.
  */
 function TwoFactor() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { next } = Route.useSearch();
   const [ready, setReady] = useState(false);
@@ -73,7 +75,7 @@ function TwoFactor() {
       await giveSecondFactor(code);
     } catch (cause) {
       setSubmitting(false);
-      setError(cause instanceof Error ? cause.message : "That code did not work.");
+      setError(cause instanceof Error ? cause.message : t("That code did not work."));
       return;
     }
     navigate({ to: next ?? "/app", replace: true });
@@ -86,19 +88,33 @@ function TwoFactor() {
 
   return (
     <AuthLayout
-      title="Enter your code"
-      subtitle="From your authenticator app. It changes every 30 seconds."
+      title={t("Enter your code")}
+      subtitle={t("From your authenticator app. It changes every 30 seconds.")}
       footer={
-        <>
-          {email ? `Signing in as ${email} · ` : null}
+        email ? (
+          <Trans
+            t={t}
+            i18nKey="Signing in as {{email}} · <a>Not you?</a>"
+            values={{ email }}
+            components={{
+              a: (
+                <button
+                  type="button"
+                  onClick={() => void signInElsewhere()}
+                  className="font-medium text-foreground hover:underline"
+                />
+              ),
+            }}
+          />
+        ) : (
           <button
             type="button"
             onClick={() => void signInElsewhere()}
             className="font-medium text-foreground hover:underline"
           >
-            {email ? "Not you?" : "Sign in with a different account"}
+            {t("Sign in with a different account")}
           </button>
-        </>
+        )
       }
     >
       {/* `method="post"` for the reason sign-in.tsx gives. */}
@@ -113,7 +129,7 @@ function TwoFactor() {
           className="w-full"
           disabled={!ready || submitting || code.length < 6}
         >
-          {submitting ? "Checking…" : "Verify"}
+          {submitting ? t("Checking…") : t("Verify")}
         </Button>
 
         <div className="text-right">
@@ -122,13 +138,14 @@ function TwoFactor() {
             onClick={() => setLostPhone((v) => !v)}
             className="text-meta text-muted-foreground hover:text-foreground"
           >
-            Lost your phone?
+            {t("Lost your phone?")}
           </button>
         </div>
         {lostPhone ? (
           <p className="m-0 text-meta text-muted-foreground">
-            Whoever runs this Covan can remove your authenticator, and you can then sign in with
-            your password alone.
+            {t(
+              "Whoever runs this Covan can remove your authenticator, and you can then sign in with your password alone.",
+            )}
           </p>
         ) : null}
       </form>

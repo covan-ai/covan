@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
+import { Trans, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Button } from "@/components/ui/button";
 import { LegalAnchor } from "@/components/legal-anchor";
 import { supabase } from "@/lib/supabase/client";
@@ -86,6 +88,8 @@ export function OAuthButtons({
    */
   consent?: boolean;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [providers, setProviders] = useState<OAuthProvider[]>([]);
   const [leaving, setLeaving] = useState<OAuthProvider | null>(null);
 
@@ -133,7 +137,9 @@ export function OAuthButtons({
               onClick={() => void start(provider)}
             >
               <Mark className="!size-[18px]" />
-              {leaving === provider ? "Redirecting…" : `Continue with ${label}`}
+              {leaving === provider
+                ? t("Redirecting…")
+                : t("Continue with {{provider}}", { provider: label })}
             </Button>
           );
         })}
@@ -141,21 +147,33 @@ export function OAuthButtons({
 
       {consent ? (
         <p className="mt-3 mb-0 text-meta leading-[1.5] text-muted-foreground">
-          Continuing with {providers.map((p) => PROVIDER[p].label).join(" or ")} agrees to the{" "}
-          <LegalAnchor link={termsLink()} newTab>
-            Terms
-          </LegalAnchor>{" "}
-          and the{" "}
-          <LegalAnchor link={privacyLink()} newTab>
-            Privacy policy
-          </LegalAnchor>
-          .
+          <Trans
+            t={t}
+            i18nKey="Continuing with {{providers}} agrees to the <terms>Terms</terms> and the <privacy>Privacy policy</privacy>."
+            values={{
+              providers: new Intl.ListFormat(locale, { type: "disjunction" }).format(
+                providers.map((p) => PROVIDER[p].label),
+              ),
+            }}
+            components={{
+              terms: (
+                <LegalAnchor link={termsLink()} newTab>
+                  {null}
+                </LegalAnchor>
+              ),
+              privacy: (
+                <LegalAnchor link={privacyLink()} newTab>
+                  {null}
+                </LegalAnchor>
+              ),
+            }}
+          />
         </p>
       ) : null}
 
       <div className="my-5 flex items-center gap-3 text-xs text-micro-foreground">
         <span className="h-px flex-1 bg-hairline" />
-        or
+        {t("or")}
         <span className="h-px flex-1 bg-hairline" />
       </div>
     </div>

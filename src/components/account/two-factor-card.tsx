@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import type { Factor } from "@supabase/supabase-js";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Field } from "@/components/field";
 import { Chip } from "@/components/chip";
 import { Button } from "@/components/ui/button";
@@ -46,6 +48,7 @@ function message(cause: unknown, fallback: string): string {
  * session that has not given the code is refused everything.
  */
 export function TwoFactorCard() {
+  const { t } = useTranslation();
   const {
     data: factors,
     isPending,
@@ -62,17 +65,19 @@ export function TwoFactorCard() {
   // or Turn on.
   return (
     <Field
-      label="Two-factor authentication"
-      help="A code from your authenticator app at every sign-in, after your password."
+      label={t("Two-factor authentication")}
+      help={t("A code from your authenticator app at every sign-in, after your password.")}
     >
       {isError ? (
-        <p className="pt-1.5 text-meta text-destructive">Couldn't load your authenticators.</p>
+        <p className="pt-1.5 text-meta text-destructive">
+          {t("Couldn't load your authenticators.")}
+        </p>
       ) : on ? (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-3 pt-1">
-            <Chip tone="ink">On</Chip>
+            <Chip tone="ink">{t("On")}</Chip>
             <Button variant="ghost" size="sm" onClick={() => setAdding(true)} disabled={isPending}>
-              Add another device
+              {t("Add another device")}
             </Button>
           </div>
           <ul className="m-0 max-w-[560px] list-none p-0">
@@ -83,13 +88,14 @@ export function TwoFactorCard() {
             ))}
           </ul>
           <p className="m-0 text-meta text-muted-foreground">
-            There are no backup codes: a second device is the way back in if you lose this one. API
-            keys you made keep working.
+            {t(
+              "There are no backup codes: a second device is the way back in if you lose this one. API keys you made keep working.",
+            )}
           </p>
         </div>
       ) : (
         <Button variant="secondary" onClick={() => setAdding(true)} disabled={isPending}>
-          Turn on
+          {t("Turn on")}
         </Button>
       )}
       <AddAuthenticatorDialog open={adding} onOpenChange={setAdding} first={!on} />
@@ -98,18 +104,20 @@ export function TwoFactorCard() {
 }
 
 function AuthenticatorRow({ factor, last }: { factor: Factor; last: boolean }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const [removing, setRemoving] = useState(false);
-  const name = factor.friendly_name || "Authenticator";
+  const name = factor.friendly_name || t("Authenticator");
 
   const remove = async () => {
     setRemoving(true);
     try {
       await removeAuthenticator(factor.id);
       await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
-      toast.success(last ? "Two-step sign-in is off" : "Device removed");
+      toast.success(last ? t("Two-step sign-in is off") : t("Device removed"));
     } catch (cause) {
-      toast.error(message(cause, "Couldn't remove that device"));
+      toast.error(message(cause, t("Couldn't remove that device")));
       setRemoving(false);
     }
   };
@@ -121,29 +129,34 @@ function AuthenticatorRow({ factor, last }: { factor: Factor; last: boolean }) {
         <span className="font-medium">{name}</span>
         <span className="text-meta text-muted-foreground">
           {" "}
-          · added {formatRelative(Date.parse(factor.created_at))}
+          ·{" "}
+          {t("added {{when}}", {
+            when: formatRelative(Date.parse(factor.created_at), undefined, t, locale),
+          })}
         </span>
       </span>
       {
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant="ghost" size="sm" disabled={removing} className="shrink-0">
-              {removing ? "Removing…" : "Remove"}
+              {removing ? t("Removing…") : t("Remove")}
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
+              <AlertDialogTitle>{t("Remove {{name}}?", { name })}</AlertDialogTitle>
               <AlertDialogDescription>
                 {last
-                  ? "It is your only one, so this turns two-step sign-in off: your password alone will get you in again."
-                  : "Its codes stop working. Your other devices still do."}
+                  ? t(
+                      "It is your only one, so this turns two-step sign-in off: your password alone will get you in again.",
+                    )
+                  : t("Its codes stop working. Your other devices still do.")}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
               <AlertDialogAction variant="danger" onClick={() => void remove()}>
-                Remove
+                {t("Remove")}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -169,6 +182,7 @@ function AddAuthenticatorDialog({
   onOpenChange: (v: boolean) => void;
   first: boolean;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
@@ -197,7 +211,7 @@ function AddAuthenticatorDialog({
     try {
       setEnrollment(await startEnrollment(name.trim()));
     } catch (cause) {
-      setError(message(cause, "Couldn't start setting that up"));
+      setError(message(cause, t("Couldn't start setting that up")));
     } finally {
       setBusy(false);
     }
@@ -210,11 +224,11 @@ function AddAuthenticatorDialog({
     try {
       await confirmEnrollment(enrollment.factorId, digits);
       await queryClient.invalidateQueries({ queryKey: QUERY_KEY });
-      toast.success(first ? "Two-step sign-in is on" : "Device added");
+      toast.success(first ? t("Two-step sign-in is on") : t("Device added"));
       onOpenChange(false);
       reset();
     } catch (cause) {
-      setError(message(cause, "That code did not match"));
+      setError(message(cause, t("That code did not match")));
     } finally {
       setBusy(false);
     }
@@ -224,7 +238,7 @@ function AddAuthenticatorDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{enrollment ? "Scan this code" : "Add an authenticator"}</DialogTitle>
+          <DialogTitle>{enrollment ? t("Scan this code") : t("Add an authenticator")}</DialogTitle>
         </DialogHeader>
 
         {enrollment ? (
@@ -240,17 +254,17 @@ function AddAuthenticatorDialog({
                 here, and no third party ever sees the secret. */}
             <img
               src={enrollment.qrCode}
-              alt="QR code for your authenticator app"
+              alt={t("QR code for your authenticator app")}
               className="mx-auto h-44 w-44 rounded-lg bg-white p-2"
             />
             <div className="space-y-1">
               <p className="text-meta text-muted-foreground">
-                Can't scan it? Enter this key instead:
+                {t("Can't scan it? Enter this key instead:")}
               </p>
               <p className="break-all font-mono text-xs">{enrollment.secret}</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="enroll-code">Code from the app</Label>
+              <Label htmlFor="enroll-code">{t("Code from the app")}</Label>
               <Input
                 id="enroll-code"
                 inputMode="numeric"
@@ -268,7 +282,7 @@ function AddAuthenticatorDialog({
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={busy || digits.length < 6}>
-                {busy ? "Checking…" : first ? "Turn on" : "Add device"}
+                {busy ? t("Checking…") : first ? t("Turn on") : t("Add device")}
               </Button>
             </div>
           </form>
@@ -282,10 +296,10 @@ function AddAuthenticatorDialog({
             className="space-y-4"
           >
             <div className="space-y-2">
-              <Label htmlFor="device-name">Device name</Label>
+              <Label htmlFor="device-name">{t("Device name")}</Label>
               <Input
                 id="device-name"
-                placeholder="Work phone"
+                placeholder={t("Work phone")}
                 value={name}
                 onChange={(e) => {
                   setName(e.target.value);
@@ -293,13 +307,13 @@ function AddAuthenticatorDialog({
                 }}
               />
               <p className="text-meta text-muted-foreground">
-                So you can tell your devices apart later.
+                {t("So you can tell your devices apart later.")}
               </p>
               {error ? <p className="text-meta text-destructive">{error}</p> : null}
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={busy || !name.trim()}>
-                {busy ? "Starting…" : "Continue"}
+                {busy ? t("Starting…") : t("Continue")}
               </Button>
             </div>
           </form>

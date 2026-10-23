@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { Field } from "@/components/field";
 import {
   Dialog,
@@ -36,6 +37,7 @@ export const PASSWORD_MIN = 8;
  * Nobody who signed in recently ever sees that step.
  */
 export function PasswordCard() {
+  const { t } = useTranslation();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [show, setShow] = useState(false);
@@ -80,24 +82,24 @@ export function PasswordCard() {
     setCode("");
     setNeedsCode(false);
     setOpen(false);
-    toast.success("Password updated");
+    toast.success(t("Password updated"));
   };
 
   // A16: a row with a button; the form is a dialog, so the page does not
   // carry three empty password boxes for something done once a year.
   return (
-    <Field label="Password" help="Change it, or set one if you signed in another way.">
+    <Field label={t("Password")} help={t("Change it, or set one if you signed in another way.")}>
       <Button variant="secondary" onClick={() => setOpen(true)}>
-        Change password
+        {t("Change password")}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="sm">
           <DialogHeader>
-            <DialogTitle>Change password</DialogTitle>
+            <DialogTitle>{t("Change password")}</DialogTitle>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-4">
             <div className="space-y-2">
-              <Label htmlFor="new-password">New password</Label>
+              <Label htmlFor="new-password">{t("New password")}</Label>
               <div className="relative">
                 <Input
                   id="new-password"
@@ -114,18 +116,23 @@ export function PasswordCard() {
                   type="button"
                   onClick={() => setShow((v) => !v)}
                   className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
-                  aria-label={show ? "Hide password" : "Show password"}
+                  aria-label={show ? t("Hide password") : t("Show password")}
                 >
                   {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
               {tooShort ? (
-                <p className="text-meta text-destructive">At least {PASSWORD_MIN} characters.</p>
+                <p className="text-meta text-destructive">
+                  {t("At least {{count}} character.", {
+                    count: PASSWORD_MIN,
+                    defaultValue_other: "At least {{count}} characters.",
+                  })}
+                </p>
               ) : null}
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="confirm-password">Confirm new password</Label>
+              <Label htmlFor="confirm-password">{t("Confirm new password")}</Label>
               <Input
                 id="confirm-password"
                 type={show ? "text" : "password"}
@@ -137,13 +144,13 @@ export function PasswordCard() {
                 }}
               />
               {mismatch ? (
-                <p className="text-meta text-destructive">The two do not match.</p>
+                <p className="text-meta text-destructive">{t("The two do not match.")}</p>
               ) : null}
             </div>
 
             {needsCode ? (
               <div className="space-y-2">
-                <Label htmlFor="reauth-code">Code from your email</Label>
+                <Label htmlFor="reauth-code">{t("Code from your email")}</Label>
                 <Input
                   id="reauth-code"
                   inputMode="numeric"
@@ -156,7 +163,9 @@ export function PasswordCard() {
                   className="tracking-widest"
                 />
                 <p className="text-meta text-muted-foreground">
-                  You last signed in a while ago, so we emailed you a code to make sure it is you.
+                  {t(
+                    "You last signed in a while ago, so we emailed you a code to make sure it is you.",
+                  )}
                 </p>
               </div>
             ) : null}
@@ -165,10 +174,10 @@ export function PasswordCard() {
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setOpen(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button onClick={save} disabled={saving || !ready}>
-              {saving ? "Saving…" : "Update password"}
+              {saving ? t("Saving…") : t("Update password")}
             </Button>
           </DialogFooter>
         </DialogContent>

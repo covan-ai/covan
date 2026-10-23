@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { api, ApiError, type Me } from "@/lib/api-client";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { Field } from "@/components/field";
@@ -16,7 +17,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-/** Stands for "no preference" in a picker, which cannot hold an empty value. */
 /** Stands for "follow the browser" in a picker, which cannot hold an empty value. */
 const FOLLOW_BROWSER = "__browser__";
 
@@ -30,21 +30,25 @@ const FOLLOW_BROWSER = "__browser__";
  * workspace page as `DefaultModelSection`, where that is what the page means.
  */
 export function PersonalPreferencesSection({ me }: { me: Me | undefined }) {
+  const { t } = useTranslation();
   const { preference, mounted, setPreference } = useTheme();
 
   // A16's Preferences as Field rows.
   return (
     <>
-      <Field label="Theme" help="System follows your device. Saved in this browser, for you.">
+      <Field
+        label={t("Theme")}
+        help={t("System follows your device. Saved in this browser, for you.")}
+      >
         <div className={mounted ? "" : "pointer-events-none opacity-50"}>
           <Segmented<ThemePreference>
-            label="Theme"
+            label={t("Theme")}
             value={preference}
             onChange={setPreference}
             options={[
-              { value: "light", label: "Light" },
-              { value: "dark", label: "Dark" },
-              { value: "system", label: "System" },
+              { value: "light", label: t("Light") },
+              { value: "dark", label: t("Dark") },
+              { value: "system", label: t("System") },
             ]}
           />
         </div>
@@ -58,6 +62,7 @@ export function PersonalPreferencesSection({ me }: { me: Me | undefined }) {
 
 /** The interface's language; agents answer in whatever language you write. */
 function LanguageField({ locale }: { locale: string | null }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [saving, setSaving] = useState(false);
   const save = async (value: string) => {
@@ -70,23 +75,28 @@ function LanguageField({ locale }: { locale: string | null }) {
       applyLocale(preference);
       await queryClient.invalidateQueries({ queryKey: ["me"] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to save");
+      toast.error(err instanceof ApiError ? err.message : t("Failed to save"));
     } finally {
       setSaving(false);
     }
   };
   return (
-    <Field label="Language" help="The interface. Agents answer in whatever language you write.">
+    <Field
+      label={t("Language")}
+      help={t("The interface. Agents answer in whatever language you write.")}
+    >
       <Select
         value={locale ?? FOLLOW_BROWSER}
         onValueChange={(v) => void save(v)}
         disabled={saving}
       >
-        <SelectTrigger aria-label="Language" className="max-w-[420px]">
+        <SelectTrigger aria-label={t("Language")} className="max-w-[420px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={FOLLOW_BROWSER}>Follow the browser</SelectItem>
+          <SelectItem value={FOLLOW_BROWSER}>{t("Follow the browser")}</SelectItem>
+          {/* Each language is named in itself ("English", "Türkçe"), the way
+              every language picker does it, so the names are not translated. */}
           {LOCALES.map((l) => (
             <SelectItem key={l.tag} value={l.tag}>
               {l.label}
@@ -133,6 +143,7 @@ function LanguageField({ locale }: { locale: string | null }) {
  * stale value survive long enough to render at all.
  */
 function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data, isError, refetch, isFetching } = useQuery({
     queryKey: ["coverage", "preference", workspaceId],
@@ -146,7 +157,7 @@ function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
       await api.coverage.setPreference(excluded);
       queryClient.setQueryData(["coverage", "preference", workspaceId], { excluded });
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to save";
+      const message = err instanceof ApiError ? err.message : t("Failed to save");
       toast.error(message);
       // Same recovery as `NotificationToggles`: put the switch back where the
       // server actually left it rather than leaving it showing a setting that
@@ -159,31 +170,33 @@ function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
 
   return (
     <Field
-      label="Coverage report"
-      help="A weekly report of topics nothing covered. It never shows names or anybody's question."
+      label={t("Coverage report")}
+      help={t(
+        "A weekly report of topics nothing covered. It never shows names or anybody's question.",
+      )}
     >
       <label className="flex items-center gap-3 pt-1 text-sm">
         <Switch
           checked={data ? data.excluded : false}
           onCheckedChange={setExcluded}
           disabled={!data || saving}
-          aria-label="Exclude my questions from the coverage report"
+          aria-label={t("Exclude my questions from the coverage report")}
         />
-        Leave my questions out
+        {t("Leave my questions out")}
       </label>
       {/* A switch left disabled with no sentence reads as "not for you". This
           is a consent control, so a failed read says so and offers the read
           again, rather than looking like a setting that does not apply. */}
       {isError && !data && (
         <p role="alert" className="mt-1 text-xs text-muted-foreground">
-          Couldn&rsquo;t load this setting.{" "}
+          {t("Couldn’t load this setting.")}{" "}
           <button
             type="button"
             className="underline underline-offset-2 disabled:opacity-50"
             onClick={() => void refetch()}
             disabled={isFetching}
           >
-            {isFetching ? "Trying…" : "Try again"}
+            {isFetching ? t("Trying…") : t("Try again")}
           </button>
         </p>
       )}
@@ -198,6 +211,7 @@ function CoverageOptOut({ workspaceId }: { workspaceId: string | undefined }) {
  * it.
  */
 function NotificationToggles() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: prefs } = useQuery({
     queryKey: ["notification-preferences"],
@@ -212,7 +226,7 @@ function NotificationToggles() {
       const next = await api.notifications.update({ [key]: value });
       queryClient.setQueryData(["notification-preferences"], next);
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to save";
+      const message = err instanceof ApiError ? err.message : t("Failed to save");
       toast.error(message);
       await queryClient.invalidateQueries({ queryKey: ["notification-preferences"] });
     } finally {
@@ -225,17 +239,21 @@ function NotificationToggles() {
   const rows: Array<{ key: Key; label: string; fallback: boolean }> = [
     {
       key: "needsMeAway",
-      label: "An agent needs me and I have been away for an hour",
+      label: t("An agent needs me and I have been away for an hour"),
       fallback: true,
     },
-    { key: "routineFailed", label: "A routine fails", fallback: true },
-    { key: "weeklySummary", label: "Weekly summary, Monday morning", fallback: false },
-    { key: "routinePaused", label: "A routine stops working and pauses itself", fallback: true },
-    { key: "quotaExhausted", label: "A routine is waiting on credits", fallback: true },
+    { key: "routineFailed", label: t("A routine fails"), fallback: true },
+    { key: "weeklySummary", label: t("Weekly summary, Monday morning"), fallback: false },
+    {
+      key: "routinePaused",
+      label: t("A routine stops working and pauses itself"),
+      fallback: true,
+    },
+    { key: "quotaExhausted", label: t("A routine is waiting on credits"), fallback: true },
   ];
 
   return (
-    <Field label="Email me when" help="Everything else stays in the Inbox.">
+    <Field label={t("Email me when")} help={t("Everything else stays in the Inbox.")}>
       <div className="flex flex-col gap-2.5 pt-1">
         {rows.map((row) => (
           <label key={row.key} className="flex items-center gap-3 text-sm">

@@ -1,11 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Trans, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { api, type ActivityItem, type HomeAgent, type HomeOverview } from "@/lib/api-client";
 import { useAgentsStore } from "@/lib/agents-store";
 import { useShell } from "@/lib/shell";
 import { useWorkspaceRole } from "@/lib/workspace-role";
 import { chartDate, chartDay, tickLabel } from "@/lib/chart-scale";
+import { dotWord, type DotState } from "@/lib/dot-states";
 import {
   activityLine,
   amountValue,
@@ -57,6 +60,8 @@ const WINDOW_DAYS = 7;
  * overview carries them.
  */
 function Home() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { agents, favorites, canWrite } = useAgentsStore();
   const { me, isAdmin } = useWorkspaceRole();
   const { new: openNew } = Route.useSearch();
@@ -102,13 +107,13 @@ function Home() {
   return (
     <>
       <TopBar
-        title="Home"
+        title={t("Home")}
         actions={
           <>
             {isAdmin && (
               <Button asChild variant="secondary">
                 <Link to="/team" search={{ invite: true }}>
-                  Invite
+                  {t("Invite")}
                 </Link>
               </Button>
             )}
@@ -124,7 +129,7 @@ function Home() {
       <PageBody width="home">
         {empty ? (
           <Welcome
-            workspaceName={overview.workspace.name ?? me?.workspace.name ?? "your workspace"}
+            workspaceName={overview.workspace.name ?? me?.workspace.name ?? t("your workspace")}
             userName={userName}
             canWrite={canWrite}
             memberCount={me?.members.length ?? 1}
@@ -133,7 +138,7 @@ function Home() {
           <>
             <div className="mb-5">
               <h2 className="m-0 text-2xl leading-[1.2] font-semibold tracking-[-0.02em]">
-                {greeting(now, userName, timeZone)}
+                {greeting(now, userName, timeZone, t)}
               </h2>
               <p className="mt-1.5 text-lead text-muted-foreground">
                 {overview
@@ -151,28 +156,32 @@ function Home() {
                             days: WINDOW_DAYS,
                           }
                         : null,
+                      t,
+                      locale,
                     })
-                  : `${homeDate(now, timeZone)}.`}
+                  : `${homeDate(now, timeZone, locale)}.`}
               </p>
             </div>
             {canWrite ? (
               selected && <AskBar agents={agents} selected={selected} onSelect={setAgentId} />
             ) : (
               <ReadOnlyNotice
-                workspaceName={overview?.workspace.name ?? me?.workspace.name ?? "this workspace"}
+                workspaceName={
+                  overview?.workspace.name ?? me?.workspace.name ?? t("this workspace")
+                }
                 viewerName={userName}
               />
             )}
             <GettingStarted className="mt-7" />
             {isError && !overview && (
               <p className="mt-7 text-sm text-muted-foreground">
-                Couldn&rsquo;t load the overview.{" "}
+                {t("Couldn't load the overview.")}{" "}
                 <button
                   type="button"
                   onClick={() => void refetch()}
                   className="font-medium text-foreground underline underline-offset-4"
                 >
-                  Try again
+                  {t("Try again")}
                 </button>
               </p>
             )}
@@ -196,17 +205,22 @@ function Welcome({
   canWrite: boolean;
   memberCount: number;
 }) {
+  const { t } = useTranslation();
   const shell = useShell();
   return (
     <div className="max-w-[760px]">
       <h2 className="m-0 text-2xl leading-[1.2] font-semibold tracking-[-0.02em]">
-        Welcome to {workspaceName}, {firstName(userName)}.
+        {t("Welcome to {{workspace}}, {{name}}.", {
+          workspace: workspaceName,
+          name: firstName(userName),
+        })}
       </h2>
       {canWrite ? (
         <>
           <p className="mt-2 text-sm text-muted-foreground">
-            Nothing is running yet. An agent takes a name, a face and a job; the first one takes
-            about a minute.
+            {t(
+              "Nothing is running yet. An agent takes a name, a face and a job; the first one takes about a minute.",
+            )}
           </p>
           <div className="mt-4 mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-border px-3.5 py-3">
             <div aria-hidden className="flex gap-1.5">
@@ -215,18 +229,20 @@ function Welcome({
               ))}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium">Create your first agent</div>
+              <div className="text-sm font-medium">{t("Create your first agent")}</div>
               <div className="text-meta text-muted-foreground">
-                Support, Research, Finance, or anything you name.
+                {t("Support, Research, Finance, or anything you name.")}
               </div>
             </div>
-            <Button onClick={shell.openCreateAgent}>Create agent</Button>
+            <Button onClick={shell.openCreateAgent}>{t("Create agent")}</Button>
           </div>
           <FirstSteps memberCount={memberCount} />
         </>
       ) : (
         <p className="mt-2 text-sm text-muted-foreground">
-          Nothing is shared with you yet. Ask an admin or a member to share an agent with you.
+          {t(
+            "Nothing is shared with you yet. Ask an admin or a member to share an agent with you.",
+          )}
         </p>
       )}
     </div>
@@ -244,6 +260,8 @@ function Overview({
   /** When the overview was read: every "12 min ago" on the page counts from it. */
   now: number;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const { needsYou, threads, routineRuns, spend, credits, team, activity } = overview;
   const names = new Map(overview.agents.map((a) => [a.agentId, a]));
   const unit = spend?.unit ?? "credits";
@@ -252,36 +270,36 @@ function Overview({
     <StatCard
       key="needs"
       to="/inbox"
-      label="Needs you"
+      label={t("Needs you")}
       value={needsYou.total}
       detail={
         needsYou.total > 0 ? (
           <>
             <StatusDot state="waiting" />
-            {needsYouParts(needsYou)}
+            {needsYouParts(needsYou, t)}
           </>
         ) : (
-          "Nothing waiting"
+          t("Nothing waiting")
         )
       }
     />,
     <StatCard
       key="threads"
-      label="Threads, last 7 days"
-      value={threads.window.toLocaleString("en-US")}
-      detail={weekDelta(threads.window, threads.previous)}
+      label={t("Threads, last 7 days")}
+      value={threads.window.toLocaleString(locale)}
+      detail={weekDelta(threads.window, threads.previous, t, locale)}
     />,
   ];
   if (spend) {
     stats.push(
       <StatCard
         key="spend"
-        label={unit === "usd" ? "Spent, last 7 days" : "Credits spent, last 7 days"}
-        value={amountValue(spend.window, unit)}
+        label={unit === "usd" ? t("Spent, last 7 days") : t("Credits spent, last 7 days")}
+        value={amountValue(spend.window, unit, locale)}
         detail={
           credits
-            ? `${credits.balance.toLocaleString("en-US")} left`
-            : "Estimated from model prices"
+            ? t("{{balance}} left", { balance: credits.balance.toLocaleString(locale) })
+            : t("Estimated from model prices")
         }
         meter={
           credits && spend.window + credits.balance > 0
@@ -294,21 +312,24 @@ function Overview({
     stats.push(
       <StatCard
         key="credits"
-        label="Credits left"
-        value={credits.balance.toLocaleString("en-US")}
-        detail="For everyone in the workspace"
+        label={t("Credits left")}
+        value={credits.balance.toLocaleString(locale)}
+        detail={t("For everyone in the workspace")}
       />,
     );
   }
   stats.push(
     <StatCard
       key="routines"
-      label="Routine runs, last 7 days"
-      value={routineRuns.total.toLocaleString("en-US")}
+      label={t("Routine runs, last 7 days")}
+      value={routineRuns.total.toLocaleString(locale)}
       detail={
         routineRuns.total > 0
-          ? `${routineRuns.done} done, ${routineRuns.failed} failed`
-          : "None this week"
+          ? t("{{done}} done, {{failed}} failed", {
+              done: routineRuns.done,
+              failed: routineRuns.failed,
+            })
+          : t("None this week")
       }
     />,
   );
@@ -328,64 +349,78 @@ function Overview({
         <div className="mt-4 grid gap-4 lg:grid-cols-3">
           <Panel
             className="lg:col-span-2"
-            title={unit === "usd" ? "Spent, last 14 days" : "Credits spent, last 14 days"}
-            sub="Per day, all agents. Hover a day for the split."
+            title={unit === "usd" ? t("Spent, last 14 days") : t("Credits spent, last 14 days")}
+            sub={t("Per day, all agents. Hover a day for the split.")}
             action={
               <Button asChild variant="ghost" size="sm" className="text-meta">
-                <Link to="/settings/usage">Usage</Link>
+                <Link to="/settings/usage">{t("Usage")}</Link>
               </Button>
             }
           >
             <BarChart
-              label={unit === "usd" ? "Spent per day" : "Credits spent per day"}
-              tick={(v) => tickLabel(v, unit)}
+              label={unit === "usd" ? t("Spent per day") : t("Credits spent per day")}
+              tick={(v) => tickLabel(v, unit, locale)}
               bars={spend.daily.map((d, i) => ({
                 key: d.day,
                 value: d.total,
                 previous: i < spend.daily.length - WINDOW_DAYS,
-                title: `${chartDay(d.day)} · ${amountWords(d.total, unit)}`,
+                title: `${chartDay(d.day, locale)} · ${amountWords(d.total, unit, t, locale)}`,
                 detail: Object.entries(d.byAgent)
                   .filter(([, v]) => v > 0)
                   .sort((a, b) => b[1] - a[1])
                   .slice(0, 5)
                   .map(
                     ([id, v]) =>
-                      `${names.get(id)?.name ?? "A deleted agent"} ${amountValue(v, unit)}`,
+                      `${names.get(id)?.name ?? t("A deleted agent")} ${amountValue(v, unit, locale)}`,
                   )
                   .join(" · "),
               }))}
               axis={
                 spend.daily.length > WINDOW_DAYS
                   ? [
-                      chartDate(spend.daily[0]!.day),
-                      chartDate(spend.daily[spend.daily.length - WINDOW_DAYS]!.day),
-                      "Today",
+                      chartDate(spend.daily[0]!.day, locale),
+                      chartDate(spend.daily[spend.daily.length - WINDOW_DAYS]!.day, locale),
+                      t("Today"),
                     ]
-                  : ["Today"]
+                  : [t("Today")]
               }
             />
           </Panel>
-          <Panel title="Spend by agent" sub={`Last 7 days, ${amountWords(spend.window, unit)}`}>
+          <Panel
+            title={t("Spend by agent")}
+            sub={t("Last 7 days, {{amount}}", {
+              amount: amountWords(spend.window, unit, t, locale),
+            })}
+          >
             {spend.byAgent.length > 0 ? (
               <HBarList
                 className="mt-4"
-                label="Spend by agent, last 7 days"
+                label={t("Spend by agent, last 7 days")}
                 rows={spend.byAgent.slice(0, 5).map((r) => {
                   const agent = names.get(r.agentId);
                   return {
                     key: r.agentId,
                     lead: <AgentMark agent={agent ?? { name: "?" }} size={24} />,
-                    label: agent?.name ?? "A deleted agent",
+                    label: agent?.name ?? t("A deleted agent"),
                     value: r.amount,
-                    display: amountValue(r.amount, unit),
+                    display: amountValue(r.amount, unit, locale),
                   };
                 })}
               />
             ) : (
-              <p className="mt-4 text-meta text-muted-foreground">Nothing spent this week.</p>
+              <p className="mt-4 text-meta text-muted-foreground">
+                {t("Nothing spent this week.")}
+              </p>
             )}
             {(() => {
-              const note = spendNote(spend.daily, (id) => names.get(id)?.name, unit, WINDOW_DAYS);
+              const note = spendNote(
+                spend.daily,
+                (id) => names.get(id)?.name,
+                unit,
+                WINDOW_DAYS,
+                t,
+                locale,
+              );
               return note ? <p className="mt-3.5 text-meta text-muted-foreground">{note}</p> : null;
             })()}
           </Panel>
@@ -393,7 +428,7 @@ function Overview({
       )}
 
       <section className="mt-7">
-        <SectionLabel as="h2">Right now</SectionLabel>
+        <SectionLabel as="h2">{t("Right now")}</SectionLabel>
         <div className="overflow-x-auto">
           <RightNow
             agents={overview.agents}
@@ -411,15 +446,15 @@ function Overview({
               as="h2"
               action={
                 <Link to="/team" className="hover:text-foreground">
-                  Team
+                  {t("Team")}
                 </Link>
               }
             >
-              Team, last 7 days
+              {t("Team, last 7 days")}
             </SectionLabel>
             {team.length > 0 ? (
               <HBarList
-                label="Threads started by each member, last 7 days"
+                label={t("Threads started by each member, last 7 days")}
                 tone="prev"
                 nameWidth={140}
                 valueWidth={32}
@@ -429,19 +464,19 @@ function Overview({
                   .map((m) => ({
                     key: m.userId,
                     lead: <Avatar name={m.name} url={m.avatarUrl} size={20} />,
-                    label: m.userId === myId ? "You" : firstName(m.name),
+                    label: m.userId === myId ? t("You") : firstName(m.name),
                     value: m.threads,
                   }))}
               />
             ) : (
               <p className="text-meta text-muted-foreground">
-                Nobody has started a thread this week.
+                {t("Nobody has started a thread this week.")}
               </p>
             )}
           </section>
         )}
         <section>
-          <SectionLabel as="h2">Recent activity</SectionLabel>
+          <SectionLabel as="h2">{t("Recent activity")}</SectionLabel>
           {activity.length > 0 ? (
             <ul className="m-0 list-none p-0">
               {activity.slice(0, 5).map((item) => (
@@ -450,7 +485,7 @@ function Overview({
             </ul>
           ) : (
             <p className="text-meta text-muted-foreground">
-              Shared threads, finished routines and new files show up here.
+              {t("Shared threads, finished routines and new files show up here.")}
             </p>
           )}
         </section>
@@ -487,10 +522,11 @@ function Panel({
   );
 }
 
-const STATUS: Record<HomeAgent["status"], { dot: "running" | "waiting" | "idle"; word: string }> = {
-  running: { dot: "running", word: "Running" },
-  needs_you: { dot: "waiting", word: "Needs you" },
-  idle: { dot: "idle", word: "Idle" },
+/** The dot for each status; its word is `dotWord`. */
+const STATUS: Record<HomeAgent["status"], DotState> = {
+  running: "running",
+  needs_you: "waiting",
+  idle: "idle",
 };
 
 /** Right now (Main): each agent, what it is doing, and its week. */
@@ -505,10 +541,12 @@ function RightNow({
   unit: "credits" | "usd";
   now: number;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const columns: Column<HomeAgent>[] = [
     {
       key: "agent",
-      header: "Agent",
+      header: t("Agent"),
       className: "w-[170px]",
       cell: (a) => (
         <Link
@@ -523,16 +561,16 @@ function RightNow({
     },
     {
       key: "status",
-      header: "Status",
+      header: t("Status"),
       className: "w-[130px]",
-      cell: (a) => <StatusWord state={STATUS[a.status].dot}>{STATUS[a.status].word}</StatusWord>,
+      cell: (a) => <StatusWord state={STATUS[a.status]}>{dotWord(STATUS[a.status], t)}</StatusWord>,
     },
     {
       key: "working",
-      header: "Working on",
+      header: t("Working on"),
       cell: (a) => {
         const w = a.workingOn;
-        if (!w) return <span className="text-muted-foreground">Nothing yet</span>;
+        if (!w) return <span className="text-muted-foreground">{t("Nothing yet")}</span>;
         const title = w.sessionId ? (
           <Link
             to="/agents/$agentId/chat"
@@ -547,31 +585,31 @@ function RightNow({
         );
         return (
           <span className="block max-w-[520px] truncate">
-            {w.kind === "last" && <span className="text-muted-foreground">Last: </span>}
+            {w.kind === "last" && <span className="text-muted-foreground">{t("Last:")} </span>}
             {title}
-            <span className="text-muted-foreground"> · {workingOnDetail(w, now)}</span>
+            <span className="text-muted-foreground"> · {workingOnDetail(w, now, t, locale)}</span>
           </span>
         );
       },
     },
     {
       key: "threads",
-      header: "Threads, 7 d",
+      header: t("Threads, 7 d"),
       num: true,
-      cell: (a) => a.threadsWindow.toLocaleString("en-US"),
+      cell: (a) => a.threadsWindow.toLocaleString(locale),
     },
   ];
   if (showSpend) {
     columns.push({
       key: "spend",
-      header: unit === "usd" ? "Spent, 7 d" : "Credits, 7 d",
+      header: unit === "usd" ? t("Spent, 7 d") : t("Credits, 7 d"),
       num: true,
-      cell: (a) => amountValue(a.spendWindow ?? 0, unit),
+      cell: (a) => amountValue(a.spendWindow ?? 0, unit, locale),
     });
   }
   return (
     <DataTable
-      label="What each agent is doing"
+      label={t("What each agent is doing")}
       columns={columns}
       rows={agents}
       rowKey={(a) => a.agentId}
@@ -589,6 +627,8 @@ function ActivityRow({
   myId: string | undefined;
   now: number;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const line = activityLine(item);
   const agentId = typeof item.detail?.agent_id === "string" ? item.detail.agent_id : null;
   const sessionId =
@@ -599,11 +639,12 @@ function ActivityRow({
         : null;
   const who =
     item.actor.kind === "person" && item.actor.id === myId
-      ? "You"
+      ? t("You")
       : item.actor.kind === "person"
         ? firstName(item.actor.name)
         : item.actor.name;
 
+  // The subject's element, filled by <Trans> from the `<s>…</s>` in the key.
   const subject =
     agentId && sessionId ? (
       <Link
@@ -611,23 +652,17 @@ function ActivityRow({
         params={{ agentId }}
         search={{ s: sessionId }}
         className="hover:underline"
-      >
-        {line.subject}
-      </Link>
+      />
     ) : item.subjectType === "routine" && item.subjectId ? (
       <Link
         to="/routines/$routineId"
         params={{ routineId: item.subjectId }}
         className="hover:underline"
-      >
-        {line.subject}
-      </Link>
+      />
     ) : item.subjectType === "document" ? (
-      <Link to="/knowledge" className="hover:underline">
-        {line.subject}
-      </Link>
+      <Link to="/knowledge" className="hover:underline" />
     ) : (
-      line.subject
+      <span />
     );
 
   return (
@@ -638,12 +673,11 @@ function ActivityRow({
         <Avatar name={item.actor.name} url={item.actor.avatar} size={24} />
       )}
       <span className="min-w-0 flex-1 truncate">
-        <span className="font-medium">{who}</span>
-        {line.before && ` ${line.before}`} {subject}
-        {line.after && ` ${line.after}`}
+        <span className="font-medium">{who}</span>{" "}
+        <Trans t={t} i18nKey={line.key} values={line.values} components={{ s: subject }} />
       </span>
       <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
-        {feedTime(item.createdAt, now)}
+        {feedTime(item.createdAt, now, t, locale)}
       </span>
     </li>
   );

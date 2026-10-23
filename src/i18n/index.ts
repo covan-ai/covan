@@ -135,6 +135,10 @@ export const englishT: Translate = (key, options) => {
  * cannot see; the table's `msg()` entries are where it sees these. This file
  * is outside what it reads, which is the whole trick.
  */
-export function lookup(t: TFunction, key: string): string {
-  return t(key);
+export function lookup(
+  t: TFunction | Translate,
+  key: string,
+  options?: Record<string, unknown>,
+): string {
+  return (t as Translate)(key, options);
 }

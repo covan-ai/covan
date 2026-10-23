@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, useRouterState } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "@/i18n";
 import { TopBar } from "@/components/top-bar";
 import { SubNav } from "@/components/sub-nav";
 import { PageBody } from "@/components/page";
@@ -35,6 +36,7 @@ const WIDE = [
 ];
 
 function SettingsLayout() {
+  const { t } = useTranslation();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const groups = SETTINGS_GROUPS.map((g) => ({
@@ -46,9 +48,9 @@ function SettingsLayout() {
 
   return (
     <>
-      <TopBar title="Settings" />
+      <TopBar title={t("Settings")} />
       <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col lg:min-h-[calc(100dvh-3rem)] lg:flex-row">
-        <SubNav groups={groups} label="Settings pages" />
+        <SubNav groups={groups} label={t("Settings pages")} />
         <div className="min-w-0 flex-1">
           <PageBody width={WIDE.includes(pathname) ? "settings-wide" : "settings"}>
             <Outlet />
@@ -59,11 +61,11 @@ function SettingsLayout() {
                 lose a workspace to read a policy. */}
             <p className="mt-16 border-t border-hairline pt-6 text-meta text-muted-foreground">
               <LegalAnchor link={termsLink()} newTab>
-                Terms
+                {t("Terms")}
               </LegalAnchor>
               <span aria-hidden> · </span>
               <LegalAnchor link={privacyLink()} newTab>
-                Privacy Policy
+                {t("Privacy Policy")}
               </LegalAnchor>
             </p>
           </PageBody>

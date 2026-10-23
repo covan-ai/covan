@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Field } from "@/components/field";
 import { SectionLabel } from "@/components/section";
 import { StatusWord } from "@/components/status-dot";
@@ -10,8 +12,8 @@ import { formatFileSize } from "@/lib/file-size";
 import { cn } from "@/lib/utils";
 
 /** "20 October 2026". */
-const day = (at: number) =>
-  new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+const day = (at: number, locale: string) =>
+  new Date(at).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" });
 
 /**
  * Settings › Export and deletion › Export (A27): ask for everything as a zip,
@@ -33,6 +35,7 @@ export function ExportWorkspaceSection({
   /** An export the email's link pointed at. */
   highlight?: string;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const key = ["exports", workspaceId];
@@ -56,7 +59,7 @@ export function ExportWorkspaceSection({
       if (done) toast.success(done);
       await queryClient.invalidateQueries({ queryKey: key });
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't do that");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't do that"));
     } finally {
       setBusy(null);
     }
@@ -64,10 +67,12 @@ export function ExportWorkspaceSection({
 
   return (
     <>
-      <SectionLabel>Export</SectionLabel>
+      <SectionLabel>{t("Export")}</SectionLabel>
       <Field
-        label="Everything as a zip"
-        help="Threads, documents as they were uploaded, agents and routines, with the SQL to put them back into a Covan you run yourself. Ready within an hour; the link is emailed to you and works for 7 days."
+        label={t("Everything as a zip")}
+        help={t(
+          "Threads, documents as they were uploaded, agents and routines, with the SQL to put them back into a Covan you run yourself. Ready within an hour; the link is emailed to you and works for 7 days.",
+        )}
       >
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -77,32 +82,36 @@ export function ExportWorkspaceSection({
               void run(
                 "request",
                 () => api.exports.request(workspaceId),
-                "Export requested — we'll email you when it's ready",
+                t("Export requested — we'll email you when it's ready"),
               )
             }
           >
-            {inProgress ? "Preparing…" : "Request export"}
+            {inProgress ? t("Preparing…") : t("Request export")}
           </Button>
           <Button
             variant="ghost"
             disabled={!workspaceId || busy === "now"}
             onClick={() =>
               workspaceId &&
-              void run("now", () => api.workspace.exportArchive(workspaceId), "Export downloaded")
+              void run(
+                "now",
+                () => api.workspace.exportArchive(workspaceId),
+                t("Export downloaded"),
+              )
             }
           >
-            {busy === "now" ? "Building…" : "Download it now instead"}
+            {busy === "now" ? t("Building…") : t("Download it now instead")}
           </Button>
         </div>
         <p className="mt-2 text-meta text-muted-foreground">
-          Owners and admins only. It holds what you can see: somebody else&rsquo;s private threads
-          are not in your copy. Delivery channels come back without their secrets, so a restore
-          brings every routine back paused.
+          {t(
+            "Owners and admins only. It holds what you can see: somebody else’s private threads are not in your copy. Delivery channels come back without their secrets, so a restore brings every routine back paused.",
+          )}
         </p>
       </Field>
 
       {isAdmin && exports.length > 0 && (
-        <Field label="Previous exports">
+        <Field label={t("Previous exports")}>
           <ul className="m-0 max-w-[560px] list-none p-0">
             {exports.map((e) => (
               <ExportRow
@@ -131,6 +140,13 @@ function ExportRow({
   busy: boolean;
   onDownload: () => void;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const requestedBy = item.mine
+    ? t("requested by you")
+    : item.requestedBy?.name
+      ? t("requested by {{name}}", { name: item.requestedBy.name })
+      : t("requested by an admin");
   return (
     <li
       className={cn(
@@ -139,29 +155,28 @@ function ExportRow({
       )}
     >
       <span className="min-w-0 flex-1 truncate">
-        {day(item.createdAt)}
+        {day(item.createdAt, locale)}
         <span className="text-muted-foreground">
-          {item.sizeBytes ? ` · ${formatFileSize(item.sizeBytes)}` : ""} · requested by{" "}
-          {item.mine ? "you" : (item.requestedBy?.name ?? "an admin")}
+          {item.sizeBytes ? ` · ${formatFileSize(item.sizeBytes)}` : ""} · {requestedBy}
         </span>
       </span>
       {item.status === "ready" ? (
         item.mine ? (
           <Button variant="secondary" size="sm" onClick={onDownload} disabled={busy}>
-            {busy ? "Downloading…" : "Download"}
+            {busy ? t("Downloading…") : t("Download")}
           </Button>
         ) : (
           // Their copy holds their private threads; it is theirs to download.
-          <span className="text-meta text-muted-foreground">Theirs to download</span>
+          <span className="text-meta text-muted-foreground">{t("Theirs to download")}</span>
         )
       ) : item.status === "queued" || item.status === "running" ? (
         <StatusWord state="running" className="text-meta">
-          Preparing
+          {t("Preparing")}
         </StatusWord>
       ) : item.status === "failed" ? (
-        <span className="text-meta text-destructive">{item.error ?? "Failed"}</span>
+        <span className="text-meta text-destructive">{item.error ?? t("Failed")}</span>
       ) : (
-        <span className="text-meta text-muted-foreground">Expired</span>
+        <span className="text-meta text-muted-foreground">{t("Expired")}</span>
       )}
     </li>
   );

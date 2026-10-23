@@ -1,3 +1,4 @@
+import { englishT, type Translate } from "@/i18n";
 import { documentAge, STALE_AFTER_DAYS } from "./relative-time";
 
 /**
@@ -67,24 +68,47 @@ export function documentsWorthRevisiting(
  * feature is about, the old ones that were being cited long before anything was
  * recording which.
  */
-export function countedSince(since: number | null): string | null {
+export function countedSince(
+  since: number | null,
+  t: Translate = englishT,
+  locale: string = "en-US",
+): string | null {
   if (since === null) return null;
   // A date rather than an age. "9 months ago" is the right unit for a document,
   // where the question is how much could have changed; this is a boundary, and
   // a boundary that drifts every time the page is opened is not one a reader
   // can check anything against.
-  const on = new Intl.DateTimeFormat("en", { day: "numeric", month: "short", year: "numeric" });
-  return `Counting answers since ${on.format(new Date(since))}.`;
+  const on = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric" });
+  return t("Counting answers since {{date}}.", { date: on.format(new Date(since)) });
 }
 
 export { STALE_AFTER_DAYS };
 
-/** "14 months", "2 years" — a document's age in the words A18 uses. */
-export function ageWords(createdAt: number, now: number = Date.now()): string {
+/**
+ * "14 months", "2 years" — a document's age in the words A18 uses. `t` is the
+ * caller's translator, after `now` the way the date helpers take it; left out,
+ * the English.
+ */
+export function ageWords(
+  createdAt: number,
+  now: number = Date.now(),
+  t: Translate = englishT,
+): string {
   const months = Math.max(0, Math.floor((now - createdAt) / (30.44 * 86_400_000)));
-  if (months < 1) return "under a month";
-  if (months < 24) return `${months} ${months === 1 ? "month" : "months"}`;
-  return `${Math.floor(months / 12)} years`;
+  if (months < 1) return t("under a month");
+  if (months < 24)
+    return t("{{count}} month", { count: months, defaultValue_other: "{{count}} months" });
+  const years = Math.floor(months / 12);
+  return t("{{count}} year", { count: years, defaultValue_other: "{{count}} years" });
+}
+
+/** Which of the three shares a miss rate falls in — the bucket behind `missedShareWords`. */
+export type MissedShare = "most" | "half" | "third";
+
+export function missedShare(share: number): MissedShare {
+  if (share >= 0.75) return "most";
+  if (share >= 0.5) return "half";
+  return "third";
 }
 
 /**
@@ -92,7 +116,12 @@ export function ageWords(createdAt: number, now: number = Date.now()): string {
  * third", "half", "most" — the share in words, never sharper than the count.
  */
 export function missedShareWords(share: number): string {
-  if (share >= 0.75) return "Most of";
-  if (share >= 0.5) return "More than half of";
-  return "More than a third of";
+  switch (missedShare(share)) {
+    case "most":
+      return "Most of";
+    case "half":
+      return "More than half of";
+    default:
+      return "More than a third of";
+  }
 }

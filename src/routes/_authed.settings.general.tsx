@@ -2,6 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { SectionLabel, SectionTitle } from "@/components/section";
 import { Field } from "@/components/field";
 import { Tile } from "@/components/tile";
@@ -61,6 +63,8 @@ const NO_DEFAULT = "__none";
  * change; everybody else reads it.
  */
 function GeneralSettingsPage() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const { me, isAdmin: isAdminOnceKnown } = useWorkspaceRole();
   // True while `me` loads, so the page does not visibly lock and unlock on
@@ -84,7 +88,7 @@ function GeneralSettingsPage() {
       await refresh();
       if (done) toast.success(done);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't save that");
+      toast.error(err instanceof ApiError ? err.message : t("Couldn't save that"));
     } finally {
       setBusy(null);
     }
@@ -93,7 +97,7 @@ function GeneralSettingsPage() {
   const saveName = () => {
     const next = shownName.trim();
     if (!ws || !next || next === ws.name) return setName(null);
-    void run("name", () => api.workspace.update({ name: next }), "Name saved").then(() =>
+    void run("name", () => api.workspace.update({ name: next }), t("Name saved")).then(() =>
       setName(null),
     );
   };
@@ -103,7 +107,7 @@ function GeneralSettingsPage() {
   const tiers = modelTiers(models);
   const priceWords = (m: string) => {
     const p = priceFor(prices, m);
-    return p ? ` · ${formatReplyPrice(p)} per message` : "";
+    return p ? ` · ${t("{{price}} per message", { price: formatReplyPrice(p) })}` : "";
   };
   const iconSrc = workspaceIconSrc(ws?.iconUrl ?? null);
   const deletesAt = ws?.deletesAt ?? null;
@@ -111,14 +115,20 @@ function GeneralSettingsPage() {
   return (
     <>
       <SectionTitle
-        title="General"
-        lede={`The workspace everyone in ${ws?.name ?? "it"} shares. Only owners and admins can change these.`}
+        title={t("General")}
+        lede={t(
+          "The workspace everyone in {{workspace}} shares. Only owners and admins can change these.",
+          { workspace: ws?.name ?? t("it", { context: "workspace", defaultValue: "it" }) },
+        )}
       />
 
       <fieldset disabled={!isAdmin} className="mt-5 min-w-0">
-        <Field label="Workspace name" help="Shown in the sidebar and in invitation emails.">
+        <Field
+          label={t("Workspace name")}
+          help={t("Shown in the sidebar and in invitation emails.")}
+        >
           <Input
-            aria-label="Workspace name"
+            aria-label={t("Workspace name")}
             className="max-w-[420px]"
             value={shownName}
             onChange={(e) => setName(e.target.value)}
@@ -130,7 +140,10 @@ function GeneralSettingsPage() {
           />
         </Field>
 
-        <Field label="Icon" help="A letter on a tile. Upload a square image to replace it.">
+        <Field
+          label={t("Icon")}
+          help={t("A letter on a tile. Upload a square image to replace it.")}
+        >
           <div className="flex items-center gap-3">
             <Tile label={ws?.name ?? "W"} size={36} tone="ink" letters={1} imageUrl={iconSrc} />
             <Button
@@ -138,32 +151,34 @@ function GeneralSettingsPage() {
               onClick={() => iconInput.current?.click()}
               disabled={busy === "icon"}
             >
-              {busy === "icon" ? "Uploading…" : "Upload image"}
+              {busy === "icon" ? t("Uploading…") : t("Upload image")}
             </Button>
             {ws?.iconUrl && (
               <Button
                 variant="ghost"
-                onClick={() => void run("icon", () => api.workspace.removeIcon(), "Icon removed")}
+                onClick={() =>
+                  void run("icon", () => api.workspace.removeIcon(), t("Icon removed"))
+                }
               >
-                Remove
+                {t("Remove")}
               </Button>
             )}
             <input
               ref={iconInput}
               type="file"
               accept="image/png,image/jpeg,image/webp"
-              aria-label="Choose an icon"
+              aria-label={t("Choose an icon")}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 e.target.value = "";
-                if (file) void run("icon", () => api.workspace.setIcon(file), "Icon updated");
+                if (file) void run("icon", () => api.workspace.setIcon(file), t("Icon updated"));
               }}
             />
           </div>
         </Field>
 
-        <Field label="Workspace ID" help="For support requests and the API.">
+        <Field label={t("Workspace ID")} help={t("For support requests and the API.")}>
           <div className="flex items-center gap-2">
             <Chip tone="code">{ws?.id ?? "—"}</Chip>
             <Button
@@ -174,17 +189,17 @@ function GeneralSettingsPage() {
                 ws &&
                 void navigator.clipboard
                   ?.writeText(ws.id)
-                  .then(() => toast.success("Copied the workspace ID"))
+                  .then(() => toast.success(t("Copied the workspace ID")))
               }
             >
-              Copy
+              {t("Copy")}
             </Button>
           </div>
         </Field>
 
         <Field
-          label="Default model tier"
-          help="New agents start here. Each agent can pick its own."
+          label={t("Default model tier")}
+          help={t("New agents start here. Each agent can pick its own.")}
         >
           <Select
             value={ws?.defaultModel ?? NO_DEFAULT}
@@ -192,23 +207,23 @@ function GeneralSettingsPage() {
               void run(
                 "model",
                 () => api.workspace.update({ defaultModel: v === NO_DEFAULT ? null : v }),
-                "Default saved",
+                t("Default saved"),
               )
             }
           >
-            <SelectTrigger aria-label="Default model tier" className="max-w-[420px]">
+            <SelectTrigger aria-label={t("Default model tier")} className="max-w-[420px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={NO_DEFAULT}>No preference</SelectItem>
-              {tiers.map((t) => (
-                <SelectItem key={t.model} value={t.model}>
-                  {t.label}
-                  {priceWords(t.model)}
+              <SelectItem value={NO_DEFAULT}>{t("No preference")}</SelectItem>
+              {tiers.map((tier) => (
+                <SelectItem key={tier.model} value={tier.model}>
+                  {tier.label}
+                  {priceWords(tier.model)}
                 </SelectItem>
               ))}
               {models
-                .filter((m) => !tiers.some((t) => t.model === m))
+                .filter((m) => !tiers.some((tier) => tier.model === m))
                 .map((m) => (
                   <SelectItem key={m} value={m}>
                     {modelLabel(m)}
@@ -219,14 +234,14 @@ function GeneralSettingsPage() {
           </Select>
         </Field>
 
-        <Field label="Time zone" help="Routines are scheduled in this time zone.">
+        <Field label={t("Time zone")} help={t("Routines are scheduled in this time zone.")}>
           <Select
             value={ws?.timezone ?? "UTC"}
             onValueChange={(tz) =>
-              void run("tz", () => api.workspace.update({ timezone: tz }), "Time zone saved")
+              void run("tz", () => api.workspace.update({ timezone: tz }), t("Time zone saved"))
             }
           >
-            <SelectTrigger aria-label="Time zone" className="max-w-[420px]">
+            <SelectTrigger aria-label={t("Time zone")} className="max-w-[420px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="max-h-72">
@@ -239,50 +254,56 @@ function GeneralSettingsPage() {
           </Select>
         </Field>
 
-        <SectionLabel>Reports</SectionLabel>
+        <SectionLabel>{t("Reports")}</SectionLabel>
         <Field
-          label="Coverage report"
-          help="Once a week, the topics the team asked about that no document covered. Every member is told it is on and can leave their questions out."
+          label={t("Coverage report")}
+          help={t(
+            "Once a week, the topics the team asked about that no document covered. Every member is told it is on and can leave their questions out.",
+          )}
         >
           <label className="flex items-center gap-3 pt-1 text-sm">
             <Switch
-              aria-label="Coverage report"
+              aria-label={t("Coverage report")}
               checked={ws?.gapReportEnabled ?? false}
               onCheckedChange={(on) =>
                 void run(
                   "coverage",
                   () => api.coverage.setEnabled(on),
-                  on ? "Report on" : "Report off",
+                  on ? t("Report on") : t("Report off"),
                 )
               }
             />
             <span className={ws?.gapReportEnabled ? "" : "text-muted-foreground"}>
-              {ws?.gapReportEnabled ? "On · Mondays" : "Off"}
+              {ws?.gapReportEnabled ? t("On · Mondays") : t("Off")}
             </span>
           </label>
         </Field>
         <Field
-          label="Weekly usage summary"
-          help="Credits and threads per agent, sent to owners and admins by email on Monday morning."
+          label={t("Weekly usage summary")}
+          help={t(
+            "Credits and threads per agent, sent to owners and admins by email on Monday morning.",
+          )}
         >
           <label className="flex items-center gap-3 pt-1 text-sm">
             <Switch
-              aria-label="Weekly usage summary"
+              aria-label={t("Weekly usage summary")}
               checked={ws?.weeklyUsageEmail ?? false}
               onCheckedChange={(on) =>
                 void run("weekly", () => api.workspace.update({ weeklyUsageEmail: on }))
               }
             />
             <span className={ws?.weeklyUsageEmail ? "" : "text-muted-foreground"}>
-              {ws?.weeklyUsageEmail ? "On" : "Off"}
+              {ws?.weeklyUsageEmail ? t("On") : t("Off")}
             </span>
           </label>
         </Field>
 
-        <SectionLabel>Data</SectionLabel>
+        <SectionLabel>{t("Data")}</SectionLabel>
         <Field
-          label="Export workspace"
-          help="Every thread, document and routine as a zip. Prepared in the background and sent to your email."
+          label={t("Export workspace")}
+          help={t(
+            "Every thread, document and routine as a zip. Prepared in the background and sent to your email.",
+          )}
         >
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -293,45 +314,48 @@ function GeneralSettingsPage() {
                 void run(
                   "export",
                   () => api.exports.request(ws.id),
-                  "Export requested — we'll email you when it's ready",
+                  t("Export requested — we'll email you when it's ready"),
                 )
               }
             >
-              Request export
+              {t("Request export")}
             </Button>
             <Link
               to="/settings/export"
               className="text-meta text-muted-foreground hover:text-foreground"
             >
-              Previous exports
+              {t("Previous exports")}
             </Link>
           </div>
         </Field>
         <Field
-          label="Delete workspace"
-          help="Removes every agent, thread and document for everyone, after 14 days' notice. This cannot be undone."
+          label={t("Delete workspace")}
+          help={t(
+            "Removes every agent, thread and document for everyone, after 14 days' notice. This cannot be undone.",
+          )}
         >
           {deletesAt ? (
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-sm text-destructive">
-                Deletes on{" "}
-                {new Date(deletesAt).toLocaleDateString("en-GB", {
-                  day: "numeric",
-                  month: "long",
+                {t("Deletes on {{date}}", {
+                  date: new Date(deletesAt).toLocaleDateString(locale, {
+                    day: "numeric",
+                    month: "long",
+                  }),
                 })}
               </span>
               <Button
                 variant="secondary"
                 onClick={() =>
-                  void run("cancel", () => api.workspace.cancelDeletion(), "Deletion called off")
+                  void run("cancel", () => api.workspace.cancelDeletion(), t("Deletion called off"))
                 }
               >
-                Keep the workspace
+                {t("Keep the workspace")}
               </Button>
             </div>
           ) : (
             <Button variant="danger" onClick={() => setConfirmDelete(true)}>
-              Delete workspace…
+              {t("Delete workspace…")}
             </Button>
           )}
         </Field>
@@ -346,20 +370,23 @@ function GeneralSettingsPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {ws?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t("Delete {{workspace}}?", { workspace: ws?.name ?? "" })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Every member is told now, and the workspace — its agents, threads, documents and
-              routines — goes in 14 days. Until then one press keeps it. Type its name to go on.
+              {t(
+                "Every member is told now, and the workspace — its agents, threads, documents and routines — goes in 14 days. Until then one press keeps it. Type its name to go on.",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Input
-            aria-label="Workspace name, to confirm"
+            aria-label={t("Workspace name, to confirm")}
             placeholder={ws?.name}
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
           />
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
             <AlertDialogAction
               variant="danger"
               disabled={!ws || typed.trim() !== ws.name}
@@ -367,11 +394,11 @@ function GeneralSettingsPage() {
                 void run(
                   "delete",
                   () => api.workspace.requestDeletion(typed.trim()),
-                  "Deletion scheduled — everyone has been told",
+                  t("Deletion scheduled — everyone has been told"),
                 )
               }
             >
-              Delete in 14 days
+              {t("Delete in 14 days")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

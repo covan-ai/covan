@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
 import { api } from "@/lib/api-client";
 import { SectionTitle } from "@/components/section";
 import { ProfileForm } from "@/components/account/profile-form";
@@ -17,10 +18,14 @@ export const Route = createFileRoute("/_authed/settings/profile")({
 });
 
 function ProfileSettingsPage() {
+  const { t } = useTranslation();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   return (
     <>
-      <SectionTitle title="Profile" lede="Who you are across every workspace you belong to." />
+      <SectionTitle
+        title={t("Profile")}
+        lede={t("Who you are across every workspace you belong to.")}
+      />
       <div className="mt-5">
         {/* Keyed so the form is seeded once `me` arrives, and again only
             when the person changes. */}

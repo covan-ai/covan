@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useTranslation } from "@/i18n";
 import { SectionTitle } from "@/components/section";
 import { UsageSection } from "@/components/usage-section";
 import { CreditLedger } from "@/components/credit-ledger";
@@ -23,17 +24,22 @@ export const Route = createFileRoute("/_authed/settings/usage")({
  * prices, and nothing about credits.
  */
 function UsageSettingsPage() {
+  const { t } = useTranslation();
   const hosted = useIsHosted();
   const { isAdmin } = useWorkspaceRole();
 
   return (
     <>
       <SectionTitle
-        title="Usage and billing"
+        title={t("Usage and billing")}
         lede={
           hosted === false
-            ? "What the agents' replies cost at list prices. This install pays its providers directly, so nothing here is billed."
-            : "Credits are the only unit: a reply, an indexed document, a connected-app call and a minute in the browser are all charged in them, from one balance the whole workspace shares."
+            ? t(
+                "What the agents' replies cost at list prices. This install pays its providers directly, so nothing here is billed.",
+              )
+            : t(
+                "Credits are the only unit: a reply, an indexed document, a connected-app call and a minute in the browser are all charged in them, from one balance the whole workspace shares.",
+              )
         }
       />
       {hosted === true && (

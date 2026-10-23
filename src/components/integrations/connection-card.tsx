@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { RefreshCw } from "lucide-react";
+import { lookup, msg, Trans, useTranslation, type TFunction } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import type {
   Connection,
   ConnectionPausedCode,
@@ -41,16 +43,18 @@ import { PROVIDER_MARK } from "./brand-marks";
 import { AppLogo } from "./app-logo";
 import { IntegrationCard, IntegrationRow } from "./integration-row";
 
-/** What each source is called, beside the account it reads. */
+/** What each source is called, beside the account it reads. Brand names, untranslated. */
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   notion: "Notion",
   google_drive: "Google Drive",
 };
 
 /** "every 30 minutes", "daily" — the interval as part of a sentence. */
-function intervalWords(minutes: number): string {
+function intervalWords(minutes: number, t: TFunction, locale: string): string {
   const found = INTERVALS.find((i) => i.minutes === minutes);
-  return found ? found.label.toLowerCase() : `every ${minutes} minutes`;
+  return found
+    ? lookup(t, found.label).toLocaleLowerCase(locale)
+    : t("every {{minutes}} minutes", { minutes });
 }
 
 /**
@@ -59,12 +63,12 @@ function intervalWords(minutes: number): string {
  * hour — only a staleness the team is willing to tolerate.
  */
 const INTERVALS = [
-  { minutes: 15, label: "Every 15 minutes" },
-  { minutes: 30, label: "Every 30 minutes" },
-  { minutes: 60, label: "Every hour" },
-  { minutes: 360, label: "Every 6 hours" },
-  { minutes: 1440, label: "Daily" },
-  { minutes: 10080, label: "Weekly" },
+  { minutes: 15, label: msg("Every 15 minutes") },
+  { minutes: 30, label: msg("Every 30 minutes") },
+  { minutes: 60, label: msg("Every hour") },
+  { minutes: 360, label: msg("Every 6 hours") },
+  { minutes: 1440, label: msg("Daily") },
+  { minutes: 10080, label: msg("Weekly") },
 ];
 
 /**
@@ -114,6 +118,8 @@ export function ConnectionRow({
   /** The grant holder's name, when they are still a member. */
   connectedBy?: string | null;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [pickingFolder, setPickingFolder] = useState(false);
   const [managing, setManaging] = useState(false);
   const update = useUpdateConnection();
@@ -121,6 +127,8 @@ export function ConnectionRow({
   const disconnect = useDisconnect();
   const reconnect = useReconnectConnection();
   const Mark = PROVIDER_MARK[connection.provider];
+  const providerName = PROVIDER_LABEL[connection.provider];
+  const folder = connection.bundleName ?? t("a folder");
 
   const paused = connection.status === "paused";
   // The last run's sentence, when it had one: which files it could not import
@@ -136,11 +144,14 @@ export function ConnectionRow({
       onSuccess: (outcome) =>
         toast.success(
           outcome.added + outcome.updated + outcome.removed === 0
-            ? "Nothing had changed."
-            : `${outcome.added} added, ${outcome.updated} updated, ${outcome.removed} removed.` +
-                (outcome.more ? " More to come — it will carry on shortly." : ""),
+            ? t("Nothing had changed.")
+            : t("{{added}} added, {{updated}} updated, {{removed}} removed.", {
+                added: outcome.added,
+                updated: outcome.updated,
+                removed: outcome.removed,
+              }) + (outcome.more ? ` ${t("More to come — it will carry on shortly.")}` : ""),
         ),
-      onError: (err) => toast.error(err instanceof Error ? err.message : "Sync failed"),
+      onError: (err) => toast.error(err instanceof Error ? err.message : t("Sync failed")),
     });
   const action = paused ? pauseAction(connection.pausedCode) : "resume";
   const reconnectButton = (
@@ -151,26 +162,33 @@ export function ConnectionRow({
       onClick={() =>
         reconnect.mutate(connection.id, {
           onError: (err) =>
-            toast.error(err instanceof Error ? err.message : "Could not start that"),
+            toast.error(err instanceof Error ? err.message : t("Could not start that")),
         })
       }
     >
-      Reconnect
+      {t("Reconnect")}
     </Button>
   );
 
   const status = connection.needsFolder
-    ? { state: "waiting" as const, text: "Needs a folder" }
+    ? { state: "waiting" as const, text: t("Needs a folder") }
     : paused
-      ? { state: "idle" as const, text: "Paused" }
+      ? { state: "idle" as const, text: t("Paused") }
       : connection.lastSyncAt
-        ? { state: "done" as const, text: syncedWords(connection.lastSyncAt) }
-        : { state: "idle" as const, text: "Not synced yet" };
+        ? {
+            state: "done" as const,
+            text: syncedWords(connection.lastSyncAt, undefined, t, locale),
+          }
+        : { state: "idle" as const, text: t("Not synced yet") };
   const description = [
     connection.accountLabel + (connection.folderName ? ` · ${connection.folderName}` : ""),
-    `${connection.documentCount} ${connection.documentCount === 1 ? "file" : "files"} in ${connection.bundleName ?? "a folder"}`,
-    intervalWords(connection.syncIntervalMinutes),
-    connectedBy ? `connected by ${connectedBy}` : null,
+    t("{{count}} file in {{folder}}", {
+      count: connection.documentCount,
+      folder,
+      defaultValue_other: "{{count}} files in {{folder}}",
+    }),
+    intervalWords(connection.syncIntervalMinutes, t, locale),
+    connectedBy ? t("connected by {{name}}", { name: connectedBy }) : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -178,18 +196,18 @@ export function ConnectionRow({
   return (
     <>
       <IntegrationRow
-        logo={<AppLogo mark={Mark} name={PROVIDER_LABEL[connection.provider]} size={36} />}
-        name={PROVIDER_LABEL[connection.provider]}
+        logo={<AppLogo mark={Mark} name={providerName} size={36} />}
+        name={providerName}
         description={description}
         status={status}
         action={
           connection.needsFolder ? (
             <Button size="sm" onClick={() => setPickingFolder(true)}>
-              Choose a folder
+              {t("Choose a folder")}
             </Button>
           ) : (
             <Button size="sm" variant="secondary" onClick={() => setManaging(true)}>
-              Manage
+              {t("Manage")}
             </Button>
           )
         }
@@ -199,14 +217,21 @@ export function ConnectionRow({
         <DialogContent size="md">
           <DialogHeader>
             <DialogTitle>
-              {PROVIDER_LABEL[connection.provider]} · {connection.accountLabel}
+              {providerName} · {connection.accountLabel}
             </DialogTitle>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-4">
             <p className="m-0 text-sm text-muted-foreground">
-              {connection.documentCount} {connection.documentCount === 1 ? "document" : "documents"}{" "}
-              in {connection.bundleName ?? "a folder"}
-              {connection.lastSyncAt ? ` · synced ${formatRelative(connection.lastSyncAt)}` : ""}
+              {t("{{count}} document in {{folder}}", {
+                count: connection.documentCount,
+                folder,
+                defaultValue_other: "{{count}} documents in {{folder}}",
+              })}
+              {connection.lastSyncAt
+                ? ` · ${t("synced {{when}}", {
+                    when: formatRelative(connection.lastSyncAt, undefined, t, locale),
+                  })}`
+                : ""}
             </p>
             {connection.pausedReason ? (
               <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground">
@@ -214,14 +239,17 @@ export function ConnectionRow({
               </p>
             ) : lastRunNote ? (
               <p className="rounded-lg border border-hairline bg-background px-4 py-3 text-meta leading-[1.45] text-muted-foreground [overflow-wrap:anywhere]">
-                Last sync {formatRelative(lastRunNote.startedAt)}: {lastRunNote.error}
+                {t("Last sync {{when}}: {{error}}", {
+                  when: formatRelative(lastRunNote.startedAt, undefined, t, locale),
+                  error: lastRunNote.error,
+                })}
               </p>
             ) : null}
 
             <div className="flex flex-wrap items-center gap-2">
               {connection.needsFolder ? (
                 <Button size="sm" onClick={() => setPickingFolder(true)}>
-                  Choose a folder
+                  {t("Choose a folder")}
                 </Button>
               ) : action === "newGrant" ? (
                 // Resume is not offered at all. It would start a sync against a token
@@ -233,7 +261,7 @@ export function ConnectionRow({
                 // which is a configuration somebody else holds — the sentence above
                 // says which variables, and a button here would only fail.
                 <span className="text-meta text-muted-foreground">
-                  An operator has to set this up again before it can resume.
+                  {t("An operator has to set this up again before it can resume.")}
                 </span>
               ) : action === "decide" ? (
                 <>
@@ -244,7 +272,7 @@ export function ConnectionRow({
                       update.mutate({ id: connection.id, patch: { status: "active" } })
                     }
                   >
-                    Remove them and resume
+                    {t("Remove them and resume")}
                   </Button>
                   {/* The other answer to the same question, and the more likely right
                 one: the documents are still there, this grant just cannot see
@@ -260,7 +288,7 @@ export function ConnectionRow({
                     onClick={syncNow}
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${sync.isPending ? "animate-spin" : ""}`} />
-                    {sync.isPending ? "Syncing…" : "Sync now"}
+                    {sync.isPending ? t("Syncing…") : t("Sync now")}
                   </Button>
 
                   <Select
@@ -278,7 +306,7 @@ export function ConnectionRow({
                     <SelectContent>
                       {INTERVALS.map((option) => (
                         <SelectItem key={option.minutes} value={String(option.minutes)}>
-                          {option.label}
+                          {lookup(t, option.label)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -294,7 +322,7 @@ export function ConnectionRow({
                       })
                     }
                   >
-                    {paused ? "Resume" : "Pause"}
+                    {paused ? t("Resume") : t("Pause")}
                   </Button>
                   {/* Offered on a working connection too, quietly. Replacing a grant
                 is the answer to "this is syncing as the wrong person" as well
@@ -315,21 +343,26 @@ export function ConnectionRow({
                 disabled={disconnect.isPending}
                 onClick={() => {
                   const alsoDelete = window.confirm(
-                    `Disconnect ${connection.accountLabel}?\n\n` +
-                      `OK — also delete the ${connection.documentCount} documents it imported.\n` +
-                      `Cancel — keep them in the bundle and just stop syncing.`,
+                    [
+                      t("Disconnect {{account}}?", { account: connection.accountLabel }),
+                      t("OK — also delete the {{count}} document it imported.", {
+                        count: connection.documentCount,
+                        defaultValue_other: "OK — also delete the {{count}} documents it imported.",
+                      }),
+                      t("Cancel — keep them in the bundle and just stop syncing."),
+                    ].join("\n\n"),
                   );
                   disconnect.mutate(
                     { id: connection.id, documents: alsoDelete ? "delete" : "keep" },
                     {
-                      onSuccess: () => toast.success("Disconnected."),
+                      onSuccess: () => toast.success(t("Disconnected.")),
                       onError: (err) =>
-                        toast.error(err instanceof Error ? err.message : "Could not disconnect"),
+                        toast.error(err instanceof Error ? err.message : t("Could not disconnect")),
                     },
                   );
                 }}
               >
-                Disconnect
+                {t("Disconnect")}
               </Button>
             </div>
           </DialogBody>
@@ -342,9 +375,9 @@ export function ConnectionRow({
         open={pickingFolder}
         onOpenChange={setPickingFolder}
         saving={update.isPending}
-        onChoose={(folder) =>
+        onChoose={(picked) =>
           update.mutate(
-            { id: connection.id, patch: { folderId: folder.id, folderName: folder.name } },
+            { id: connection.id, patch: { folderId: picked.id, folderName: picked.name } },
             {
               // Choosing the folder starts the first sync now rather than at the
               // engine's next tick, up to five minutes away — long enough for a
@@ -354,11 +387,11 @@ export function ConnectionRow({
               // source), so the second simply finds less to do.
               onSuccess: () => {
                 setPickingFolder(false);
-                toast.success(`Syncing “${folder.name}”.`);
+                toast.success(t("Syncing “{{folder}}”.", { folder: picked.name }));
                 syncNow();
               },
               onError: (err) =>
-                toast.error(err instanceof Error ? err.message : "Could not save that folder"),
+                toast.error(err instanceof Error ? err.message : t("Could not save that folder")),
             },
           )
         }
@@ -367,7 +400,7 @@ export function ConnectionRow({
   );
 }
 
-/** The environment variables an operator sets to turn a provider on. */
+/** The environment variables an operator sets to turn a provider on. Identifiers, untranslated. */
 const PROVIDER_ENV: Record<ProviderId, string> = {
   notion: "NOTION_CLIENT_ID and NOTION_CLIENT_SECRET",
   google_drive: "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET",
@@ -394,9 +427,10 @@ const PROVIDER_ENV: Record<ProviderId, string> = {
 const SOON = new Set<ProviderId>(["google_drive"]);
 
 const PROVIDER_BLURB: Record<ProviderId, string> = {
-  notion: "The pages you tick in Notion's own picker, kept in step with a bundle.",
-  google_drive:
+  notion: msg("The pages you tick in Notion's own picker, kept in step with a bundle."),
+  google_drive: msg(
     "A Drive folder — Docs, Sheets, Slides and text files — kept in step with a bundle.",
+  ),
 };
 
 /**
@@ -414,6 +448,7 @@ export function SourceCard({
   provider: ProviderAvailability;
   bundles: Bundle[];
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [bundleId, setBundleId] = useState<string>("");
   const start = useStartConnection();
@@ -429,25 +464,27 @@ export function SourceCard({
         name={provider.label}
         note={
           soon ? (
-            <Chip size="sm">Coming soon</Chip>
+            <Chip size="sm">{t("Coming soon")}</Chip>
           ) : !provider.configured ? (
-            <Chip size="sm">Not configured</Chip>
+            <Chip size="sm">{t("Not configured")}</Chip>
           ) : null
         }
         description={
           provider.configured || soon ? (
-            PROVIDER_BLURB[provider.id]
+            lookup(t, PROVIDER_BLURB[provider.id])
           ) : (
-            <>
-              Not configured on this deployment. An operator sets{" "}
-              <span className="font-mono text-xs">{PROVIDER_ENV[provider.id]}</span> to turn it on.
-            </>
+            <Trans
+              t={t}
+              i18nKey="Not configured on this deployment. An operator sets <code>{{variables}}</code> to turn it on."
+              values={{ variables: PROVIDER_ENV[provider.id] }}
+              components={{ code: <span className="font-mono text-xs" /> }}
+            />
           )
         }
         action={
           provider.configured ? (
             <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
-              Connect
+              {t("Connect")}
             </Button>
           ) : undefined
         }
@@ -462,21 +499,24 @@ export function SourceCard({
       >
         <DialogContent size="sm">
           <DialogHeader>
-            <DialogTitle>Connect {provider.label}</DialogTitle>
+            <DialogTitle>{t("Connect {{provider}}", { provider: provider.label })}</DialogTitle>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-3">
-            <p className="m-0 text-sm text-muted-foreground">{PROVIDER_BLURB[provider.id]}</p>
+            <p className="m-0 text-sm text-muted-foreground">
+              {lookup(t, PROVIDER_BLURB[provider.id])}
+            </p>
             {bundles.length === 0 ? (
               <p className="m-0 text-sm text-muted-foreground">
-                A connection keeps a folder in Knowledge current, so there has to be one to keep.
-                Make one in Knowledge first.
+                {t(
+                  "A connection keeps a folder in Knowledge current, so there has to be one to keep. Make one in Knowledge first.",
+                )}
               </p>
             ) : (
               <div className="space-y-1.5">
-                <Label>Into which folder</Label>
+                <Label>{t("Into which folder")}</Label>
                 <Select value={bundleId} onValueChange={setBundleId}>
-                  <SelectTrigger aria-label="Into which folder">
-                    <SelectValue placeholder="Choose a folder" />
+                  <SelectTrigger aria-label={t("Into which folder")}>
+                    <SelectValue placeholder={t("Choose a folder")} />
                   </SelectTrigger>
                   <SelectContent>
                     {bundles.map((bundle) => (
@@ -491,7 +531,7 @@ export function SourceCard({
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" onClick={() => setOpen(false)}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               disabled={!bundleId || start.isPending}
@@ -500,12 +540,12 @@ export function SourceCard({
                   { provider: provider.id, bundleId },
                   {
                     onError: (err) =>
-                      toast.error(err instanceof Error ? err.message : "Could not start that"),
+                      toast.error(err instanceof Error ? err.message : t("Could not start that")),
                   },
                 )
               }
             >
-              {start.isPending ? "Opening…" : "Connect"}
+              {start.isPending ? t("Opening…") : t("Connect")}
             </Button>
           </DialogFooter>
         </DialogContent>

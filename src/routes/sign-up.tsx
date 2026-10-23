@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { Trans, useTranslation } from "@/i18n";
 import { AuthLayout } from "@/components/auth-layout";
 import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ export const Route = createFileRoute("/sign-up")({
 });
 
 function SignUp() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -99,25 +101,28 @@ function SignUp() {
   if (sentTo) {
     return (
       <AuthLayout
-        title="Confirm your address"
+        title={t("Confirm your address")}
         subtitle={
-          <>
-            We sent a link to <span className="font-medium text-foreground">{sentTo}</span>. Open it
-            on any device to finish.
-          </>
+          <Trans
+            t={t}
+            i18nKey="We sent a link to <b>{{email}}</b>. Open it on any device to finish."
+            values={{ email: sentTo }}
+            components={{ b: <span className="font-medium text-foreground" /> }}
+          />
         }
         footer={
-          <>
-            Already have one?{" "}
-            <Link to="/sign-in" className="font-medium text-foreground hover:underline">
-              Sign in
-            </Link>
-          </>
+          <Trans
+            t={t}
+            i18nKey="Already have one? <a>Sign in</a>"
+            components={{
+              a: <Link to="/sign-in" className="font-medium text-foreground hover:underline" />,
+            }}
+          />
         }
       >
         <div className="flex items-center gap-2.5 rounded-lg border border-border px-3 py-2.5">
           <StatusDot state="waiting" />
-          <span className="text-sm">Waiting for the link to be opened</span>
+          <span className="text-sm">{t("Waiting for the link to be opened")}</span>
         </div>
       </AuthLayout>
     );
@@ -131,15 +136,16 @@ function SignUp() {
   // anything is not available to it. Hence a sentence that needs neither.
   return (
     <AuthLayout
-      title="Create a workspace"
-      subtitle="Your team, your agents, your documents. Free to start."
+      title={t("Create a workspace")}
+      subtitle={t("Your team, your agents, your documents. Free to start.")}
       footer={
-        <>
-          Already have one?{" "}
-          <Link to="/sign-in" className="font-medium text-foreground hover:underline">
-            Sign in
-          </Link>
-        </>
+        <Trans
+          t={t}
+          i18nKey="Already have one? <a>Sign in</a>"
+          components={{
+            a: <Link to="/sign-in" className="font-medium text-foreground hover:underline" />,
+          }}
+        />
       }
     >
       {/* Remembered, as the email form below is: this page has no box to
@@ -152,13 +158,13 @@ function SignUp() {
       <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-3.5">
         <div className="space-y-1.5">
           <Label htmlFor="workspace" className="text-meta">
-            Workspace name
+            {t("Workspace name")}
           </Label>
           <Input
             id="workspace"
             name="workspace"
             type="text"
-            placeholder="Acme"
+            placeholder={t("Acme")}
             maxLength={100}
             autoComplete="organization"
             className="h-9"
@@ -167,13 +173,13 @@ function SignUp() {
 
         <div className="space-y-1.5">
           <Label htmlFor="email" className="text-meta">
-            Work email
+            {t("Work email")}
           </Label>
           <Input
             id="email"
             name="email"
             type="email"
-            placeholder="you@company.com"
+            placeholder={t("you@company.com")}
             required
             autoComplete="email"
             className="h-9"
@@ -186,14 +192,17 @@ function SignUp() {
 
         <div className="space-y-1.5">
           <Label htmlFor="password" className="text-meta">
-            Password
+            {t("Password")}
           </Label>
           <div className="relative">
             <Input
               id="password"
               name="password"
               type={showPassword ? "text" : "password"}
-              placeholder={`At least ${MIN_PASSWORD} characters`}
+              placeholder={t("At least {{count}} character", {
+                count: MIN_PASSWORD,
+                defaultValue_other: "At least {{count}} characters",
+              })}
               required
               minLength={MIN_PASSWORD}
               autoComplete="new-password"
@@ -203,7 +212,7 @@ function SignUp() {
               type="button"
               onClick={() => setShowPassword((v) => !v)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? t("Hide password") : t("Show password")}
             >
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -213,7 +222,7 @@ function SignUp() {
         {error && <p className="m-0 text-sm text-destructive">{error}</p>}
 
         <Button type="submit" size="lg" className="mt-1 w-full" disabled={submitting}>
-          {submitting ? "Creating…" : "Create workspace"}
+          {submitting ? t("Creating…") : t("Create workspace")}
         </Button>
       </form>
 
@@ -221,15 +230,22 @@ function SignUp() {
           for other people needs their own documents and a self-hoster does
           not. See `src/lib/legal.ts`. */}
       <p className="mt-4 mb-0 text-meta leading-[1.5] text-muted-foreground">
-        By continuing you agree to the{" "}
-        <LegalAnchor link={termsLink()} newTab>
-          Terms
-        </LegalAnchor>{" "}
-        and the{" "}
-        <LegalAnchor link={privacyLink()} newTab>
-          Privacy policy
-        </LegalAnchor>
-        . We email you once to confirm the address.
+        <Trans
+          t={t}
+          i18nKey="By continuing you agree to the <terms>Terms</terms> and the <privacy>Privacy policy</privacy>. We email you once to confirm the address."
+          components={{
+            terms: (
+              <LegalAnchor link={termsLink()} newTab>
+                {null}
+              </LegalAnchor>
+            ),
+            privacy: (
+              <LegalAnchor link={privacyLink()} newTab>
+                {null}
+              </LegalAnchor>
+            ),
+          }}
+        />
       </p>
     </AuthLayout>
   );

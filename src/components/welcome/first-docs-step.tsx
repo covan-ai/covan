@@ -2,6 +2,7 @@ import { useRef, useState, type DragEvent } from "react";
 import { Link } from "@tanstack/react-router";
 import { Upload } from "lucide-react";
 import { toast } from "sonner";
+import { lookup, msg, useTranslation } from "@/i18n";
 import { Chip } from "@/components/chip";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
@@ -11,37 +12,40 @@ import { useAgentsStore, type Agent } from "@/lib/agents-store";
 import { ACCEPT, ACCEPTED_SUMMARY, validateUpload } from "@/lib/uploads";
 import { cn } from "@/lib/utils";
 
-/** The four kinds of file most teams already have (A29). */
+/**
+ * The four kinds of file most teams already have (A29). `title` and `line`
+ * are English keys; `kind` is the file-type badge, not a word.
+ */
 const KINDS = [
   {
     id: "policies",
     kind: "PDF",
-    title: "Policies or a handbook",
-    line: "Refunds, shipping, what you promise. The thing people ask about most.",
+    title: msg("Policies or a handbook"),
+    line: msg("Refunds, shipping, what you promise. The thing people ask about most."),
   },
   {
     id: "product",
     kind: "DOC",
-    title: "Product docs or a price list",
-    line: "What you sell, in your words, with the numbers.",
+    title: msg("Product docs or a price list"),
+    line: msg("What you sell, in your words, with the numbers."),
   },
   {
     id: "templates",
     kind: "TXT",
-    title: "Reply templates or macros",
-    line: "The answers your team already copies and pastes.",
+    title: msg("Reply templates or macros"),
+    line: msg("The answers your team already copies and pastes."),
   },
   {
     id: "faq",
     kind: "MD",
-    title: "FAQ",
-    line: "The questions that keep coming back, answered once.",
+    title: msg("FAQ"),
+    line: msg("The questions that keep coming back, answered once."),
   },
 ] as const;
 
 const TEMPLATES = ["faq.md", "how-we-work.md", "product-notes.md"]
-  .map((f) => KNOWLEDGE_TEMPLATES.find((t) => t.filename === f))
-  .filter((t): t is KnowledgeTemplate => Boolean(t));
+  .map((f) => KNOWLEDGE_TEMPLATES.find((tpl) => tpl.filename === f))
+  .filter((tpl): tpl is KnowledgeTemplate => Boolean(tpl));
 
 type Uploaded = { name: string; size: number };
 
@@ -53,6 +57,7 @@ type Uploaded = { name: string; size: number };
  * for the agent on the first upload, and the agent reads it at once.
  */
 export function FirstDocsStep({ agent }: { agent: Agent }) {
+  const { t } = useTranslation();
   const { createBundle, attachBundle, uploadToBundle } = useAgentsStore();
   const [folderId, setFolderId] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<Record<string, Uploaded>>({});
@@ -63,7 +68,7 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
 
   const folder = async (): Promise<string> => {
     if (folderId) return folderId;
-    const bundle = await createBundle(`${agent.name}'s documents`);
+    const bundle = await createBundle(t("{{agent}}'s documents", { agent: agent.name }));
     await attachBundle(agent.id, bundle.id);
     setFolderId(bundle.id);
     return bundle.id;
@@ -88,7 +93,7 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
         }));
       }
     } catch {
-      toast.error("Couldn't upload that. Try again, or add it later in Knowledge.");
+      toast.error(t("Couldn't upload that. Try again, or add it later in Knowledge."));
     } finally {
       setBusy(null);
     }
@@ -129,9 +134,14 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
                 {k.kind}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{k.title}</span>
+                <span className="block text-sm font-medium">{lookup(t, k.title)}</span>
                 <span className="block text-meta text-muted-foreground">
-                  {done ? `Uploaded · ${done.name} · ${formatFileSize(done.size)}` : k.line}
+                  {done
+                    ? t("Uploaded · {{name}} · {{size}}", {
+                        name: done.name,
+                        size: formatFileSize(done.size),
+                      })
+                    : lookup(t, k.line)}
                 </span>
               </span>
               {done ? (
@@ -142,9 +152,9 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
                   variant="secondary"
                   disabled={busy !== null}
                   onClick={() => pick(k.id)}
-                  aria-label={`Upload ${k.title}`}
+                  aria-label={t("Upload {{kind}}", { kind: lookup(t, k.title) })}
                 >
-                  {busy === k.id ? "Uploading…" : "Upload"}
+                  {busy === k.id ? t("Uploading…") : t("Upload")}
                 </Button>
               )}
             </li>
@@ -171,17 +181,17 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
           className="min-w-0 flex-1 text-left text-sm"
         >
           <span className="font-medium">
-            {busy === "any" ? "Uploading…" : "Or drop anything here."}
+            {busy === "any" ? t("Uploading…") : t("Or drop anything here.")}
           </span>{" "}
           <span className="text-muted-foreground">{ACCEPTED_SUMMARY}.</span>
         </button>
         <Button size="sm" variant="secondary" asChild>
-          <Link to="/settings/integrations">Connect Google Drive</Link>
+          <Link to="/settings/integrations">{t("Connect Google Drive")}</Link>
         </Button>
       </div>
       {loose.length > 0 ? (
         <p className="mt-2 mb-0 text-meta text-muted-foreground">
-          Also uploaded: {loose.map(([, f]) => f.name).join(", ")}
+          {t("Also uploaded: {{names}}", { names: loose.map(([, f]) => f.name).join(", ") })}
         </p>
       ) : null}
 
@@ -191,7 +201,7 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
         multiple
         accept={ACCEPT}
         className="hidden"
-        aria-label="Choose files"
+        aria-label={t("Choose files")}
         onChange={(e) => {
           void upload(e.target.files, pickingFor.current);
           e.target.value = "";
@@ -200,26 +210,28 @@ export function FirstDocsStep({ agent }: { agent: Agent }) {
 
       <div className="mt-6">
         <div className="text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase">
-          Nothing written down yet?
+          {t("Nothing written down yet?")}
         </div>
         <p className="mt-1 mb-1.5 text-meta text-muted-foreground">
-          Fill in a template and upload it. Each is a page with the headings a good document has.
+          {t(
+            "Fill in a template and upload it. Each is a page with the headings a good document has.",
+          )}
         </p>
         <ul className="m-0 list-none p-0">
-          {TEMPLATES.map((t) => (
+          {TEMPLATES.map((tpl) => (
             <li
-              key={t.filename}
+              key={tpl.filename}
               className="flex min-h-11 items-center gap-3 border-b border-hairline last:border-b-0"
             >
-              <Chip tone="code">{t.filename}</Chip>
-              <span className="min-w-0 flex-1 truncate text-sm">{t.blurb}</span>
+              <Chip tone="code">{tpl.filename}</Chip>
+              <span className="min-w-0 flex-1 truncate text-sm">{tpl.blurb}</span>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => downloadTemplate(t)}
-                aria-label={`Download ${t.filename}`}
+                onClick={() => downloadTemplate(tpl)}
+                aria-label={t("Download {{file}}", { file: tpl.filename })}
               >
-                Download
+                {t("Download")}
               </Button>
             </li>
           ))}

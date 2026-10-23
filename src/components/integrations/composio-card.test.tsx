@@ -163,7 +163,7 @@ describe("ConnectedApps", () => {
     const dialog = await manage([app({ unavailable: { count: 1, hiddenUntil: until } })]);
     expect(screen.getByText(/1 operation hidden/)).toBeInTheDocument();
     expect(dialog.getByText(/refused an operation when an agent tried it/)).toHaveTextContent(
-      `Tried again from ${new Date(until).toLocaleDateString("en", {
+      `Tried again from ${new Date(until).toLocaleDateString("en-GB", {
         day: "numeric",
         month: "long",
         year: "numeric",

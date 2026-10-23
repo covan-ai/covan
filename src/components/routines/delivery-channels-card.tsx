@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, Mail, Plus, RefreshCw, Send, Trash2, Webhook } from "lucide-react";
+import { lookup, msg, Trans, useTranslation, type Translate } from "@/i18n";
 import { Chip } from "@/components/chip";
 import { Field } from "@/components/field";
 import { RevealedSecret } from "@/components/revealed-secret";
@@ -37,9 +38,9 @@ import {
 } from "@/hooks/use-routines";
 
 const KIND_LABEL: Record<DeliveryChannelKind, string> = {
-  email: "Email",
-  slack_webhook: "Slack webhook",
-  webhook: "Webhook",
+  email: msg("Email"),
+  slack_webhook: msg("Slack webhook"),
+  webhook: msg("Webhook"),
 };
 
 /**
@@ -65,6 +66,7 @@ function ChannelIcon({ kind }: { kind: DeliveryChannelKind }) {
 }
 
 export function DeliveryChannelsCard() {
+  const { t } = useTranslation();
   const { data: channels = [], isLoading } = useDeliveryChannels();
   const createChannel = useCreateChannel();
   const deleteChannel = useDeleteChannel();
@@ -99,37 +101,38 @@ export function DeliveryChannelsCard() {
         return;
       }
       if (created.kind === "email" && !created.confirmed) {
-        toast.success(confirmationSentence(created.confirmation));
+        toast.success(confirmationSentence(created.confirmation, t));
         close();
         return;
       }
-      toast.success("Delivery channel added");
+      toast.success(t("Delivery channel added"));
       close();
     } catch (err) {
       // The API owns validation (a Slack URL must be on hooks.slack.com, an
       // address must look like one, a webhook URL must not point into private
       // space), so its message is the useful one.
-      toast.error(err instanceof ApiError ? err.message : "Could not add that channel");
+      toast.error(err instanceof ApiError ? err.message : t("Could not add that channel"));
     }
   };
 
   const sendTest = async (channel: DeliveryChannel) => {
     try {
       await testChannel.mutateAsync(channel.id);
-      toast.success(`Test sent to ${channel.label}`);
+      toast.success(t("Test sent to {{channel}}", { channel: channel.label }));
     } catch (err) {
       // An address that has not confirmed is not sent a test — that is the
       // mail it has not agreed to — but it is asked again, at most daily.
       if (err instanceof ApiError && err.status === 409) {
-        toast.message("This address hasn't confirmed yet", {
-          description:
+        toast.message(t("This address hasn't confirmed yet"), {
+          description: t(
             "Covan emailed it a link. Nothing is sent there until somebody opens it — we ask again at most once a day.",
+          ),
         });
         return;
       }
       // 502 carries what the receiver itself said. Replacing that with
       // "delivery failed" would make the button worth less than not having it.
-      toast.error(err instanceof ApiError ? err.message : "Could not send a test");
+      toast.error(err instanceof ApiError ? err.message : t("Could not send a test"));
     }
   };
 
@@ -139,35 +142,36 @@ export function DeliveryChannelsCard() {
       setRevealed(signingSecret);
       setOpen(true);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Could not rotate that secret");
+      toast.error(err instanceof ApiError ? err.message : t("Could not rotate that secret"));
     }
   };
 
   const removeChannel = async (id: string) => {
     try {
       await deleteChannel.mutateAsync(id);
-      toast.success("Delivery channel removed");
+      toast.success(t("Delivery channel removed"));
     } catch (err) {
       // 409 is the deferred foreign key on routines.delivery_channel_id. The
       // raw error says nothing a user can act on; naming the cause does.
       if (err instanceof ApiError && err.status === 409) {
-        toast.error("This channel is still used by a routine.");
+        toast.error(t("This channel is still used by a routine."));
         return;
       }
-      toast.error(err instanceof ApiError ? err.message : "Could not remove that channel");
+      toast.error(err instanceof ApiError ? err.message : t("Could not remove that channel"));
     }
   };
 
   // A field on Preferences: where your routines send their updates.
   return (
-    <Field label="Delivery channels" help="Where your routines send their updates.">
+    <Field label={t("Delivery channels")} help={t("Where your routines send their updates.")}>
       <div className="max-w-[560px]">
         {isLoading ? (
-          <p className="pt-1.5 text-sm text-muted-foreground">Loading…</p>
+          <p className="pt-1.5 text-sm text-muted-foreground">{t("Loading…")}</p>
         ) : channels.length === 0 ? (
           <p className="pt-1.5 text-sm text-muted-foreground">
-            No delivery channels yet. Add one to send routine updates to Slack, an inbox, or
-            anything that can take a webhook.
+            {t(
+              "No delivery channels yet. Add one to send routine updates to Slack, an inbox, or anything that can take a webhook.",
+            )}
           </p>
         ) : (
           <ul className="m-0 list-none p-0">
@@ -178,13 +182,13 @@ export function DeliveryChannelsCard() {
               >
                 <ChannelIcon kind={channel.kind} />
                 <span className="min-w-0 flex-1 truncate text-sm">{channel.label}</span>
-                {!channel.confirmed && <Chip>Waiting for confirmation</Chip>}
+                {!channel.confirmed && <Chip>{t("Waiting for confirmation")}</Chip>}
 
                 <button
                   onClick={() => void sendTest(channel)}
                   disabled={testChannel.isPending}
-                  aria-label={`Send a test to ${channel.label}`}
-                  title="Send a test"
+                  aria-label={t("Send a test to {{channel}}", { channel: channel.label })}
+                  title={t("Send a test")}
                   className={ROW_ACTION}
                 >
                   <Send className="h-4 w-4" />
@@ -194,8 +198,10 @@ export function DeliveryChannelsCard() {
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <button
-                        aria-label={`Rotate the signing secret for ${channel.label}`}
-                        title="Rotate signing secret"
+                        aria-label={t("Rotate the signing secret for {{channel}}", {
+                          channel: channel.label,
+                        })}
+                        title={t("Rotate signing secret")}
                         className={ROW_ACTION}
                       >
                         <RefreshCw className="h-4 w-4" />
@@ -203,18 +209,17 @@ export function DeliveryChannelsCard() {
                     </AlertDialogTrigger>
                     <AlertDialogContent>
                       <AlertDialogHeader>
-                        <AlertDialogTitle>Rotate this signing secret?</AlertDialogTitle>
+                        <AlertDialogTitle>{t("Rotate this signing secret?")}</AlertDialogTitle>
                         <AlertDialogDescription>
-                          Deliveries are signed with the new secret from the next one onwards, and
-                          the old secret stops working the moment you confirm. A receiver still
-                          checking against the old one will reject everything until you update it.
-                          The destination URL does not change.
+                          {t(
+                            "Deliveries are signed with the new secret from the next one onwards, and the old secret stops working the moment you confirm. A receiver still checking against the old one will reject everything until you update it. The destination URL does not change.",
+                          )}
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogCancel>{t("Cancel")}</AlertDialogCancel>
                         <AlertDialogAction onClick={() => void rotate(channel)}>
-                          Rotate
+                          {t("Rotate")}
                         </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>
@@ -223,8 +228,8 @@ export function DeliveryChannelsCard() {
 
                 <button
                   onClick={() => void removeChannel(channel.id)}
-                  aria-label={`Remove ${channel.label}`}
-                  title="Remove"
+                  aria-label={t("Remove {{channel}}", { channel: channel.label })}
+                  title={t("Remove")}
                   className={`${ROW_ACTION} hover:text-destructive`}
                 >
                   <Trash2 className="h-4 w-4" />
@@ -234,35 +239,38 @@ export function DeliveryChannelsCard() {
           </ul>
         )}
         <Button variant="secondary" size="sm" className="mt-2" onClick={() => setOpen(true)}>
-          <Plus /> Add channel
+          <Plus /> {t("Add channel")}
         </Button>
       </div>
 
       <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : close())}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{revealed ? "Your signing secret" : "Add a delivery channel"}</DialogTitle>
+            <DialogTitle>
+              {revealed ? t("Your signing secret") : t("Add a delivery channel")}
+            </DialogTitle>
           </DialogHeader>
 
           {revealed ? (
             <div className="space-y-4">
-              <RevealedSecret value={revealed} label="Copy signing secret" />
+              <RevealedSecret value={revealed} label={t("Copy signing secret")} />
               <p className="text-meta text-muted-foreground">
-                This is the only time it is shown. Give it to whatever receives the webhook: every
-                delivery carries an <code className="font-mono">X-Covan-Signature</code> header
-                computed with it, and a receiver that does not check the signature will accept a
-                body from anybody. Lost it? Rotate for a new one.
+                <Trans
+                  t={t}
+                  i18nKey="This is the only time it is shown. Give it to whatever receives the webhook: every delivery carries an <code>X-Covan-Signature</code> header computed with it, and a receiver that does not check the signature will accept a body from anybody. Lost it? Rotate for a new one."
+                  components={{ code: <code className="font-mono" /> }}
+                />
               </p>
               <div className="flex justify-end">
                 <Button variant="ghost" onClick={close}>
-                  I've saved it
+                  {t("I've saved it")}
                 </Button>
               </div>
             </div>
           ) : (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="channel-kind">Type</Label>
+                <Label htmlFor="channel-kind">{t("Type")}</Label>
                 <Select
                   value={kind}
                   onValueChange={(v) => {
@@ -276,20 +284,22 @@ export function DeliveryChannelsCard() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="email">{KIND_LABEL.email}</SelectItem>
-                    <SelectItem value="slack_webhook">{KIND_LABEL.slack_webhook}</SelectItem>
-                    <SelectItem value="webhook">{KIND_LABEL.webhook}</SelectItem>
+                    <SelectItem value="email">{lookup(t, KIND_LABEL.email)}</SelectItem>
+                    <SelectItem value="slack_webhook">
+                      {lookup(t, KIND_LABEL.slack_webhook)}
+                    </SelectItem>
+                    <SelectItem value="webhook">{lookup(t, KIND_LABEL.webhook)}</SelectItem>
                   </SelectContent>
                 </Select>
                 {kind === "webhook" && (
                   <p className="text-meta text-muted-foreground">
-                    A signed POST to any endpoint you run.
+                    {t("A signed POST to any endpoint you run.")}
                   </p>
                 )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="channel-secret">
-                  {kind === "email" ? "Email address" : "Webhook URL"}
+                  {kind === "email" ? t("Email address") : t("Webhook URL")}
                 </Label>
                 <Input
                   id="channel-secret"
@@ -306,13 +316,13 @@ export function DeliveryChannelsCard() {
               </div>
               <div className="flex justify-end gap-2">
                 <Button variant="ghost" onClick={close}>
-                  Cancel
+                  {t("Cancel")}
                 </Button>
                 <Button
                   onClick={() => void submit()}
                   disabled={!secret.trim() || createChannel.isPending}
                 >
-                  {createChannel.isPending ? "Adding…" : "Add channel"}
+                  {createChannel.isPending ? t("Adding…") : t("Add channel")}
                 </Button>
               </div>
             </div>
@@ -324,12 +334,14 @@ export function DeliveryChannelsCard() {
 }
 
 /** What to tell somebody who just added an address that is not their own. */
-function confirmationSentence(outcome: ConfirmationOutcome | undefined): string {
+function confirmationSentence(outcome: ConfirmationOutcome | undefined, t: Translate): string {
   if (outcome === "sent") {
-    return "Added. We've emailed that address a link — nothing is sent there until it's confirmed.";
+    return t(
+      "Added. We've emailed that address a link — nothing is sent there until it's confirmed.",
+    );
   }
   if (outcome === "limit") {
-    return "Added, but you've asked enough addresses today. We'll ask this one tomorrow.";
+    return t("Added, but you've asked enough addresses today. We'll ask this one tomorrow.");
   }
-  return "Added. It will need to confirm before anything is sent there.";
+  return t("Added. It will need to confirm before anything is sent there.");
 }

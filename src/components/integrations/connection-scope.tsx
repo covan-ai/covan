@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/chip";
 import { useUpdateToolConnection } from "@/hooks/use-connections";
@@ -18,6 +19,7 @@ import type { ToolConnection } from "@/lib/connections-api";
  * about it, not a pointer (DESIGN.md).
  */
 export function ConnectionScope({ connection }: { connection: ToolConnection }) {
+  const { t } = useTranslation();
   const update = useUpdateToolConnection();
   const shared = connection.scope === "workspace";
 
@@ -28,20 +30,22 @@ export function ConnectionScope({ connection }: { connection: ToolConnection }) 
         onSuccess: () =>
           toast.success(
             shared
-              ? `${connection.label} is yours alone again.`
-              : `${connection.label} is shared with the workspace.`,
+              ? t("{{app}} is yours alone again.", { app: connection.label })
+              : t("{{app}} is shared with the workspace.", { app: connection.label }),
           ),
         onError: (err) =>
-          toast.error(err instanceof Error ? err.message : "Could not change who can use it"),
+          toast.error(err instanceof Error ? err.message : t("Could not change who can use it")),
       },
     );
 
   return (
     <>
-      <Chip tone="neutral">{shared ? "Shared" : connection.mine ? "Only you" : "Personal"}</Chip>
+      <Chip tone="neutral">
+        {shared ? t("Shared") : connection.mine ? t("Only you") : t("Personal")}
+      </Chip>
       {connection.mine ? (
         <Button variant="ghost" size="sm" onClick={toggle} disabled={update.isPending}>
-          {update.isPending ? "Saving…" : shared ? "Stop sharing" : "Share"}
+          {update.isPending ? t("Saving…") : shared ? t("Stop sharing") : t("Share")}
         </Button>
       ) : null}
     </>

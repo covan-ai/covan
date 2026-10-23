@@ -1,6 +1,8 @@
 import { Link, useRouterState } from "@tanstack/react-router";
+import { lookup, useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 
+/** `label` is an English key (`msg()` in `settings-pages.ts`); the nav says `lookup(t, label)`. */
 export type SubNavItem = { href: string; label: string; external?: boolean; onSelect?: () => void };
 export type SubNavGroup = { label: string; items: SubNavItem[] };
 
@@ -9,6 +11,7 @@ export type SubNavGroup = { label: string; items: SubNavItem[] };
  * active one on `surface`. Below `lg` it is one horizontal scroller.
  */
 export function SubNav({ groups, label }: { groups: SubNavGroup[]; label: string }) {
+  const { t } = useTranslation();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const row = (item: SubNavItem) => {
     const active =
@@ -19,6 +22,7 @@ export function SubNav({ groups, label }: { groups: SubNavGroup[]; label: string
         ? "bg-surface font-medium text-foreground"
         : "text-nav-foreground hover:bg-surface-muted",
     );
+    const text = lookup(t, item.label);
     if (item.onSelect) {
       return (
         <button
@@ -27,14 +31,14 @@ export function SubNav({ groups, label }: { groups: SubNavGroup[]; label: string
           onClick={item.onSelect}
           className={cn(cls, "text-left")}
         >
-          {item.label}
+          {text}
         </button>
       );
     }
     if (item.external) {
       return (
         <a key={item.label} href={item.href} target="_blank" rel="noreferrer" className={cls}>
-          {item.label}
+          {text}
         </a>
       );
     }
@@ -45,7 +49,7 @@ export function SubNav({ groups, label }: { groups: SubNavGroup[]; label: string
         aria-current={active ? "page" : undefined}
         className={cls}
       >
-        {item.label}
+        {text}
       </Link>
     );
   };
@@ -62,7 +66,7 @@ export function SubNav({ groups, label }: { groups: SubNavGroup[]; label: string
               i > 0 && "pt-5",
             )}
           >
-            {g.label}
+            {lookup(t, g.label)}
           </div>
           {g.items.map(row)}
         </div>

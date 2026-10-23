@@ -10,6 +10,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Trans, useTranslation } from "@/i18n";
 import { Field } from "@/components/field";
 import { SectionLabel } from "@/components/section";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,7 @@ import { supabase } from "@/lib/supabase/client";
  * happened.
  */
 export function CloseAccountSection({ email }: { email?: string | null }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const [closing, setClosing] = useState(false);
@@ -45,6 +47,7 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
   // Typing the address, not the word DELETE. It is the one string on screen
   // that is different for every person, so it cannot be muscle-memoried from
   // the last confirmation dialog they saw.
+  // An address, compared as the API stores it: ASCII-folded. i18n-ignore
   const confirmed = !!email && typed.trim().toLowerCase() === email.toLowerCase();
 
   const reset = (next: boolean) => {
@@ -70,7 +73,7 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
       setRefusal(
         e instanceof ApiError
           ? e.message
-          : "Couldn't close your account. Nothing has been deleted.",
+          : t("Couldn't close your account. Nothing has been deleted."),
       );
       setClosing(false);
     }
@@ -79,20 +82,23 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
   // A16's Danger: one field, the consequences in its help and under it.
   return (
     <>
-      <SectionLabel>Danger</SectionLabel>
+      <SectionLabel>{t("Danger")}</SectionLabel>
       <Field
-        label="Close account"
-        help="Leaves every workspace. What you made in a shared one stays with it, without your name."
+        label={t("Close account")}
+        help={t(
+          "Leaves every workspace. What you made in a shared one stays with it, without your name.",
+        )}
       >
         <div className="flex max-w-[560px] flex-col gap-2">
           <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
-            This deletes your account and everything that belongs only to you — your conversations,
-            your API keys, and any workspace you are the last person in. It cannot be undone.
+            {t(
+              "This deletes your account and everything that belongs only to you — your conversations, your API keys, and any workspace you are the last person in. It cannot be undone.",
+            )}
           </p>
           <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
-            Workspaces you share with other people keep running without you. What you uploaded and
-            what you wrote there stays, because it belongs to the workspace rather than to you; your
-            name simply comes off it.
+            {t(
+              "Workspaces you share with other people keep running without you. What you uploaded and what you wrote there stays, because it belongs to the workspace rather than to you; your name simply comes off it.",
+            )}
           </p>
           {/* The way out of the paragraph above, and it has to be here rather than
             only on /privacy — this is the screen where somebody decides, and a
@@ -104,28 +110,34 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
             is the right amount of friction for something irreversible that
             affects somebody other than the asker. See covan#56. */}
           <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
-            If you want a file you uploaded removed rather than anonymous, ask before you close, not
-            after — once the account is gone there is nothing left to tell which files were yours.
+            {t(
+              "If you want a file you uploaded removed rather than anonymous, ask before you close, not after — once the account is gone there is nothing left to tell which files were yours.",
+            )}
           </p>
 
           <div className="pt-1">
             <AlertDialog open={open} onOpenChange={reset}>
               <AlertDialogTrigger asChild>
-                <Button variant="danger">Close my account</Button>
+                <Button variant="danger">{t("Close my account")}</Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Close your account?</AlertDialogTitle>
+                  <AlertDialogTitle>{t("Close your account?")}</AlertDialogTitle>
                   <AlertDialogDescription>
-                    There is no undo and no grace period. Your conversations and API keys go, and
-                    any workspace you are the last person in goes with them.
+                    {t(
+                      "There is no undo and no grace period. Your conversations and API keys go, and any workspace you are the last person in goes with them.",
+                    )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
 
                 <div className="space-y-2">
                   <Label htmlFor="confirm-email">
-                    Type <span className="font-mono text-foreground">{email ?? "your email"}</span>{" "}
-                    to confirm
+                    <Trans
+                      t={t}
+                      i18nKey="Type <code>{{email}}</code> to confirm"
+                      values={{ email: email ?? t("your email") }}
+                      components={{ code: <span className="font-mono text-foreground" /> }}
+                    />
                   </Label>
                   <Input
                     id="confirm-email"
@@ -144,7 +156,7 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
                 ) : null}
 
                 <AlertDialogFooter>
-                  <AlertDialogCancel disabled={closing}>Cancel</AlertDialogCancel>
+                  <AlertDialogCancel disabled={closing}>{t("Cancel")}</AlertDialogCancel>
                   <AlertDialogAction
                     onClick={(e) => {
                       // Kept open on purpose: the action would otherwise dismiss
@@ -156,7 +168,7 @@ export function CloseAccountSection({ email }: { email?: string | null }) {
                     variant="danger"
                     disabled={!confirmed || closing}
                   >
-                    {closing ? "Closing…" : "Close my account"}
+                    {closing ? t("Closing…") : t("Close my account")}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>

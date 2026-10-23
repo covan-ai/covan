@@ -1,4 +1,4 @@
-import { englishT, msg, type Translate } from "@/i18n";
+import { englishT, lookup, msg, type Translate } from "@/i18n";
 
 /**
  * The words at the top of Home (Main, A24): the greeting, the date, and one
@@ -12,29 +12,30 @@ import { englishT, msg, type Translate } from "@/i18n";
 const EN = "en-GB";
 
 /**
- * The numbers the sentence spells out, as keys with a `number` context so the
- * Turkish can be a word too ("üç") without colliding with "three" elsewhere.
+ * The numbers the sentence spells out, as keys, so the translation can spell
+ * them out too. "no" is a count here, never an answer; an answer would be
+ * capitalised and its own key.
  */
 const NUMBER_WORDS = [
-  "no",
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
-  "ten",
-  "eleven",
-  "twelve",
-].map((word) => msg(word));
+  msg("no"),
+  msg("one"),
+  msg("two"),
+  msg("three"),
+  msg("four"),
+  msg("five"),
+  msg("six"),
+  msg("seven"),
+  msg("eight"),
+  msg("nine"),
+  msg("ten"),
+  msg("eleven"),
+  msg("twelve"),
+];
 
 /** "three" up to twelve, then digits: "48". */
 export function countWord(n: number, t: Translate = englishT, locale: string = EN): string {
   const word = Number.isInteger(n) && n >= 0 ? NUMBER_WORDS[n] : undefined;
-  return word ? t(word, { context: "number", defaultValue: word }) : n.toLocaleString(locale);
+  return word ? lookup(t, word) : n.toLocaleString(locale);
 }
 
 function capitalise(s: string, locale: string): string {

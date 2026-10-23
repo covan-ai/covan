@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { Trans, useTranslation } from "@/i18n";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase/client";
@@ -62,6 +63,7 @@ function readUrlError(): string | null {
 }
 
 function Confirmed() {
+  const { t } = useTranslation();
   // Read at mount rather than announced by an effect: the fragment is in the URL
   // before React renders, so a state that starts as "checking" and flips to
   // "invalid" a tick later is a spinner nobody needed to see.
@@ -112,9 +114,9 @@ function Confirmed() {
 
   if (status === "checking") {
     return (
-      <AuthLayout title="Confirming your address" subtitle="One moment.">
+      <AuthLayout title={t("Confirming your address")} subtitle={t("One moment.")}>
         <div className="flex min-h-24 items-center justify-center text-sm text-muted-foreground">
-          Loading…
+          {t("Loading…")}
         </div>
       </AuthLayout>
     );
@@ -123,26 +125,27 @@ function Confirmed() {
   if (status === "invalid") {
     return (
       <AuthLayout
-        title="That link didn't work"
-        subtitle="It has expired, or it had already been used."
+        title={t("That link didn't work")}
+        subtitle={t("It has expired, or it had already been used.")}
         footer={
           <Link to="/sign-in" className="font-medium text-foreground hover:underline">
-            Back to sign in
+            {t("Back to sign in")}
           </Link>
         }
       >
         <div className="flex flex-col gap-3">
           {urlError && <p className="m-0 text-sm text-destructive">{urlError}</p>}
           <p className="m-0 text-sm text-muted-foreground">
-            If you have confirmed this address already, sign in. If you have not, signing up again
-            with the same address sends a new link.
+            {t(
+              "If you have confirmed this address already, sign in. If you have not, signing up again with the same address sends a new link.",
+            )}
           </p>
           <div className="mt-1 flex flex-col gap-2">
             <Button asChild size="lg" className="w-full">
-              <Link to="/sign-in">Sign in</Link>
+              <Link to="/sign-in">{t("Sign in")}</Link>
             </Button>
             <Button asChild size="lg" variant="ghost" className="w-full">
-              <Link to="/sign-up">Send a new link</Link>
+              <Link to="/sign-up">{t("Send a new link")}</Link>
             </Button>
           </div>
         </div>
@@ -153,17 +156,18 @@ function Confirmed() {
   if (status === "halfway") {
     return (
       <AuthLayout
-        title="One more link to click"
-        subtitle="Your address changes once both links are confirmed."
+        title={t("One more link to click")}
+        subtitle={t("Your address changes once both links are confirmed.")}
         footer={
           <Link to="/settings/profile" className="font-medium text-foreground hover:underline">
-            Back to your account
+            {t("Back to your account")}
           </Link>
         }
       >
         <p className="m-0 text-sm text-muted-foreground">
-          This one is done. Open the email we sent to your other address and click the link in it
-          too.
+          {t(
+            "This one is done. Open the email we sent to your other address and click the link in it too.",
+          )}
         </p>
       </AuthLayout>
     );
@@ -171,15 +175,23 @@ function Confirmed() {
 
   if (status === "changed") {
     return (
-      <AuthLayout title="Address changed" subtitle="You sign in with your new address from now on.">
+      <AuthLayout
+        title={t("Address changed")}
+        subtitle={t("You sign in with your new address from now on.")}
+      >
         <div className="flex flex-col gap-3">
           {changedTo ? (
             <p className="m-0 text-sm text-muted-foreground">
-              Your account is now <span className="text-foreground">{changedTo}</span>.
+              <Trans
+                t={t}
+                i18nKey="Your account is now <b>{{email}}</b>."
+                values={{ email: changedTo }}
+                components={{ b: <span className="text-foreground" /> }}
+              />
             </p>
           ) : null}
           <Button asChild size="lg" className="mt-1 w-full">
-            <Link to="/settings/profile">Back to your account</Link>
+            <Link to="/settings/profile">{t("Back to your account")}</Link>
           </Button>
         </div>
       </AuthLayout>
@@ -189,21 +201,22 @@ function Confirmed() {
   if (status === "unknown") {
     return (
       <AuthLayout
-        title="Confirm your address"
-        subtitle="This page opens from the link in your confirmation email."
+        title={t("Confirm your address")}
+        subtitle={t("This page opens from the link in your confirmation email.")}
         footer={
           <Link to="/sign-in" className="font-medium text-foreground hover:underline">
-            Back to sign in
+            {t("Back to sign in")}
           </Link>
         }
       >
         <div className="flex flex-col gap-3">
           <p className="m-0 text-sm text-muted-foreground">
-            Open the email we sent and click the button in it. If you have already confirmed, you
-            can sign in from here.
+            {t(
+              "Open the email we sent and click the button in it. If you have already confirmed, you can sign in from here.",
+            )}
           </p>
           <Button asChild size="lg" className="mt-1 w-full">
-            <Link to="/sign-in">Sign in</Link>
+            <Link to="/sign-in">{t("Sign in")}</Link>
           </Button>
         </div>
       </AuthLayout>
@@ -212,24 +225,26 @@ function Confirmed() {
 
   return (
     <AuthLayout
-      title="Address confirmed"
-      subtitle="Your account is active and you are signed in."
+      title={t("Address confirmed")}
+      subtitle={t("Your account is active and you are signed in.")}
       footer={
-        <>
-          Signed in on the wrong account?{" "}
-          <Link to="/sign-in" className="font-medium text-foreground hover:underline">
-            Sign in as someone else
-          </Link>
-        </>
+        <Trans
+          t={t}
+          i18nKey="Signed in on the wrong account? <a>Sign in as someone else</a>"
+          components={{
+            a: <Link to="/sign-in" className="font-medium text-foreground hover:underline" />,
+          }}
+        />
       }
     >
       <div className="flex flex-col gap-3">
         <p className="m-0 text-sm text-muted-foreground">
-          If a colleague invited you, the invitation is matched to this address and is waiting
-          inside.
+          {t(
+            "If a colleague invited you, the invitation is matched to this address and is waiting inside.",
+          )}
         </p>
         <Button asChild size="lg" className="mt-1 w-full">
-          <Link to="/app">Continue to Covan</Link>
+          <Link to="/app">{t("Continue to Covan")}</Link>
         </Button>
       </div>
     </AuthLayout>

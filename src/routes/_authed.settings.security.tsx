@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useTranslation } from "@/i18n";
 import { SectionTitle } from "@/components/section";
 import { PasswordCard } from "@/components/account/password-card";
 import { TwoFactorCard } from "@/components/account/two-factor-card";
@@ -15,9 +16,10 @@ export const Route = createFileRoute("/_authed/settings/security")({
 });
 
 function SecuritySettingsPage() {
+  const { t } = useTranslation();
   return (
     <>
-      <SectionTitle title="Security" lede="How you sign in, and what keeps it yours." />
+      <SectionTitle title={t("Security")} lede={t("How you sign in, and what keeps it yours.")} />
       <div className="mt-5">
         <PasswordCard />
         <TwoFactorCard />

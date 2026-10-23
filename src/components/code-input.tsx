@@ -1,4 +1,5 @@
 import { useRef, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,15 +16,17 @@ export function CodeInput({
   name,
   disabled,
   length = 6,
-  label = "Six-digit code",
+  label,
 }: {
   value: string;
   onChange: (digits: string) => void;
   name: string;
   disabled?: boolean;
   length?: number;
+  /** The group's name for a screen reader; "Six-digit code" unless said otherwise. */
   label?: string;
 }) {
+  const { t } = useTranslation();
   const boxes = useRef<Array<HTMLInputElement | null>>([]);
   const digits = value.replace(/\D/g, "").slice(0, length);
 
@@ -53,14 +56,18 @@ export function CodeInput({
   };
 
   return (
-    <div role="group" aria-label={label} className="flex justify-between gap-2">
+    <div
+      role="group"
+      aria-label={label ?? t("Six-digit code")}
+      className="flex justify-between gap-2"
+    >
       {Array.from({ length }, (_, i) => (
         <input
           key={i}
           ref={(el) => {
             boxes.current[i] = el;
           }}
-          aria-label={`Digit ${i + 1}`}
+          aria-label={t("Digit {{position}}", { position: i + 1 })}
           inputMode="numeric"
           autoComplete={i === 0 ? "one-time-code" : "off"}
           disabled={disabled}

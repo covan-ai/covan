@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { Trans, useTranslation } from "@/i18n";
 import { AuthLayout } from "@/components/auth-layout";
 import { OAuthButtons } from "@/components/oauth-buttons";
 import { Button } from "@/components/ui/button";
@@ -15,7 +16,11 @@ export const Route = createFileRoute("/sign-in")({
   component: SignIn,
 });
 
+/** Dots, not words: what a password field shows before anything is typed. */
+const PASSWORD_MASK = "••••••••••";
+
 function SignIn() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -82,15 +87,16 @@ function SignIn() {
 
   return (
     <AuthLayout
-      title="Sign in"
-      subtitle="Use the account your team invited."
+      title={t("Sign in")}
+      subtitle={t("Use the account your team invited.")}
       footer={
-        <>
-          New here?{" "}
-          <Link to="/sign-up" className="font-medium text-foreground hover:underline">
-            Create a workspace
-          </Link>
-        </>
+        <Trans
+          t={t}
+          i18nKey="New here? <a>Create a workspace</a>"
+          components={{
+            a: <Link to="/sign-up" className="font-medium text-foreground hover:underline" />,
+          }}
+        />
       }
     >
       <OAuthButtons remember={remember} onError={setError} />
@@ -113,13 +119,13 @@ function SignIn() {
       <form method="post" onSubmit={handleSubmit} className="flex flex-col gap-3.5">
         <div className="space-y-1.5">
           <Label htmlFor="email" className="text-meta">
-            Email
+            {t("Email")}
           </Label>
           <Input
             id="email"
             name="email"
             type="email"
-            placeholder="you@company.com"
+            placeholder={t("you@company.com")}
             required
             autoComplete="email"
             className="h-9"
@@ -129,13 +135,13 @@ function SignIn() {
         <div className="space-y-1.5">
           <div className="flex items-baseline justify-between">
             <Label htmlFor="password" className="text-meta">
-              Password
+              {t("Password")}
             </Label>
             <Link
               to="/forgot-password"
               className="text-meta text-muted-foreground hover:text-foreground"
             >
-              Forgot it?
+              {t("Forgot it?")}
             </Link>
           </div>
           <div className="relative">
@@ -143,7 +149,7 @@ function SignIn() {
               id="password"
               name="password"
               type={showPassword ? "text" : "password"}
-              placeholder="••••••••••"
+              placeholder={PASSWORD_MASK}
               required
               autoComplete="current-password"
               className="h-9 pr-9"
@@ -152,7 +158,7 @@ function SignIn() {
               type="button"
               onClick={() => setShowPassword((v) => !v)}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? t("Hide password") : t("Show password")}
             >
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -165,13 +171,13 @@ function SignIn() {
             checked={remember}
             onCheckedChange={(next) => setRememberChecked(next === true)}
           />
-          Remember me
+          {t("Remember me")}
         </label>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <Button type="submit" size="lg" className="mt-1 w-full" disabled={submitting}>
-          {submitting ? "Signing in…" : "Sign in"}
+          {submitting ? t("Signing in…") : t("Sign in")}
         </Button>
       </form>
     </AuthLayout>

@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 
+import { lookup, msg, useTranslation, type TFunction } from "@/i18n";
 import { assetSrc } from "@/lib/api-client";
 import {
   canConnectToolkit,
@@ -50,6 +51,7 @@ export function AppDetailDialog({
   toolkit: ComposioToolkit | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   // Keyed off the toolkit rather than a separate `open`, so there is one source
   // of truth for "is a card showing" and it is the same value the card renders.
   const detail = useComposioToolkitDetail(toolkit?.slug ?? null);
@@ -78,6 +80,7 @@ export function AppDetailDialog({
    * button that cannot say what it wants is worse than saying so.
    */
   const checking = kind === null && detail.isPending;
+  const credential = credentialNoun(t, described?.credentialScheme);
 
   return (
     <Dialog open={Boolean(toolkit)} onOpenChange={(next) => !next && onClose()}>
@@ -103,16 +106,21 @@ export function AppDetailDialog({
             {/* The whole description. The grid truncates it to one line, which
                 is the right call in a grid and the reason this card exists. */}
             <DialogDescription className="text-base leading-[1.6] text-foreground">
-              {toolkit.description || "Composio publishes no description for this application."}
+              {toolkit.description || t("Composio publishes no description for this application.")}
             </DialogDescription>
 
             <div className="flex flex-wrap items-center gap-1.5">
               {/* No chip at all while the answer is unknown — a guess here is
                   the thing this whole change exists to stop. */}
-              {described && kind ? <Chip tone="neutral">{authLabel(described)}</Chip> : null}
+              {described && kind ? <Chip tone="neutral">{authLabel(t, described)}</Chip> : null}
               {/* Only when the route could back it. See the note at the top. */}
               {detail.data?.total != null ? (
-                <Chip tone="neutral">{`${detail.data.total} operation${detail.data.total === 1 ? "" : "s"}`}</Chip>
+                <Chip tone="neutral">
+                  {t("{{count}} operation", {
+                    count: detail.data.total,
+                    defaultValue_other: "{{count}} operations",
+                  })}
+                </Chip>
               ) : null}
             </div>
 
@@ -130,7 +138,7 @@ export function AppDetailDialog({
           <DialogFooter className="shrink-0 flex-col items-stretch gap-2.5 border-t border-hairline px-5 py-4 sm:flex-col sm:items-stretch">
             {checking ? (
               <p className="text-meta leading-[1.45] text-muted-foreground">
-                Checking what this one needs&hellip;
+                {t("Checking what this one needs…")}
               </p>
             ) : connectable ? (
               <>
@@ -140,13 +148,12 @@ export function AppDetailDialog({
                   // third party that is belongs above the thing they press.
                   <p className="text-meta leading-[1.45] text-muted-foreground">
                     <strong className="font-medium text-foreground">
-                      Connect opens a page at Composio.
+                      {t("Connect opens a page at Composio.")}
                     </strong>{" "}
-                    You enter your {toolkit.name}{" "}
-                    {credentialWords(described?.credentialScheme).noun} there; Covan never sees it —
-                    the credential stays at Composio, and what is stored here is a reference to it.
-                    The page expires about ten minutes after you open it, so have the{" "}
-                    {credentialWords(described?.credentialScheme).noun} to hand.
+                    {t(
+                      "You enter your {{app}} {{credential}} there; Covan never sees it — the credential stays at Composio, and what is stored here is a reference to it. The page expires about ten minutes after you open it, so have the {{credential}} to hand.",
+                      { app: toolkit.name, credential },
+                    )}
                     {described?.authHintUrl ? (
                       <>
                         {" "}
@@ -156,7 +163,7 @@ export function AppDetailDialog({
                           rel="noreferrer noopener"
                           className="underline underline-offset-2 hover:text-foreground"
                         >
-                          Where to find it at {toolkit.name}
+                          {t("Where to find it at {{app}}", { app: toolkit.name })}
                         </a>
                       </>
                     ) : null}
@@ -169,10 +176,12 @@ export function AppDetailDialog({
                   // entitled to wonder whether it worked.
                   <p className="text-meta leading-[1.45] text-muted-foreground">
                     <strong className="font-medium text-foreground">
-                      There is nothing to sign in to.
+                      {t("There is nothing to sign in to.")}
                     </strong>{" "}
-                    {toolkit.name} needs no account and no key, so Connect adds it here and nothing
-                    leaves this page. Your agents can call it straight away.
+                    {t(
+                      "{{app}} needs no account and no key, so Connect adds it here and nothing leaves this page. Your agents can call it straight away.",
+                      { app: toolkit.name },
+                    )}
                   </p>
                 ) : null}
                 <div className="flex justify-end">
@@ -194,7 +203,7 @@ export function AppDetailDialog({
                       )
                     }
                   >
-                    {connect.isPending ? "Opening…" : "Connect"}
+                    {connect.isPending ? t("Opening…") : t("Connect")}
                   </Button>
                 </div>
               </>
@@ -207,8 +216,13 @@ export function AppDetailDialog({
               // nowhere.
               <p className="text-meta leading-[1.45] text-muted-foreground">
                 {kind === null
-                  ? `Covan could not check what ${toolkit.name} needs just now. Try again in a moment.`
-                  : `${toolkit.name} can’t be connected yet. It has to be set up in Composio, the service Covan connects apps through, before anyone here can sign in to it.`}
+                  ? t("Covan could not check what {{app}} needs just now. Try again in a moment.", {
+                      app: toolkit.name,
+                    })
+                  : t(
+                      "{{app}} can’t be connected yet. It has to be set up in Composio, the service Covan connects apps through, before anyone here can sign in to it.",
+                      { app: toolkit.name },
+                    )}
               </p>
             )}
           </DialogFooter>
@@ -219,26 +233,24 @@ export function AppDetailDialog({
 }
 
 /**
- * The noun somebody is being asked to go and fetch, with its article.
+ * The noun somebody is being asked to go and fetch.
  *
  * From Composio's scheme, and never Composio's word for it: telling a person
  * to paste an API key into something labelled `BASIC` is `DESIGN.md`'s opening
  * failure. The fallback is deliberately vague rather than wrong — three
  * applications in the catalogue ask for a client id and secret, and calling
  * that "a key" would send somebody looking for the wrong thing.
- *
- * The article is written out rather than derived from the first letter, which
- * is a rule about spelling pretending to be a rule about pronunciation: it
- * reads "an username" the first time a `BASIC` application opens this card.
  */
-const CREDENTIAL_WORDS: Record<string, { noun: string; article: string }> = {
-  API_KEY: { noun: "API key", article: "an" },
-  BEARER_TOKEN: { noun: "access token", article: "an" },
-  BASIC: { noun: "username and password", article: "a" },
+const CREDENTIAL_NOUN: Record<string, string> = {
+  API_KEY: msg("API key"),
+  BEARER_TOKEN: msg("access token"),
+  BASIC: msg("username and password"),
 };
 
-function credentialWords(scheme: string | undefined): { noun: string; article: string } {
-  return CREDENTIAL_WORDS[(scheme ?? "").toUpperCase()] ?? { noun: "credential", article: "a" };
+function credentialNoun(t: TFunction, scheme: string | undefined): string {
+  // The scheme is Composio's ASCII identifier, not a word anybody reads.
+  const key = CREDENTIAL_NOUN[(scheme ?? "").toUpperCase()]; // i18n-ignore
+  return key ? lookup(t, key) : t("credential");
 }
 
 /**
@@ -246,23 +258,37 @@ function credentialWords(scheme: string | undefined): { noun: string; article: s
  *
  * Read off `connectKind`, never off `authSchemes` — `OAUTH2` is Composio's
  * vocabulary and means nothing to the person deciding. The scheme is consulted
- * only to pick an English noun, which is what `credentialNoun` is for.
+ * only to pick the noun, and each noun is a whole sentence here rather than a
+ * word with an article in front of it: "an username" is a rule about spelling
+ * pretending to be a rule about pronunciation, and other languages have no
+ * article to get wrong.
  */
-function authLabel(toolkit: ComposioToolkit): string {
+function authLabel(t: TFunction, toolkit: ComposioToolkit): string {
+  const app = toolkit.name;
   switch (toolkit.connectKind) {
     case "no_auth":
-      return "No sign-in needed";
+      return t("No sign-in needed");
     case "managed_oauth":
-      return `Sign in at ${toolkit.name}`;
+      return t("Sign in at {{app}}", { app });
     case "user_credential": {
-      const { noun, article } = credentialWords(toolkit.credentialScheme);
-      return `Needs ${article} ${noun} from ${toolkit.name}`;
+      switch (
+        (toolkit.credentialScheme ?? "").toUpperCase() // i18n-ignore
+      ) {
+        case "API_KEY":
+          return t("Needs an API key from {{app}}", { app });
+        case "BEARER_TOKEN":
+          return t("Needs an access token from {{app}}", { app });
+        case "BASIC":
+          return t("Needs a username and password from {{app}}", { app });
+        default:
+          return t("Needs a credential from {{app}}", { app });
+      }
     }
     // The person reading this does not know what Composio is, and does not
     // need to in order to learn that this one is not available. The footer
     // says why, for whoever does want to know (covan-cloud#407).
     default:
-      return "Not available yet";
+      return t("Not available yet");
   }
 }
 
@@ -297,15 +323,18 @@ type OperationsState =
  * would make both worse.
  */
 function Operations({ state }: { state: OperationsState }) {
+  const { t } = useTranslation();
   if (state.kind === "loading") {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return <p className="text-sm text-muted-foreground">{t("Loading…")}</p>;
   }
   if (state.kind === "unavailable") {
     // Deliberately says nothing about how many operations exist. Connect is
     // still live above — nobody should be stopped from connecting Gmail
     // because a catalogue read wobbled.
     return (
-      <p className="text-sm text-muted-foreground">Its operations could not be read just now.</p>
+      <p className="text-sm text-muted-foreground">
+        {t("Its operations could not be read just now.")}
+      </p>
     );
   }
   if (state.operations.length === 0) {
@@ -313,7 +342,7 @@ function Operations({ state }: { state: OperationsState }) {
     // the reason the wire type distinguishes `[]` from `null`.
     return (
       <p className="text-sm text-muted-foreground">
-        Composio lists no operations for this application.
+        {t("Composio lists no operations for this application.")}
       </p>
     );
   }
@@ -325,7 +354,7 @@ function Operations({ state }: { state: OperationsState }) {
           and the application's actual total is the thing nothing here knows.
           The chip above carries a count only when the route could earn one. */}
       <span className="text-xs uppercase tracking-[0.06em] text-muted-foreground">
-        {state.more ? "Some of what it can do" : "What it can do"}
+        {state.more ? t("Some of what it can do") : t("What it can do")}
       </span>
       <ul className="flex flex-col gap-2.5">
         {state.operations.map((operation) => (
@@ -344,7 +373,7 @@ function Operations({ state }: { state: OperationsState }) {
                 {/* Only on `true`. `null` means Composio annotated nothing,
                     which is not the same as "safe" and must not read as it. */}
                 {operation.destructive === true ? (
-                  <Chip tone="neutral">Can change things</Chip>
+                  <Chip tone="neutral">{t("Can change things")}</Chip>
                 ) : null}
               </span>
               {operation.description ? (

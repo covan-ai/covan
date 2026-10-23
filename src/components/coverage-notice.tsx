@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { api, ApiError } from "@/lib/api-client";
 import { useCoverageNoticeDismissed } from "@/lib/coverage-notice";
 import { Banner } from "@/components/banner";
@@ -40,6 +41,7 @@ export function CoverageNotice({
   workspaceId: string;
   enabled: boolean;
 }) {
+  const { t } = useTranslation();
   const { dismissed, dismiss } = useCoverageNoticeDismissed(workspaceId);
   const [excluding, setExcluding] = useState(false);
 
@@ -59,7 +61,7 @@ export function CoverageNotice({
       await api.coverage.setPreference(true);
       dismiss();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Couldn't save that — try again.");
+      toast.error(err instanceof ApiError ? err.message : t("Couldn't save that — try again."));
     } finally {
       setExcluding(false);
     }
@@ -82,7 +84,7 @@ export function CoverageNotice({
   return (
     <Banner
       kind="notice"
-      label="Coverage report"
+      label={t("Coverage report")}
       leading={<StatusDot state="waiting" />}
       actions={
         <>
@@ -93,24 +95,26 @@ export function CoverageNotice({
             onClick={exclude}
             disabled={excluding}
           >
-            {excluding ? "Excluding…" : "Exclude my questions"}
+            {excluding ? t("Excluding…") : t("Exclude my questions")}
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={dismiss}>
-            Keep me in
+            {t("Keep me in")}
           </Button>
         </>
       }
     >
-      <span className="font-medium text-foreground">Your admin turned on a coverage report.</span>{" "}
-      Once a week it shows which topics the team asked about that no document covered — clustered
-      topics only, from at least three different people, or every topic if you&rsquo;re the only
-      member here. It never shows names and never shows anybody&rsquo;s question. You can leave your
-      questions out, now or later in Settings.
+      <span className="font-medium text-foreground">
+        {t("Your admin turned on a coverage report.")}
+      </span>{" "}
+      {t(
+        "Once a week it shows which topics the team asked about that no document covered — clustered topics only, from at least three different people, or every topic if you’re the only member here. It never shows names and never shows anybody’s question. You can leave your questions out, now or later in Settings.",
+      )}
       {isError && (
         <>
           {" "}
-          We couldn&rsquo;t check whether you&rsquo;ve already left them out. If you have, choosing
-          again changes nothing.
+          {t(
+            "We couldn’t check whether you’ve already left them out. If you have, choosing again changes nothing.",
+          )}
         </>
       )}
     </Banner>

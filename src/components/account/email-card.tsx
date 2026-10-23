@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Field } from "@/components/field";
 import { Chip } from "@/components/chip";
 import { Input } from "@/components/ui/input";
@@ -21,13 +23,17 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * deployment's redirect allow-list.
  */
 export function EmailCard({ email }: { email: string | null | undefined }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [next, setNext] = useState("");
   const [sending, setSending] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const trimmed = next.trim();
-  const valid = EMAIL_RE.test(trimmed) && trimmed.toLowerCase() !== (email ?? "").toLowerCase();
+  const valid =
+    EMAIL_RE.test(trimmed) &&
+    trimmed.toLocaleLowerCase(locale) !== (email ?? "").toLocaleLowerCase(locale);
 
   const send = async () => {
     if (!valid) return;
@@ -49,14 +55,14 @@ export function EmailCard({ email }: { email: string | null | undefined }) {
 
   // A16's Email field: the address you sign in with, and a new one beside it.
   return (
-    <Field label="Email" help="Sign-in and notifications go here.">
+    <Field label={t("Email")} help={t("Sign-in and notifications go here.")}>
       <div className="flex flex-wrap items-center gap-2.5 pt-1.5">
         <span className="text-sm">{email ?? "…"}</span>
-        <Chip>Verified</Chip>
+        <Chip>{t("Verified")}</Chip>
       </div>
       <div className="mt-3 max-w-[420px] space-y-1.5">
         <Label htmlFor="new-email" className="text-meta text-muted-foreground">
-          New address
+          {t("New address")}
         </Label>
         <div className="flex gap-2">
           <Input
@@ -70,18 +76,20 @@ export function EmailCard({ email }: { email: string | null | undefined }) {
             }}
           />
           <Button variant="secondary" onClick={send} disabled={sending || !valid}>
-            {sending ? "Sending…" : "Change address"}
+            {sending ? t("Sending…") : t("Change address")}
           </Button>
         </div>
         {error ? <p className="text-meta text-destructive">{error}</p> : null}
         {sentTo ? (
           <p className="text-meta text-muted-foreground" role="status">
-            We sent a link to {email ?? "your current address"} and to {sentTo}. Click both; the
-            change happens after the second.
+            {t(
+              "We sent a link to {{current}} and to {{next}}. Click both; the change happens after the second.",
+              { current: email ?? t("your current address"), next: sentTo },
+            )}
           </p>
         ) : (
           <p className="text-meta text-muted-foreground">
-            We send a link to both addresses, and nothing changes until both are clicked.
+            {t("We send a link to both addresses, and nothing changes until both are clicked.")}
           </p>
         )}
       </div>

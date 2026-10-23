@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { useTranslation } from "@/i18n";
 import { readSession } from "@/lib/supabase/session";
 
 /*
@@ -27,6 +28,7 @@ export const Route = createFileRoute("/")({
 const RETRY_AFTER_MS = 3000;
 
 function Index() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [attempt, setAttempt] = useState(0);
   const [unreachable, setUnreachable] = useState(false);
@@ -62,7 +64,7 @@ function Index() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-sm text-muted-foreground">Loading…</div>
+      <div className="text-sm text-muted-foreground">{t("Loading…")}</div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { Field } from "@/components/field";
 import { AvatarPicker } from "@/components/account/avatar-picker";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,7 @@ export const BIO_MAX = 280;
  * stale value.
  */
 export function ProfileForm({ user }: { user: Me["user"] | undefined }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [name, setName] = useState(user?.name ?? "");
   const [bio, setBio] = useState(user?.bio ?? "");
@@ -62,12 +64,12 @@ export function ProfileForm({ user }: { user: Me["user"] | undefined }) {
     setSaving(true);
     try {
       await api.profile.update(patch);
-      toast.success("Profile saved");
+      toast.success(t("Profile saved"));
       // `me` feeds the sidebar and the member list too, so everything showing
       // you refreshes together rather than disagreeing until a reload.
       await queryClient.invalidateQueries({ queryKey: ["me"] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to save your profile");
+      toast.error(err instanceof ApiError ? err.message : t("Failed to save your profile"));
     } finally {
       setSaving(false);
     }
@@ -78,11 +80,13 @@ export function ProfileForm({ user }: { user: Me["user"] | undefined }) {
     try {
       const image = await resizeAvatar(file);
       await api.profile.uploadAvatar(image);
-      toast.success("Photo saved");
+      toast.success(t("Photo saved"));
       await queryClient.invalidateQueries({ queryKey: ["me"] });
     } catch (err) {
       toast.error(
-        err instanceof ApiError || err instanceof Error ? err.message : "Failed to save the photo",
+        err instanceof ApiError || err instanceof Error
+          ? err.message
+          : t("Failed to save the photo"),
       );
     } finally {
       setPhotoBusy(false);
@@ -93,10 +97,10 @@ export function ProfileForm({ user }: { user: Me["user"] | undefined }) {
     setPhotoBusy(true);
     try {
       await api.profile.removeAvatar();
-      toast.success("Photo removed");
+      toast.success(t("Photo removed"));
       await queryClient.invalidateQueries({ queryKey: ["me"] });
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to remove the photo");
+      toast.error(err instanceof ApiError ? err.message : t("Failed to remove the photo"));
     } finally {
       setPhotoBusy(false);
     }
@@ -112,8 +116,8 @@ export function ProfileForm({ user }: { user: Me["user"] | undefined }) {
   return (
     <>
       <Field
-        label="Photo"
-        help="Your initials until you upload one. PNG, JPEG or WebP, cropped square."
+        label={t("Photo")}
+        help={t("Your initials until you upload one. PNG, JPEG or WebP, cropped square.")}
       >
         <AvatarPicker
           name={user?.name}
@@ -124,10 +128,10 @@ export function ProfileForm({ user }: { user: Me["user"] | undefined }) {
         />
       </Field>
 
-      <Field label="Name" help="Shown next to the threads you start.">
+      <Field label={t("Name")} help={t("Shown next to the threads you start.")}>
         <Input
           id="profile-name"
-          aria-label="Display name"
+          aria-label={t("Display name")}
           className="max-w-[420px]"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -135,65 +139,65 @@ export function ProfileForm({ user }: { user: Me["user"] | undefined }) {
         />
       </Field>
 
-      <Field label="About you" help="What you work on, so a teammate knows who to ask.">
+      <Field label={t("About you")} help={t("What you work on, so a teammate knows who to ask.")}>
         <Textarea
           id="profile-bio"
-          aria-label="About you"
+          aria-label={t("About you")}
           value={bio}
           onChange={(e) => setBio(e.target.value)}
           maxLength={BIO_MAX}
           rows={3}
-          placeholder="Runs support for the EU stores."
+          placeholder={t("Runs support for the EU stores.")}
         />
         <span className="mt-1 block text-right text-xs text-micro-foreground tabular-nums">
           {bio.length}/{BIO_MAX}
         </span>
       </Field>
 
-      <Field label="Time zone" help="Your greeting, dates and reminders follow it.">
+      <Field label={t("Time zone")} help={t("Your greeting, dates and reminders follow it.")}>
         <Button
           id="profile-timezone"
           type="button"
           variant="secondary"
-          aria-label="Time zone"
+          aria-label={t("Time zone")}
           className="w-full max-w-[420px] justify-start font-normal"
           onClick={() => setZonesOpen(true)}
         >
           <span className="truncate">
-            {timezone ? timeZoneLabel(timezone) : "Follow the device"}
+            {timezone ? timeZoneLabel(timezone) : t("Follow the device")}
           </span>
         </Button>
       </Field>
 
       <div className="flex items-center justify-end gap-2 py-4">
         <span className="mr-auto text-xs text-muted-foreground">
-          Your name, photo and the line about you are seen by everyone in your workspaces.
+          {t("Your name, photo and the line about you are seen by everyone in your workspaces.")}
         </span>
         {dirty ? (
           <Button variant="ghost" onClick={discard} disabled={saving}>
-            Discard
+            {t("Discard")}
           </Button>
         ) : null}
         <Button onClick={save} disabled={saving || !dirty || !name.trim()}>
-          {saving ? "Saving…" : "Save profile"}
+          {saving ? t("Saving…") : t("Save profile")}
         </Button>
       </div>
 
       <CommandDialog open={zonesOpen} onOpenChange={setZonesOpen}>
-        <CommandInput placeholder="Search time zones…" />
+        <CommandInput placeholder={t("Search time zones…")} />
         <CommandList>
-          <CommandEmpty>No zone by that name.</CommandEmpty>
+          <CommandEmpty>{t("No zone by that name.")}</CommandEmpty>
           <CommandGroup>
             {deviceZone ? (
               <CommandItem value={`device ${deviceZone}`} onSelect={() => pickZone(deviceZone)}>
-                Use this device&rsquo;s zone ({timeZoneLabel(deviceZone)})
+                {t("Use this device’s zone ({{zone}})", { zone: timeZoneLabel(deviceZone) })}
               </CommandItem>
             ) : null}
             <CommandItem value="follow the device clear" onSelect={() => pickZone(null)}>
-              Follow the device
+              {t("Follow the device")}
             </CommandItem>
           </CommandGroup>
-          <CommandGroup heading="All zones">
+          <CommandGroup heading={t("All zones")}>
             {listTimeZones().map((zone) => (
               <CommandItem key={zone} value={zone} onSelect={() => pickZone(zone)}>
                 {timeZoneLabel(zone)}

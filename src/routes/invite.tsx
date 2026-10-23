@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
+import { Trans, lookup, msg, useTranslation } from "@/i18n";
 import { AuthLayout } from "@/components/auth-layout";
 import { Avatar } from "@/components/avatar";
 import { Tile } from "@/components/tile";
@@ -23,20 +24,25 @@ export const Route = createFileRoute("/invite")({
 
 /** What each role may do, in the invitation's own words (A23). */
 const ROLE_SENTENCE: Record<string, string> = {
-  admin: "you can use and manage every agent, the people and the billing.",
-  member:
+  admin: msg("you can use and manage every agent, the people and the billing."),
+  member: msg(
     "you can use every shared agent and start your own threads. Threads you start are private to you.",
-  viewer: "you can read what is shared with you.",
+  ),
+  viewer: msg("you can read what is shared with you."),
 };
 
-const roleWord = (role: string) => role.charAt(0).toUpperCase() + role.slice(1);
+/** The role as a word on the card; an unknown one is shown as the API spelt it. */
+const ROLE_WORD: Record<string, string> = {
+  admin: msg("Admin"),
+  member: msg("Member"),
+  viewer: msg("Viewer"),
+};
 
-/** "in 5 days", "today", or null once it has passed. */
-function expiresIn(at: number | null | undefined, now: number): string | null {
+/** Whole days until the invitation lapses: 1 is tomorrow; null once it has passed. */
+function daysLeft(at: number | null | undefined, now: number): number | null {
   if (!at) return null;
   const days = Math.ceil((at - now) / 86_400_000);
-  if (days <= 0) return null;
-  return days === 1 ? "tomorrow" : `in ${days} days`;
+  return days <= 0 ? null : days;
 }
 
 type Preview = (InvitationPreview | InviteLinkPreview) & { kind: "email" | "link" };
@@ -53,6 +59,7 @@ type Preview = (InvitationPreview | InviteLinkPreview) & { kind: "email" | "link
  * back here once you are in.
  */
 function Invite() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<"checking" | "signed-out" | "signed-in" | "no-link">(
@@ -118,7 +125,7 @@ function Invite() {
       await queryClient.invalidateQueries();
       void navigate({ to: "/app", replace: true });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Couldn't join. Try the link again.");
+      setError(e instanceof ApiError ? e.message : t("Couldn't join. Try the link again."));
       setJoining(false);
     }
   };
@@ -130,9 +137,9 @@ function Invite() {
 
   if (status === "checking") {
     return (
-      <AuthLayout title="Opening your invitation" subtitle="One moment.">
+      <AuthLayout title={t("Opening your invitation")} subtitle={t("One moment.")}>
         <div className="flex min-h-16 items-center justify-center text-sm text-muted-foreground">
-          Loading…
+          {t("Loading…")}
         </div>
       </AuthLayout>
     );
@@ -141,17 +148,18 @@ function Invite() {
   if (status === "no-link") {
     return (
       <AuthLayout
-        title="That link is incomplete"
-        subtitle="Open the button in your invitation email again."
+        title={t("That link is incomplete")}
+        subtitle={t("Open the button in your invitation email again.")}
         footer={
           <Link to="/sign-in" className="font-medium text-foreground hover:underline">
-            Sign in
+            {t("Sign in")}
           </Link>
         }
       >
         <p className="m-0 text-sm text-muted-foreground">
-          An invitation link carries a code at the end. If the email is old, ask whoever invited you
-          to send a new one.
+          {t(
+            "An invitation link carries a code at the end. If the email is old, ask whoever invited you to send a new one.",
+          )}
         </p>
       </AuthLayout>
     );
@@ -160,48 +168,73 @@ function Invite() {
   if (preview && !preview.open) {
     return (
       <AuthLayout
-        title="This invitation has expired"
-        subtitle={`It was for ${preview.workspaceName}.`}
+        title={t("This invitation has expired")}
+        subtitle={t("It was for {{workspace}}.", { workspace: preview.workspaceName })}
         footer={
           <Link to="/sign-in" className="font-medium text-foreground hover:underline">
-            Sign in
+            {t("Sign in")}
           </Link>
         }
       >
         <p className="m-0 text-sm text-muted-foreground">
-          Ask {preview.inviterName ?? "whoever invited you"} to send a new one. Invitations last
-          seven days.
+          {preview.inviterName
+            ? t("Ask {{name}} to send a new one. Invitations last seven days.", {
+                name: preview.inviterName,
+              })
+            : t("Ask whoever invited you to send a new one. Invitations last seven days.")}
         </p>
       </AuthLayout>
     );
   }
 
-  const workspace = preview?.workspaceName ?? "the workspace";
   const counts =
     preview && preview.memberCount != null && preview.agentCount != null
-      ? `${preview.memberCount} ${preview.memberCount === 1 ? "member" : "members"} · ${preview.agentCount} ${preview.agentCount === 1 ? "agent" : "agents"}`
+      ? `${t("{{count}} member", { count: preview.memberCount, defaultValue_other: "{{count}} members" })} · ${t("{{count}} agent", { count: preview.agentCount, defaultValue_other: "{{count}} agents" })}`
       : null;
-  const expiry = expiresIn(preview?.expiresAt, now);
+  const days = daysLeft(preview?.expiresAt, now);
+  const expiry =
+    days === null
+      ? null
+      : days === 1
+        ? t("The invitation expires tomorrow.")
+        : t("The invitation expires in {{count}} day.", {
+            count: days,
+            defaultValue_other: "The invitation expires in {{count}} days.",
+          });
   const me = session?.user;
 
   return (
     <AuthLayout
       title={
-        preview
-          ? `${preview.inviterName ?? "Someone"} invited you to ${preview.workspaceName}`
-          : "You've been invited"
+        !preview
+          ? t("You've been invited")
+          : preview.inviterName
+            ? t("{{name}} invited you to {{workspace}}", {
+                name: preview.inviterName,
+                workspace: preview.workspaceName,
+              })
+            : t("Someone invited you to {{workspace}}", { workspace: preview.workspaceName })
       }
       subtitle={
         preview ? (
-          <>
-            As a <span className="font-medium text-foreground">{roleWord(preview.role)}</span>:{" "}
-            {ROLE_SENTENCE[preview.role] ?? "you can use what is shared with you."}
-          </>
+          <Trans
+            t={t}
+            i18nKey="As a <b>{{role}}</b>: {{sentence}}"
+            values={{
+              role: ROLE_WORD[preview.role] ? lookup(t, ROLE_WORD[preview.role]) : preview.role,
+              sentence: ROLE_SENTENCE[preview.role]
+                ? lookup(t, ROLE_SENTENCE[preview.role])
+                : t("you can use what is shared with you."),
+            }}
+            components={{ b: <span className="font-medium text-foreground" /> }}
+          />
         ) : (
-          "Sign up or sign in with the address the invitation was sent to."
+          t("Sign up or sign in with the address the invitation was sent to.")
         )
       }
-      footer={preview?.inviterName ? `Invited by ${preview.inviterName}` : undefined}
+      footer={
+        preview?.inviterName ? t("Invited by {{name}}", { name: preview.inviterName }) : undefined
+      }
     >
       {preview ? (
         <div className="-mt-1 mb-4 flex items-center gap-3">
@@ -223,10 +256,14 @@ function Invite() {
               </div>
               <div className="truncate text-meta text-muted-foreground">{me.email}</div>
             </div>
-            <span className="ml-auto text-xs text-muted-foreground">signed in</span>
+            <span className="ml-auto text-xs text-muted-foreground">{t("signed in")}</span>
           </div>
           <Button size="lg" className="w-full" disabled={joining} onClick={() => void join()}>
-            {joining ? "Joining…" : `Accept and join ${workspace}`}
+            {joining
+              ? t("Joining…")
+              : preview?.workspaceName
+                ? t("Accept and join {{workspace}}", { workspace: preview.workspaceName })
+                : t("Accept and join the workspace")}
           </Button>
           <Button
             size="lg"
@@ -234,7 +271,7 @@ function Invite() {
             className="mt-2 w-full"
             onClick={() => void switchAccount()}
           >
-            Use a different account
+            {t("Use a different account")}
           </Button>
           {error ? <p className="mt-3 mb-0 text-sm text-destructive">{error}</p> : null}
         </>
@@ -242,25 +279,26 @@ function Invite() {
         <>
           {preview?.kind === "email" ? (
             <p className="mt-0 mb-4 text-sm text-muted-foreground">
-              Sign up or sign in as{" "}
-              <strong className="font-medium text-foreground">
-                {(preview as InvitationPreview).email}
-              </strong>
-              . The invitation will be waiting inside, with a button to accept it.
+              <Trans
+                t={t}
+                i18nKey="Sign up or sign in as <b>{{email}}</b>. The invitation will be waiting inside, with a button to accept it."
+                values={{ email: (preview as InvitationPreview).email }}
+                components={{ b: <strong className="font-medium text-foreground" /> }}
+              />
             </p>
           ) : null}
           <Button asChild size="lg" className="w-full">
-            <Link to="/sign-up">Create an account</Link>
+            <Link to="/sign-up">{t("Create an account")}</Link>
           </Button>
           <Button asChild size="lg" variant="ghost" className="mt-2 w-full">
-            <Link to="/sign-in">Sign in</Link>
+            <Link to="/sign-in">{t("Sign in")}</Link>
           </Button>
         </>
       )}
 
       <p className="mt-4 mb-0 text-meta leading-[1.5] text-muted-foreground">
-        {expiry ? `The invitation expires ${expiry}. ` : ""}Not expecting this? You can ignore it;
-        nothing happens until you accept.
+        {expiry ? `${expiry} ` : ""}
+        {t("Not expecting this? You can ignore it; nothing happens until you accept.")}
       </p>
     </AuthLayout>
   );

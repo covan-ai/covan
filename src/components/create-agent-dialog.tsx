@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useTranslation } from "@/i18n";
 import { AGENT_MARKS, AgentMarkPicker } from "@/components/agent-mark";
 import { GeneratePersonaButton } from "@/components/generate-persona-button";
 import { Button } from "@/components/ui/button";
@@ -66,6 +67,7 @@ export function CreateAgentDialog({
 }
 
 function CreateAgentForm({ onDone }: { onDone: () => void }) {
+  const { t } = useTranslation();
   const { agents, createAgent } = useAgentsStore();
   const navigate = useNavigate();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
@@ -106,12 +108,14 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
         sharing: newAgentSharing(sharing),
       });
       toast.success(
-        sharing === "only" ? `${agent.name} is ready` : `${agent.name} is live for your team`,
+        sharing === "only"
+          ? t("{{name}} is ready", { name: agent.name })
+          : t("{{name}} is live for your team", { name: agent.name }),
       );
       onDone();
       void navigate({ to: "/agents/$agentId/chat", params: { agentId: agent.id } });
     } catch {
-      toast.error("Couldn't create the agent");
+      toast.error(t("Couldn't create the agent"));
     } finally {
       setSaving(false);
     }
@@ -121,35 +125,35 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
     <>
       <DialogHeader>
         <span className="flex flex-wrap items-baseline gap-x-3">
-          <DialogTitle>New agent</DialogTitle>
+          <DialogTitle>{t("New agent")}</DialogTitle>
           <span className="text-meta text-muted-foreground">
             {sharing === "only"
-              ? "Only you can use it until you share it."
-              : "The whole workspace can use it."}
+              ? t("Only you can use it until you share it.")
+              : t("The whole workspace can use it.")}
           </span>
         </span>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-[18px]">
         <div className="space-y-1.5">
-          <Label htmlFor="agent-name">Name</Label>
+          <Label htmlFor="agent-name">{t("Name")}</Label>
           <Input
             id="agent-name"
             className="h-9"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Research"
+            placeholder={t("e.g. Research")}
             onKeyDown={(e) => {
               if (e.key === "Enter") void save();
             }}
           />
         </div>
         <div className="space-y-2">
-          <span className="block text-sm font-medium">Face</span>
+          <span className="block text-sm font-medium">{t("Face")}</span>
           <AgentMarkPicker value={avatar} onChange={setAvatar} size={40} />
         </div>
         <div className="space-y-1.5">
           <div className="flex items-baseline justify-between gap-2">
-            <Label htmlFor="agent-persona">What it does</Label>
+            <Label htmlFor="agent-persona">{t("What it does")}</Label>
             <GeneratePersonaButton
               name={name}
               model={model}
@@ -162,14 +166,16 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
             rows={4}
             value={persona}
             onChange={(e) => setPersona(e.target.value)}
-            placeholder="Who it works for, what it reads, how it speaks, what it must never do."
+            placeholder={t(
+              "Who it works for, what it reads, how it speaks, what it must never do.",
+            )}
           />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label>Model</Label>
+            <Label>{t("Model")}</Label>
             <Select value={model} onValueChange={setModel}>
-              <SelectTrigger aria-label="Model">
+              <SelectTrigger aria-label={t("Model")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -189,15 +195,15 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Who can use it</Label>
+            <Label>{t("Who can use it")}</Label>
             <Select value={sharing} onValueChange={(v) => setSharing(v as NewAgentSharing)}>
-              <SelectTrigger aria-label="Who can use it">
+              <SelectTrigger aria-label={t("Who can use it")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {NEW_AGENT_SHARING.map((choice) => (
                   <SelectItem key={choice} value={choice}>
-                    {choice === "only" ? "Only me" : NEW_AGENT_SHARING_LABEL[choice]}
+                    {choice === "only" ? t("Only me") : NEW_AGENT_SHARING_LABEL[choice]}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -207,13 +213,13 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
       </DialogBody>
       <DialogFooter>
         <span className="mr-auto hidden text-meta text-muted-foreground sm:inline">
-          Knowledge and tools are attached in Configuration after it exists.
+          {t("Knowledge and tools are attached in Configuration after it exists.")}
         </span>
         <Button variant="secondary" onClick={onDone}>
-          Cancel
+          {t("Cancel")}
         </Button>
         <Button onClick={() => void save()} disabled={!name.trim() || saving}>
-          {saving ? "Creating…" : "Create agent"}
+          {saving ? t("Creating…") : t("Create agent")}
         </Button>
       </DialogFooter>
     </>

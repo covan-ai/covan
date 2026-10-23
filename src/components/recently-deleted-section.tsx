@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { lookup, msg, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Avatar } from "@/components/avatar";
 import { Chip } from "@/components/chip";
 import { DataTable } from "@/components/data-table";
@@ -30,6 +32,8 @@ import { toast } from "sonner";
  * to restore, which is a different claim and possibly a false one.
  */
 export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const [restoring, setRestoring] = useState<string | null>(null);
 
@@ -55,12 +59,12 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
       // back on the screens that list them.
       await invalidateWorkspaceScoped(queryClient);
       await queryClient.invalidateQueries({ queryKey: ["trash"] });
-      toast.success(`${item.name} restored`);
+      toast.success(t("{{name}} restored", { name: item.name }));
     } catch (e) {
       // The one message worth passing through verbatim: a document whose bundle
       // is also deleted cannot come back on its own, and the server says which
       // to press first.
-      toast.error(e instanceof ApiError ? e.message : "Couldn't restore that");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't restore that"));
     } finally {
       setRestoring(null);
     }
@@ -71,14 +75,15 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
   // because it is the one button here with no way back.
   const forget = async (item: TrashItem) => {
     if (restoring || (item.kind !== "bundle" && item.kind !== "document")) return;
-    if (!confirm(`Delete "${item.name}" for good? This cannot be undone.`)) return;
+    if (!confirm(t("Delete “{{name}}” for good? This cannot be undone.", { name: item.name })))
+      return;
     setRestoring(item.id);
     try {
       await api.trash.forget(item.kind, item.id);
       await queryClient.invalidateQueries({ queryKey: ["trash"] });
-      toast.success(`${item.name} is gone for good`);
+      toast.success(t("{{name}} is gone for good", { name: item.name }));
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't delete that");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't delete that"));
     } finally {
       setRestoring(null);
     }
@@ -88,30 +93,46 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
   // the last day marked by the ring.
   return (
     <section id="recently-deleted" className="scroll-mt-16">
-      <SectionLabel action={<span className="font-normal">{days} days, then gone for good</span>}>
-        Recently deleted
+      <SectionLabel
+        action={
+          <span className="font-normal">
+            {t("{{count}} day, then gone for good", {
+              count: days,
+              defaultValue_other: "{{count}} days, then gone for good",
+            })}
+          </span>
+        }
+      >
+        {t("Recently deleted")}
       </SectionLabel>
       <p className="mb-2 text-meta text-muted-foreground">
-        Only deletions somebody performed are listed. Restoring an agent brings back every thread
-        and routine that went with it.
+        {t(
+          "Only deletions somebody performed are listed. Restoring an agent brings back every thread and routine that went with it.",
+        )}
       </p>
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
       ) : items.length === 0 ? (
         <p className="py-3 text-sm text-muted-foreground">
-          Nothing deleted. Agents, folders, documents, threads and routines wait here for {days}{" "}
-          days before they go for good.
+          {t(
+            "Nothing deleted. Agents, folders, documents, threads and routines wait here for {{count}} day before they go for good.",
+            {
+              count: days,
+              defaultValue_other:
+                "Nothing deleted. Agents, folders, documents, threads and routines wait here for {{count}} days before they go for good.",
+            },
+          )}
         </p>
       ) : (
         <div className="overflow-x-auto">
           <DataTable
-            label="Recently deleted"
+            label={t("Recently deleted")}
             rows={items}
             rowKey={(item) => `${item.kind}:${item.id}`}
             columns={[
               {
                 key: "item",
-                header: "Item",
+                header: t("Item"),
                 cell: (item) => (
                   <span className="flex min-w-0 items-center gap-2">
                     <span className="truncate font-medium">{item.name}</span>
@@ -121,10 +142,14 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
                   </span>
                 ),
               },
-              { key: "kind", header: "Type", cell: (item) => <Chip>{KIND_WORD[item.kind]}</Chip> },
+              {
+                key: "kind",
+                header: t("Type", { context: "kind", defaultValue: "Type" }),
+                cell: (item) => <Chip>{lookup(t, KIND_WORD[item.kind])}</Chip>,
+              },
               {
                 key: "by",
-                header: "Deleted by",
+                header: t("Deleted by"),
                 hideBelow: "md",
                 cell: (item) =>
                   item.deletedBy ? (
@@ -133,20 +158,22 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
                       {firstName(item.deletedBy)}
                     </span>
                   ) : (
-                    <span className="text-muted-foreground">Someone no longer here</span>
+                    <span className="text-muted-foreground">{t("Someone no longer here")}</span>
                   ),
               },
               {
                 key: "when",
-                header: "When",
+                header: t("When"),
                 hideBelow: "md",
                 cell: (item) => (
-                  <span className="text-muted-foreground">{formatRelative(item.deletedAt)}</span>
+                  <span className="text-muted-foreground">
+                    {formatRelative(item.deletedAt, undefined, t, locale)}
+                  </span>
                 ),
               },
               {
                 key: "left",
-                header: "Days left",
+                header: t("Days left"),
                 cell: (item) => {
                   const left = daysLeft(item.purgesAt, days);
                   return left <= 1 ? (
@@ -158,7 +185,7 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
               },
               {
                 key: "actions",
-                header: <span className="sr-only">Actions</span>,
+                header: <span className="sr-only">{t("Actions")}</span>,
                 className: "text-right",
                 cell: (item) => (
                   <span className="inline-flex items-center gap-1">
@@ -168,7 +195,7 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
                       onClick={() => void restore(item)}
                       disabled={restoring === item.id}
                     >
-                      {restoring === item.id ? "Working…" : "Restore"}
+                      {restoring === item.id ? t("Working…") : t("Restore")}
                     </Button>
                     {item.kind === "bundle" || item.kind === "document" ? (
                       <Button
@@ -176,9 +203,9 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
                         size="sm"
                         onClick={() => void forget(item)}
                         disabled={restoring === item.id}
-                        aria-label={`Delete ${item.name} for good`}
+                        aria-label={t("Delete {{name}} for good", { name: item.name })}
                       >
-                        Delete for good
+                        {t("Delete for good")}
                       </Button>
                     ) : null}
                   </span>
@@ -193,11 +220,11 @@ export function RecentlyDeletedSection({ canWrite }: { canWrite: boolean }) {
 }
 
 const KIND_WORD: Record<TrashKind, string> = {
-  agent: "Agent",
-  bundle: "Folder",
-  document: "Document",
-  session: "Thread",
-  routine: "Routine",
+  agent: msg("Agent"),
+  bundle: msg("Folder"),
+  document: msg("Document"),
+  session: msg("Thread"),
+  routine: msg("Routine"),
 };
 
 const firstName = (name: string) => name.trim().split(/\s+/)[0] ?? name;

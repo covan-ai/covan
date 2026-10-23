@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Blocks } from "lucide-react";
 
+import { Trans, useTranslation } from "@/i18n";
 import { assetSrc } from "@/lib/api-client";
 import { mightConnectToolkit, type ComposioToolkit } from "@/lib/connections-api";
 import { useComposioCategories, useComposioToolkits } from "@/hooks/use-connections";
@@ -59,6 +60,7 @@ export function AppCatalogue({
    */
   leading?: ReactNode;
 }) {
+  const { t } = useTranslation();
   const [category, setCategory] = useState("");
   const search = useDebounced(query.trim(), DEBOUNCE_MS);
 
@@ -78,13 +80,14 @@ export function AppCatalogue({
               <Blocks className="size-3.5" aria-hidden />
             </span>
           }
-          name="About 1,500 apps"
-          note={<Chip size="sm">Not configured</Chip>}
+          name={t("About 1,500 apps")}
+          note={<Chip size="sm">{t("Not configured")}</Chip>}
           description={
-            <>
-              Set <span className="font-mono text-xs">COMPOSIO_API_KEY</span> to let agents search
-              Gmail, HubSpot, Linear and the rest, and call the ones you connect.
-            </>
+            <Trans
+              t={t}
+              i18nKey="Set <code>COMPOSIO_API_KEY</code> to let agents search Gmail, HubSpot, Linear and the rest, and call the ones you connect."
+              components={{ code: <span className="font-mono text-xs" /> }}
+            />
           }
         />
       </ul>
@@ -94,7 +97,7 @@ export function AppCatalogue({
   const found = (catalogue.data?.pages ?? []).flatMap((page) => page.toolkits);
   const seen = new Set<string>();
   const toolkits = found.filter(
-    (t) => !connected.has(t.slug) && !seen.has(t.slug) && seen.add(t.slug),
+    (toolkit) => !connected.has(toolkit.slug) && !seen.has(toolkit.slug) && seen.add(toolkit.slug),
   );
   const emptyBecauseConnected = toolkits.length === 0 && found.length > 0;
 
@@ -102,11 +105,11 @@ export function AppCatalogue({
     <div className="flex flex-col gap-4">
       {categories.data?.categories.length ? (
         <Pills
-          label="Categories"
+          label={t("Categories")}
           value={category}
           onChange={(v) => setCategory(v === category ? "" : v)}
           options={[
-            { value: "", label: "All" },
+            { value: "", label: t("All") },
             ...categories.data.categories.map((c) => ({ value: c.id, label: c.name })),
           ]}
         />
@@ -120,20 +123,23 @@ export function AppCatalogue({
       </ul>
 
       {catalogue.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t("Loading…")}</p>
       ) : catalogue.isError ? (
         <p className="text-sm text-muted-foreground">
-          The catalogue could not be read just now. Try again in a moment.
+          {t("The catalogue could not be read just now. Try again in a moment.")}
         </p>
       ) : toolkits.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {emptyBecauseConnected
             ? search
-              ? `Everything matching “${search}” is already connected — it is in the list above.`
-              : "Everything in this part of the catalogue is already connected."
+              ? t(
+                  "Everything matching “{{query}}” is already connected — it is in the list above.",
+                  { query: search },
+                )
+              : t("Everything in this part of the catalogue is already connected.")
             : search
-              ? `Nothing in the catalogue matches “${search}”.`
-              : "Nothing in this part of the catalogue."}
+              ? t("Nothing in the catalogue matches “{{query}}”.", { query: search })
+              : t("Nothing in this part of the catalogue.")}
         </p>
       ) : null}
 
@@ -149,16 +155,15 @@ export function AppCatalogue({
             disabled={catalogue.isFetchingNextPage}
             onClick={() => void catalogue.fetchNextPage()}
           >
-            {catalogue.isFetchingNextPage ? "Loading…" : "Show more"}
+            {catalogue.isFetchingNextPage ? t("Loading…") : t("Show more")}
           </Button>
         </div>
       ) : null}
 
       <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
-        Some of these you sign in to; most want a key you get from the application itself, typed on
-        a page at Composio. Either way Covan never sees the password, the token or the key — they
-        are held by Composio, and what is stored here is a reference. An agent asks before its first
-        action on each.
+        {t(
+          "Some of these you sign in to; most want a key you get from the application itself, typed on a page at Composio. Either way Covan never sees the password, the token or the key — they are held by Composio, and what is stored here is a reference. An agent asks before its first action on each.",
+        )}
       </p>
     </div>
   );
@@ -171,6 +176,7 @@ export function AppCatalogue({
  * be read about; it says so instead of offering Connect.
  */
 function CatalogueTile({ toolkit, onOpen }: { toolkit: ComposioToolkit; onOpen: () => void }) {
+  const { t } = useTranslation();
   const connectable = mightConnectToolkit(toolkit);
 
   return (
@@ -180,8 +186,8 @@ function CatalogueTile({ toolkit, onOpen }: { toolkit: ComposioToolkit; onOpen: 
       description={
         <span className="line-clamp-2">
           {connectable
-            ? toolkit.description || "Connect it and your agents can call it."
-            : "Not available yet"}
+            ? toolkit.description || t("Connect it and your agents can call it.")
+            : t("Not available yet")}
         </span>
       }
       action={
@@ -189,10 +195,14 @@ function CatalogueTile({ toolkit, onOpen }: { toolkit: ComposioToolkit; onOpen: 
           size="sm"
           variant={connectable ? "secondary" : "ghost"}
           aria-haspopup="dialog"
-          aria-label={`${connectable ? "Connect" : "About"} ${toolkit.name}`}
+          aria-label={
+            connectable
+              ? t("Connect {{app}}", { app: toolkit.name })
+              : t("About {{app}}", { app: toolkit.name })
+          }
           onClick={onOpen}
         >
-          {connectable ? "Connect" : "About"}
+          {connectable ? t("Connect") : t("About")}
         </Button>
       }
     />

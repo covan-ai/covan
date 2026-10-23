@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
+import { useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { DataTable } from "@/components/data-table";
 import { SectionLabel, SectionTitle } from "@/components/section";
 import { StatusDot } from "@/components/status-dot";
@@ -37,6 +39,8 @@ import { RevealedSecret } from "@/components/revealed-secret";
  * a credential nothing would accept.
  */
 export function ApiKeysSection() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [creating, setCreating] = useState(false);
   const [revealed, setRevealed] = useState<{ name: string; token: string } | null>(null);
   const { data, isLoading, isError } = useQuery({
@@ -46,12 +50,14 @@ export function ApiKeysSection() {
 
   const title = (
     <SectionTitle
-      title="API keys"
-      lede="A key acts as you. It can do exactly what you can and nothing more, so there are no scopes to get wrong. Leave the workspace and your keys stop with you."
+      title={t("API keys")}
+      lede={t(
+        "A key acts as you. It can do exactly what you can and nothing more, so there are no scopes to get wrong. Leave the workspace and your keys stop with you.",
+      )}
       action={
         data?.available ? (
           <Button onClick={() => setCreating(true)}>
-            <Plus /> New key
+            <Plus /> {t("New key")}
           </Button>
         ) : undefined
       }
@@ -70,8 +76,9 @@ export function ApiKeysSection() {
       <>
         {title}
         <p className="mt-6 text-sm text-muted-foreground">
-          Couldn't load your keys. This is a fault rather than a setting — try again, and tell
-          whoever runs this deployment if it persists.
+          {t(
+            "Couldn't load your keys. This is a fault rather than a setting — try again, and tell whoever runs this deployment if it persists.",
+          )}
         </p>
       </>
     );
@@ -84,7 +91,9 @@ export function ApiKeysSection() {
       <>
         {title}
         <p className="mt-6 text-sm text-muted-foreground">
-          This deployment does not issue keys. Whoever runs it can turn them on in its settings.
+          {t(
+            "This deployment does not issue keys. Whoever runs it can turn them on in its settings.",
+          )}
         </p>
       </>
     );
@@ -100,66 +109,74 @@ export function ApiKeysSection() {
         <div className="mt-6 flex items-start gap-3.5 rounded-xl border border-foreground p-4">
           <StatusDot state="waiting" className="mt-1.5" />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium">Your new key, &ldquo;{revealed.name}&rdquo;</div>
+            <div className="text-sm font-medium">
+              {t("Your new key, “{{name}}”", { name: revealed.name })}
+            </div>
             <p className="mt-0.5 mb-2.5 text-meta text-muted-foreground">
-              Copy it now. This is the only time it is shown; the server keeps a hash, not the key.
+              {t(
+                "Copy it now. This is the only time it is shown; the server keeps a hash, not the key.",
+              )}
             </p>
-            <RevealedSecret value={revealed.token} label="Copy key" inline>
+            <RevealedSecret value={revealed.token} label={t("Copy key")} inline>
               <Button variant="ghost" size="sm" onClick={() => setRevealed(null)}>
-                I have saved it
+                {t("I have saved it")}
               </Button>
             </RevealedSecret>
           </div>
         </div>
       )}
 
-      <SectionLabel action={<DocsLink page="api">API reference</DocsLink>}>
-        Keys · {data.keys.length}
+      <SectionLabel action={<DocsLink page="api">{t("API reference")}</DocsLink>}>
+        {t("Keys · {{total}}", { total: data.keys.length })}
       </SectionLabel>
       {data.keys.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No keys yet. Create one to reach the API from somewhere that cannot sign in.
+          {t("No keys yet. Create one to reach the API from somewhere that cannot sign in.")}
         </p>
       ) : (
         <div className="overflow-x-auto">
           <DataTable
-            label="API keys"
+            label={t("API keys")}
             rows={data.keys}
             rowKey={(k) => k.id}
             columns={[
               {
                 key: "name",
-                header: "Name",
+                header: t("Name"),
                 cell: (k) => <span className="font-medium">{k.name}</span>,
               },
               {
                 key: "key",
-                header: "Key",
+                header: t("Key"),
                 cell: (k) => (
                   <span className="font-mono text-meta text-muted-foreground">{k.prefix}…</span>
                 ),
               },
               {
                 key: "created",
-                header: "Created",
+                header: t("Created"),
                 hideBelow: "md",
                 cell: (k) => (
-                  <span className="text-muted-foreground">{lastActivityLabel(k.createdAt)}</span>
+                  <span className="text-muted-foreground">
+                    {lastActivityLabel(k.createdAt, undefined, t, locale)}
+                  </span>
                 ),
               },
               {
                 key: "used",
-                header: "Last used",
+                header: t("Last used"),
                 // Never used reads as a fact; "last used —" reads as missing data.
                 cell: (k) => (
                   <span className="text-muted-foreground">
-                    {k.lastUsedAt ? lastActivityLabel(k.lastUsedAt) : "Never"}
+                    {k.lastUsedAt
+                      ? lastActivityLabel(k.lastUsedAt, undefined, t, locale)
+                      : t("Never")}
                   </span>
                 ),
               },
               {
                 key: "revoke",
-                header: <span className="sr-only">Revoke</span>,
+                header: <span className="sr-only">{t("Revoke")}</span>,
                 className: "w-20 text-right",
                 cell: (k) => <RevokeKey apiKey={k} />,
               },
@@ -168,8 +185,9 @@ export function ApiKeysSection() {
         </div>
       )}
       <p className="mt-3 text-meta text-muted-foreground">
-        Keys belong to people, not to the workspace: a teammate&rsquo;s keys are on their page. A
-        revoked key fails on the next request.
+        {t(
+          "Keys belong to people, not to the workspace: a teammate’s keys are on their page. A revoked key fails on the next request.",
+        )}
       </p>
 
       <CreateKeyDialog
@@ -182,6 +200,7 @@ export function ApiKeysSection() {
 }
 
 function RevokeKey({ apiKey }: { apiKey: ApiKey }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [revoking, setRevoking] = useState(false);
 
@@ -190,9 +209,9 @@ function RevokeKey({ apiKey }: { apiKey: ApiKey }) {
     try {
       await api.apiKeys.revoke(apiKey.id);
       await queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-      toast.success("Key revoked");
+      toast.success(t("Key revoked"));
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't revoke that key");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't revoke that key"));
       setRevoking(false);
     }
   };
@@ -204,9 +223,9 @@ function RevokeKey({ apiKey }: { apiKey: ApiKey }) {
       onClick={revoke}
       disabled={revoking}
       className="text-destructive"
-      aria-label={`Revoke ${apiKey.name}`}
+      aria-label={t("Revoke {{name}}", { name: apiKey.name })}
     >
-      {revoking ? "Revoking…" : "Revoke"}
+      {revoking ? t("Revoking…") : t("Revoke")}
     </Button>
   );
 }
@@ -229,6 +248,7 @@ function CreateKeyDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: (name: string, token: string) => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -247,7 +267,7 @@ function CreateKeyDialog({
       onCreated(name.trim(), key.token);
       close(false);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't create that key");
+      toast.error(e instanceof ApiError ? e.message : t("Couldn't create that key"));
     } finally {
       setSaving(false);
     }
@@ -257,28 +277,30 @@ function CreateKeyDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent size="sm">
         <DialogHeader>
-          <DialogTitle>New API key</DialogTitle>
+          <DialogTitle>{t("New API key")}</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-1.5">
-          <Label htmlFor="api-key-name">What is it for</Label>
+          <Label htmlFor="api-key-name">{t("What is it for")}</Label>
           <Input
             id="api-key-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Nightly report script"
+            placeholder={t("Nightly report script")}
             maxLength={60}
             onKeyDown={(e) => {
               if (e.key === "Enter") void submit();
             }}
           />
-          <p className="text-meta text-muted-foreground">Only for you to recognise it later.</p>
+          <p className="text-meta text-muted-foreground">
+            {t("Only for you to recognise it later.")}
+          </p>
         </DialogBody>
         <DialogFooter>
           <Button variant="secondary" onClick={() => close(false)}>
-            Cancel
+            {t("Cancel")}
           </Button>
           <Button onClick={() => void submit()} disabled={saving || !name.trim()}>
-            {saving ? "Creating…" : "Create key"}
+            {saving ? t("Creating…") : t("Create key")}
           </Button>
         </DialogFooter>
       </DialogContent>

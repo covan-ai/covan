@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
 
 import { api } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,10 @@ const MAX = 4000;
  * arrive is worse than one that was refused.
  */
 export function QuotaSupportForm() {
+  const { t } = useTranslation();
+  // Outside the sentence it fills: the extraction tool does not look for a
+  // t() inside another one's values.
+  const couldNotSend = t("Couldn't send that message");
   const [message, setMessage] = useState("");
   const send = useMutation({
     mutationFn: () => api.support.quota(message.trim()),
@@ -28,15 +33,17 @@ export function QuotaSupportForm() {
 
   if (send.isSuccess) {
     return (
-      <p className="text-meta text-muted-foreground">Sent — we will read it and get back to you.</p>
+      <p className="text-meta text-muted-foreground">
+        {t("Sent — we will read it and get back to you.")}
+      </p>
     );
   }
 
   return (
     <div className="flex flex-col gap-2">
       <Textarea
-        aria-label="What do you need?"
-        placeholder="What do you need? Roughly how much, and by when?"
+        aria-label={t("What do you need?")}
+        placeholder={t("What do you need? Roughly how much, and by when?")}
         maxLength={MAX}
         rows={3}
         value={message}
@@ -47,8 +54,9 @@ export function QuotaSupportForm() {
         // pointer and keeps this one token for "an engine-level failure", which
         // is exactly what a send that did not arrive is.
         <p className="text-meta text-destructive">
-          {send.error instanceof Error ? send.error.message : "Couldn't send that message"} — or
-          email efe@covan.app directly.
+          {t("{{reason}} — or email efe@covan.app directly.", {
+            reason: send.error instanceof Error ? send.error.message : couldNotSend,
+          })}
         </p>
       )}
       <Button
@@ -56,7 +64,7 @@ export function QuotaSupportForm() {
         onClick={() => send.mutate()}
         disabled={message.trim().length === 0 || send.isPending}
       >
-        Send
+        {t("Send")}
       </Button>
     </div>
   );

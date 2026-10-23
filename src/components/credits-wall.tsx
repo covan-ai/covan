@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "@/i18n";
 
 import { api } from "@/lib/api-client";
 import { isAdminRole } from "@/lib/roles";
@@ -19,6 +20,7 @@ import { QuotaSupportForm } from "@/components/quota-support-form";
  * go looking for a button that does not exist yet.
  */
 export function CreditsWall() {
+  const { t } = useTranslation();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
 
   // The house pattern — `Me.workspace` carries no role. See `useWorkspaceRole`
@@ -31,17 +33,18 @@ export function CreditsWall() {
       <div className="flex flex-col gap-2">
         <p className="text-meta text-muted-foreground">
           {isAdmin
-            ? "Top-ups are handled by hand for now — tell us how many credits you need."
-            : "Ask us for more credits, or ask an admin of this workspace to."}
+            ? t("Top-ups are handled by hand for now — tell us how many credits you need.")
+            : t("Ask us for more credits, or ask an admin of this workspace to.")}
         </p>
         <QuotaSupportForm />
       </div>
 
       <p className="text-meta text-muted-foreground">
-        Covan's full source is published, and an install running on your own provider keys has no
-        credits at all — everything here works the same way.{" "}
+        {t(
+          "Covan's full source is published, and an install running on your own provider keys has no credits at all — everything here works the same way.",
+        )}{" "}
         <DocsLink page="self-hosting" className="text-xs">
-          Running it yourself
+          {t("Running it yourself")}
         </DocsLink>
       </p>
     </div>

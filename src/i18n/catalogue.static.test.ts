@@ -71,7 +71,9 @@ describe("the catalogues", () => {
             continue;
           }
           const context = CONTEXT.exec(key);
-          const isContextKey = context !== null && context[1]! in en;
+          // A context key reads as its base: `Done_status` says "Done". The base
+          // need not be a key of its own, so it is recognised by its value.
+          const isContextKey = context !== null && (context[1]! in en || value === context[1]);
           if (isContextKey) {
             // `t("Done", { context: "status" })` extracts as `Done_status`,
             // and without a `defaultValue: "Done"` in the call the English

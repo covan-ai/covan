@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { lookup, msg, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { AgentMark } from "@/components/agent-mark";
 import { Chip } from "@/components/chip";
 import { DataTable } from "@/components/data-table";
@@ -16,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, type CoverageAgent, type RevisitDocument } from "@/lib/api-client";
-import { ageWords, missedShareWords } from "@/lib/stale-documents";
+import { ageWords, missedShare } from "@/lib/stale-documents";
 
 const WINDOWS = [7, 30, 90] as const;
 const ALL = "__all";
@@ -39,9 +41,9 @@ const pct = (part: number, of: number) => (of === 0 ? 0 : Math.round((part / of)
 
 /** The three buckets, darkest first, as the legend reads them. */
 const BUCKETS = [
-  { key: "covered", label: "Found a passage", swatch: "bg-foreground" },
-  { key: "fallback", label: "Fell back to whole documents", swatch: "bg-foreground/50" },
-  { key: "ungrounded", label: "Nothing close", swatch: "bg-input" },
+  { key: "covered", label: msg("Found a passage"), swatch: "bg-foreground" },
+  { key: "fallback", label: msg("Fell back to whole documents"), swatch: "bg-foreground/50" },
+  { key: "ungrounded", label: msg("Nothing close"), swatch: "bg-input" },
 ] as const;
 
 /**
@@ -65,6 +67,8 @@ const BUCKETS = [
  * page then shows the title alone rather than an error.
  */
 export function WorkspaceCoverageSection() {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const [days, setDays] = useState<number>(30);
   const [agentId, setAgentId] = useState<string | null>(null);
   const [opened, setOpened] = useState<RevisitDocument | null>(null);
@@ -88,23 +92,23 @@ export function WorkspaceCoverageSection() {
   const filters = (
     <div className="flex flex-wrap gap-2">
       <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
-        <SelectTrigger aria-label="Window" className="w-auto">
+        <SelectTrigger aria-label={t("Window")} className="w-auto">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {WINDOWS.map((w) => (
             <SelectItem key={w} value={String(w)}>
-              Last {w} days
+              {t("Last {{count}} day", { count: w, defaultValue_other: "Last {{count}} days" })}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
       <Select value={agentId ?? ALL} onValueChange={(v) => setAgentId(v === ALL ? null : v)}>
-        <SelectTrigger aria-label="Agent" className="w-auto">
+        <SelectTrigger aria-label={t("Agent")} className="w-auto">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value={ALL}>All agents</SelectItem>
+          <SelectItem value={ALL}>{t("All agents")}</SelectItem>
           {(everyone?.agents ?? []).map((a) => (
             <SelectItem key={a.agentId} value={a.agentId}>
               {a.name}
@@ -117,8 +121,10 @@ export function WorkspaceCoverageSection() {
 
   const title = (
     <SectionTitle
-      title="Coverage"
-      lede="What the team asked that nothing written was close to. Counts by agent and by window, never the questions themselves and never who asked."
+      title={t("Coverage")}
+      lede={t(
+        "What the team asked that nothing written was close to. Counts by agent and by window, never the questions themselves and never who asked.",
+      )}
       action={data?.available ? filters : undefined}
     />
   );
@@ -147,11 +153,12 @@ export function WorkspaceCoverageSection() {
     <>
       {title}
 
-      <SectionLabel>How replies were grounded</SectionLabel>
+      <SectionLabel>{t("How replies were grounded")}</SectionLabel>
       {totals.answers === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Nothing in this window. Once somebody asks an agent a question, whether anything you wrote
-          was close to it lands here.
+          {t(
+            "Nothing in this window. Once somebody asks an agent a question, whether anything you wrote was close to it lands here.",
+          )}
         </p>
       ) : (
         <>
@@ -159,7 +166,7 @@ export function WorkspaceCoverageSection() {
             {BUCKETS.map((b) => (
               <span key={b.key} className="inline-flex items-center gap-1.5">
                 <i className={`inline-block size-3 rounded-[3px] ${b.swatch}`} aria-hidden />
-                {b.label}
+                {lookup(t, b.label)}
               </span>
             ))}
           </div>
@@ -173,15 +180,24 @@ export function WorkspaceCoverageSection() {
 
       {untouched > 0 && (
         <p className="mt-2 text-meta text-muted-foreground">
-          {untouched} {untouched === 1 ? "agent" : "agents"} nobody asked anything in this window.
+          {t("{{count}} agent nobody asked anything in this window.", {
+            count: untouched,
+            defaultValue_other: "{{count}} agents nobody asked anything in this window.",
+          })}
         </p>
       )}
       {/* A figure whose denominator is a sample rather than a census says so
           on the same screen as the figure. */}
       {totals.unrecorded > 0 && (
         <p className="mt-2 text-meta text-muted-foreground">
-          {totals.unrecorded} {totals.unrecorded === 1 ? "reply" : "replies"} in this window predate
-          the recording and are left out of every figure above.
+          {t(
+            "{{count}} reply in this window predates the recording and is left out of every figure above.",
+            {
+              count: totals.unrecorded,
+              defaultValue_other:
+                "{{count}} replies in this window predate the recording and are left out of every figure above.",
+            },
+          )}
         </p>
       )}
 
@@ -190,22 +206,32 @@ export function WorkspaceCoverageSection() {
           <StatusDot state="waiting" className="mt-1.5" />
           <div className="min-w-0 flex-1">
             <div className="mb-1 text-sm font-medium">
-              {missedShareWords(worstShare)} what {worst.name} is asked is not in what it was given
+              {missedShare(worstShare) === "most"
+                ? t("Most of what {{agent}} is asked is not in what it was given", {
+                    agent: worst.name,
+                  })
+                : missedShare(worstShare) === "half"
+                  ? t("More than half of what {{agent}} is asked is not in what it was given", {
+                      agent: worst.name,
+                    })
+                  : t("More than a third of what {{agent}} is asked is not in what it was given", {
+                      agent: worst.name,
+                    })}
             </div>
             <p className="mb-3 text-sm text-muted-foreground">
-              The middle bucket is the one to act on: those replies were still usable, but no
-              passage in anything the team wrote was close. That is the question people keep asking
-              that nobody has written down.
+              {t(
+                "The middle bucket is the one to act on: those replies were still usable, but no passage in anything the team wrote was close. That is the question people keep asking that nobody has written down.",
+              )}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button asChild>
                 <Link to="/agents/$agentId/knowledge" params={{ agentId: worst.agentId }}>
-                  Add documents to {worst.name}
+                  {t("Add documents to {{agent}}", { agent: worst.name })}
                 </Link>
               </Button>
               <Button variant="secondary" asChild>
                 <Link to="/agents/$agentId/configuration" params={{ agentId: worst.agentId }}>
-                  See the folders it reads
+                  {t("See the folders it reads")}
                 </Link>
               </Button>
             </div>
@@ -216,37 +242,41 @@ export function WorkspaceCoverageSection() {
       {documents.length > 0 && (
         <>
           <SectionLabel
-            action={<span className="font-normal">Old enough to doubt, used enough to matter</span>}
+            action={
+              <span className="font-normal">{t("Old enough to doubt, used enough to matter")}</span>
+            }
           >
-            Documents worth revisiting
+            {t("Documents worth revisiting")}
           </SectionLabel>
           <div className="overflow-x-auto">
             <DataTable
-              label="Documents worth revisiting"
+              label={t("Documents worth revisiting")}
               rows={documents}
               rowKey={(d) => d.documentId}
               columns={[
                 {
                   key: "doc",
-                  header: "Document",
+                  header: t("Document"),
                   cell: (d) => <Chip tone="code">{d.name}</Chip>,
                 },
                 {
                   key: "age",
-                  header: "Age",
+                  header: t("Age"),
                   cell: (d) => (
-                    <span className="text-muted-foreground">{ageWords(d.createdAt)}</span>
+                    <span className="text-muted-foreground">
+                      {ageWords(d.createdAt, undefined, t)}
+                    </span>
                   ),
                 },
                 {
                   key: "uses",
-                  header: `Used in replies, ${days} d`,
+                  header: t("Used in replies, {{days}} d", { days }),
                   num: true,
-                  cell: (d) => d.uses.toLocaleString("en-US"),
+                  cell: (d) => d.uses.toLocaleString(locale),
                 },
                 {
                   key: "readBy",
-                  header: "Read by",
+                  header: t("Read by"),
                   hideBelow: "md",
                   cell: (d) => (
                     <span className="flex flex-wrap gap-1">
@@ -258,16 +288,16 @@ export function WorkspaceCoverageSection() {
                 },
                 {
                   key: "open",
-                  header: <span className="sr-only">Open</span>,
+                  header: <span className="sr-only">{t("Open")}</span>,
                   className: "w-20 text-right",
                   cell: (d) => (
                     <Button
                       variant="ghost"
                       size="sm"
-                      aria-label={`Open ${d.name}`}
+                      aria-label={t("Open {{name}}", { name: d.name })}
                       onClick={() => setOpened(d)}
                     >
-                      Open
+                      {t("Open")}
                     </Button>
                   ),
                 },
@@ -278,8 +308,9 @@ export function WorkspaceCoverageSection() {
       )}
 
       <p className="mt-4 text-meta text-muted-foreground">
-        Counts come from every thread in the workspace, private ones included. Nothing but the
-        number crosses: not who asked, not what they asked.
+        {t(
+          "Counts come from every thread in the workspace, private ones included. Nothing but the number crosses: not who asked, not what they asked.",
+        )}
       </p>
 
       {opened && (
@@ -295,8 +326,14 @@ export function WorkspaceCoverageSection() {
 
 /** One agent: its mark and name, the three buckets as one bar, and the count. */
 function AgentBar({ agent, first }: { agent: CoverageAgent; first: boolean }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const missed = pct(agent.fallback + agent.ungrounded, agent.answers);
-  const shares = BUCKETS.map((b) => ({ ...b, share: pct(agent[b.key], agent.answers) }));
+  const shares = BUCKETS.map((b) => ({
+    ...b,
+    label: lookup(t, b.label),
+    share: pct(agent[b.key], agent.answers),
+  }));
   return (
     <li className="grid min-h-11 grid-cols-[150px_minmax(0,1fr)_120px] items-center gap-3.5 border-b border-hairline last:border-b-0">
       <span className="flex min-w-0 items-center gap-2.5 text-sm font-medium">
@@ -305,7 +342,7 @@ function AgentBar({ agent, first }: { agent: CoverageAgent; first: boolean }) {
       </span>
       <span
         role="img"
-        aria-label={`${agent.name}: ${shares.map((s) => `${s.share}% ${s.label.toLowerCase()}`).join(", ")}`}
+        aria-label={`${agent.name}: ${shares.map((s) => `${s.share}% ${s.label.toLocaleLowerCase(locale)}`).join(", ")}`}
         className="flex h-4 gap-0.5"
       >
         {shares
@@ -319,7 +356,15 @@ function AgentBar({ agent, first }: { agent: CoverageAgent; first: boolean }) {
           ))}
       </span>
       <span className="text-right text-meta text-muted-foreground tabular-nums">
-        {agent.answers.toLocaleString("en-US")} asked · {missed}%{first ? " not covered" : ""}
+        {first
+          ? t("{{asked}} asked · {{missed}}% not covered", {
+              asked: agent.answers.toLocaleString(locale),
+              missed,
+            })
+          : t("{{asked}} asked · {{missed}}%", {
+              asked: agent.answers.toLocaleString(locale),
+              missed,
+            })}
       </span>
     </li>
   );

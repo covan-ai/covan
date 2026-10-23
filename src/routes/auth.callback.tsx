@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
+import { useTranslation } from "@/i18n";
 import { AuthLayout } from "@/components/auth-layout";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase/client";
@@ -43,6 +44,7 @@ function readUrlError(): string | null {
 }
 
 function AuthCallback() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [urlError] = useState(readUrlError);
   const [status, setStatus] = useState<"checking" | "none">("checking");
@@ -79,28 +81,28 @@ function AuthCallback() {
   if (urlError || status === "none") {
     return (
       <AuthLayout
-        title="That didn't sign you in"
+        title={t("That didn't sign you in")}
         subtitle={
           urlError
-            ? "The provider sent you back without an account."
-            : "There was nothing to finish."
+            ? t("The provider sent you back without an account.")
+            : t("There was nothing to finish.")
         }
         footer={
           <Link
             to="/sign-in"
             className="inline-flex items-center gap-1.5 font-medium text-foreground hover:underline"
           >
-            <ArrowLeft className="h-3.5 w-3.5" /> Back to sign in
+            <ArrowLeft className="h-3.5 w-3.5" /> {t("Back to sign in")}
           </Link>
         }
       >
         <div className="flex flex-col items-center gap-3 py-2 text-center">
           {urlError && <p className="text-sm text-destructive">{urlError}</p>}
           <p className="text-sm text-muted-foreground">
-            Try again, or sign in with your email and password instead.
+            {t("Try again, or sign in with your email and password instead.")}
           </p>
           <Button asChild size="sm" className="mt-1">
-            <Link to="/sign-in">Sign in</Link>
+            <Link to="/sign-in">{t("Sign in")}</Link>
           </Button>
         </div>
       </AuthLayout>
@@ -108,9 +110,9 @@ function AuthCallback() {
   }
 
   return (
-    <AuthLayout title="Signing you in" subtitle="One moment.">
+    <AuthLayout title={t("Signing you in")} subtitle={t("One moment.")}>
       <div className="flex min-h-24 items-center justify-center text-sm text-muted-foreground">
-        Loading…
+        {t("Loading…")}
       </div>
     </AuthLayout>
   );

@@ -10,6 +10,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useTranslation, type TFunction } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { Button } from "@/components/ui/button";
 import { AppLogo } from "@/components/integrations/app-logo";
 import { IntegrationRow } from "@/components/integrations/integration-row";
@@ -36,9 +38,9 @@ import { agoShort } from "@/lib/day-groups";
 /** Under one prefix, so a forget or a save refreshes every list on screen. */
 const savedLoginsKey = (agentId?: string) => ["browser-credentials", agentId ?? "all"] as const;
 
-function lastUsed(at: string | null): string {
-  if (!at) return "Not used yet";
-  return `Last used ${agoShort(Date.parse(at))}`;
+function lastUsed(at: string | null, t: TFunction, locale: string): string {
+  if (!at) return t("Not used yet");
+  return t("Last used {{when}}", { when: agoShort(Date.parse(at), undefined, t, locale) });
 }
 
 export function SavedLoginsList({
@@ -56,6 +58,8 @@ export function SavedLoginsList({
   /** The frame around the list — a settings section — drawn only when there is a list to frame. */
   wrap?: (list: ReactElement, count: number) => ReactElement;
 }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const [forgetting, setForgetting] = useState<SavedLogin | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -74,7 +78,7 @@ export function SavedLoginsList({
     },
     onError: (e: unknown) =>
       setRefusal(
-        e instanceof ApiError ? e.message : "Couldn't forget that login. Nothing was deleted.",
+        e instanceof ApiError ? e.message : t("Couldn't forget that login. Nothing was deleted."),
       ),
   });
 
@@ -102,9 +106,11 @@ export function SavedLoginsList({
                   {agent ? <span>{agent} · </span> : null}
                   <span>{login.siteHost}</span>
                   {" · "}
-                  <span>{login.scope === "agent" ? "Everyone using this agent" : "Just you"}</span>
+                  <span>
+                    {login.scope === "agent" ? t("Everyone using this agent") : t("Just you")}
+                  </span>
                   {" · "}
-                  <span>{lastUsed(login.lastUsedAt)}</span>
+                  <span>{lastUsed(login.lastUsedAt, t, locale)}</span>
                 </>
               }
               action={
@@ -117,7 +123,7 @@ export function SavedLoginsList({
                       setForgetting(login);
                     }}
                   >
-                    Forget
+                    {t("Forget")}
                   </Button>
                 ) : undefined
               }
@@ -136,7 +142,9 @@ export function SavedLoginsList({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Forget {forgetting?.label}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t("Forget {{label}}?", { label: forgetting?.label })}
+            </AlertDialogTitle>
             {/* Ruling R38. A shared login only ever signs in inside a browser
                 with nobody's profile, so forgetting it is the whole of
                 stopping it. A personal one signs in inside the person's own
@@ -145,15 +153,21 @@ export function SavedLoginsList({
                 per-site removal, so none is promised. */}
             <AlertDialogDescription>
               {forgetting?.scope === "agent"
-                ? `The agent stops signing in to ${forgetting?.siteHost} as this account, for everyone. Someone can save a login again the next time a task asks.`
-                : `The agent stops signing in to ${forgetting?.siteHost} with it. ${forgetting?.siteHost} may stay signed in inside your own browser profile until its cookies expire. To sign out completely, forget your browser sign-ins in Settings → Browser sign-ins (this signs you out of every site). You can save it again the next time a task asks.`}
+                ? t(
+                    "The agent stops signing in to {{site}} as this account, for everyone. Someone can save a login again the next time a task asks.",
+                    { site: forgetting?.siteHost },
+                  )
+                : t(
+                    "The agent stops signing in to {{site}} with it. {{site}} may stay signed in inside your own browser profile until its cookies expire. To sign out completely, forget your browser sign-ins in Settings → Browser sign-ins (this signs you out of every site). You can save it again the next time a task asks.",
+                    { site: forgetting?.siteHost },
+                  )}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
           {refusal ? <p className="text-sm leading-[1.45] text-destructive">{refusal}</p> : null}
 
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={forget.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={forget.isPending}>{t("Cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 // Kept open so a refusal has somewhere to be read.
@@ -162,7 +176,7 @@ export function SavedLoginsList({
               }}
               disabled={forget.isPending}
             >
-              {forget.isPending ? "Forgetting…" : "Forget it"}
+              {forget.isPending ? t("Forgetting…") : t("Forget it")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -104,6 +104,31 @@ export function msg(english: string): string {
 }
 
 /**
+ * The shape of `t` a pure helper takes as a parameter, the way it takes `now`.
+ *
+ * Narrower than i18next's own `TFunction` on purpose: a helper needs the key,
+ * the interpolation values and the plural's `defaultValue_other`, and a test
+ * can hand it `englishT` below without pulling i18next into a unit test of
+ * a date formatter.
+ */
+export type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+/**
+ * What `t` does when nobody passed one: the English, with its placeholders
+ * filled in and its plural chosen. The default for every helper's `t`
+ * parameter, so a caller that has not been translated yet — and every
+ * existing test — sees exactly the words it saw before.
+ */
+export const englishT: Translate = (key, options) => {
+  const count = options?.count;
+  const other = options?.defaultValue_other;
+  const text = typeof count === "number" && count !== 1 && typeof other === "string" ? other : key;
+  return text.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, name: string) =>
+    options && name in options ? String(options[name]) : match,
+  );
+};
+
+/**
  * `t()` for a key that came out of a table — `lookup(t, item.label)`.
  *
  * The extraction tool reads every `t(…)` and refuses one whose key it

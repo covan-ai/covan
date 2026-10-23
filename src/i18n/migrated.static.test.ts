@@ -41,6 +41,11 @@ export const MIGRATED: string[] = [
   "components/ui/dialog.tsx",
   "components/settings/settings-pages.ts",
   "lib/accept-invitation.ts",
+  "lib/day-groups.ts",
+  "lib/relative-time.ts",
+  "lib/roles.ts",
+  "lib/chart-scale.ts",
+  "lib/credits.ts",
 ];
 
 const LEFTOVERS: Array<{ name: string; pattern: RegExp }> = [

@@ -1,20 +1,27 @@
+import { englishT, type Translate } from "@/i18n";
+
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
 /**
  * "in 24 minutes" / "2 hours ago". `now` is injectable so tests do not depend
- * on the wall clock.
+ * on the wall clock; `t` and `locale` the same way, defaulting to the English.
  *
  * Anything inside a minute collapses to "now": a next-run time counting down in
  * seconds is noise, and it would force a re-render every second to stay honest.
  */
-export function formatRelative(epochMs: number, now: number = Date.now()): string {
+export function formatRelative(
+  epochMs: number,
+  now: number = Date.now(),
+  t: Translate = englishT,
+  locale: string = "en",
+): string {
   const diff = epochMs - now;
   const abs = Math.abs(diff);
-  if (abs < MINUTE) return "now";
+  if (abs < MINUTE) return t("now");
 
-  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "always" });
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "always" });
   if (abs < HOUR) return rtf.format(Math.round(diff / MINUTE), "minute");
   if (abs < DAY) return rtf.format(Math.round(diff / HOUR), "hour");
   return rtf.format(Math.round(diff / DAY), "day");
@@ -50,12 +57,17 @@ export type DocumentAge = {
  * exists to prevent — so the number never claims more age than there is, and the
  * threshold is crossed only once it genuinely has been.
  */
-export function documentAge(uploadedAt: number, now: number = Date.now()): DocumentAge {
+export function documentAge(
+  uploadedAt: number,
+  now: number = Date.now(),
+  t: Translate = englishT,
+  locale: string = "en",
+): DocumentAge {
   const days = Math.floor(Math.max(0, now - uploadedAt) / DAY);
   const stale = days >= STALE_AFTER_DAYS;
 
-  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "always" });
-  if (days < 1) return { label: "today", stale };
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "always" });
+  if (days < 1) return { label: t("today"), stale };
   if (days < 30) return { label: rtf.format(-days, "day"), stale };
   if (days < 365) return { label: rtf.format(-Math.floor(days / 30), "month"), stale };
   return { label: rtf.format(-Math.floor(days / 365), "year"), stale };

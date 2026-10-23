@@ -46,6 +46,11 @@ export const MIGRATED: string[] = [
   "lib/roles.ts",
   "lib/chart-scale.ts",
   "lib/credits.ts",
+  "lib/home-sentence.ts",
+  "lib/inbox.ts",
+  "lib/first-week.ts",
+  "lib/invitation-notice.ts",
+  "lib/invite-text.ts",
 ];
 
 const LEFTOVERS: Array<{ name: string; pattern: RegExp }> = [

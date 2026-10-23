@@ -1,3 +1,4 @@
+import { englishT, type Translate } from "@/i18n";
 import type { InboxItem } from "@/lib/api-client";
 import type { DotState } from "@/lib/dot-states";
 
@@ -9,17 +10,22 @@ export function inboxDot(item: InboxItem): DotState {
 }
 
 /** The second line: what waits on you, what it is doing, or the last word. */
-export function inboxLine(item: InboxItem, agentName: string): { who: string; text: string } {
+export function inboxLine(
+  item: InboxItem,
+  agentName: string,
+  t: Translate = englishT,
+): { who: string; text: string } {
   if (item.needsYou) return { who: agentName, text: item.needsYou.summary };
   if (item.running) {
     return {
       who: agentName,
-      text: item.running.note ?? `Working · step ${item.running.stepsDone + 1}`,
+      text: item.running.note ?? t("Working · step {{step}}", { step: item.running.stepsDone + 1 }),
     };
   }
   if (item.preview) {
-    const who = item.preview.role === "assistant" ? agentName : (item.preview.senderName ?? "You");
+    const who =
+      item.preview.role === "assistant" ? agentName : (item.preview.senderName ?? t("You"));
     return { who, text: item.preview.text };
   }
-  return { who: agentName, text: "No messages yet" };
+  return { who: agentName, text: t("No messages yet") };
 }

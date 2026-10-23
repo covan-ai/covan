@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { englishT } from "@/i18n";
 import {
   activityLine,
   amountValue,
@@ -166,24 +167,33 @@ describe("Right now and Recent activity", () => {
     expect(feedTime(new Date(2026, 9, 21, 9, 0).getTime(), now)).toBe("Yesterday");
   });
 
+  // The line is a key with the subject marked `<s>…</s>`, so the page can draw
+  // the subject as a link and the translation can put it where its grammar
+  // wants it. Rendered through englishT here, the way an untranslated page
+  // would read it.
   it("words each kind of event", () => {
     const base = { subjectLabel: "Pipeline snapshot", count: 1, detail: null };
-    expect(activityLine({ ...base, action: "turn.approved" })).toEqual({
-      before: "approved",
-      subject: "Pipeline snapshot",
-      after: "",
-    });
-    expect(activityLine({ ...base, action: "session.shared" }).after).toBe("with the team");
+    const words = (item: Parameters<typeof activityLine>[0]) => {
+      const line = activityLine(item);
+      return englishT(line.key, line.values).replace(/<\/?s>/g, "");
+    };
+    expect(words({ ...base, action: "turn.approved" })).toBe("approved Pipeline snapshot");
+    expect(words({ ...base, action: "session.shared" })).toBe(
+      "shared Pipeline snapshot with the team",
+    );
     expect(
-      activityLine({
+      words({
         action: "document.added",
         subjectLabel: "nda.pdf",
         count: 3,
         detail: { bundle_name: "Contracts" },
       }),
-    ).toEqual({ before: "added 3 files to", subject: "Knowledge / Contracts", after: "" });
+    ).toBe("added 3 files to Knowledge / Contracts");
     expect(
-      activityLine({ action: "document.added", subjectLabel: "nda.pdf", count: 1, detail: null }),
-    ).toEqual({ before: "added", subject: "nda.pdf", after: "to Knowledge" });
+      words({ action: "document.added", subjectLabel: "nda.pdf", count: 1, detail: null }),
+    ).toBe("added nda.pdf to Knowledge");
+    expect(activityLine({ ...base, action: "turn.approved" }).values.subject).toBe(
+      "Pipeline snapshot",
+    );
   });
 });

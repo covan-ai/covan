@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { Agent, ChatSession } from "./agents-store";
+import { msg } from "@/i18n";
 
 /**
  * What a new workspace still has left to do.
@@ -37,7 +38,8 @@ export type FirstWeekInput = {
 /**
  * The labels here are what the list says when nothing else does. The setup
  * list beside the first conversation reads its own words from
- * `onboarding-config.ts` and only the `done` flags from here.
+ * `onboarding-config.ts` and only the `done` flags from here. Both `label`
+ * and `hint` are English keys: `lookup(t, step.label)` where they are drawn.
  */
 export function firstWeekSteps({
   agents,
@@ -49,8 +51,10 @@ export function firstWeekSteps({
   return [
     {
       key: "ask",
-      label: "Ask it something",
-      hint: "The reply names where it came from — that is the difference between this and a chat window.",
+      label: msg("Ask it something"),
+      hint: msg(
+        "The reply names where it came from — that is the difference between this and a chat window.",
+      ),
       // `messageCount`, not `sessions.length`: opening the composer starts a
       // session before anybody has said anything, so counting sessions would
       // tick this box for a workspace that has never asked a question.
@@ -58,20 +62,22 @@ export function firstWeekSteps({
     },
     {
       key: "connect",
-      label: "Connect an app",
-      hint: "Mail, calendar, a CRM, a wiki. The agent can then read and act in it, with your say-so.",
+      label: msg("Connect an app"),
+      hint: msg(
+        "Mail, calendar, a CRM, a wiki. The agent can then read and act in it, with your say-so.",
+      ),
       done: connectedCount > 0,
     },
     {
       key: "knowledge",
-      label: "Upload what the team knows",
-      hint: "A process doc, a contract, a research note. This is what the agent answers from.",
+      label: msg("Upload what the team knows"),
+      hint: msg("A process doc, a contract, a research note. This is what the agent answers from."),
       done: agents.some((a) => a.documents.length > 0),
     },
     {
       key: "team",
-      label: "Bring in a teammate",
-      hint: "Share the agent with them, and their own conversations with it stay private.",
+      label: msg("Bring in a teammate"),
+      hint: msg("Share the agent with them, and their own conversations with it stay private."),
       // Membership, not a pending invitation. "Invited somebody" is a fact the
       // Team page already reports; this asks whether anyone actually arrived,
       // which is the thing an invitation that never reached anybody looks
@@ -80,8 +86,10 @@ export function firstWeekSteps({
     },
     {
       key: "routine",
-      label: "Schedule something that runs without you",
-      hint: "Point one at a feed or a page, say what to do with it, and the result arrives by email or Slack.",
+      label: msg("Schedule something that runs without you"),
+      hint: msg(
+        "Point one at a feed or a page, say what to do with it, and the result arrives by email or Slack.",
+      ),
       done: routineCount > 0,
     },
   ];

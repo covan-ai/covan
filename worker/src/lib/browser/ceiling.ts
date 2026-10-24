@@ -13,10 +13,11 @@ import { quoteOf, type Entitlements } from "../entitlements";
  *   at the provider's own figure, so a run started on the last few credits
  *   could otherwise spend many times the balance — the overshoot landing on
  *   the operator. The ceiling is the provider cost the balance above the
- *   floor still covers, and it is HELD for the run (`reserve`) before the
- *   run starts, so a second run started meanwhile is bounded by what the
- *   first left rather than by the same untouched balance. The hosted build
- *   does the converting, so the rate never crosses into this tree.
+ *   floor still covers — half of it, so the replies beside the run are not
+ *   refused — and it is HELD for the run (`reserve`) before the run starts,
+ *   so a second run started meanwhile is bounded by what the first left
+ *   rather than by the same untouched balance. The hosted build does the
+ *   converting, so the rate never crosses into this tree.
  * - **A runaway.** A run that loops — a page that never settles, a step it
  *   repeats — has nothing else to stop it but the provider's timeout and the
  *   sweep. `RUNAWAY_COST_CAP_USD` is far above any task seen, and it is the

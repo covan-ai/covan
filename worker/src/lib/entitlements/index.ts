@@ -180,11 +180,16 @@ export interface Entitlements {
   /**
    * Before work whose cost is known only afterwards but can be bounded before
    * it starts — a browser run, which the provider stops at its `maxCostUsd`.
-   * Holds, under `holdId`, as much of `usd` of provider cost as the workspace
-   * still covers beyond `check`'s floor and every other live hold, and answers
-   * the dollars held: `usd` itself when nothing is short, less when it is,
-   * zero when nothing is left. A second call under the same id replaces the
-   * first.
+   * Holds, under `holdId`, as much of `usd` of provider cost as fits in HALF
+   * of what the workspace has free — beyond `check`'s floor and every other
+   * live hold — and answers the dollars held: `usd` itself when nothing is
+   * short, less when it is, zero when nothing is left. A second call under
+   * the same id replaces the first.
+   *
+   * Half, because a hold is credit nobody else can use while the work runs:
+   * a run that held all of it would refuse every reply in the workspace for
+   * minutes, to keep room for a ceiling it almost never reaches. The other
+   * half is the replies', and the next run's, which holds half again.
    *
    * Atomic, and that is the point of it: two runs started together never both
    * hold the same credits, which is the overshoot `check` accepts. Answered in

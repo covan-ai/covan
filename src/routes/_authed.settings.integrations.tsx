@@ -133,7 +133,10 @@ function apiErrorCode(message: string): string {
  * - **Available** — the catalogue, visible before anybody types: the sources,
  *   Slack, a database or an API by hand, the REST API, and Composio's apps.
  *
- * The search over the page narrows all three at once.
+ * The search over the page narrows all three at once. The catalogue carries a
+ * second field bound to the same query, pinned under the top bar while its
+ * grid scrolls, and "/" focuses it: by the time somebody is scrolling tiles
+ * the one up here is off the screen.
  */
 function IntegrationsPage() {
   useGrantOutcome();
@@ -298,7 +301,12 @@ function IntegrationsPage() {
       {canWrite ? (
         <section data-coach="integrations-catalogue" className="mt-8">
           <SectionLabel>{t("Available")}</SectionLabel>
-          <AppCatalogue connected={already} query={query} leading={leading} />
+          <AppCatalogue
+            connected={already}
+            query={query}
+            onQueryChange={setQuery}
+            leading={leading}
+          />
         </section>
       ) : null}
 

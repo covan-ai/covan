@@ -13,6 +13,9 @@ const receipt = (over: Partial<ChatUploadReceipt> = {}): ChatUploadReceipt => ({
   state: "done",
   progress: 100,
   indexed: true,
+  indexStatus: "ready",
+  indexProgress: null,
+  indexError: null,
   reason: null,
   ...over,
 });
@@ -20,6 +23,7 @@ const receipt = (over: Partial<ChatUploadReceipt> = {}): ChatUploadReceipt => ({
 function uploadsWith(
   receipts: ChatUploadReceipt[] = [],
   destinations = [{ id: "runbooks", name: "Runbooks" }],
+  waitingFor: string | null = null,
 ): ChatUploads {
   return {
     receipts,
@@ -28,6 +32,8 @@ function uploadsWith(
     moveTo: vi.fn(async () => {}),
     remove: vi.fn(async () => {}),
     dismiss: vi.fn(),
+    settled: vi.fn(async () => {}),
+    waitingFor,
   };
 }
 
@@ -68,9 +74,67 @@ describe("ChatReceipts", () => {
   });
 
   it("says when a document is in but cannot be retrieved from", () => {
-    render(<ChatReceipts uploads={uploadsWith([receipt({ indexed: false })])} />);
+    render(
+      <ChatReceipts uploads={uploadsWith([receipt({ indexed: false, indexStatus: null })])} />,
+    );
 
     expect(screen.getByText(/not indexed/i)).toBeInTheDocument();
+  });
+
+  it("reads a queued file as indexing, not as unindexed", () => {
+    render(
+      <ChatReceipts uploads={uploadsWith([receipt({ indexed: false, indexStatus: "queued" })])} />,
+    );
+
+    expect(screen.getByText("Indexing…")).toBeInTheDocument();
+    expect(screen.queryByText(/not indexed/i)).not.toBeInTheDocument();
+  });
+
+  it("shows how far the indexing job has got", () => {
+    render(
+      <ChatReceipts
+        uploads={uploadsWith([
+          receipt({
+            indexed: false,
+            indexStatus: "indexing",
+            indexProgress: { done: 1, total: 4 },
+          }),
+        ])}
+      />,
+    );
+
+    expect(screen.getByText("Indexing 25%")).toBeInTheDocument();
+  });
+
+  it("says not indexed when the job failed, with its error on hover", () => {
+    render(
+      <ChatReceipts
+        uploads={uploadsWith([
+          receipt({ indexed: false, indexStatus: "failed", indexError: "no text in it" }),
+        ])}
+      />,
+    );
+
+    expect(screen.getByText(/not indexed/i).closest("[title]")).toHaveAttribute(
+      "title",
+      "no text in it",
+    );
+  });
+
+  it("says which file a send is waiting on", () => {
+    render(
+      <ChatReceipts
+        uploads={uploadsWith(
+          [receipt({ indexed: false, indexStatus: "indexing" })],
+          [],
+          "notes.md",
+        )}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Waiting for notes.md to finish indexing…",
+    );
   });
 
   it("shows the progress of a file still going up", () => {

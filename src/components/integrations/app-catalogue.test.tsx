@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -38,6 +39,8 @@ const detail: {
 let pages = [{ configured: true, toolkits: [] as ComposioToolkit[], nextCursor: "" }];
 let categories = [{ id: "crm", name: "CRM" }];
 let hasNextPage = false;
+/** True while the grid is showing the previous search's answer in place of this one's. */
+let isPlaceholderData = false;
 const fetchNextPage = vi.fn();
 /** Every (search, category) the component has asked for, in order. */
 let asked: Array<[string, string]> = [];
@@ -57,6 +60,7 @@ vi.mock("@/hooks/use-connections", () => ({
       isPending: false,
       isError: false,
       hasNextPage,
+      isPlaceholderData,
       isFetchingNextPage: false,
       fetchNextPage,
     };
@@ -85,6 +89,18 @@ function toolkit(over: Partial<ComposioToolkit> = {}): ComposioToolkit {
   };
 }
 
+/** The page's side of it: one query, held above the catalogue's own field. */
+function Searchable({ connected = new Set<string>() }: { connected?: Set<string> }) {
+  const [query, setQuery] = useState("");
+  return (
+    <>
+      <input aria-label="Elsewhere" />
+      <p data-testid="page-query">{query}</p>
+      <AppCatalogue connected={connected} query={query} onQueryChange={setQuery} />
+    </>
+  );
+}
+
 function withToolkits(...list: ComposioToolkit[]) {
   pages = [{ configured: true, toolkits: list, nextCursor: "" }];
 }
@@ -93,6 +109,7 @@ beforeEach(() => {
   withToolkits(toolkit(), toolkit({ slug: "linear", name: "Linear", description: "Issues" }));
   categories = [{ id: "crm", name: "CRM" }];
   hasNextPage = false;
+  isPlaceholderData = false;
   asked = [];
   connect.mutate.mockClear();
   fetchNextPage.mockClear();
@@ -376,5 +393,87 @@ describe("AppCatalogue", () => {
     ];
     render(<AppCatalogue connected={new Set()} query="" />);
     expect(screen.getAllByRole("button", { name: /Gmail/ })).toHaveLength(1);
+  });
+
+  describe("its own search field", () => {
+    it("narrows the tiles already loaded on every keystroke, before the server answers", async () => {
+      render(<Searchable />);
+      await userEvent.type(screen.getByRole("searchbox", { name: /Search the catalogue/ }), "lin");
+
+      expect(screen.getByRole("button", { name: /Linear/ })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Gmail/ })).not.toBeInTheDocument();
+      // It is the page's query, so the connected list above narrows as well.
+      expect(screen.getByTestId("page-query")).toHaveTextContent("lin");
+    });
+
+    it("hands the debounced term to the hook", async () => {
+      render(<Searchable />);
+      asked = [];
+      await userEvent.type(screen.getByRole("searchbox"), "hub");
+      expect(asked.every(([search]) => search !== "h" && search !== "hu")).toBe(true);
+      await waitFor(() => expect(asked.at(-1)?.[0]).toBe("hub"));
+    });
+
+    it("says it is searching rather than that nothing matches, until the server has answered", async () => {
+      // "Nothing matches" for the half-second before the server names an
+      // application the loaded tiles happen not to contain is a wrong answer.
+      isPlaceholderData = true;
+      const { rerender } = render(<Searchable />);
+      await userEvent.type(screen.getByRole("searchbox"), "zzz");
+      await waitFor(() => expect(asked.at(-1)?.[0]).toBe("zzz"));
+
+      expect(screen.queryByText(/Nothing in the catalogue matches/)).not.toBeInTheDocument();
+      expect(screen.getAllByText("Searching…").length).toBeGreaterThan(0);
+
+      // The answer arrives, and it is empty.
+      isPlaceholderData = false;
+      withToolkits();
+      rerender(<Searchable />);
+      expect(screen.getByText(/Nothing in the catalogue matches “zzz”/)).toBeInTheDocument();
+    });
+
+    it("shows the server's answer as it came once it has arrived, and counts it", async () => {
+      // The narrowing is a stand-in for the answer, not a second filter over
+      // it: Composio may match an application on more than its name. The mock
+      // answers every term with both tiles, so both come back.
+      render(<Searchable />);
+      await userEvent.type(screen.getByRole("searchbox"), "gmail");
+      await waitFor(() => expect(screen.getByText("2 found")).toBeInTheDocument());
+      expect(screen.getByRole("button", { name: /Linear/ })).toBeInTheDocument();
+    });
+
+    it("clears on Escape, and with the × button", async () => {
+      render(<Searchable />);
+      const field = screen.getByRole("searchbox");
+      await userEvent.type(field, "lin");
+      await userEvent.keyboard("{Escape}");
+      expect(field).toHaveValue("");
+      expect(screen.getByRole("button", { name: /Gmail/ })).toBeInTheDocument();
+
+      await userEvent.type(field, "lin");
+      await userEvent.click(screen.getByRole("button", { name: "Clear the search" }));
+      expect(field).toHaveValue("");
+      expect(field).toHaveFocus();
+    });
+
+    it("is focused by / from anywhere, but not while somebody is typing elsewhere", async () => {
+      render(<Searchable />);
+      const field = screen.getByRole("searchbox");
+
+      await userEvent.keyboard("/");
+      expect(field).toHaveFocus();
+      // The slash was the shortcut, not a character.
+      expect(field).toHaveValue("");
+
+      await userEvent.click(screen.getByRole("textbox", { name: "Elsewhere" }));
+      await userEvent.keyboard("/");
+      expect(screen.getByRole("textbox", { name: "Elsewhere" })).toHaveValue("/");
+      expect(field).not.toHaveFocus();
+    });
+
+    it("is not drawn without somewhere to put what is typed", async () => {
+      render(<AppCatalogue connected={new Set()} query="" />);
+      expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    });
   });
 });

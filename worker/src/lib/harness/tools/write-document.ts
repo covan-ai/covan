@@ -48,8 +48,10 @@ export const writeDocumentTool: AgentTool = {
     "is being written and will appear in the conversation. A separate writer plans and writes " +
     "it section by section, and reads this whole conversation and the team's documents " +
     "itself — so `instruction` is a short brief, not the document: never put the content, " +
-    "the outline or the text into it. If the documents listed for this conversation already " +
-    "include the one being asked about, do not call this again; point the person to its card.",
+    "the outline or the text into it. To change a document that already exists — fix, update, " +
+    "extend or reword it, including one written here — use edit_document instead of writing it " +
+    "again. If the documents listed for this conversation already include the one being asked " +
+    "about, do not call this again; point the person to its card.",
   input: {
     type: "object",
     properties: {

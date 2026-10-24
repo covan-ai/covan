@@ -36,6 +36,8 @@ import type { AgentTool } from "./harness/registry";
 /** The parts of the system prefix a deployment may reword. See `buildSystemPrefix`. */
 export const PROMPT_PARTS = [
   "default_persona",
+  // What Covan is (`ABOUT_COVAN`), in the chat modes.
+  "about_covan",
   "capabilities",
   "concision",
   "brainstorm",

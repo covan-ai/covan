@@ -17,7 +17,9 @@ import { runRoutineTool } from "./tools/run-routine";
 import { findToolTool } from "./tools/find-tool";
 import { runToolTool } from "./tools/run-tool";
 import { writeDocumentTool } from "./tools/write-document";
+import { editDocumentTool, listDocumentsTool, readDocumentTool } from "./tools/documents";
 import { askPersonTool } from "./tools/ask-person";
+import { covanGuideTool } from "./tools/covan-guide";
 
 /**
  * Every tool an agent can be given, in one list.
@@ -436,6 +438,8 @@ export type AgentTool = {
 /** Every tool, configured or not, in the order the interface lists them. */
 export const TOOLS: AgentTool[] = [
   searchDocumentsTool,
+  listDocumentsTool,
+  readDocumentTool,
   describeConnectionTool,
   queryDatabaseTool,
   httpRequestTool,
@@ -447,7 +451,9 @@ export const TOOLS: AgentTool[] = [
   watchEventTool,
   runRoutineTool,
   writeDocumentTool,
+  editDocumentTool,
   askPersonTool,
+  covanGuideTool,
 ];
 
 export function toolByName(name: string): AgentTool | null {

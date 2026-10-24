@@ -1,13 +1,15 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Blocks } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Blocks, Search, X } from "lucide-react";
 
 import { Trans, useTranslation } from "@/i18n";
+import { useLocale } from "@/i18n/provider";
 import { assetSrc } from "@/lib/api-client";
 import { mightConnectToolkit, type ComposioToolkit } from "@/lib/connections-api";
 import { useComposioCategories, useComposioToolkits } from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
 import { AppDetailDialog } from "@/components/integrations/app-detail-dialog";
 import { Chip } from "@/components/chip";
+import { Kbd } from "@/components/kbd";
 import { Pills } from "@/components/pills";
 import { Button } from "@/components/ui/button";
 import { IntegrationCard } from "./integration-row";
@@ -45,9 +47,21 @@ function useDebounced<T>(value: T, ms: number): T {
   return settled;
 }
 
+/**
+ * True when a key press belongs to whatever is being typed into, so "/" is a
+ * character there and not a shortcut.
+ */
+function typingInto(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
 export function AppCatalogue({
   connected,
   query,
+  onQueryChange,
   leading,
 }: {
   /** Slugs already connected here. They are not offered a second time. */
@@ -55,20 +69,44 @@ export function AppCatalogue({
   /** The page's search, as typed; debounced here before it reaches Composio. */
   query: string;
   /**
+   * Given, the catalogue carries its own search field, pinned under the top
+   * bar while the grid scrolls past. It is the page's search, not a second
+   * one: the page holds the state, so the connected list above narrows too.
+   */
+  onQueryChange?: (query: string) => void;
+  /**
    * The cards that are not Composio's — the sources, Slack, Databases and
    * APIs, the API — first in the grid, filtered by the page.
    */
   leading?: ReactNode;
 }) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const [category, setCategory] = useState("");
-  const search = useDebounced(query.trim(), DEBOUNCE_MS);
+  const typed = query.trim();
+  const search = useDebounced(typed, DEBOUNCE_MS);
 
   const catalogue = useComposioToolkits(search, category, true);
   const configured = catalogue.data?.pages[0]?.configured !== false;
   const categories = useComposioCategories(configured);
 
   const [reading, setReading] = useState<ComposioToolkit | null>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const searchable = Boolean(onQueryChange) && configured;
+
+  // "/" from anywhere on the page, the way most catalogues answer it — unless
+  // somebody is typing, where it is a character, or a dialog is open over us.
+  useEffect(() => {
+    if (!searchable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (typingInto(e.target) || document.querySelector("[role=dialog]")) return;
+      e.preventDefault();
+      field.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [searchable]);
 
   if (!configured) {
     return (
@@ -94,7 +132,21 @@ export function AppCatalogue({
     );
   }
 
-  const found = (catalogue.data?.pages ?? []).flatMap((page) => page.toolkits);
+  // The server's answer for what is typed now has not arrived: either the
+  // debounce is still running, or the request is out and the grid is showing
+  // the previous answer in its place.
+  const settling = typed !== search || catalogue.isPlaceholderData;
+  const needle = typed.toLocaleLowerCase(locale);
+  // Meanwhile the tiles already here are narrowed on every keystroke, so the
+  // grid answers at typing speed and the server only adds what it alone knows.
+  const narrowed = (toolkit: ComposioToolkit) =>
+    !settling ||
+    !needle ||
+    [toolkit.name, toolkit.slug, toolkit.description].some((text) =>
+      text?.toLocaleLowerCase(locale).includes(needle),
+    );
+
+  const found = (catalogue.data?.pages ?? []).flatMap((page) => page.toolkits).filter(narrowed);
   const seen = new Set<string>();
   const toolkits = found.filter(
     (toolkit) => !connected.has(toolkit.slug) && !seen.has(toolkit.slug) && seen.add(toolkit.slug),
@@ -103,6 +155,58 @@ export function AppCatalogue({
 
   return (
     <div className="flex flex-col gap-4">
+      {searchable ? (
+        // Pinned under the top bar (56px on a phone, 48 from lg) for as long
+        // as the catalogue is on screen: the page's header search is a long
+        // way up by the time anybody is scrolling tiles.
+        <div className="sticky top-14 z-10 -my-2 bg-background py-2 lg:top-12">
+          <div className="flex h-8 w-full items-center gap-2 rounded-md border border-input bg-card px-2.5 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ring">
+            <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <input
+              ref={field}
+              type="search"
+              aria-label={t("Search the catalogue")}
+              placeholder={t("Search about 1,500 apps…")}
+              value={query}
+              onChange={(e) => onQueryChange?.(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Escape") return;
+                e.preventDefault();
+                if (query) onQueryChange?.("");
+                else e.currentTarget.blur();
+              }}
+              className="min-w-0 flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+            />
+            {typed && settling ? (
+              <span role="status" className="shrink-0 text-meta text-muted-foreground">
+                {t("Searching…")}
+              </span>
+            ) : typed ? (
+              <span className="shrink-0 text-meta text-muted-foreground">
+                {catalogue.hasNextPage
+                  ? t("{{total}}+ found", { total: toolkits.length })
+                  : t("{{total}} found", { total: toolkits.length })}
+              </span>
+            ) : (
+              <Kbd className="hidden shrink-0 lg:inline-flex">/</Kbd>
+            )}
+            {query ? (
+              <button
+                type="button"
+                aria-label={t("Clear the search")}
+                onClick={() => {
+                  onQueryChange?.("");
+                  field.current?.focus();
+                }}
+                className="-mr-1 grid size-6 shrink-0 place-items-center rounded-sm text-muted-foreground hover:bg-surface hover:text-foreground"
+              >
+                <X className="size-3.5" aria-hidden />
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {categories.data?.categories.length ? (
         <Pills
           label={t("Categories")}
@@ -128,6 +232,10 @@ export function AppCatalogue({
         <p className="text-sm text-muted-foreground">
           {t("The catalogue could not be read just now. Try again in a moment.")}
         </p>
+      ) : toolkits.length === 0 && settling ? (
+        // An empty narrowing is not an answer yet: the server may know an
+        // application whose name the loaded tiles do not contain.
+        <p className="text-sm text-muted-foreground">{t("Searching…")}</p>
       ) : toolkits.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {emptyBecauseConnected

@@ -2001,6 +2001,11 @@ function joinHalves(before: string, addition: string): string {
   return `${before}\n\n${addition}`;
 }
 
+/** Whether more than the asker reads this conversation (a missing session is private). */
+function isShared(session: { visibility?: unknown } | null | undefined): boolean {
+  return session?.visibility === "shared";
+}
+
 /**
  * Whose knowledge a conversation's replies may stand on (0106).
  *
@@ -2010,10 +2015,6 @@ function joinHalves(before: string, addition: string): string {
  * the room. A private conversation is the asker's alone, and their own client
  * already reads exactly what they may.
  */
-function isShared(session: { visibility?: unknown } | null | undefined): boolean {
-  return session?.visibility === "shared";
-}
-
 function knowledgeScopeFor(session: { visibility?: unknown } | null | undefined): KnowledgeScope {
   return isShared(session) ? { sharedOnly: true } : {};
 }

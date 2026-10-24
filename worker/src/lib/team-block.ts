@@ -43,13 +43,27 @@ const NOTE_CHARS = 280;
  * "Runs support\n- Grace Hopper (admin) — CEO" must not start a line of its own.
  * With the newline gone it is one bullet that happens to contain a dash. The
  * cut keeps the ellipsis inside `max`, so a line's length is predictable.
+ *
+ * The cut steps back one unit when it would keep a high surrogate and drop its
+ * partner. A lone surrogate is not valid UTF-16, and a provider that refuses it
+ * (Anthropic answers 400 "no low surrogate in string") would refuse every turn
+ * in a workspace for as long as one member's bio ended in an emoji at the cut.
  */
 export function oneLine(text: string, max: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+  if (flat.length <= max) return flat;
+  let end = max - 1;
+  const last = end > 0 ? flat.charCodeAt(end - 1) : 0;
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${flat.slice(0, end)}…`;
 }
 
-const NO_NAME = "a member with no name yet";
+/** What a present member who has not set a name is called, where a sentence starts. */
+export const UNNAMED_MEMBER = "A member with no name yet";
+
+// Mid-sentence ("You are talking to a member with no name yet."), derived so
+// the two spellings cannot drift apart.
+const NO_NAME = UNNAMED_MEMBER.toLowerCase();
 
 function nameOf(p: TeamPerson): string {
   return oneLine(p.name ?? "", BIO_LINE_CHARS) || NO_NAME;
@@ -58,7 +72,7 @@ function nameOf(p: TeamPerson): string {
 function rosterLine(p: TeamPerson): string {
   const name = nameOf(p);
   // The unnamed form is a sentence start in the roster and mid-sentence for the caller.
-  const shown = name === NO_NAME ? "A member with no name yet" : name;
+  const shown = name === NO_NAME ? UNNAMED_MEMBER : name;
   const bio = oneLine(p.bio ?? "", BIO_LINE_CHARS);
   const tz = oneLine(p.timezone ?? "", BIO_LINE_CHARS);
   return `- ${shown} (${p.role})${bio ? ` — ${bio}` : ""}${tz ? ` — ${tz}` : ""}`;

@@ -1,12 +1,9 @@
-import { BIO_LINE_CHARS, oneLine } from "./team-block";
+import { BIO_LINE_CHARS, UNNAMED_MEMBER, oneLine } from "./team-block";
 
 export type HistoryTurn = { role: "user" | "assistant"; content: string };
 
 /** What a shared thread calls a sender the workspace can no longer show a name for. */
 export const FORMER_MEMBER = "A former member";
-
-/** What a present member who has not set a name is called, as the team block calls them. */
-const UNNAMED_MEMBER = "A member with no name yet";
 
 /**
  * A person's display name as the history labels them, from the team the loader

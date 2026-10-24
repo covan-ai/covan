@@ -324,4 +324,13 @@ describe("oneLine", () => {
     expect(oneLine("abcdefghij", 5)).toBe("abcd…");
     expect(oneLine("abcde", 5)).toBe("abcde");
   });
+
+  it("does not cut between the two halves of a surrogate pair", () => {
+    // Index 158 is the emoji's high surrogate, so a cut at 160 units used to
+    // keep it and drop its partner: a string no JSON encoder can send whole.
+    const cut = oneLine(`${"a".repeat(158)}😀${"b".repeat(10)}`, BIO_LINE_CHARS);
+    expect(cut.isWellFormed()).toBe(true);
+    expect(cut.length).toBeLessThanOrEqual(BIO_LINE_CHARS);
+    expect(cut.endsWith("…")).toBe(true);
+  });
 });

@@ -531,6 +531,15 @@ function appWith(spec: {
           error: null,
         }),
       },
+      // Read only to narrow a shared conversation to shared bundles, which the
+      // one attached here is.
+      knowledge_bundles: {
+        select: () => ({
+          data:
+            documents.length > 0 ? [{ id: "bundle-1", scope: "workspace", created_by: null }] : [],
+          error: null,
+        }),
+      },
       documents: {
         select: (ctx: QueryContext) => ({
           data: ctx.columns?.includes("content")
@@ -1251,6 +1260,10 @@ describe("the people the agent works with", () => {
     await ask(app);
     // The embedded text is built from the unattributed turns.
     const embedded = JSON.stringify(embedTexts.mock.calls);
+    // Retrieval did run, and on the words themselves: without this the two
+    // negatives below hold just as well when nothing was embedded at all.
+    expect(embedTexts).toHaveBeenCalled();
+    expect(embedded).toContain("vacation policy");
     expect(embedded).not.toContain("Grace Hopper:");
     expect(embedded).not.toContain("Ada Lovelace:");
   });

@@ -1176,7 +1176,11 @@ describe("the people the agent works with", () => {
       visibility: "shared",
     });
     await ask(shared.app);
-    expect(sentMessages().slice(1).map((m) => m.content)).toEqual([
+    expect(
+      sentMessages()
+        .slice(1)
+        .map((m) => m.content),
+    ).toEqual([
       "Ada Lovelace: Draft the launch note.",
       "Here is a draft.",
       "Grace Hopper: Make it shorter.",
@@ -1193,7 +1197,11 @@ describe("the people the agent works with", () => {
       visibility: "private",
     });
     await ask(priv.app);
-    expect(sentMessages().slice(1).map((m) => m.content)).toEqual([
+    expect(
+      sentMessages()
+        .slice(1)
+        .map((m) => m.content),
+    ).toEqual([
       "Draft the launch note.",
       "Here is a draft.",
       "Make it shorter.",
@@ -1223,10 +1231,11 @@ describe("the people the agent works with", () => {
       visibility: "shared",
     });
     await ask(app);
-    expect(sentMessages().slice(1).map((m) => m.content)).toEqual([
-      "I think we ship.",
-      "Where did we land?",
-    ]);
+    expect(
+      sentMessages()
+        .slice(1)
+        .map((m) => m.content),
+    ).toEqual(["I think we ship.", "Where did we land?"]);
   });
 
   it("retrieves on what was said, not on who said it", async () => {

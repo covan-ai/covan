@@ -1,11 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  attributeSenders,
-  capContent,
-  FORMER_MEMBER,
-  selectHistory,
-  senderNames,
-} from "./history";
+import { attributeSenders, capContent, FORMER_MEMBER, selectHistory, senderNames } from "./history";
 
 const size = (turns: { content: string }[]) => turns.reduce((n, t) => n + t.content.length, 0);
 
@@ -194,11 +188,11 @@ describe("attributeSenders", () => {
     [ADA, "Ada"],
     [GRACE, "Grace"],
   ]);
-  const row = (
-    role: "user" | "assistant",
-    content: string,
-    sender_id: string | null = null,
-  ) => ({ role, content, sender_id });
+  const row = (role: "user" | "assistant", content: string, sender_id: string | null = null) => ({
+    role,
+    content,
+    sender_id,
+  });
 
   it("leaves a private thread's history byte-identical", () => {
     const rows = [row("user", "hi", ADA), row("assistant", "hello"), row("user", "and?", GRACE)];

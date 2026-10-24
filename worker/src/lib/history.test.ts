@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { capContent, selectHistory } from "./history";
+import {
+  attributeSenders,
+  capContent,
+  FORMER_MEMBER,
+  selectHistory,
+  senderNames,
+} from "./history";
 
 const size = (turns: { content: string }[]) => turns.reduce((n, t) => n + t.content.length, 0);
 
@@ -178,5 +184,74 @@ describe("capContent", () => {
         before(rows, maxChars),
       );
     }
+  });
+});
+
+describe("attributeSenders", () => {
+  const ADA = "00000000-0000-4000-8000-00000000ada0";
+  const GRACE = "00000000-0000-4000-8000-0000000g0ace";
+  const names = new Map([
+    [ADA, "Ada"],
+    [GRACE, "Grace"],
+  ]);
+  const row = (
+    role: "user" | "assistant",
+    content: string,
+    sender_id: string | null = null,
+  ) => ({ role, content, sender_id });
+
+  it("leaves a private thread's history byte-identical", () => {
+    const rows = [row("user", "hi", ADA), row("assistant", "hello"), row("user", "and?", GRACE)];
+    const out = attributeSenders(rows, names, false);
+    expect(JSON.stringify(out)).toBe(
+      JSON.stringify([
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "hello" },
+        { role: "user", content: "and?" },
+      ]),
+    );
+  });
+
+  it("prefixes each person's turns with their name in a shared thread", () => {
+    const out = attributeSenders(
+      [row("user", "hi", ADA), row("assistant", "hello"), row("user", "and?", GRACE)],
+      names,
+      true,
+    );
+    expect(out).toEqual([
+      { role: "user", content: "Ada: hi" },
+      { role: "assistant", content: "hello" },
+      { role: "user", content: "Grace: and?" },
+    ]);
+  });
+
+  it('names a sender whose profile is gone "A former member"', () => {
+    const out = attributeSenders([row("user", "bye", "someone-who-left")], names, true);
+    expect(FORMER_MEMBER).toBe("A former member");
+    expect(out).toEqual([{ role: "user", content: "A former member: bye" }]);
+  });
+
+  it("leaves a user turn with no sender untouched, as the ones written before 0008 are", () => {
+    const out = attributeSenders([row("user", "old", null)], names, true);
+    expect(out).toEqual([{ role: "user", content: "old" }]);
+  });
+
+  it("never prefixes an assistant turn, even one that carries a sender", () => {
+    const out = attributeSenders([row("assistant", "hello", ADA)], names, true);
+    expect(out).toEqual([{ role: "assistant", content: "hello" }]);
+  });
+});
+
+describe("senderNames", () => {
+  it("names a person as the team block does, on one line", () => {
+    const names = senderNames([
+      { id: "a", name: "Ada\nLovelace" },
+      { id: "b", name: "   " },
+      { id: "c", name: null },
+    ]);
+    expect(names.get("a")).toBe("Ada Lovelace");
+    expect(names.get("b")).toBe("A member with no name yet");
+    expect(names.get("c")).toBe("A member with no name yet");
+    expect(names.has("d")).toBe(false);
   });
 });

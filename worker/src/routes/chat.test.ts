@@ -163,6 +163,25 @@ const ASKS_FIRST: AgentTool = {
   }),
 };
 
+/**
+ * The `ToolContext` each turn handed the loop, in order.
+ *
+ * Nothing the model is shown says whether the thread is shared, so the only way
+ * to see what the route told the tools is to read what it built. Wraps the real
+ * loop rather than replacing it: every other test here still runs a turn.
+ */
+const loopContexts: ToolContext[] = [];
+vi.mock("../lib/harness/loop", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/harness/loop")>();
+  return {
+    ...actual,
+    runAgentTurn: (opts: Parameters<typeof actual.runAgentTurn>[0]) => {
+      loopContexts.push(opts.ctx);
+      return actual.runAgentTurn(opts);
+    },
+  };
+});
+
 vi.mock("../lib/supabase", () => ({
   serviceClient: () => ({
     from: (table: string) => {
@@ -341,7 +360,20 @@ type Match = {
 
 function appWith(spec: {
   question: string;
-  history?: Array<{ role: string; content: string }>;
+  history?: Array<{ role: string; content: string; sender_id?: string | null }>;
+  /** Who typed `question`. Undefined leaves `sender_id` off the row. */
+  questionSender?: string | null;
+  /** The session's `visibility`. Undefined leaves the column absent, as the other tests have it. */
+  visibility?: "shared" | "private";
+  /**
+   * The workspace and its people, as the team block reads them. Undefined is a
+   * workspace the read finds no name for, so no block is built and every other
+   * test in this file is about what it says it is about.
+   */
+  team?: {
+    name: string;
+    members: Array<{ id: string; name: string | null; role?: string }>;
+  };
   documents?: Doc[];
   matches?: Match[];
   /** The name the session already has. Null — the default — is a new chat. */
@@ -394,12 +426,21 @@ function appWith(spec: {
   const documents = spec.documents ?? [];
   const rows = [
     ...(spec.history ?? []),
-    ...(spec.kickoff ? [] : [{ role: "user", content: spec.question }]),
+    ...(spec.kickoff
+      ? []
+      : [
+          {
+            role: "user",
+            content: spec.question,
+            ...(spec.questionSender !== undefined ? { sender_id: spec.questionSender } : {}),
+          },
+        ]),
     ...(spec.cutOffReply ? [{ role: "assistant", content: spec.cutOffReply }] : []),
   ].map((m, i) => ({
     id: `m${i}`,
     role: m.role,
     content: m.content,
+    ...("sender_id" in m ? { sender_id: m.sender_id } : {}),
     created_at: `2026-09-0${i + 1}T10:00:00Z`,
     // What the first half of a cut-off reply cost, so a continuation can be
     // checked for adding to it rather than overwriting it.
@@ -440,6 +481,7 @@ function appWith(spec: {
             user_id: spec.sessionOwner ?? USER.id,
             title: spec.sessionTitle ?? null,
             ...(spec.sessionDial ?? {}),
+            ...(spec.visibility ? { visibility: spec.visibility } : {}),
           },
           error: null,
         }),
@@ -449,9 +491,35 @@ function appWith(spec: {
       // run's row and the person's name. Absent in every test but those.
       user_onboarding: { select: () => ({ data: spec.onboarding ?? null, error: null }) },
       profiles: {
+        // One person's name (the opening) or the people the team block lists.
+        select: (ctx: QueryContext) =>
+          ctx.single
+            ? {
+                data:
+                  spec.profileName === undefined
+                    ? { name: "Ada Lovelace" }
+                    : { name: spec.profileName },
+                error: null,
+              }
+            : {
+                data: (spec.team?.members ?? []).map((m) => ({
+                  id: m.id,
+                  name: m.name,
+                  bio: null,
+                  timezone: null,
+                })),
+                error: null,
+              },
+      },
+      workspaces: {
+        select: () => ({ data: spec.team ? { name: spec.team.name } : null, error: null }),
+      },
+      workspace_members: {
         select: () => ({
-          data:
-            spec.profileName === undefined ? { name: "Ada Lovelace" } : { name: spec.profileName },
+          data: (spec.team?.members ?? []).map((m) => ({
+            user_id: m.id,
+            role: m.role ?? "member",
+          })),
           error: null,
         }),
       },
@@ -591,6 +659,7 @@ beforeEach(() => {
   claimWins = true;
   approvedTool = null;
   createOpenAIKeys.length = 0;
+  loopContexts.length = 0;
   embedTexts.mockResolvedValue({ vectors: [[0.1, 0.2]], tokens: 8 });
   answersWith(streamOf("Twenty days."));
 });
@@ -1058,6 +1127,133 @@ describe("the assembled prompt", () => {
     const { app } = appWith({ question: "hello", documents: [HANDBOOK], matches: [] });
     await ask(app);
     expect(sentMessages()[0].content).toContain("handbook.md");
+  });
+});
+
+describe("the people the agent works with", () => {
+  const ADA = "user-1";
+  const GRACE = "user-2";
+  const TEAM = {
+    name: "Acme",
+    members: [
+      { id: ADA, name: "Ada Lovelace", role: "admin" },
+      { id: GRACE, name: "Grace Hopper" },
+    ],
+  };
+
+  it("sends the team block in the system prefix", async () => {
+    const { app } = appWith({ question: "Who is on the team?", team: TEAM });
+    await ask(app);
+    const prefix = sentMessages()[0].content as string;
+    expect(sentMessages()[0].role).toBe("system");
+    expect(prefix).toContain("The team:");
+    expect(prefix).toContain("You are talking to Ada Lovelace");
+    expect(prefix).toContain("Grace Hopper");
+    // The same block is what the stored lengths count.
+    expect(storedParts()?.team_chars as number).toBeGreaterThan(0);
+  });
+
+  it("builds no block, and says nothing of it, when the workspace cannot be read", async () => {
+    const { app } = appWith({ question: "Hello" });
+    await ask(app);
+    expect(sentMessages()[0].content).not.toContain("The team:");
+    expect(storedParts()?.team_chars).toBe(0);
+  });
+
+  it("attributes turns only in a shared session", async () => {
+    const history = [
+      { role: "user", content: "Draft the launch note.", sender_id: ADA },
+      { role: "assistant", content: "Here is a draft." },
+      { role: "user", content: "Make it shorter.", sender_id: GRACE },
+      { role: "user", content: "From before senders were recorded.", sender_id: null },
+    ];
+
+    const shared = appWith({
+      question: "And a subject line?",
+      questionSender: ADA,
+      history,
+      team: TEAM,
+      visibility: "shared",
+    });
+    await ask(shared.app);
+    expect(sentMessages().slice(1).map((m) => m.content)).toEqual([
+      "Ada Lovelace: Draft the launch note.",
+      "Here is a draft.",
+      "Grace Hopper: Make it shorter.",
+      "From before senders were recorded.",
+      "Ada Lovelace: And a subject line?",
+    ]);
+
+    completionCreate.mockClear();
+    const priv = appWith({
+      question: "And a subject line?",
+      questionSender: ADA,
+      history,
+      team: TEAM,
+      visibility: "private",
+    });
+    await ask(priv.app);
+    expect(sentMessages().slice(1).map((m) => m.content)).toEqual([
+      "Draft the launch note.",
+      "Here is a draft.",
+      "Make it shorter.",
+      "From before senders were recorded.",
+      "And a subject line?",
+    ]);
+  });
+
+  it("calls a sender who has left the workspace a former member", async () => {
+    const { app } = appWith({
+      question: "Where did we land?",
+      questionSender: ADA,
+      history: [{ role: "user", content: "I think we ship.", sender_id: "user-gone" }],
+      team: TEAM,
+      visibility: "shared",
+    });
+    await ask(app);
+    expect(sentMessages()[1].content).toBe("A former member: I think we ship.");
+  });
+
+  it("leaves a shared thread unattributed when the team could not be read", async () => {
+    // Better every turn unlabelled than every sender called a former member.
+    const { app } = appWith({
+      question: "Where did we land?",
+      questionSender: ADA,
+      history: [{ role: "user", content: "I think we ship.", sender_id: GRACE }],
+      visibility: "shared",
+    });
+    await ask(app);
+    expect(sentMessages().slice(1).map((m) => m.content)).toEqual([
+      "I think we ship.",
+      "Where did we land?",
+    ]);
+  });
+
+  it("retrieves on what was said, not on who said it", async () => {
+    const { app } = appWith({
+      question: "And the second one?",
+      questionSender: ADA,
+      history: [{ role: "user", content: "What is our vacation policy?", sender_id: GRACE }],
+      team: TEAM,
+      visibility: "shared",
+      documents: [HANDBOOK],
+      matches: [],
+    });
+    await ask(app);
+    // The embedded text is built from the unattributed turns.
+    const embedded = JSON.stringify(embedTexts.mock.calls);
+    expect(embedded).not.toContain("Grace Hopper:");
+    expect(embedded).not.toContain("Ada Lovelace:");
+  });
+
+  it("gives tools whether the session is shared", async () => {
+    const shared = appWith({ question: "Hello", team: TEAM, visibility: "shared" });
+    await ask(shared.app);
+    expect(loopContexts.at(-1)?.sessionShared).toBe(true);
+
+    const priv = appWith({ question: "Hello", team: TEAM, visibility: "private" });
+    await ask(priv.app);
+    expect(loopContexts.at(-1)?.sessionShared).toBe(false);
   });
 });
 
@@ -2203,6 +2399,29 @@ describe("POST /chat/confirm/:id", () => {
 
     expect(serviceInsert.mock.calls.at(-1)?.[0].outcome).toBe("paused");
     expect(serviceUpdate.mock.calls.at(-1)?.[0]).toMatchObject({ outcome: "cut_short" });
+  });
+
+  it("tells the approved call whether the session is shared, as the question did", async () => {
+    parked = PARKED;
+    let seen: ToolContext | null = null;
+    approvedTool = {
+      name: "schedule_job",
+      description: "Schedules.",
+      input: { type: "object", properties: {}, additionalProperties: false },
+      destructive: true,
+      isConfigured: () => true,
+      run: async (_input: unknown, ctx: ToolContext) => {
+        seen = ctx;
+        return { kind: "ok", content: "scheduled" };
+      },
+    };
+    const { app } = appWith({ question: "every monday", visibility: "shared" });
+    answersWith(streamOf("Done."));
+
+    await (await confirm(app, true)).text();
+
+    expect((seen as ToolContext | null)?.sessionShared).toBe(true);
+    expect(loopContexts.at(-1)?.sessionShared).toBe(true);
   });
 
   it("tells the model the person declined, in the tool's own answer", async () => {

@@ -3,6 +3,7 @@ import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import type { BrowserResult } from "../../browser/client";
 import type { BrowserSessionRef } from "../../browser/sessions";
 import type { CreditSnapshot } from "../../entitlements";
+import { RUNAWAY_COST_CAP_USD } from "../../browser/ceiling";
 import { DEFAULT_MODEL, DEFAULT_REASONING, V4_BASE } from "../../browser/v4";
 import { OUTCOME_SCHEMA } from "../../browser/outcome";
 
@@ -519,10 +520,11 @@ describe("once approved", () => {
     expect(task.indexOf("login_required")).toBeLessThan(task.indexOf(TASK));
   });
 
-  it("puts no ceiling on a paid run, and names the model rather than taking the provider's", async () => {
+  it("bounds an unmetered run only against a runaway, and names the model rather than taking the provider's", async () => {
     await browseTool.run({ task: TASK }, ctx());
-    // A run at a ceiling ends with no answer; a paid run is charged what it cost instead.
-    expect("maxCostUsd" in sentRun()).toBe(false);
+    // Nothing is metered here, so the only bound is the runaway one, and the
+    // run is not told to hurry.
+    expect(sentRun().maxCostUsd).toBe(RUNAWAY_COST_CAP_USD);
     expect(String(sentRun().task)).not.toContain("Your budget is small");
     expect(sentRun().model).toBe(DEFAULT_MODEL);
   });
@@ -1454,8 +1456,8 @@ describe("a saved login (Task 2.3)", () => {
       for (const binding of body.secretBindings as { allowedDomains: string[] }[]) {
         expect(binding.allowedDomains).toEqual(["linkedin.com"]);
       }
-      // Still one run, still uncapped, still metered once.
-      expect("maxCostUsd" in body).toBe(false);
+      // Still one run, still bounded only against a runaway, still metered once.
+      expect(body.maxCostUsd).toBe(RUNAWAY_COST_CAP_USD);
       expect(spend).toHaveBeenCalledTimes(1);
       expect(spend.mock.calls[0][1]).toEqual([
         expect.objectContaining({ kind: "browser_task", stage: "started" }),

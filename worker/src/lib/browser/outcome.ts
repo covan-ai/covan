@@ -1,3 +1,4 @@
+import { TIGHT_CEILING_USD } from "./ceiling";
 import type { CredentialBinding } from "./credentials";
 import {
   DEFAULT_MODEL,
@@ -88,7 +89,8 @@ export function bareHost(value: string | null): string | null {
  * Words the model never writes, put in front of the one sentence it did.
  *
  * The first sentence is the plan's, verbatim. The budget sentence goes only
- * to a run that has a `maxCostUsd` — today the free retry alone — told to the
+ * to a run whose `maxCostUsd` is tight — the free retry, and a paid run on a
+ * workspace's last credits (`TIGHT_CEILING_USD`) — told to the
  * one thing that can act on it: a run stopped at the ceiling answers "Could
  * not produce output matching outputSchema" and nothing else, so every page
  * it read is paid for and, but for the notes `salvage.ts` reads back from its
@@ -118,10 +120,10 @@ const ANSWER_SENTENCES =
   "quoting what it showed; and what you found or did in `answer`: " +
   JSON.stringify(OUTCOME_SCHEMA);
 
-/** The preamble of a run with no ceiling: every paid run. */
+/** The preamble of a run with room to finish. */
 export const RUN_PREAMBLE = SIGN_IN_SENTENCE + ANSWER_SENTENCES;
 
-/** The preamble of a run with a `maxCostUsd`: the free retry. */
+/** The preamble of a run on a tight `maxCostUsd`. */
 export const CAPPED_RUN_PREAMBLE = SIGN_IN_SENTENCE + BUDGET_SENTENCE + ANSWER_SENTENCES;
 
 /** The task text a run is created with: the preamble, then the person's sentence untouched. */
@@ -254,9 +256,15 @@ export function conversationRun(
     login?: Pick<CredentialBinding, "siteHost" | "aliases" | "bindings"> | null;
     /** The free retry after a hand-back: capped at `RETRY_COST_CAP_USD`, not the run's. */
     freeRetry?: boolean;
+    /** A paid run's ceiling, from `paidRunCeiling`. Absent, the run has none. */
+    maxCostUsd?: number;
   },
 ): CreateRunInput {
   const login = input.login?.bindings.length ? input.login : null;
+  const maxCostUsd = input.freeRetry ? RETRY_COST_CAP_USD : input.maxCostUsd;
+  // Told its budget is small only when it is: a run on a generous ceiling
+  // that stops early to save money is an answer cut short for nothing.
+  const capped = maxCostUsd !== undefined && maxCostUsd < TIGHT_CEILING_USD;
   // `||`, as `v4BaseOf`: `docker-compose.yml` hands an unset variable over
   // as an empty string, and an empty model is a 422.
   const model = env.BROWSER_USE_MODEL || DEFAULT_MODEL;
@@ -267,8 +275,8 @@ export function conversationRun(
     // file header and ruling R8. A saved login's sentence goes between the
     // preamble and the person's sentence, which stays last and untouched.
     task: login
-      ? `${input.freeRetry ? CAPPED_RUN_PREAMBLE : RUN_PREAMBLE}\n\n${savedLoginSentence(login)}\n\nTask: ${input.task}`
-      : runTask(input.task, { capped: input.freeRetry }),
+      ? `${capped ? CAPPED_RUN_PREAMBLE : RUN_PREAMBLE}\n\n${savedLoginSentence(login)}\n\nTask: ${input.task}`
+      : runTask(input.task, { capped }),
     outputSchema: OUTCOME_SCHEMA,
     // Exactly the bindings `credentialsFor` built, with the `allowedDomains`
     // it took from the saved row (Review focus 4) — nothing here widens them.
@@ -301,9 +309,9 @@ export function conversationRun(
     // Omitted when the operator asked for the provider's default, or the
     // model's family has no word for the level; see `modelParamsFor`.
     ...(modelParams ? { modelParams } : {}),
-    // No ceiling on a paid run: it runs until it finishes and is charged what
-    // it cost (`settle.ts`). The free retry keeps one, because nobody pays
-    // for it but the operator; see `RETRY_COST_CAP_USD`.
-    ...(input.freeRetry ? { maxCostUsd: RETRY_COST_CAP_USD } : {}),
+    // A paid run's ceiling is what its workspace can pay for, or the runaway
+    // bound (`ceiling.ts`); the free retry's is `RETRY_COST_CAP_USD`, because
+    // nobody pays for it but the operator.
+    ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
   };
 }

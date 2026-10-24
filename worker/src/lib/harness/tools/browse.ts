@@ -751,6 +751,7 @@ export const browseTool: AgentTool = {
     const begun = await beginConversationRun(ctx.env, {
       userId: ctx.userId,
       agentId: ctx.agentId,
+      workspaceId: ctx.workspaceId,
       task,
       site,
       browser: session.value,

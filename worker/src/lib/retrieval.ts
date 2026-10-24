@@ -97,6 +97,17 @@ export type Retrieval = {
   grounding: "chunks" | "documents" | "none";
   /** Embedding tokens spent asking. The caller records them. */
   embeddingTokens: number;
+  /**
+   * Every passage the search returned, in its ranked order, before the char
+   * budget had a say. What the retrieval benchmark (`eval/retrieval/`) scores.
+   */
+  passages: RetrievedChunk[];
+  /**
+   * The search could not run: the embedding call or the query failed. The
+   * turn still goes ahead ungrounded, but an empty `passages` then means
+   * "broke", not "nothing matched".
+   */
+  failed: boolean;
 };
 
 /**
@@ -199,6 +210,8 @@ export async function retrieveForAgent(
   // Embedding the question costs tokens too. Carried to the end of the turn and
   // recorded with the completion's, so one reply means one counter write.
   let embeddingTokens = 0;
+  /** Whether the search itself failed, as against finding nothing. */
+  let failed = false;
   /** What the block may hold. Raised only for a document asked for by name. */
   let budget = RAG_BLOCK_CHARS;
 
@@ -279,6 +292,7 @@ export async function retrieveForAgent(
             })
           : await db.rpc("match_chunks", { ...shared, p_query_embedding: queryEmbedding });
         if (matchError) {
+          failed = true;
           console.error("match_chunks failed", matchError);
         } else if (matches && matches.length > 0) {
           const typed = matches as Array<{
@@ -301,6 +315,7 @@ export async function retrieveForAgent(
         }
       }
     } catch (e) {
+      failed = true;
       console.error("retrieval failed (continuing persona-only)", e);
     }
   }
@@ -449,6 +464,8 @@ export async function retrieveForAgent(
     sources: [...sources.values()],
     grounding,
     embeddingTokens,
+    passages: matched,
+    failed,
   };
 }
 

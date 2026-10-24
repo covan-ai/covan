@@ -539,7 +539,7 @@ async function nearestFromIndex(
  * With no scope, every attached bundle the client can see — the policies have
  * already decided for a person's own client.
  */
-async function readableBundles(
+export async function readableBundles(
   db: SupabaseClient,
   attached: string[],
   scope: KnowledgeScope,

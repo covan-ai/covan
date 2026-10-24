@@ -20,6 +20,17 @@ const bundles = [
   { id: "runbooks", name: "Runbooks", description: null, documentCount: 3, createdAt: 0 },
 ];
 
+// The agents list as the store last read it. Tests change it and rerender,
+// which is what the store's poll does while a document is being indexed.
+type LiveDoc = {
+  id: string;
+  indexed: boolean;
+  indexStatus: "queued" | "indexing" | "ready" | "partial" | "failed" | null;
+  indexProgress?: { done: number; total: number } | null;
+  indexError?: string | null;
+};
+let agents: { id: string; documents: LiveDoc[] }[] = [];
+
 vi.mock("@/lib/agents-store", () => ({
   useAgentsStore: () => ({
     ensureChatBundle,
@@ -27,6 +38,7 @@ vi.mock("@/lib/agents-store", () => ({
     removeDocument,
     moveDocument,
     bundles,
+    agents,
   }),
 }));
 
@@ -50,9 +62,26 @@ const indexedDoc = (name: string) => ({
   size: 5,
   chunkCount: 3,
   indexed: true,
+  indexStatus: "ready" as const,
 });
 
+// What the upload route actually answers since indexing became a job: stored,
+// listed, and not yet searchable.
+const queuedDoc = (name: string) => ({
+  id: `doc-${name}`,
+  name,
+  size: 5,
+  chunkCount: 0,
+  indexed: false,
+  indexStatus: "queued" as const,
+});
+
+const live = (docs: LiveDoc[]) => {
+  agents = [{ id: "agent-1", documents: docs }];
+};
+
 beforeEach(() => {
+  agents = [];
   ensureChatBundle.mockReset().mockResolvedValue({ id: "bundle-1" });
   uploadToBundle.mockReset();
   removeDocument.mockReset().mockResolvedValue(undefined);
@@ -105,19 +134,136 @@ describe("useChatUploads", () => {
     });
   });
 
-  it("says so when a document uploaded but embedded nothing", async () => {
-    uploadToBundle.mockResolvedValue({ ...indexedDoc("odd.md"), chunkCount: 0, indexed: false });
+  it("reads a fresh upload as indexing, not as unindexed, and warns of nothing yet", async () => {
+    uploadToBundle.mockResolvedValue(queuedDoc("notes.md"));
     const { result } = renderHook(() => useChatUploads(agent));
+
+    await act(async () => {
+      await result.current.addFiles([fileNamed("notes.md")]);
+    });
+
+    expect(result.current.receipts[0]).toMatchObject({
+      state: "done",
+      indexed: false,
+      indexStatus: "queued",
+    });
+    // Queued is not a failure. The warning this used to raise here was wrong
+    // for every upload, and the chip it left said "Not indexed" for good.
+    expect(warning).not.toHaveBeenCalled();
+  });
+
+  it("follows the indexing job through the store until the file is searchable", async () => {
+    uploadToBundle.mockResolvedValue(queuedDoc("notes.md"));
+    const { result, rerender } = renderHook(() => useChatUploads(agent));
+
+    await act(async () => {
+      await result.current.addFiles([fileNamed("notes.md")]);
+    });
+
+    live([
+      {
+        id: "doc-notes.md",
+        indexed: false,
+        indexStatus: "indexing",
+        indexProgress: { done: 1, total: 4 },
+      },
+    ]);
+    rerender();
+    expect(result.current.receipts[0]).toMatchObject({
+      indexStatus: "indexing",
+      indexProgress: { done: 1, total: 4 },
+      indexed: false,
+    });
+
+    live([{ id: "doc-notes.md", indexed: true, indexStatus: "ready" }]);
+    rerender();
+    expect(result.current.receipts[0]).toMatchObject({ indexStatus: "ready", indexed: true });
+    expect(warning).not.toHaveBeenCalled();
+  });
+
+  it("warns once when the indexing job fails, and keeps its error", async () => {
+    uploadToBundle.mockResolvedValue(queuedDoc("odd.md"));
+    const { result, rerender } = renderHook(() => useChatUploads(agent));
 
     await act(async () => {
       await result.current.addFiles([fileNamed("odd.md")]);
     });
+    live([
+      { id: "doc-odd.md", indexed: false, indexStatus: "failed", indexError: "no text in it" },
+    ]);
+    rerender();
+    rerender();
 
     // Retrieval cannot match a passage in it, so the reply will not be grounded
     // on it. Saying nothing here is how a file ends up trusted for an answer it
     // never contributed to.
+    expect(result.current.receipts[0]).toMatchObject({
+      indexed: false,
+      indexStatus: "failed",
+      indexError: "no text in it",
+    });
+    expect(warning).toHaveBeenCalledTimes(1);
     expect(warning).toHaveBeenCalledWith(expect.stringContaining("odd.md"));
-    expect(result.current.receipts[0].indexed).toBe(false);
+  });
+
+  it("holds a send until the file being indexed is searchable", async () => {
+    uploadToBundle.mockResolvedValue(queuedDoc("notes.md"));
+    const { result, rerender } = renderHook(() => useChatUploads(agent));
+
+    await act(async () => {
+      await result.current.addFiles([fileNamed("notes.md")]);
+    });
+
+    let done = false;
+    let wait!: Promise<void>;
+    act(() => {
+      wait = result.current.settled(5_000).then(() => {
+        done = true;
+      });
+    });
+    await waitFor(() => expect(result.current.waitingFor).toBe("notes.md"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    expect(done).toBe(false);
+
+    live([{ id: "doc-notes.md", indexed: true, indexStatus: "ready" }]);
+    rerender();
+    await act(async () => {
+      await wait;
+    });
+    expect(done).toBe(true);
+    expect(result.current.waitingFor).toBeNull();
+  });
+
+  it("stops holding a send once the wait runs out", async () => {
+    uploadToBundle.mockResolvedValue(queuedDoc("notes.md"));
+    const { result } = renderHook(() => useChatUploads(agent));
+
+    await act(async () => {
+      await result.current.addFiles([fileNamed("notes.md")]);
+    });
+    await act(async () => {
+      await result.current.settled(300);
+    });
+
+    expect(result.current.receipts[0].indexStatus).toBe("queued");
+    expect(result.current.waitingFor).toBeNull();
+  });
+
+  it("does not wait at all when nothing is still coming", async () => {
+    uploadToBundle.mockResolvedValue(indexedDoc("notes.md"));
+    const { result } = renderHook(() => useChatUploads(agent));
+
+    await act(async () => {
+      await result.current.addFiles([fileNamed("notes.md")]);
+    });
+    const started = Date.now();
+    await act(async () => {
+      await result.current.settled();
+    });
+
+    expect(Date.now() - started).toBeLessThan(200);
   });
 
   it("keeps the failure on screen instead of a toast that scrolls away", async () => {

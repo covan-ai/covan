@@ -32,6 +32,7 @@ type JobRow = {
   error?: unknown;
   cursor?: unknown;
   outline?: unknown;
+  document_id?: unknown;
 };
 
 function clip(text: string, max: number): string {
@@ -75,7 +76,7 @@ export async function documentJobNote(
   try {
     const { data, error } = await db
       .from("document_jobs")
-      .select("title, status, error, cursor, outline, created_at")
+      .select("title, status, error, cursor, outline, document_id, created_at")
       .eq("session_id", sessionId)
       .gt("created_at", new Date(now.getTime() - WITHIN_MS).toISOString())
       .order("created_at", { ascending: false })
@@ -88,7 +89,8 @@ export async function documentJobNote(
     if (rows.length === 0) return null;
     const lines = rows.map(
       (row, i) =>
-        `${i + 1}. "${clip(String(row.title ?? ""), TITLE_CHARS)}" — ${documentStanding(row)}`,
+        `${i + 1}. "${clip(String(row.title ?? ""), TITLE_CHARS)}" — ${documentStanding(row)}` +
+        (typeof row.document_id === "string" ? ` (document id: ${row.document_id})` : ""),
     );
     return [
       "Documents written in this conversation in the last day, oldest first. This is Covan's " +
@@ -96,7 +98,8 @@ export async function documentJobNote(
       ...lines,
       "When the person asks about these documents, answer from this list and nothing else. Do " +
         "not call write_document again for a document listed here unless the person asks for a " +
-        "new or different one — point them to its card instead.",
+        "new or different one — point them to its card instead. To change a finished one, " +
+        "read it with read_document and change it with edit_document, using its document id.",
     ].join("\n");
   } catch {
     console.warn("could not read a conversation's documents for its prompt");

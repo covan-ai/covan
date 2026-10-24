@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAgentsStore, type Agent } from "@/lib/agents-store";
+import { indexingNow } from "@/lib/index-status";
 import { ACCEPT } from "@/lib/uploads";
 import { useChatUploads } from "@/lib/use-chat-uploads";
 import { useTranslation } from "@/i18n";
@@ -56,6 +57,11 @@ export function AskBar({
     const body = text.trim();
     setSending(true);
     try {
+      // The thread asks the question as soon as it opens, so a file still
+      // being indexed would not be searchable by the time it is answered.
+      if (uploads.receipts.some((r) => r.state === "uploading" || indexingNow(r))) {
+        await uploads.settled();
+      }
       const session = await startSession(selected.id);
       if (body) {
         try {
@@ -159,7 +165,9 @@ export function AskBar({
                       )
                     : r.state === "failed"
                       ? t("failed")
-                      : t("added")}
+                      : indexingNow(r)
+                        ? t("Indexing…")
+                        : t("added")}
                 </span>
                 <button
                   type="button"
@@ -175,6 +183,11 @@ export function AskBar({
             </li>
           ))}
         </ul>
+      )}
+      {uploads.waitingFor && (
+        <p role="status" className="mt-2 text-xs text-muted-foreground">
+          {t("Waiting for {{name}} to finish indexing…", { name: uploads.waitingFor })}
+        </p>
       )}
     </div>
   );

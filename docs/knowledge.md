@@ -316,6 +316,32 @@ the point. The allowance is checked before every section, so a workspace that
 runs out partway through stops with what it has written, and **Continue** picks
 it up once credits are added.
 
+### Changing a document that already exists
+
+An agent can also open and change the documents it can read, rather than
+writing a new one every time something needs fixing. Three tools do it:
+`list_documents` names what is in its knowledge with ids, `read_document` reads
+one whole (a long one thirty thousand characters at a time), and
+`edit_document` changes it — exact pieces of the text replaced with new ones,
+or the whole text for a short rewrite. Ask "change the date in the second
+section" and the report you already have is changed; nothing is written again
+from the conversation.
+
+- **Markdown, text, CSV, JSON, HTML and XML change in place.** The new text is
+  stored, the old file removed, and the document is indexed again, so search
+  finds the new words a moment later. A report the agent wrote shows the edit on
+  its card in the conversation too.
+- **Word, PowerPoint, PDF and synced documents do not.** Their text is pulled
+  out of a file Covan cannot write back into, or comes from Notion or Drive and
+  would be put back by the next sync. The agent saves an edited Markdown copy
+  beside the original — `Contract (edited).md` — and says so; the original is
+  untouched.
+- **The same people may edit as may upload.** The database decides, through the
+  documents policies: a viewer, or somebody who cannot write to the bundle, is
+  refused and nothing is saved. An edit that finds its text changed underneath
+  it — somebody else edited first — is refused rather than written over the
+  other change.
+
 ## What a routine files
 
 A [routine](routines.md#keeping-what-it-sends) can file each summary it delivers

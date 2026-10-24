@@ -51,6 +51,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the one insert into document_jobs, which 0102 gives no client role a write on: a client that could write a job could put words in `sources` that every section is then written from, or name another workspace's bundle. It decides nothing a caller sent: before the insert, the bundle is checked writable and in the workspace, and the conversation is read, all through the caller's own client; the row is then written with exactly the workspace, agent, session and user those reads established",
   ],
   [
+    "lib/docs/edit.ts",
+    "an agent's edit to a document in place: 0085 grants no client role `r2_key`, `size` or `content`, because those are the file the row points at. Permission is asked of the database first — the caller's own client makes a no-op update of the row's name, and the documents update policy answers with the row or with nothing — and only then are those columns written, keyed to the id that answer returned and to the stored key the text was read at. The same write refreshes the index columns 0105 keeps from clients, and the sections of the document job that wrote the document, found by that same id in the same workspace. An edited copy of a file that cannot be changed in place is inserted through the caller's own client",
+  ],
+  [
     "lib/docs/host.ts",
     "the document engine's clocks — the Durable Object's alarm, the Node timer, the cron — none of which has a caller, so there is no JWT for RLS to resolve. What each may touch is bounded to one job id: the one a route's own read returned when it kicked the host, or the one claim_due_document_jobs (0102, service role only) handed the cron",
   ],

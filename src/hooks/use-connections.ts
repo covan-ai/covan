@@ -103,6 +103,16 @@ export function useComposioToolkits(search: string, category: string, enabled: b
     // "" is the catalogue saying there is no more, and it has to be mapped to
     // undefined or the button offers a page that comes back identical.
     getNextPageParam: (last) => last.nextCursor || undefined,
+    // A new search keeps the last answer on screen while the next one is
+    // asked for, so the grid narrows instead of blanking to "Loading…" on
+    // every pause in typing. Only across searches within one category: the
+    // previous category's tiles under a new heading would be a wrong answer,
+    // not a stale one.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[2] === category ? previous : undefined,
+    // Five minutes: going back to a term already asked is answered from the
+    // cache rather than by another round trip to a third party.
+    staleTime: 5 * 60 * 1000,
     enabled,
   });
 }

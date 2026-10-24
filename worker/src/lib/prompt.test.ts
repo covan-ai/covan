@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  ABOUT_COVAN,
   buildSystemPrefix,
   temperatureFor,
   reasoningEffortFor,
@@ -109,6 +110,56 @@ describe("buildSystemPrefix", () => {
     // is not a pure function of the arguments.
     const args = { persona: "P", mode: "normal" as const, docNames: ["a.md"] };
     expect(buildSystemPrefix(args)).toBe(buildSystemPrefix(args));
+  });
+});
+
+describe("what Covan is, in the prefix", () => {
+  const now = new Date("2026-10-24T09:00:00Z");
+
+  it("tells a normal chat what Covan is, after the persona and before the rest", () => {
+    const out = buildSystemPrefix({
+      persona: "You are our PM.",
+      mode: "normal",
+      docNames: [],
+      webSearchEnabled: true,
+      now,
+    });
+    const personaAt = out.indexOf("You are our PM.");
+    const aboutAt = out.indexOf(ABOUT_COVAN);
+    expect(aboutAt).toBeGreaterThan(personaAt);
+    expect(aboutAt).toBeLessThan(out.indexOf("You can search the web"));
+    expect(aboutAt).toBeLessThan(out.indexOf("Today is"));
+    expect(aboutAt).toBeLessThan(out.indexOf(CONCISION_INSTRUCTIONS));
+  });
+
+  it("tells a brainstorm too, before its instructions", () => {
+    const out = buildSystemPrefix({ persona: "P", mode: "brainstorm", docNames: [] });
+    const aboutAt = out.indexOf(ABOUT_COVAN);
+    expect(aboutAt).toBeGreaterThan(out.indexOf("P"));
+    expect(aboutAt).toBeLessThan(out.indexOf(BRAINSTORM_INSTRUCTIONS));
+  });
+
+  it("leaves it out of a report and a document section, which answer nobody about Covan", () => {
+    for (const mode of ["report", "document"] as const) {
+      const out = buildSystemPrefix({ persona: "P", mode, docNames: [] });
+      expect(out).not.toContain(ABOUT_COVAN);
+    }
+  });
+
+  it("sends questions about Covan to the guide rather than to a guess", () => {
+    expect(ABOUT_COVAN).toContain("covan_guide");
+    expect(ABOUT_COVAN).toContain("answer in their language");
+  });
+
+  it("can be reworded by a deployment", () => {
+    const out = buildSystemPrefix({
+      persona: "P",
+      mode: "normal",
+      docNames: [],
+      overrides: { parts: { about_covan: "Covan, briefly." }, tools: {} },
+    });
+    expect(out).toContain("Covan, briefly.");
+    expect(out).not.toContain(ABOUT_COVAN);
   });
 });
 

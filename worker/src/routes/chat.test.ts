@@ -2055,8 +2055,8 @@ describe("a reply that used a tool", () => {
       (t: { function: { name: string } }) => t.function.name,
     );
     // No connected service and no delivery channel, so only the tools that
-    // need neither: the knowledge search, and asking the person.
-    expect(offered).toEqual(["search_documents", "ask_person"]);
+    // need neither: the knowledge tools, asking the person, and the guide.
+    expect(offered).toEqual(["search_documents", "list_documents", "ask_person", "covan_guide"]);
   });
 
   it("offers the connection tools once the workspace has a connection", async () => {

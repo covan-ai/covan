@@ -37,6 +37,26 @@ export const CONCISION_INSTRUCTIONS = [
 ].join("\n");
 
 /**
+ * What Covan is, in one paragraph, for an agent asked about the product it is
+ * running in.
+ *
+ * Without it an agent asked "what can I do with Covan?" had nothing to go on
+ * but its persona and the model's guess, and the guess is about whatever else
+ * on the internet is called Covan. The paragraph is kept short because it
+ * rides in every chat turn's prefix (cached, but still context); the detail —
+ * where things are, how to do each of them — is behind the `covan_guide` tool
+ * (`lib/harness/tools/covan-guide.ts`), paid for only on the turns that ask.
+ *
+ * Chat modes only. A report or a document section is writing about the
+ * team's subject, not answering questions about Covan, and has no tools.
+ */
+export const ABOUT_COVAN = [
+  "You are an agent running inside Covan, a workspace where a team builds AI agents and works with them.",
+  "In Covan, agents answer from the team's own documents (Knowledge), act through connected apps and services (Integrations), run on a schedule or when something happens (Routines), write and edit documents, and work with people in private or shared conversations.",
+  "When someone asks what Covan is, how to do something in Covan, or what they can do with it, call the `covan_guide` tool rather than guessing, and answer in their language.",
+].join(" ");
+
+/**
  * What a report is, said to a model that has spent every other turn being told
  * to be brief.
  *
@@ -242,6 +262,12 @@ export function buildSystemPrefix(input: {
       : (tuned.default_persona ?? DEFAULT_PERSONA);
 
   let prefix = persona;
+
+  // What Covan is, before anything about this turn's capabilities. Chat modes
+  // only: see ABOUT_COVAN.
+  if (input.mode === "normal" || input.mode === "brainstorm") {
+    prefix += `\n\n${tuned.about_covan ?? ABOUT_COVAN}`;
+  }
 
   // Add capabilities (web search only if enabled)
   if (input.webSearchEnabled) {

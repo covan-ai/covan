@@ -28,6 +28,8 @@ import { ReportDialog } from "@/components/chat-report";
 import { ChatMic } from "@/components/chat-mic";
 import { appendDictation, useDictation } from "@/lib/use-dictation";
 import { useChatUploads } from "@/lib/use-chat-uploads";
+import { filesFromDrop } from "@/lib/dropped-files";
+import { indexingNow } from "@/lib/index-status";
 import { findChatBundle } from "@/lib/chat-uploads";
 import { canEditAgent } from "@/lib/agent-access";
 import { useReportWriter } from "@/lib/use-report";
@@ -1139,6 +1141,14 @@ function ChatTab() {
             if (step.tool === "write_document" && step.status === "ok") {
               void queryClient.invalidateQueries({ queryKey: documentJobsKey(sessionId) });
             }
+            // An edit changes a document in place: its card here shows the
+            // job's sections, which the edit rewrote, and Knowledge shows it
+            // re-indexing.
+            if (step.tool === "edit_document" && step.status === "ok") {
+              void queryClient.invalidateQueries({ queryKey: documentJobsKey(sessionId) });
+              void queryClient.invalidateQueries({ queryKey: ["agents"] });
+              void queryClient.invalidateQueries({ queryKey: ["bundle-documents"] });
+            }
             // Upsert by index: every step arrives twice, once running and
             // once settled, and the second is the same row changing rather
             // than a new one.
@@ -1420,6 +1430,14 @@ function ChatTab() {
     queryClient.setQueryData<Message[]>(key, (old = []) => [...old, optimistic]);
 
     try {
+      // A file dropped a moment ago is still being indexed, and a question
+      // sent now would be answered before any passage of it exists. The
+      // question is on screen already; it goes to the server once the files
+      // are searchable, or after `settled`'s timeout. Only awaited when there
+      // is something to wait for, so an ordinary send stays synchronous.
+      if (uploads.receipts.some((r) => r.state === "uploading" || indexingNow(r))) {
+        await uploads.settled();
+      }
       try {
         await api.messages.create({ sessionId, role: "user", content: text });
       } catch {
@@ -1889,8 +1907,11 @@ function ChatTab() {
         if (!canUpload) return;
         e.preventDefault();
         setDragging(false);
-        const files = Array.from(e.dataTransfer.files);
-        if (files.length > 0) void uploads.addFiles(files);
+        // Folders expand into the files in them, as on the Knowledge page.
+        // Read now: the DataTransfer is emptied once this handler returns.
+        void filesFromDrop(e.dataTransfer).then((files) => {
+          if (files.length > 0) void uploads.addFiles(files);
+        });
       }}
     >
       {dragging && (

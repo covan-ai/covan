@@ -1,4 +1,6 @@
 import type { RoutineEnv } from "../../types";
+import { entitlementsFor, type Entitlements } from "../entitlements";
+import { paidRunCeiling } from "./ceiling";
 import type { BrowserResult } from "./client";
 import { credentialsFor, type CredentialBinding } from "./credentials";
 import { conversationRun, jarForRun } from "./outcome";
@@ -74,6 +76,8 @@ export async function beginConversationRun(
   input: {
     userId: string;
     agentId: string;
+    /** Whose credits pay for the run: its ceiling is what they still cover (`ceiling.ts`). */
+    workspaceId: string;
     task: string;
     site: string | null;
     browser: RunBrowser;
@@ -88,9 +92,15 @@ export async function beginConversationRun(
      * somehow opened with the jar is declined rather than reused.
      */
     withoutJar?: boolean;
+    /** Defaults to `entitlementsFor(env)`. */
+    entitlements?: Pick<Entitlements, "snapshot" | "quote">;
   },
 ): Promise<BrowserResult<BegunRun>> {
-  if (input.withoutJar) return beginJarlessRun(env, input);
+  const maxCostUsd = await paidRunCeiling(
+    input.entitlements ?? entitlementsFor(env),
+    input.workspaceId,
+  );
+  if (input.withoutJar) return beginJarlessRun(env, { ...input, maxCostUsd });
   const known = input.profile === undefined ? await profileFor(env, input.userId) : input.profile;
   const jar = known ?? (await runProfile(env, input.userId, {}, input.egressCountry ?? null));
 
@@ -115,6 +125,7 @@ export async function beginConversationRun(
       profile: sent,
       withoutProfile,
       login,
+      maxCostUsd,
     }),
     { signal: input.signal },
   );
@@ -157,6 +168,7 @@ async function beginJarlessRun(
     site: string | null;
     browser: RunBrowser;
     signal?: AbortSignal;
+    maxCostUsd: number;
   },
 ): Promise<BrowserResult<BegunRun>> {
   const continuing = input.browser.providerSessionId;
@@ -170,6 +182,7 @@ async function beginJarlessRun(
       profile: null,
       withoutProfile: true,
       login,
+      maxCostUsd: input.maxCostUsd,
     }),
     { signal: input.signal },
   );

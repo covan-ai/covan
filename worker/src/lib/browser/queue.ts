@@ -267,6 +267,7 @@ async function startWaiting(
     const begun = await deps.begin(env, {
       userId: row.user_id,
       agentId: row.agent_id,
+      workspaceId: row.workspace_id,
       task: row.task,
       site: row.login_host ?? null,
       browser,

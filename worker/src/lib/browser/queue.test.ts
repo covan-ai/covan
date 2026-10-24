@@ -196,6 +196,7 @@ describe("advanceBrowserQueue", () => {
     expect(d.begin).toHaveBeenCalledWith(ENV, {
       userId: "user-1",
       agentId: "agent-1",
+      workspaceId: "ws-1",
       task: WAITING.task,
       site: null,
       browser: {

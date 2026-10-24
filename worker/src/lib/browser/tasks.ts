@@ -87,6 +87,11 @@ export async function recordBrowserTask(
     jarless?: boolean;
     /** What the agent will do with the answer (0117), when it said. */
     thenStep?: string;
+    /**
+     * The row's id, chosen before the run was asked for so its ceiling could
+     * be held under it (`ceiling.ts`). The database's own when absent.
+     */
+    id?: string;
   } & RecordedRun,
 ): Promise<string | null> {
   const provider =
@@ -101,6 +106,7 @@ export async function recordBrowserTask(
   const { data, error } = await serviceClient(env)
     .from("browser_tasks")
     .insert({
+      ...(input.id ? { id: input.id } : {}),
       workspace_id: input.workspaceId,
       agent_id: input.agentId,
       user_id: input.userId,

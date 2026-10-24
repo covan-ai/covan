@@ -122,6 +122,7 @@ function deps(over: Partial<QueueDeps> = {}) {
     entitlements: {
       check: vi.fn(async () => ({ allowed: true }) as { allowed: true }),
       record: vi.fn(async () => {}),
+      release: vi.fn(async () => {}),
     },
     ...over,
   };
@@ -197,6 +198,8 @@ describe("advanceBrowserQueue", () => {
       userId: "user-1",
       agentId: "agent-1",
       workspaceId: "ws-1",
+      // The ceiling is held under the row's own id, which the settle lets go.
+      holdId: WAITING.id,
       task: WAITING.task,
       site: null,
       browser: {
@@ -236,6 +239,8 @@ describe("advanceBrowserQueue", () => {
     expect(d.cancelRun).toHaveBeenCalledWith(ENV, "run-2");
     expect(d.finish).not.toHaveBeenCalled();
     expect(d.entitlements.record).not.toHaveBeenCalled();
+    // No settle will come for it, so the queue lets go of its ceiling itself.
+    expect(d.entitlements.release).toHaveBeenCalledWith(WAITING.id);
   });
 
   it.each([0, 409, 429, 503])(

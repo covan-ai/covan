@@ -180,6 +180,31 @@ export interface Entitlements {
   release?(holdId: string): Promise<void>;
 
   /**
+   * Before work whose cost is known only afterwards but can be bounded before
+   * it starts — a browser run, which the provider stops at its `maxCostUsd`.
+   * Holds, under `holdId`, as much of `usd` of provider cost as fits in HALF
+   * of what the workspace has free — beyond `check`'s floor and every other
+   * live hold — and answers the dollars held: `usd` itself when nothing is
+   * short, less when it is, zero when nothing is left. A second call under
+   * the same id replaces the first.
+   *
+   * Half, because a hold is credit nobody else can use while the work runs:
+   * a run that held all of it would refuse every reply in the workspace for
+   * minutes, to keep room for a ceiling it almost never reaches. The other
+   * half is the replies', and the next run's, which holds half again.
+   *
+   * Atomic, and that is the point of it: two runs started together never both
+   * hold the same credits, which is the overshoot `check` accepts. Answered in
+   * dollars, like `quote`, so the rate never crosses into this tree.
+   * `release(holdId)` lets go once the run's charge is written; a hold nobody
+   * releases stops counting on its own.
+   *
+   * Optional: an implementation that charges nobody holds nothing, and a
+   * caller bounds the work some other way.
+   */
+  reserve?(workspaceId: string, holdId: string, usd: number): Promise<number>;
+
+  /**
    * What `usd` of provider cost is charged as, in credits, right now.
    *
    * The open tree can estimate what work cost at list price — a usage row

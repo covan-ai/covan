@@ -78,6 +78,13 @@ export async function beginConversationRun(
     agentId: string;
     /** Whose credits pay for the run: its ceiling is what they still cover (`ceiling.ts`). */
     workspaceId: string;
+    /**
+     * The `browser_tasks.id` the run will be recorded under, which its
+     * ceiling is held under until the settle lets it go. Let go here when the
+     * provider does not take the run; a caller that fails to record a run the
+     * provider took lets go itself.
+     */
+    holdId: string;
     task: string;
     site: string | null;
     browser: RunBrowser;
@@ -93,14 +100,39 @@ export async function beginConversationRun(
      */
     withoutJar?: boolean;
     /** Defaults to `entitlementsFor(env)`. */
-    entitlements?: Pick<Entitlements, "snapshot" | "quote">;
+    entitlements?: Pick<Entitlements, "snapshot" | "quote" | "reserve" | "release">;
   },
 ): Promise<BrowserResult<BegunRun>> {
-  const maxCostUsd = await paidRunCeiling(
-    input.entitlements ?? entitlementsFor(env),
-    input.workspaceId,
-  );
-  if (input.withoutJar) return beginJarlessRun(env, { ...input, maxCostUsd });
+  const entitlements = input.entitlements ?? entitlementsFor(env);
+  const maxCostUsd = await paidRunCeiling(entitlements, input.workspaceId, input.holdId);
+  const begun = input.withoutJar
+    ? await beginJarlessRun(env, { ...input, maxCostUsd })
+    : await beginJarredRun(env, input, maxCostUsd);
+  if (begun.kind === "error") await releaseHold(entitlements, input.holdId);
+  return begun;
+}
+
+/**
+ * Let go of a run's held ceiling. Never throws: a hold nobody releases stops
+ * counting on its own, and a run that did not start must not fail on it.
+ */
+export async function releaseHold(
+  entitlements: Pick<Entitlements, "release">,
+  holdId: string,
+): Promise<void> {
+  try {
+    await entitlements.release?.(holdId);
+  } catch (err) {
+    console.warn("could not let go of a browser run's held credits", err);
+  }
+}
+
+/** `beginConversationRun` for a run that carries the person's jar, or makes one. */
+async function beginJarredRun(
+  env: RoutineEnv,
+  input: Parameters<typeof beginConversationRun>[1],
+  maxCostUsd: number,
+): Promise<BrowserResult<BegunRun>> {
   const known = input.profile === undefined ? await profileFor(env, input.userId) : input.profile;
   const jar = known ?? (await runProfile(env, input.userId, {}, input.egressCountry ?? null));
 

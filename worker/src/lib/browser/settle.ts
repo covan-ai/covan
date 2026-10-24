@@ -6,6 +6,7 @@ import { deliverBrowserTask } from "./deliver";
 import { bareHost, OUTCOME_STATUSES, type OutcomeStatus } from "./outcome";
 import { advanceBrowserQueue } from "./queue";
 import { salvageRun } from "./salvage";
+import { releaseHold } from "./start";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 import { browsersFor, type RunSummary } from "./v4";
 
@@ -183,8 +184,11 @@ export type SettleDeps = {
    * to `advanceBrowserQueue` through the same client.
    */
   advance?: (browserSessionId: string) => Promise<unknown>;
-  /** Where the provider's own figure is charged. Defaults to `entitlementsFor(env)`. */
-  entitlements?: Pick<Entitlements, "record">;
+  /**
+   * Where the provider's own figure is charged, and the run's held ceiling let
+   * go. Defaults to `entitlementsFor(env)`.
+   */
+  entitlements?: Pick<Entitlements, "record" | "release">;
   /** A stopped run's notes from its event log (`salvage.ts`). Defaults to `salvageRun`. */
   salvage?: (runId: string) => Promise<string | null>;
 };
@@ -254,6 +258,10 @@ export async function settleBrowserTask(
   if (!claimed) return false;
 
   await chargeSettled(env, row, outcome, overrides.entitlements);
+  // Its ceiling was held under its id when it started (`ceiling.ts`); the
+  // charge is written now, or there is none to write. A retry held nothing,
+  // and letting go of nothing is harmless.
+  await releaseHold(overrides.entitlements ?? entitlementsFor(env), row.id);
 
   /**
    * Ruling R4: the agent lets go of the browser, so the panel stops showing it

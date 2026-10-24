@@ -13,8 +13,10 @@ import { quoteOf, type Entitlements } from "../entitlements";
  *   at the provider's own figure, so a run started on the last few credits
  *   could otherwise spend many times the balance — the overshoot landing on
  *   the operator. The ceiling is the provider cost the balance above the
- *   floor still covers, converted by the hosted build's own `quote`, so the
- *   rate never crosses into this tree.
+ *   floor still covers, and it is HELD for the run (`reserve`) before the
+ *   run starts, so a second run started meanwhile is bounded by what the
+ *   first left rather than by the same untouched balance. The hosted build
+ *   does the converting, so the rate never crosses into this tree.
  * - **A runaway.** A run that loops — a page that never settles, a step it
  *   repeats — has nothing else to stop it but the provider's timeout and the
  *   sweep. `RUNAWAY_COST_CAP_USD` is far above any task seen, and it is the
@@ -35,29 +37,36 @@ export const TIGHT_CEILING_USD = 0.5;
 const MIN_CEILING_USD = 0.01;
 
 /**
- * The ceiling for a paid run in `workspaceId`.
+ * The ceiling for a paid run in `workspaceId`, held under `holdId`.
  *
- * Never refuses: whether the run may start at all is `check`'s question,
- * asked before this. A snapshot that cannot be read, or a deployment with no
- * `quote`, gets the runaway ceiling alone — the same answer an unmetered
- * install gets, and the one that loses nobody an answer.
+ * `holdId` is the run's `browser_tasks.id`, so the settle that charges the run
+ * lets the hold go (`settle.ts`); a caller whose run does not start lets go
+ * itself. Never refuses: whether the run may start at all is `check`'s
+ * question, asked before this, and a run that finds every credit already held
+ * by the runs beside it gets the smallest ceiling rather than a refusal. A
+ * hold or a balance that cannot be read, or a deployment that converts no
+ * dollars, gets the runaway ceiling alone — the answer an unmetered install
+ * gets, and the one that loses nobody an answer.
  */
 export async function paidRunCeiling(
-  entitlements: Pick<Entitlements, "snapshot" | "quote">,
+  entitlements: Pick<Entitlements, "snapshot" | "quote" | "reserve">,
   workspaceId: string,
+  holdId: string,
 ): Promise<number> {
   try {
+    if (entitlements.reserve) {
+      const held = await entitlements.reserve(workspaceId, holdId, RUNAWAY_COST_CAP_USD);
+      return Number.isFinite(held) ? clamp(held) : RUNAWAY_COST_CAP_USD;
+    }
+    // An implementation that meters but cannot hold: the balance as it reads
+    // now, and the overshoot `check` accepts when two runs start together.
     const credits = await entitlements.snapshot(workspaceId);
     const quote = quoteOf(entitlements);
     if (!credits.metered || credits.unlimited || !quote) return RUNAWAY_COST_CAP_USD;
     const perUsd = quote(1);
     if (!Number.isFinite(perUsd) || perUsd <= 0) return RUNAWAY_COST_CAP_USD;
     const affordable = (credits.balance - (credits.floor ?? 0)) / perUsd;
-    if (!Number.isFinite(affordable)) return RUNAWAY_COST_CAP_USD;
-    // Rounded down to the cent, so the ceiling never promises a fraction of
-    // a credit the workspace does not have.
-    const cents = Math.floor(affordable * 100) / 100;
-    return Math.min(RUNAWAY_COST_CAP_USD, Math.max(MIN_CEILING_USD, cents));
+    return Number.isFinite(affordable) ? clamp(affordable) : RUNAWAY_COST_CAP_USD;
   } catch (err) {
     console.warn(
       "could not read the credits a browser run may spend; using the runaway ceiling",
@@ -65,4 +74,13 @@ export async function paidRunCeiling(
     );
     return RUNAWAY_COST_CAP_USD;
   }
+}
+
+/**
+ * Rounded down to the cent, so the ceiling never promises a fraction of a
+ * credit the workspace does not have, and kept between a cent and a runaway.
+ */
+function clamp(usd: number): number {
+  const cents = Math.floor(usd * 100) / 100;
+  return Math.min(RUNAWAY_COST_CAP_USD, Math.max(MIN_CEILING_USD, cents));
 }

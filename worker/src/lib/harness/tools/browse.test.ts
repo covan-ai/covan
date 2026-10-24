@@ -190,11 +190,29 @@ vi.mock("../spend", async (importOriginal) => {
 const snapshot = vi.fn(async (_workspaceId: string): Promise<CreditSnapshot> => ({
   metered: false,
 }));
+/**
+ * A deployment that can hold a run's ceiling (`reserve`), switched on per
+ * test: without it the ceiling is read from `snapshot`, as before.
+ */
+let holding = false;
+const reserve = vi.fn(
+  async (_workspaceId: string, _holdId: string, _usd: number): Promise<number> => 0.4,
+);
+const release = vi.fn(async (_holdId: string): Promise<void> => {});
 vi.mock("../../entitlements", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../entitlements")>();
   return {
     ...actual,
-    entitlementsFor: () => ({ snapshot: (workspaceId: string) => snapshot(workspaceId) }),
+    entitlementsFor: () => ({
+      snapshot: (workspaceId: string) => snapshot(workspaceId),
+      release: (holdId: string) => release(holdId),
+      ...(holding
+        ? {
+            reserve: (workspaceId: string, holdId: string, usd: number) =>
+              reserve(workspaceId, holdId, usd),
+          }
+        : {}),
+    }),
   };
 });
 
@@ -331,6 +349,9 @@ beforeEach(() => {
   affordable.mockReset();
   affordable.mockResolvedValue(null);
   spend.mockReset();
+  holding = false;
+  reserve.mockClear();
+  release.mockClear();
   snapshot.mockReset();
   snapshot.mockResolvedValue({
     metered: true,
@@ -520,6 +541,34 @@ describe("once approved", () => {
     expect(task.indexOf("login_required")).toBeLessThan(task.indexOf(TASK));
   });
 
+  it("holds the ceiling under the id the task is then recorded with, before the run", async () => {
+    holding = true;
+    await browseTool.run({ task: TASK }, ctx());
+
+    expect(reserve).toHaveBeenCalledWith("ws-1", expect.any(String), RUNAWAY_COST_CAP_USD);
+    const holdId = reserve.mock.calls[0][1];
+    expect(recordBrowserTask.mock.calls[0][1]).toMatchObject({ id: holdId });
+    // What was held is what the run may spend, and the settle lets it go.
+    expect(sentRun().maxCostUsd).toBe(0.4);
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it("lets go of the held ceiling when the provider does not take the run", async () => {
+    holding = true;
+    fetchMock.mockImplementation(async () => json({ detail: "nope" }, 500));
+
+    expect((await browseTool.run({ task: TASK }, ctx())).kind).toBe("error");
+    expect(release).toHaveBeenCalledWith(reserve.mock.calls[0][1]);
+  });
+
+  it("lets go of the held ceiling when the run cannot be recorded", async () => {
+    holding = true;
+    recordBrowserTask.mockResolvedValueOnce(null);
+
+    expect((await browseTool.run({ task: TASK }, ctx())).kind).toBe("error");
+    expect(release).toHaveBeenCalledWith(reserve.mock.calls[0][1]);
+  });
+
   it("bounds an unmetered run only against a runaway, and names the model rather than taking the provider's", async () => {
     await browseTool.run({ task: TASK }, ctx());
     // Nothing is metered here, so the only bound is the runaway one, and the
@@ -568,6 +617,8 @@ describe("once approved", () => {
     await browseTool.run({ task: TASK }, ctx());
     expect(recordBrowserTask).toHaveBeenCalledTimes(1);
     expect(recordBrowserTask.mock.calls[0][1]).toEqual({
+      // Chosen before the run, so its ceiling is held under the row's own id.
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/),
       workspaceId: "ws-1",
       agentId: "agent-1",
       userId: "user-1",

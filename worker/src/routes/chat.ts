@@ -456,6 +456,7 @@ chat.post("/chat/stream", async (c) => {
   const parts = promptParts({
     systemPrefix,
     manifest,
+    team: "",
     docNames,
     ragBlock: ragBlock ?? "",
     history,

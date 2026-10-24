@@ -311,6 +311,82 @@ describe("the date and zone in the prefix", () => {
   });
 });
 
+describe("the team block in the prefix", () => {
+  const TEAM = "The team: Acme.\n- Ada Test (admin)";
+  const fixed = {
+    persona: "You are Ada.",
+    mode: "normal" as const,
+    docNames: ["a.md"],
+    now: new Date("2026-10-25T12:00:00Z"),
+    timezone: "Europe/Istanbul",
+  };
+
+  it("puts the team block after the persona and before the capabilities", () => {
+    const out = buildSystemPrefix({ ...fixed, webSearchEnabled: true, team: TEAM });
+    const personaAt = out.indexOf("You are Ada.");
+    const aboutAt = out.indexOf(ABOUT_COVAN);
+    const teamAt = out.indexOf(TEAM);
+    const capabilitiesAt = out.indexOf("You can search the web");
+    expect(personaAt).toBe(0);
+    expect(teamAt).toBeGreaterThan(aboutAt);
+    expect(aboutAt).toBeGreaterThan(personaAt);
+    expect(capabilitiesAt).toBeGreaterThan(teamAt);
+    // Separated by a blank line on both sides, like every other part.
+    expect(out).toContain(`\n\n${TEAM}\n\nYou can search the web`);
+  });
+
+  it("still goes before the clock line when there is no web search", () => {
+    const out = buildSystemPrefix({ ...fixed, team: TEAM });
+    expect(out).toContain(TEAM);
+    expect(out.indexOf(TEAM)).toBeLessThan(out.indexOf("Today is"));
+  });
+
+  it("is placed before the tuned capabilities too", () => {
+    const out = buildSystemPrefix({
+      ...fixed,
+      webSearchEnabled: true,
+      team: TEAM,
+      overrides: { parts: { capabilities: "TUNED CAPABILITIES" }, tools: {} },
+    });
+    expect(out).toContain(TEAM);
+    expect(out.indexOf(TEAM)).toBeLessThan(out.indexOf("TUNED CAPABILITIES"));
+  });
+
+  it("is unchanged when no team block is given", () => {
+    // Captured from the code as it stood before `team` existed. Without web
+    // search, so CAPABILITIES (whose wording this change also touches) is not
+    // in it: this pins that a deployment with nothing to say about its team
+    // sends the bytes it always sent, and so keeps its prompt-cache entry.
+    const before = buildSystemPrefix({ ...fixed, webSearchEnabled: false });
+    expect(before).toMatchInlineSnapshot(`
+      "You are Ada.
+
+      You are an agent running inside Covan, a workspace where a team builds AI agents and works with them. In Covan, agents answer from the team's own documents (Knowledge), act through connected apps and services (Integrations), run on a schedule or when something happens (Routines), write and edit documents, and work with people in private or shared conversations. When someone asks what Covan is, how to do something in Covan, or what they can do with it, call the \`covan_guide\` tool rather than guessing, and answer in their language.
+
+      Today is Sunday, 25 October 2026. Times mean Europe/Istanbul unless somebody says otherwise — read and write them in that zone, and say which zone you used when a time could be read two ways. When a tool takes a zone as its own argument, pass Europe/Istanbul rather than putting an offset in the timestamp.
+
+      Match your response length to what the question needs — a simple question gets a direct answer, a complex question gets a thorough one.
+      Open with the answer, not with a restatement of the question.
+      Do not close by summarizing what you just said.
+      Use structure (headings, lists, code blocks) when it helps readability.
+      Be conversational and clear. Never terse for terseness' sake.
+
+      The team has shared these documents with you: a.md. When the user says "the file", "the document", "the video", or asks what was uploaded, they mean one of these — never claim you cannot read files. Relevant excerpts are supplied in a separate system message whenever retrieval finds them; answer from those in preference to what you already believe, and say plainly when they do not cover what was asked rather than filling the gap. If no excerpt is present, say which of these documents you would need to look at rather than inventing what it contains."
+    `);
+    for (const team of [undefined, null, ""]) {
+      expect(buildSystemPrefix({ ...fixed, webSearchEnabled: false, team })).toBe(before);
+    }
+  });
+
+  it("no longer claims the whole workspace's history", () => {
+    const out = buildSystemPrefix({ ...fixed, webSearchEnabled: true });
+    expect(out).not.toContain("full conversation history");
+    expect(out).toContain(
+      "You remember only this conversation. What you know about the team and the person you are talking to is in the section above.",
+    );
+  });
+});
+
 describe("promptParts", () => {
   const block = (docNames: string[]) =>
     buildSystemPrefix({ persona: "You are Ada.", mode: "normal", docNames });
@@ -332,6 +408,7 @@ describe("promptParts", () => {
       toolNames: ["find_tool", "run_tool"],
       webSearch: true,
       mode: "normal",
+      team: "",
     });
   };
 
@@ -354,6 +431,25 @@ describe("promptParts", () => {
     const p = parts([]);
     expect(p.manifest_chars).toBe(MANIFEST.length);
     expect(p.manifest_chars).toBeLessThan(p.system_chars);
+  });
+
+  it("counts the team block by its length, and a prefix without one as zero", () => {
+    const team = "The team: Acme.\n- Ada Test (admin)";
+    const withTeam = promptParts({
+      systemPrefix: buildSystemPrefix({ persona: "P", mode: "normal", docNames: [], team }),
+      manifest: "",
+      docNames: [],
+      ragBlock: "",
+      history: [],
+      question: "q",
+      toolNames: [],
+      webSearch: false,
+      mode: "normal",
+      team,
+    });
+    expect(withTeam.team_chars).toBe(team.length);
+    expect(withTeam.team_chars).toBeLessThan(withTeam.system_chars);
+    expect(parts([]).team_chars).toBe(0);
   });
 
   it("counts history in turns and in characters, and the question separately", () => {

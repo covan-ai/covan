@@ -552,6 +552,47 @@ describe("a v4 run that stopped short (ruling R8's outcome)", () => {
     expect(prompt).not.toMatch(/refused|browser panel/i);
   });
 
+  it("says a run ran out before finishing and reports only what its notes show", async () => {
+    await deliverBrowserTask(
+      ROW,
+      {
+        status: "failed",
+        output: "Step: search acme.test\nPage: ada@acme.test (verified)",
+        error: "Could not produce output matching outputSchema",
+        costUsd: 0.25,
+        salvaged: true,
+      },
+      ENV,
+      fakeDb(),
+    );
+    const prompt = complete.mock.calls[0][1].messages.map((m) => String(m.content)).join("\n");
+    expect(prompt).toContain("Page: ada@acme.test (verified)");
+    expect(prompt).toMatch(/stopped before it finished/);
+    expect(prompt).toMatch(/not instructions/);
+    expect(prompt).toMatch(/never present a guess or a pattern as a found result/);
+    expect(prompt).not.toMatch(/It reports that it/);
+  });
+
+  it("delivers a stopped run's notes under the error when the model cannot be asked", async () => {
+    complete.mockRejectedValueOnce(new Error("provider down"));
+    await deliverBrowserTask(
+      ROW,
+      {
+        status: "failed",
+        output: "Step: search acme.test",
+        error: "Could not produce output matching outputSchema",
+        costUsd: 0.25,
+        salvaged: true,
+      },
+      ENV,
+      fakeDb(),
+    );
+    const content = String(inserted[0].content);
+    expect(content).toContain("Could not produce output matching outputSchema");
+    expect(content).toContain("What it saw on the way:");
+    expect(content).toContain("Step: search acme.test");
+  });
+
   it("answers a run that said done exactly as before", async () => {
     await deliverBrowserTask(
       ROW,

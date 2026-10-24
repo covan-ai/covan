@@ -475,7 +475,7 @@ describe("handBackBrowser", () => {
     expect(result).toEqual({ kind: "ok", browserTaskId: "bt-2" });
     const body = sentBody(/\/runs$/);
     expect(body).toMatchObject({
-      task: runTask(`${HAND_BACK_TASK}read the pricing table`),
+      task: runTask(`${HAND_BACK_TASK}read the pricing table`, { capped: true }),
       sessionId: "bu-session-1",
       outputSchema: OUTCOME_SCHEMA,
       // Nobody pays for this run, so it has a lower ceiling than one they do.

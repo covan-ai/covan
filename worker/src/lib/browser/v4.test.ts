@@ -4,7 +4,6 @@ import {
   V4_BASE,
   DEFAULT_MODEL,
   DEFAULT_REASONING,
-  RUN_COST_CAP_USD,
   createRun,
   modelParamsFor,
   reasoningOf,
@@ -53,7 +52,7 @@ describe("createRun", () => {
 
   it("posts to v4 /runs with the key header, and returns the provider's ids", async () => {
     fetchMock.mockResolvedValue(json(created, 202));
-    const result = await createRun(ENV, { task: "get the pricing", maxCostUsd: RUN_COST_CAP_USD });
+    const result = await createRun(ENV, { task: "get the pricing" });
     expect(result).toEqual({
       kind: "ok",
       value: { id: RUN_ID, sessionId: SESSION_ID, status: "queued" },
@@ -64,17 +63,20 @@ describe("createRun", () => {
     expect(init.headers["X-Browser-Use-API-Key"]).toBe("bu_test");
   });
 
-  it("sends only task, model and maxCostUsd for a first run with nothing else", async () => {
+  it("sends only task and model for a first run with nothing else", async () => {
     fetchMock.mockResolvedValue(json(created, 202));
-    await createRun(ENV, { task: "get the pricing", maxCostUsd: 0.25 });
+    await createRun(ENV, { task: "get the pricing" });
     // The provider rejects unknown keys and null keys are noise: absent means absent.
-    expect(sentBody()).toEqual({ task: "get the pricing", model: DEFAULT_MODEL, maxCostUsd: 0.25 });
+    expect(sentBody()).toEqual({ task: "get the pricing", model: DEFAULT_MODEL });
   });
 
-  it("always carries maxCostUsd", async () => {
+  it("carries maxCostUsd only when given one", async () => {
     fetchMock.mockResolvedValue(json(created, 202));
-    await createRun(ENV, { task: "t", maxCostUsd: RUN_COST_CAP_USD });
-    expect(sentBody().maxCostUsd).toBe(RUN_COST_CAP_USD);
+    await createRun(ENV, { task: "t" });
+    expect("maxCostUsd" in sentBody()).toBe(false);
+    fetchMock.mockClear();
+    await createRun(ENV, { task: "t", maxCostUsd: 0.1 });
+    expect(sentBody().maxCostUsd).toBe(0.1);
   });
 
   it("carries sessionId for a follow-up, and omits it for a first run", async () => {

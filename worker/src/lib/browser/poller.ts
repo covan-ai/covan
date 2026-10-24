@@ -135,6 +135,12 @@ export type FinishedTask = {
   reported?: ReportedOutcome;
   /** Written to `stop_reason` (0078) when the run was stopped rather than finished. */
   stopReason?: "cancelled";
+  /**
+   * `output` is not the run's answer but its own notes, read back from its
+   * event log after it stopped without one (`salvage.ts`). The delivery says
+   * so rather than phrasing them as a report.
+   */
+  salvaged?: true;
 };
 
 export type PollerDeps = {

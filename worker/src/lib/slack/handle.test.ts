@@ -111,6 +111,12 @@ function db(
     activeWorkspace?: string | null;
     /** What `agent_access_for` says the asker may do (0104); null is nothing. */
     access?: string | null;
+    /** False is a workspace whose roster cannot be read, which the turn must survive. */
+    team?: boolean;
+    /** Newest first, as the handler asks for them. */
+    recent?: Array<{ role: string; content: string; sender_id?: string | null }>;
+    /** What `chat_sessions.visibility` says for a thread that already has a session. */
+    threadVisibility?: "shared" | "private";
   } = {},
 ) {
   const activeWorkspace = options.activeWorkspace ?? null;
@@ -127,20 +133,48 @@ function db(
         insert: () => ({ data: null, error: null }),
       },
       profiles: {
-        select: () => ({
-          data:
-            options.profile === false
-              ? null
-              : { id: "user-1", active_workspace_id: activeWorkspace },
-          error: null,
-        }),
+        select: (ctx) =>
+          // The roster's profiles come by id list; the identity lookup by email.
+          ctx.filters.some((f) => f.kind === "in")
+            ? {
+                data: [
+                  { id: "user-1", name: "Deniz Kaya", bio: null, timezone: null },
+                  { id: "user-2", name: "Ada Lovelace", bio: null, timezone: null },
+                ],
+                error: null,
+              }
+            : {
+                data:
+                  options.profile === false
+                    ? null
+                    : { id: "user-1", active_workspace_id: activeWorkspace },
+                error: null,
+              },
       },
       workspace_members: {
-        select: () => ({
-          data:
-            options.member === false ? null : { user_id: "user-1", workspace_id: activeWorkspace },
-          error: null,
-        }),
+        select: (ctx) =>
+          // The roster read names no member; the membership check names one.
+          ctx.filters.some((f) => f.column === "user_id")
+            ? {
+                data:
+                  options.member === false
+                    ? null
+                    : { user_id: "user-1", workspace_id: activeWorkspace },
+                error: null,
+              }
+            : {
+                data: [
+                  { user_id: "user-1", role: "member" },
+                  { user_id: "user-2", role: "admin" },
+                ],
+                error: null,
+              },
+      },
+      workspaces: {
+        select: () =>
+          options.team === false
+            ? { data: null, error: { message: "boom" } }
+            : { data: { name: "Acme" }, error: null },
       },
       agents: {
         select: () => ({
@@ -159,12 +193,13 @@ function db(
         insert: () => ({ data: null, error: null }),
       },
       chat_sessions: {
+        select: () => ({ data: { visibility: options.threadVisibility ?? "shared" }, error: null }),
         insert: () => ({ data: { id: "session-1" }, error: null }),
         delete: () => ({ data: null, error: null }),
       },
       messages: {
         insert: () => ({ data: null, error: null }),
-        select: () => ({ data: [], error: null }),
+        select: () => ({ data: options.recent ?? [], error: null }),
       },
     },
   });
@@ -554,5 +589,153 @@ describe("answering in a thread", () => {
       { userId: "user-1" },
     );
     expect(posted().text).toMatch(/went wrong/i);
+  });
+});
+
+describe("the room the thread is in", () => {
+  /** What the model was sent, in order. */
+  const sent = () => {
+    const [request] = create.mock.calls[0] as unknown as [
+      { messages: { role: string; content: string }[] },
+    ];
+    return request.messages;
+  };
+  /** The conversation itself: no prefix, and not the retrieved block between its turns. */
+  const turns = () =>
+    sent()
+      .slice(1)
+      .filter((m) => !m.content.startsWith("Document: "))
+      .map((m) => m.content);
+
+  // Newest first, as the handler reads them: Ada asked something earlier, the
+  // agent answered, and Deniz has just asked the follow-up.
+  const recent = [
+    { role: "user", content: "kaç gün izin hakkım var?", sender_id: "user-1" },
+    { role: "assistant", content: "Twenty days a year." },
+    { role: "user", content: "What is our leave policy?", sender_id: "user-2" },
+  ];
+
+  it("sends the team block, with the matched Slack user as the caller", async () => {
+    const fake = db({ identity: true });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    expect(sent()[0].role).toBe("system");
+    expect(sent()[0].content).toContain("The team:");
+    expect(sent()[0].content).toContain("Ada Lovelace");
+    expect(sent()[0].content).toContain("You are talking to Deniz Kaya");
+  });
+
+  it("reads the roster for the installation's workspace, since the service role sees every one", async () => {
+    const fake = db({ identity: true });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    const filtersOf = (table: string, pick: (c: { filters: unknown[] }) => boolean) =>
+      fake.callsTo(table).find((c) => c.op === "select" && pick(c));
+    expect(
+      filtersOf("workspace_members", (c) =>
+        c.filters.some((f) => (f as { column: string }).column === "workspace_id"),
+      ),
+    ).toBeDefined();
+    expect(fake.callsTo("workspaces")[0].filters).toContainEqual({
+      column: "id",
+      value: "ws-1",
+      kind: "eq",
+    });
+  });
+
+  it("names who said what in a thread that was opened in a public channel", async () => {
+    const fake = db({ identity: true, existingSession: "session-old", recent });
+
+    await handleSlackEvent(
+      await installation(),
+      { ...mention(), thread_ts: "1725273600.000100", ts: "1725273999.000200" },
+      deps(fake),
+    );
+
+    expect(turns()).toEqual([
+      "Ada Lovelace: What is our leave policy?",
+      "Twenty days a year.",
+      "Deniz Kaya: kaç gün izin hakkım var?",
+    ]);
+  });
+
+  it("names them in a thread it has just opened in a public channel", async () => {
+    const fake = db({ identity: true, recent });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    expect(sent()[sent().length - 1].content).toBe("Deniz Kaya: kaç gün izin hakkım var?");
+  });
+
+  it("leaves a private thread's turns exactly as they were written", async () => {
+    isPublicChannel.mockResolvedValue(false);
+    const fake = db({ identity: true, recent });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    expect(turns()).toEqual([
+      "What is our leave policy?",
+      "Twenty days a year.",
+      "kaç gün izin hakkım var?",
+    ]);
+  });
+
+  it("leaves an existing private thread alone, and asks Slack nothing", async () => {
+    const fake = db({
+      identity: true,
+      existingSession: "session-old",
+      threadVisibility: "private",
+      recent,
+    });
+
+    await handleSlackEvent(
+      await installation(),
+      { ...mention(), thread_ts: "1725273600.000100", ts: "1725273999.000200" },
+      deps(fake),
+    );
+
+    expect(turns()).toEqual([
+      "What is our leave policy?",
+      "Twenty days a year.",
+      "kaç gün izin hakkım var?",
+    ]);
+    expect(fake.callsTo("chat_sessions").some((c) => c.op === "select")).toBe(true);
+    expect(isPublicChannel).not.toHaveBeenCalled();
+  });
+
+  it("retrieves on what was said, not on who said it", async () => {
+    const fake = db({ identity: true, existingSession: "session-old", recent });
+
+    await handleSlackEvent(
+      await installation(),
+      { ...mention(), thread_ts: "1725273600.000100", ts: "1725273999.000200" },
+      deps(fake),
+    );
+
+    const asked = JSON.stringify(retrieveForAgent.mock.calls[0]);
+    expect(asked).toContain("What is our leave policy?");
+    expect(asked).not.toContain("Ada Lovelace:");
+    expect(asked).not.toContain("Deniz Kaya:");
+  });
+
+  // Better every turn unlabelled than every sender called a former member.
+  it("sends no team block and no names when the roster cannot be read", async () => {
+    const fake = db({ identity: true, existingSession: "session-old", team: false, recent });
+
+    await handleSlackEvent(
+      await installation(),
+      { ...mention(), thread_ts: "1725273600.000100", ts: "1725273999.000200" },
+      deps(fake),
+    );
+
+    expect(sent()[0].content).not.toContain("The team:");
+    expect(turns()).toEqual([
+      "What is our leave policy?",
+      "Twenty days a year.",
+      "kaç gün izin hakkım var?",
+    ]);
+    expect(posted().text).toContain("Twenty days a year.");
   });
 });

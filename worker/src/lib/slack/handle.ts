@@ -10,13 +10,17 @@ import {
 import { embeddingModel } from "../embeddings";
 import { retrieveForAgent } from "../retrieval";
 import {
+  attributeSenders,
   selectHistory,
+  senderNames,
   MSG_HISTORY_LIMIT,
   HISTORY_CHAR_BUDGET,
   PER_MESSAGE_CHAR_CAP,
 } from "../history";
 import { buildSystemPrefix, maxTokensFor, temperatureFor, reasoningEffortFor } from "../prompt";
 import { promptOverrides } from "../prompt-overrides";
+import { loadTeamContext } from "../memory";
+import { teamBlock } from "../team-block";
 import { resolveModel } from "../models";
 import { complete, type CompletionMessage } from "../completion";
 import { replyOutcome } from "../harness/usage";
@@ -218,7 +222,7 @@ export async function handleSlackEvent(
   const question = stripMention(event.text!, installation.bot_user_id);
   if (!question) return;
 
-  const sessionId = await sessionForThread(installation, event, {
+  const thread = await sessionForThread(installation, event, {
     ...deps,
     agentId: agent.id,
     userId,
@@ -235,10 +239,11 @@ export async function handleSlackEvent(
         ? "shared"
         : "private",
   });
-  if (!sessionId) {
+  if (!thread) {
     await say("I couldn't open a conversation for this thread. Nothing was lost — try again.");
     return;
   }
+  const sessionId = thread.id;
 
   const { error: askError } = await deps.db.from("messages").insert({
     session_id: sessionId,
@@ -254,17 +259,38 @@ export async function handleSlackEvent(
 
   const { data: recentDesc } = await deps.db
     .from("messages")
-    .select("role,content")
+    .select("role,content,sender_id")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: false })
     .limit(MSG_HISTORY_LIMIT);
+  const turns = (
+    (recentDesc ?? []) as Array<{
+      role: string;
+      content: string;
+      sender_id: string | null;
+    }>
+  )
+    .slice()
+    .reverse()
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      sender_id: m.sender_id ?? null,
+    }));
   const history = selectHistory(
-    ((recentDesc ?? []) as Array<{ role: string; content: string }>)
-      .slice()
-      .reverse()
-      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+    turns.map(({ role, content }) => ({ role, content })),
     { maxChars: HISTORY_CHAR_BUDGET, perMessageCap: PER_MESSAGE_CHAR_CAP },
   );
+
+  // Who is on the team, started here so its reads overlap retrieval and
+  // awaited where the prefix is built. `deps.db` is the service role, which is
+  // why the loader names the workspace and its members rather than leaning on
+  // RLS. It answers null instead of throwing, so a turn that fails before
+  // then leaves nothing unhandled behind it.
+  const teamContext = loadTeamContext(deps.db, {
+    workspaceId: installation.workspace_id,
+    callerId: userId,
+  });
 
   // The same history the turn is assembled from. `retrievalQuery` reads the
   // turns before the last one, so a follow-up in a Slack thread carries its
@@ -274,6 +300,8 @@ export async function handleSlackEvent(
   const retrieval = await retrieveForAgent(deps.db, runEnv, agent.id, question, history, {
     sharedOnly: true,
   });
+
+  const team = await teamContext;
 
   const mode: "normal" | "brainstorm" = agent.mode === "brainstorm" ? "brainstorm" : "normal";
   const systemPrefix = buildSystemPrefix({
@@ -288,15 +316,29 @@ export async function handleSlackEvent(
     // week" in Slack was inferring the date from the question.
     now: new Date(),
     overrides: await promptOverrides(runEnv),
+    team: team ? teamBlock(team) : null,
   });
+
+  // In a thread the channel can read, each person's turns carry their name,
+  // from the same read as the team block. No team, no names: better every
+  // sender unlabelled than every one of them called a former member. Retrieval
+  // above was given the turns as written, so a name is never part of what it
+  // searches. A private thread is sent exactly as it always was.
+  const sentHistory =
+    thread.visibility === "shared" && team !== null
+      ? selectHistory(attributeSenders(turns, senderNames(team.people), true), {
+          maxChars: HISTORY_CHAR_BUDGET,
+          perMessageCap: PER_MESSAGE_CHAR_CAP,
+        })
+      : history;
 
   // Same assembly as the chat route: the stable prefix and prior turns first so
   // OpenAI's automatic prompt cache can discount them, with the volatile
   // retrieved block riding immediately before the latest question — as a `user`
   // message, because it is quoted document text rather than this server's own
   // words. See `routes/chat.ts` and `lib/rag.ts`.
-  const priorTurns = history.slice(0, -1);
-  const latestTurn = history[history.length - 1];
+  const priorTurns = sentHistory.slice(0, -1);
+  const latestTurn = sentHistory[sentHistory.length - 1];
   const messages: CompletionMessage[] = [
     { role: "system", content: systemPrefix },
     ...priorTurns,
@@ -516,7 +558,11 @@ async function resolveIdentity(
   return profile.id as string;
 }
 
-/** The conversation for this thread, creating it on the first question. */
+/**
+ * The conversation for this thread, creating it on the first question, and
+ * whether it is shared. Visibility is decided once, when the session is made,
+ * so an existing thread has to be asked.
+ */
 async function sessionForThread(
   installation: InstallationRow,
   event: SlackEvent,
@@ -526,7 +572,7 @@ async function sessionForThread(
     title: string;
     visibility: () => Promise<"private" | "shared">;
   },
-): Promise<string | null> {
+): Promise<{ id: string; visibility: "private" | "shared" } | null> {
   const channel = event.channel!;
   const threadTs = event.thread_ts ?? event.ts!;
 
@@ -537,8 +583,21 @@ async function sessionForThread(
     .eq("channel_id", channel)
     .eq("thread_ts", threadTs)
     .maybeSingle();
-  if (existing?.session_id) return existing.session_id as string;
+  if (existing?.session_id) {
+    const { data: session } = await deps.db
+      .from("chat_sessions")
+      .select("visibility")
+      .eq("id", existing.session_id)
+      .maybeSingle();
+    // A row that cannot be read is the private answer: no names is the
+    // behaviour every thread had before there were any.
+    return {
+      id: existing.session_id as string,
+      visibility: session?.visibility === "shared" ? "shared" : "private",
+    };
+  }
 
+  const visibility = await deps.visibility();
   const { data: session, error } = await deps.db
     .from("chat_sessions")
     .insert({
@@ -547,7 +606,7 @@ async function sessionForThread(
       workspace_id: installation.workspace_id,
       title: deps.title,
       kind: "chat",
-      visibility: await deps.visibility(),
+      visibility,
     })
     .select("id")
     .single();
@@ -575,10 +634,12 @@ async function sessionForThread(
       .maybeSingle();
     if (raced?.session_id) {
       await deps.db.from("chat_sessions").delete().eq("id", session.id);
-      return raced.session_id as string;
+      // The winner was opened from this same channel, so it is what this one
+      // would have been.
+      return { id: raced.session_id as string, visibility };
     }
     console.error("slack: failed to link the thread", linkError);
   }
 
-  return session.id as string;
+  return { id: session.id as string, visibility };
 }

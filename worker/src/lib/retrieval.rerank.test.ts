@@ -19,8 +19,10 @@ vi.mock("./rerank", () => ({
     keep: number,
   ) => {
     rerankCalls.push({ model, query, count: passages.length, keep });
+    // Scores the last passage 3 and the rest 1, and puts it first.
+    const reordered = [...passages].reverse().slice(0, keep);
     return {
-      passages: [...passages].reverse().slice(0, keep),
+      passages: reordered.map((p, i) => ({ ...p, rerankScore: i === 0 ? 3 : 1 })),
       spend: { kind: "completion", model, promptTokens: 50, completionTokens: 5 },
       reranked: true,
     };
@@ -83,5 +85,37 @@ describe("retrieveForAgent with a reranker", () => {
     expect(rerankCalls).toHaveLength(0);
     expect(r.passages.map((p) => p.content)).toEqual(["first", "second", "third"]);
     expect(r.rerankSpend).toBeNull();
+  });
+
+  it("cites what the reranker said answers the question, not what sat closest", async () => {
+    // "third" is the weakest by similarity and the one the reranker scores 3;
+    // the other two are only on the topic. Without the reranker's say, the
+    // chips would name the two that do not answer.
+    const fake = fakeDb({
+      tables: {
+        agent_bundles: { select: () => ({ data: [{ bundle_id: "b1" }], error: null }) },
+        documents: {
+          select: () => ({ data: [{ name: "en.md" }, { name: "tr.md" }], error: null }),
+        },
+      },
+      rpc: {
+        match_chunks: () => ({
+          data: [
+            { document_id: "tr1", document_name: "tr.md", content: "first", similarity: 0.62 },
+            { document_id: "tr2", document_name: "tr.md", content: "second", similarity: 0.6 },
+            { document_id: "en", document_name: "en.md", content: "third", similarity: 0.3 },
+          ],
+          error: null,
+        }),
+      },
+    });
+    const r = await retrieveForAgent(
+      fake.db as never,
+      { RAG_RERANK_MODEL: "gpt-4.1-mini" } as never,
+      "agent-1",
+      "q",
+      [],
+    );
+    expect(r.sources).toEqual([{ id: "en", name: "en.md" }]);
   });
 });

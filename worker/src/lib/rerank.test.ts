@@ -58,6 +58,7 @@ describe("rerankPassages", () => {
     });
     const r = await rerankPassages({} as never, "gpt-5-nano", "q", passages, 10);
     expect(r.passages.map((p) => p.content)).toEqual(["b", "d", "a", "c"]);
+    expect(r.passages.map((p) => p.rerankScore)).toEqual([3, 2, 1, 1]);
     expect(r.reranked).toBe(true);
   });
 

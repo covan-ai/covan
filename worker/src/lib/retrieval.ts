@@ -477,9 +477,18 @@ export async function retrieveForAgent(
     }
     // What the model read and what the answer is shown as coming from are two
     // lists. The block holds everything above the floor that fit; the chips
-    // hold only what clearly bears on the question (`citable`).
-    for (const u of citable(block.used, citationFloor(env))) {
-      addSource(u.documentId ?? null, u.documentName);
+    // hold only what clearly bears on the question — by the reranker's score
+    // where it read the passage (2 or more: answers at least in part), by
+    // `citable` everywhere else.
+    const bySimilarity = new Set(
+      citable(
+        block.used.filter((u) => u.rerankScore === undefined),
+        citationFloor(env),
+      ),
+    );
+    for (const u of block.used) {
+      const cited = u.rerankScore === undefined ? bySimilarity.has(u) : u.rerankScore >= 2;
+      if (cited) addSource(u.documentId ?? null, u.documentName);
     }
   }
 

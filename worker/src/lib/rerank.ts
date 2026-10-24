@@ -135,7 +135,7 @@ export async function rerankPassages(
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score || a.i - b.i)
       .slice(0, keep)
-      .map((x) => x.p);
+      .map((x) => ({ ...x.p, rerankScore: x.score }));
     return { passages: ordered, spend, reranked: true };
   } catch (err) {
     console.error("rerank failed (keeping the search's order)", err);

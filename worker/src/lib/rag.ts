@@ -18,6 +18,13 @@ export type RetrievedChunk = {
    * different bars.
    */
   similarity?: number | null;
+  /**
+   * The reranker's 0–3 score, when one read this passage (`lib/rerank.ts`).
+   * When present it decides the citation instead of `similarity`: the reranker
+   * read the passage, and the similarity is exactly what it was brought in to
+   * overrule — a passage in another language than the question sits low on it.
+   */
+  rerankScore?: number;
 };
 
 /**

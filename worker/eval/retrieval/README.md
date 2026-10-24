@@ -135,12 +135,13 @@ variant was compared. The overall thresholds are well above the noise.
 The search hands 30 candidates to a model that scores each 0–3 for whether it
 answers the question (`lib/rerank.ts`); the ten best scored 1+ go on.
 
-| run          | R@5   | R@10  | MRR   | negative pass | p95 ms | rerank tokens / search |
-| ------------ | ----- | ----- | ----- | ------------- | ------ | ---------------------- |
-| baseline     | 62.3% | 69.8% | 0.449 | 44.4%         | 254    | —                      |
-| gpt-4.1-mini | 81.1% | 81.1% | 0.701 | 44.4%         | 1187   | ~7,100 in, ~13 out     |
-| gpt-5-mini   | 83.0% | 83.0% | 0.727 | 55.6%         | 1925   | ~6,800 in, ~25 out     |
-| gpt-5-nano   | 30.2% | 30.2% | 0.211 | 66.7%         | 2086   | ~7,100 in, ~46 out     |
+| run                          | R@5   | R@10  | MRR   | negative pass | p95 ms | rerank tokens / search |
+| ---------------------------- | ----- | ----- | ----- | ------------- | ------ | ---------------------- |
+| baseline                     | 62.3% | 69.8% | 0.449 | 44.4%         | 254    | —                      |
+| gpt-4.1-mini                 | 81.1% | 81.1% | 0.701 | 44.4%         | 1187   | ~7,100 in, ~13 out     |
+| gpt-4.1-mini, chips by score | 81.1% | 81.1% | 0.681 | 66.7%         | 1379   | ~7,100 in, ~13 out     |
+| gpt-5-mini                   | 83.0% | 83.0% | 0.727 | 55.6%         | 1925   | ~6,800 in, ~25 out     |
+| gpt-5-nano                   | 30.2% | 30.2% | 0.211 | 66.7%         | 2086   | ~7,100 in, ~46 out     |
 
 `gpt-4.1-mini` meets every clause of the keep rule: MRR +0.252, cross-language
 R@5 12.5% → 75%, morphology 62.5% → 100%, no category lost a case, p95 under
@@ -148,9 +149,15 @@ R@5 12.5% → 75%, morphology 62.5% → 100%, no category lost a case, p95 under
 `gpt-5-nano` throws most right passages away (scores them 0) and fails nearly
 every category.
 
-Two things it did not fix: the negative pass rate (a passage "on the topic"
-scores 1 and is still cited), and follow-up questions, which depend on what
-`retrievalQuery` sends rather than on the order.
+Citations first stayed on vector similarity, so the passage the reranker put
+first — often in the other language, so low on similarity — could go without a
+chip while its neighbours got one, and the negative pass rate did not move.
+Chips now follow the reranker's score where it read the passage (2 or more:
+answers at least in part): the second gpt-4.1-mini row. Same ranking within
+noise; negative pass 44% → 67%.
+
+Not fixed: follow-up questions, which depend on what `retrievalQuery` sends
+rather than on the order.
 
 The first attempt asked for one score per passage as a list; `gpt-5-nano`
 returned a list of the wrong length on 49 of 62 searches. The reply is now

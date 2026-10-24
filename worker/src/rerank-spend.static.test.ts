@@ -39,4 +39,19 @@ describe("reranker spend", () => {
       expect(readFileSync(path, "utf8"), relative(src, path)).toContain("rerankSpend");
     }
   });
+
+  // A caller that hands retrieval on to someone else to charge — the routine
+  // dispatcher, the document queue — charges nothing itself, so the check
+  // above never sees it. It has to pass the reranker's spend along.
+  it("is passed on by every caller of retrieveForAgent", () => {
+    const callers = sourceFiles(src).filter(
+      (path) =>
+        !path.endsWith("lib/retrieval.ts") &&
+        readFileSync(path, "utf8").includes("retrieveForAgent("),
+    );
+    expect(callers.length).toBeGreaterThanOrEqual(5);
+    for (const path of callers) {
+      expect(readFileSync(path, "utf8"), relative(src, path)).toContain("rerankSpend");
+    }
+  });
 });

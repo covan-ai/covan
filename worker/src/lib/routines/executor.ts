@@ -365,7 +365,7 @@ export type ExecutorDeps = {
   retrieve: (
     input: RetrievalInput,
     env: RoutineEnv,
-  ) => Promise<{ ragBlock: string; embeddingTokens: number; rerankSpend?: Spend | null }>;
+  ) => Promise<{ ragBlock: string; embeddingTokens: number; rerankSpend: Spend | null }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
   /**
@@ -635,6 +635,16 @@ export async function runRoutine(
   // browser task the turn starts has to name the run it answers before that
   // row exists (0100). Every branch writes its row with it.
   const runId = crypto.randomUUID();
+  // What retrieval cost, once it has run. Held out here so a run that fails
+  // after retrieving still charges it: with a reranker on that is a model
+  // call, and a transient failure's retry buys another.
+  let retrievalSpend: Spend[] = [];
+  /** Retrieval's spend, handed to exactly one `finish`: the first to ask. */
+  const takeRetrievalSpend = (): Spend[] => {
+    const taken = retrievalSpend;
+    retrievalSpend = [];
+    return taken;
+  };
 
   try {
     // Membership is checked before anything else. Removing someone from a
@@ -1103,6 +1113,14 @@ export async function runRoutine(
       ragBlock = retrieved.ragBlock;
       embeddingTokens = retrieved.embeddingTokens;
       rerankSpend = retrieved.rerankSpend ?? null;
+      retrievalSpend = spends(
+        embeddingSpend(
+          embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
+          embeddingTokens,
+          "retrieval",
+        ),
+        rerankSpend,
+      );
     } catch (err) {
       console.error("routine retrieval failed (continuing persona-only)", err);
     }
@@ -1191,17 +1209,7 @@ export async function runRoutine(
         itemsNew: items.length,
         itemsOverflow: overflow,
         tokens: summary.tokens,
-        spend: [
-          ...summary.spend,
-          ...spends(
-            embeddingSpend(
-              embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
-              embeddingTokens,
-              "retrieval",
-            ),
-            rerankSpend,
-          ),
-        ],
+        spend: [...summary.spend, ...takeRetrievalSpend()],
         cursor: nextCursor,
         error: NOTHING_RELEVANT_REASON,
         // A declined run made the call — two of them, in fact, since the
@@ -1240,17 +1248,7 @@ export async function runRoutine(
         itemsOverflow: overflow,
         modelCall: { model: summary.model, modelOutcome: summary.modelOutcome },
         tokens: summary.tokens,
-        spend: [
-          ...summary.spend,
-          ...spends(
-            embeddingSpend(
-              embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
-              embeddingTokens,
-              "retrieval",
-            ),
-            rerankSpend,
-          ),
-        ],
+        spend: [...summary.spend, ...takeRetrievalSpend()],
         cursor: nextCursor,
         summary: body,
       });
@@ -1316,13 +1314,8 @@ export async function runRoutine(
       tokens: summary.tokens,
       spend: [
         ...summary.spend,
+        ...takeRetrievalSpend(),
         ...spends(
-          embeddingSpend(
-            embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
-            embeddingTokens,
-            "retrieval",
-          ),
-          rerankSpend,
           embeddingSpend(
             embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
             filing.indexTokens,
@@ -1363,6 +1356,7 @@ export async function runRoutine(
         status: "failed",
         itemsNew: 0,
         tokens: 0,
+        spend: takeRetrievalSpend(),
         error: recorded,
         transient: transientFailure(err),
       });
@@ -1589,7 +1583,17 @@ export type RunOutcome = {
       tokens: number;
       spend: Spend[];
     }
-  | { status: "skipped" | "failed"; tokens: 0; spend?: undefined }
+  | { status: "skipped"; tokens: 0; spend?: undefined }
+  | {
+      /**
+       * A run that broke. `tokens` is the model's, and a failed run has none
+       * to report — but one that got as far as retrieval has paid for it, a
+       * model call when a reranker is on, and says so.
+       */
+      status: "failed";
+      tokens: 0;
+      spend?: Spend[];
+    }
 );
 
 async function finish(

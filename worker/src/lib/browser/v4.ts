@@ -96,22 +96,18 @@ export function reasoningOf(raw: string | undefined): ReasoningEffort | null {
 }
 
 /**
- * The most one run may spend, in dollars, sent as `maxCostUsd` on every run.
- *
- * v2 had `BROWSER_MAX_STEPS`; v4 caps money instead, which is the thing the
- * step count was a proxy for.
- */
-export const RUN_COST_CAP_USD = 0.25;
-
-/**
  * The ceiling on the one free retry after a person hands the browser back
- * (`handBackBrowser`), which nobody is charged for.
+ * (`handBackBrowser`), which nobody is charged for — the one run that still
+ * carries a `maxCostUsd`.
  *
- * Lower than `RUN_COST_CAP_USD` because the free retry was where the money
- * went: of the first four, three ran to the full $0.25 and ended with no
- * answer, at the operator's expense, against a typical task's two to six
- * cents. The retry starts in a browser that is already signed in and on the
- * page, so it has less to do than the run it continues.
+ * A paid run carried one too until 2026-10-24, at $0.25: a run asked to look
+ * through several sites reached it, ended with no answer, and the person got
+ * an error for a quarter they had already spent. A paid run now runs until it
+ * finishes and is charged what it cost (`settle.ts`). The free retry keeps a
+ * ceiling because the operator pays it: of the first four, three ran to the
+ * full $0.25 and ended with no answer, against a typical task's two to six
+ * cents. It starts in a browser that is already signed in and on the page, so
+ * it has less to do than the run it continues.
  */
 export const RETRY_COST_CAP_USD = 0.1;
 
@@ -217,7 +213,8 @@ export type CreateRunInput = {
   model?: string;
   /** Sent when given, in the shape `modelParamsFor` builds for `model`. */
   modelParams?: Record<string, unknown>;
-  maxCostUsd: number;
+  /** The provider's ceiling on what the run may spend. Omitted, it has none. */
+  maxCostUsd?: number;
 };
 
 /**
@@ -255,8 +252,7 @@ export function isTerminalRun(status: RunStatus): boolean {
  * is `client.ts`'s `mapStatus` reasoning again: it must mean "come back
  * later". Guessing `completed` would deliver an empty answer, and guessing
  * `failed` would throw away work already paid for. The cost of being wrong in
- * this direction is a poll that never settles, which the sweep and the run's
- * own `maxCostUsd` both bound.
+ * this direction is a poll that never settles, which the sweep bounds.
  */
 function toRunStatus(raw: unknown): RunStatus {
   switch (String(raw)) {
@@ -329,7 +325,7 @@ export function createRun(
         task: input.task,
         model: input.model ?? DEFAULT_MODEL,
         ...(input.modelParams ? { modelParams: input.modelParams } : {}),
-        maxCostUsd: input.maxCostUsd,
+        ...(input.maxCostUsd === undefined ? {} : { maxCostUsd: input.maxCostUsd }),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         ...(Object.keys(browserSettings).length > 0 ? { browserSettings } : {}),
         ...(input.secretBindings?.length ? { secretBindings: input.secretBindings } : {}),

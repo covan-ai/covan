@@ -2,7 +2,6 @@ import type { CredentialBinding } from "./credentials";
 import {
   DEFAULT_MODEL,
   RETRY_COST_CAP_USD,
-  RUN_COST_CAP_USD,
   modelParamsFor,
   reasoningOf,
   type CreateRunInput,
@@ -88,22 +87,27 @@ export function bareHost(value: string | null): string | null {
 /**
  * Words the model never writes, put in front of the one sentence it did.
  *
- * The first sentence is the plan's, verbatim. The second is the run's
- * `maxCostUsd`, told to the one thing that can act on it: a run stopped at
- * the ceiling answers "Could not produce output matching outputSchema" and
- * nothing else, so every page it read is paid for and, but for the notes
- * `salvage.ts` reads back from its event log, lost — three retries
- * after a sign-in on 2026-10-11/12 ended that way, at $0.25 each, asked for
- * fifteen companies or "explore in detail". The last asks for the final
- * answer in the schema's shape — the schema itself, serialised, rather than a
- * paraphrase of it, which is what keeps it from drifting.
+ * The first sentence is the plan's, verbatim. The budget sentence goes only
+ * to a run that has a `maxCostUsd` — today the free retry alone — told to the
+ * one thing that can act on it: a run stopped at the ceiling answers "Could
+ * not produce output matching outputSchema" and nothing else, so every page
+ * it read is paid for and, but for the notes `salvage.ts` reads back from its
+ * event log, lost. Three retries after a sign-in on 2026-10-11/12 ended that
+ * way at $0.25 each, asked for fifteen companies or "explore in detail". The
+ * last asks for the final answer in the schema's shape — the schema itself,
+ * serialised, rather than a paraphrase of it, which is what keeps it from
+ * drifting.
  */
-export const RUN_PREAMBLE =
+const SIGN_IN_SENTENCE =
   "If a page requires signing in and you have no credential for it, stop and report " +
-  "`login_required` with the site's host. " +
+  "`login_required` with the site's host. ";
+
+const BUDGET_SENTENCE =
   "Your budget is small and a run that exhausts it ends with no answer at all, so for a task " +
   "that asks for many items or open-ended exploration, stop once you have a useful answer and " +
-  "report what you have, saying what is missing. " +
+  "report what you have, saying what is missing. ";
+
+const ANSWER_SENTENCES =
   "When the task has you send, post or submit something for several items, do them one at a " +
   "time and see each one go through before the next; never report one as done that you did " +
   "not see succeed. " +
@@ -114,9 +118,15 @@ export const RUN_PREAMBLE =
   "quoting what it showed; and what you found or did in `answer`: " +
   JSON.stringify(OUTCOME_SCHEMA);
 
+/** The preamble of a run with no ceiling: every paid run. */
+export const RUN_PREAMBLE = SIGN_IN_SENTENCE + ANSWER_SENTENCES;
+
+/** The preamble of a run with a `maxCostUsd`: the free retry. */
+export const CAPPED_RUN_PREAMBLE = SIGN_IN_SENTENCE + BUDGET_SENTENCE + ANSWER_SENTENCES;
+
 /** The task text a run is created with: the preamble, then the person's sentence untouched. */
-export function runTask(task: string): string {
-  return `${RUN_PREAMBLE}\n\nTask: ${task}`;
+export function runTask(task: string, opts: { capped?: boolean } = {}): string {
+  return `${opts.capped ? CAPPED_RUN_PREAMBLE : RUN_PREAMBLE}\n\nTask: ${task}`;
 }
 
 /**
@@ -257,8 +267,8 @@ export function conversationRun(
     // file header and ruling R8. A saved login's sentence goes between the
     // preamble and the person's sentence, which stays last and untouched.
     task: login
-      ? `${RUN_PREAMBLE}\n\n${savedLoginSentence(login)}\n\nTask: ${input.task}`
-      : runTask(input.task),
+      ? `${input.freeRetry ? CAPPED_RUN_PREAMBLE : RUN_PREAMBLE}\n\n${savedLoginSentence(login)}\n\nTask: ${input.task}`
+      : runTask(input.task, { capped: input.freeRetry }),
     outputSchema: OUTCOME_SCHEMA,
     // Exactly the bindings `credentialsFor` built, with the `allowedDomains`
     // it took from the saved row (Review focus 4) — nothing here widens them.
@@ -291,10 +301,9 @@ export function conversationRun(
     // Omitted when the operator asked for the provider's default, or the
     // model's family has no word for the level; see `modelParamsFor`.
     ...(modelParams ? { modelParams } : {}),
-    // A ceiling on what one run may cost, enforced by the provider rather than
-    // hoped for. The person never pays browser-use; this
-    // is what keeps the operator's side of that bounded — the hand-back's
-    // free retry included, on a lower ceiling because nobody pays for it.
-    maxCostUsd: input.freeRetry ? RETRY_COST_CAP_USD : RUN_COST_CAP_USD,
+    // No ceiling on a paid run: it runs until it finishes and is charged what
+    // it cost (`settle.ts`). The free retry keeps one, because nobody pays
+    // for it but the operator; see `RETRY_COST_CAP_USD`.
+    ...(input.freeRetry ? { maxCostUsd: RETRY_COST_CAP_USD } : {}),
   };
 }

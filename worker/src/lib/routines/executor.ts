@@ -365,7 +365,7 @@ export type ExecutorDeps = {
   retrieve: (
     input: RetrievalInput,
     env: RoutineEnv,
-  ) => Promise<{ ragBlock: string; embeddingTokens: number }>;
+  ) => Promise<{ ragBlock: string; embeddingTokens: number; rerankSpend?: Spend | null }>;
   fetchDeps: FetchDeps;
   deliveryDeps: DeliveryDeps;
   /**
@@ -1090,6 +1090,7 @@ export async function runRoutine(
     // still worth more to the reader than a run that failed.
     let ragBlock = "";
     let embeddingTokens = 0;
+    let rerankSpend: Spend | null = null;
     try {
       const retrieved = await deps.retrieve(
         {
@@ -1101,6 +1102,7 @@ export async function runRoutine(
       );
       ragBlock = retrieved.ragBlock;
       embeddingTokens = retrieved.embeddingTokens;
+      rerankSpend = retrieved.rerankSpend ?? null;
     } catch (err) {
       console.error("routine retrieval failed (continuing persona-only)", err);
     }
@@ -1197,6 +1199,7 @@ export async function runRoutine(
               embeddingTokens,
               "retrieval",
             ),
+            rerankSpend,
           ),
         ],
         cursor: nextCursor,
@@ -1245,6 +1248,7 @@ export async function runRoutine(
               embeddingTokens,
               "retrieval",
             ),
+            rerankSpend,
           ),
         ],
         cursor: nextCursor,
@@ -1318,6 +1322,7 @@ export async function runRoutine(
             embeddingTokens,
             "retrieval",
           ),
+          rerankSpend,
           embeddingSpend(
             embeddingModel(runEnv as { EMBEDDING_MODEL?: string }),
             filing.indexTokens,

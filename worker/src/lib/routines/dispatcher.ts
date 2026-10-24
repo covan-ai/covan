@@ -127,7 +127,7 @@ function executorDeps(
     retrieve: async ({ agentId, query, scope }, runEnv) => {
       // A routine has no client of its own; the scope it is handed is the only
       // thing between this service-role read and everybody's private bundles.
-      const { ragBlock, embeddingTokens } = await retrieveForAgent(
+      const { ragBlock, embeddingTokens, rerankSpend } = await retrieveForAgent(
         db,
         runEnv,
         agentId,
@@ -135,7 +135,7 @@ function executorDeps(
         [],
         scope ?? { sharedOnly: true },
       );
-      return { ragBlock, embeddingTokens };
+      return { ragBlock, embeddingTokens, rerankSpend };
     },
     entitlements: entitlementsFor(env),
     fetchDeps: { fetchImpl: boundFetch, ownHosts },

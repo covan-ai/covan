@@ -137,6 +137,12 @@ describe("loadEnv", () => {
     expect(() => loadEnv(complete)).not.toThrow();
   });
 
+  it("carries the reranker model through, so a Node self-host can turn it on", () => {
+    expect(loadEnv({ ...complete, RAG_RERANK_MODEL: "gpt-4.1-mini" }).RAG_RERANK_MODEL).toBe(
+      "gpt-4.1-mini",
+    );
+  });
+
   it("carries the rate limits through when the operator sets them", () => {
     const env = loadEnv({
       ...complete,

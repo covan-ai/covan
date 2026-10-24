@@ -762,3 +762,61 @@ describe("charging what the run really cost", () => {
     expect(entitlements.record).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A run that hits its `maxCostUsd` answers only "Could not produce output
+ * matching outputSchema". What it read along the way is in its event log, and
+ * the settle hands that on instead of the error alone.
+ */
+describe("settleBrowserTask, for a run that stopped without an answer", () => {
+  const SILENT: FinishedTask = {
+    status: "failed",
+    output: null,
+    error: "Could not produce output matching outputSchema",
+    costUsd: 0.25,
+  };
+
+  it("delivers the run's own notes, marked as notes, and keeps them on the row", async () => {
+    const { mem, deps } = setup();
+    const salvage = vi.fn(async (_runId: string) => "Step: search acme.test\nPage: ada@acme.test");
+
+    await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, SILENT, { ...deps, salvage });
+
+    expect(salvage).toHaveBeenCalledWith("run-secret-1");
+    expect(mem.callsTo("browser_tasks")[0].values).toMatchObject({
+      status: "failed",
+      output: "Step: search acme.test\nPage: ada@acme.test",
+      error: "Could not produce output matching outputSchema",
+    });
+    expect(deliver.mock.calls[0][1]).toEqual({
+      ...SILENT,
+      output: "Step: search acme.test\nPage: ada@acme.test",
+      salvaged: true,
+    });
+  });
+
+  it("delivers the error as before when the log holds nothing", async () => {
+    const { deps } = setup();
+    const salvage = vi.fn(async () => null);
+
+    await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, SILENT, { ...deps, salvage });
+
+    expect(deliver.mock.calls[0][1]).toBe(SILENT);
+  });
+
+  it("reads no log for a run that answered, reported, was cancelled, or is v2", async () => {
+    const salvage = vi.fn(async () => "notes");
+    const cases: [Row, FinishedTask][] = [
+      [taskRow(), DONE],
+      [taskRow(), { ...SILENT, output: "sent 2 of 10" }],
+      [taskRow(), { ...SILENT, reported: { status: "blocked", host: null, answer: null } }],
+      [taskRow(), { ...SILENT, status: "stopped", stopReason: "cancelled" }],
+      [taskRow({ provider_run_id: null, api_version: "v2" }), SILENT],
+    ];
+    for (const [row, outcome] of cases) {
+      const { deps } = setup([row]);
+      await settleBrowserTask(ENV, row as BrowserTaskRow, outcome, { ...deps, salvage });
+    }
+    expect(salvage).not.toHaveBeenCalled();
+  });
+});

@@ -91,7 +91,8 @@ export function bareHost(value: string | null): string | null {
  * The first sentence is the plan's, verbatim. The second is the run's
  * `maxCostUsd`, told to the one thing that can act on it: a run stopped at
  * the ceiling answers "Could not produce output matching outputSchema" and
- * nothing else, so every page it read is paid for and lost — three retries
+ * nothing else, so every page it read is paid for and, but for the notes
+ * `salvage.ts` reads back from its event log, lost — three retries
  * after a sign-in on 2026-10-11/12 ended that way, at $0.25 each, asked for
  * fifteen companies or "explore in detail". The last asks for the final
  * answer in the schema's shape — the schema itself, serialised, rather than a

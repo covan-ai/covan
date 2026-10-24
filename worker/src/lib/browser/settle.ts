@@ -5,6 +5,7 @@ import { serviceClient } from "../supabase";
 import { deliverBrowserTask } from "./deliver";
 import { bareHost, OUTCOME_STATUSES, type OutcomeStatus } from "./outcome";
 import { advanceBrowserQueue } from "./queue";
+import { salvageRun } from "./salvage";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
 import { browsersFor, type RunSummary } from "./v4";
 
@@ -184,6 +185,8 @@ export type SettleDeps = {
   advance?: (browserSessionId: string) => Promise<unknown>;
   /** Where the provider's own figure is charged. Defaults to `entitlementsFor(env)`. */
   entitlements?: Pick<Entitlements, "record">;
+  /** A stopped run's notes from its event log (`salvage.ts`). Defaults to `salvageRun`. */
+  salvage?: (runId: string) => Promise<string | null>;
 };
 
 function problem(error: { code?: string; message?: string } | null): {
@@ -209,6 +212,7 @@ export async function settleBrowserTask(
   const db = overrides.db ?? serviceClient(env);
   const now = overrides.now ?? (() => new Date());
   const deliver = overrides.deliver ?? deliverBrowserTask;
+  outcome = await withSalvage(row, outcome, overrides.salvage ?? ((id) => salvageRun(env, id)));
 
   const stopReason = outcome.stopReason ?? reportedReason(outcome);
   const { data: claimed, error } = await db
@@ -300,6 +304,27 @@ export async function settleBrowserTask(
     }
   }
   return true;
+}
+
+/**
+ * A failed v4 run that said nothing — no answer, no outcome — with its event
+ * log's notes as the output, so what it read reaches the conversation and the
+ * row. The cost ceiling is the usual way to get here (`outcome.ts`'s
+ * preamble). Before the claim, so the row keeps the notes too; a clock that
+ * then loses the claim has spent a few reads, which is the rare case.
+ *
+ * A cancel is left alone: somebody stopped it on purpose. So is a v2 task,
+ * which has no event log of this shape.
+ */
+async function withSalvage(
+  row: BrowserTaskRow,
+  outcome: FinishedTask,
+  salvage: (runId: string) => Promise<string | null>,
+): Promise<FinishedTask> {
+  if (outcome.status !== "failed" || outcome.output || outcome.reported) return outcome;
+  if (!row.provider_run_id) return outcome;
+  const notes = await salvage(row.provider_run_id);
+  return notes ? { ...outcome, output: notes, salvaged: true } : outcome;
 }
 
 /**

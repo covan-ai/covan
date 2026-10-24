@@ -162,3 +162,26 @@ rather than on the order.
 The first attempt asked for one score per passage as a list; `gpt-5-nano`
 returned a list of the wrong length on 49 of 62 searches. The reply is now
 keyed by passage number and lists only the relevant ones.
+
+### Reranker race (2026-10-24) — `gpt-4.1-mini` stays
+
+Against the two other rerankers that could be run from here. `bge-reranker-base`
+is the only reranker Workers AI offers; it was measured through a throwaway
+REST call (not in the code), once dropping passages it scored under 0.01 and
+once only re-ordering. Cohere and Jina were not tried: no key.
+
+| run                         | R@5   | R@10  | MRR   | cross-lang R@5 | negative pass | p50 ms | p95 ms |
+| --------------------------- | ----- | ----- | ----- | -------------- | ------------- | ------ | ------ |
+| baseline                    | 62.3% | 69.8% | 0.449 | 12.5%          | 44.4%         | 214    | 254    |
+| bge-reranker-base, drop     | 60.4% | 62.3% | 0.510 | 50.0%          | 100%\*        | 816    | 1074   |
+| bge-reranker-base, re-order | 73.6% | 81.1% | 0.602 | 50.0%          | 100%\*        | 823    | 1249   |
+| gpt-4o-mini                 | 71.7% | 71.7% | 0.667 | 75.0%          | 77.8%         | 952    | 1892   |
+| **gpt-4.1-mini**            | 81.1% | 81.1% | 0.701 | 75.0%          | 66.7%         | 888    | 1071   |
+
+\* The cross-encoder's probabilities rarely reach the band used for a chip, so
+it cites almost nothing — a negative pass for the wrong reason.
+
+The cross-encoder was not faster from here (a REST round trip per search; a
+Worker's own `AI` binding would save some of it) and is weakest exactly where
+the reranker earns its keep, Turkish against English. `gpt-4o-mini` is cheaper
+per token and slower and less accurate than `gpt-4.1-mini`.

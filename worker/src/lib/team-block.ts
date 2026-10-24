@@ -68,7 +68,8 @@ function callerParagraph(caller: TeamPerson, notes: string[]): string {
   let text = `You are talking to ${nameOf(caller)}.`;
   const bio = oneLine(caller.bio ?? "", BIO_LINE_CHARS);
   if (bio) text += ` About them: ${/[.!?…]$/.test(bio) ? bio : `${bio}.`}`;
-  if (notes.length > 0) text += ` What you have noted about them:\n${notes.map((n) => `- ${n}`).join("\n")}`;
+  if (notes.length > 0)
+    text += ` What you have noted about them:\n${notes.map((n) => `- ${n}`).join("\n")}`;
   return text;
 }
 
@@ -98,9 +99,16 @@ export function teamBlock(input: TeamBlockInput): string {
   const workspace = oneLine(input.workspaceName, BIO_LINE_CHARS);
   if (!workspace) return "";
 
-  const sorted = [...input.people].sort(
-    (a, b) => (a.name ?? "").localeCompare(b.name ?? "", "en") || a.id.localeCompare(b.id),
-  );
+  // Named people by name, then id; people with no name yet after them, by id.
+  // An empty name would otherwise sort first and push the roster's real names
+  // down behind placeholders. Blank and whitespace-only names count as unnamed,
+  // the same test `nameOf` applies when it prints them.
+  const sorted = [...input.people].sort((a, b) => {
+    const an = oneLine(a.name ?? "", BIO_LINE_CHARS);
+    const bn = oneLine(b.name ?? "", BIO_LINE_CHARS);
+    if (!an !== !bn) return an ? -1 : 1;
+    return (an && an.localeCompare(bn, "en")) || a.id.localeCompare(b.id);
+  });
   const roster = sorted.slice(0, MAX_PEOPLE_LINES).map(rosterLine);
   const more = sorted.length - MAX_PEOPLE_LINES;
   if (more > 0) roster.push(`- …and ${more} more members.`);
@@ -131,7 +139,8 @@ export function teamBlock(input: TeamBlockInput): string {
   let out = render();
   let fromTeam = true;
   while (out.length > TEAM_BLOCK_CHARS && (teamNotes.length > 0 || personNotes.length > 0)) {
-    const list = (fromTeam && teamNotes.length > 0) || personNotes.length === 0 ? teamNotes : personNotes;
+    const list =
+      (fromTeam && teamNotes.length > 0) || personNotes.length === 0 ? teamNotes : personNotes;
     list.pop();
     fromTeam = !fromTeam;
     out = render();

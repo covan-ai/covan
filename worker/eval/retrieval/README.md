@@ -73,7 +73,7 @@ Written before the first comparison, and not to be moved after one is seen. A
 change to retrieval is kept when, against the baseline:
 
 - overall MRR rises by at least **0.02**, and overall R@5 does not fall;
-- no category's R@5 falls by more than **0.05** (`compare.ts` flags `DROP`);
+- no category loses more than **one case** at R@5 (`compare.ts` flags `DROP`);
 - the negative pass rate does not fall;
 - p95 retrieval time stays under **1500 ms**.
 
@@ -123,6 +123,7 @@ The same baseline run twice (`compare.ts baseline baseline-rerun`): overall
 R@5 moved 0.019 and overall MRR 0.001 — one case of 53. Within a category the
 largest moves were R@5 0.125 (morphology, one case of eight) and MRR 0.095
 (follow-up). **With seven or eight cases a category, one case flipping is
-0.125–0.143, more than the 0.05 per-category threshold above** — so that
-clause, as written, would flag noise. The overall thresholds are well above
-the noise.
+0.125–0.143.** The per-category clause was first written as "R@5 falls by no
+more than 0.05", which one case of noise already breaks; it was changed to
+"loses no more than one case" on 2026-10-24, after this rerun and before any
+variant was compared. The overall thresholds are well above the noise.

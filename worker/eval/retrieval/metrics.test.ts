@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankOf, score, type CaseResult } from "./metrics";
+import { lostCases, rankOf, score, type CaseResult } from "./metrics";
 import type { RetrievedChunk } from "../../src/lib/rag";
 
 const passage = (content: string): RetrievedChunk => ({
@@ -81,5 +81,23 @@ describe("score", () => {
     );
     expect(report.overall.p50ms).toBe(30);
     expect(report.overall.p95ms).toBe(1000);
+  });
+});
+
+/**
+ * A category of seven or eight cases moves 0.125–0.143 when one case flips,
+ * and the baseline run twice flipped one by noise alone. So a category is
+ * flagged for losing more than one case, not for a fraction a single case
+ * already exceeds.
+ */
+describe("lostCases", () => {
+  it("counts how many cases a category lost at recall@5", () => {
+    expect(lostCases(0.625, 0.5, 8)).toBe(1);
+    expect(lostCases(0.625, 0.375, 8)).toBe(2);
+  });
+
+  it("is zero or negative when the category held or gained", () => {
+    expect(lostCases(0.5, 0.5, 8)).toBe(0);
+    expect(lostCases(0.5, 0.625, 8)).toBe(-1);
   });
 });

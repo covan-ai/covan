@@ -104,3 +104,8 @@ export function score(label: string, model: string, results: CaseResult[]): Repo
     cases: results,
   };
 }
+
+/** How many cases a category lost between two recall figures (negative: gained). */
+export function lostCases(before: number, after: number, cases: number): number {
+  return Math.round((before - after) * cases);
+}

@@ -1,17 +1,17 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Report } from "./metrics";
+import { lostCases, type Report } from "./metrics";
 
 /**
  * Two runs side by side, by category.
  *
  *   bun eval/retrieval/compare.ts baseline rerank-v1
  *
- * A category is flagged when its recall@5 (pass rate, for negatives) fell by
- * more than the README's keep rule allows.
+ * A category is flagged when it lost more than one case at recall@5 (pass
+ * rate, for negatives) — the README's keep rule. One case is within noise.
  */
-const DROP_THRESHOLD = 0.05;
+const MAX_LOST_CASES = 1;
 
 const here = dirname(fileURLToPath(import.meta.url));
 const [a, b] = process.argv.slice(2);
@@ -33,14 +33,15 @@ for (const category of Object.keys({ ...ra.byCategory, ...rb.byCategory })) {
     rows[category] = { note: "only in one run" };
   } else if ("passRate" in sa && "passRate" in sb) {
     const d = sb.passRate - sa.passRate;
-    rows[category] = { pass: signed(d), flag: d < -DROP_THRESHOLD ? "DROP" : "" };
+    const lost = lostCases(sa.passRate, sb.passRate, sb.cases);
+    rows[category] = { pass: signed(d), flag: lost > MAX_LOST_CASES ? "DROP" : "" };
   } else if (!("passRate" in sa) && !("passRate" in sb)) {
     const d5 = sb.recallAt5 - sa.recallAt5;
     rows[category] = {
       "R@5": signed(d5),
       "R@10": signed(sb.recallAt10 - sa.recallAt10),
       MRR: signed(sb.mrr - sa.mrr),
-      flag: d5 < -DROP_THRESHOLD ? "DROP" : "",
+      flag: lostCases(sa.recallAt5, sb.recallAt5, sb.cases) > MAX_LOST_CASES ? "DROP" : "",
     };
   }
 }

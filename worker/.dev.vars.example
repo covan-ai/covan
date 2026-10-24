@@ -46,6 +46,10 @@ OPENAI_API_KEY=replace-with-openai-api-key
 # recall on a corpus it wasn't tuned for.
 # RAG_LEXICAL=off
 
+# A model that re-orders retrieved passages before they reach the prompt.
+# Unset means off. See worker/eval/retrieval/README.md for what it buys.
+# RAG_RERANK_MODEL=gpt-4.1-mini
+
 # Comma-separated EXACT frontend origins. Never a wildcard or a pattern —
 # docs/self-hosting.md explains what that costs. localhost is allowed in code.
 ALLOWED_ORIGIN=http://localhost:3000

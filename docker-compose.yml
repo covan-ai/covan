@@ -373,6 +373,8 @@ services:
       # Retrieval's lexical (keyword) arm. Empty or "on" means enabled; "off"
       # turns it off for a corpus it doesn't suit.
       RAG_LEXICAL: ${RAG_LEXICAL:-}
+      # A model that re-orders retrieved passages. Empty means off.
+      RAG_RERANK_MODEL: ${RAG_RERANK_MODEL:-}
       # Passages one workspace may hold. Empty means no ceiling.
       WORKSPACE_MAX_PASSAGES: ${WORKSPACE_MAX_PASSAGES:-}
       ROUTINE_SECRET_KEY: ${ROUTINE_SECRET_KEY:?set ROUTINE_SECRET_KEY in .env}

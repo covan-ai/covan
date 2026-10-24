@@ -48,7 +48,9 @@ export type CompletionPurpose =
   | "ocr"
   // A page of a connected app's results read for a question
   // (`lib/harness/tools/read-pages.ts`).
-  | "reading";
+  | "reading"
+  // Retrieved passages re-ordered for a question (`lib/rerank.ts`).
+  | "rerank";
 
 export type EmbeddingPurpose = "retrieval" | "index" | "reindex" | "sync" | "report";
 

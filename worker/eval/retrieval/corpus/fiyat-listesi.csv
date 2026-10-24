@@ -1,0 +1,333 @@
+sku,urun,kategori,para_birimi,fiyat,koltuk_siniri,donem
+PRV-PRO-0001,Professional 50 Koltuk Aylık,PRO,USD,450.00,50,aylik
+PRV-ENT-0002,Enterprise Yıllık 300,ENT,USD,147000.00,300,yillik
+PRV-ADD-0003,Gelişmiş Raporlama 90 Gün,ADD,TRY,67389.00,0,yillik
+PRV-API-0004,API Çağrı Paketi 500K,API,TRY,138609.00,0,yillik
+PRV-SSO-0005,LDAP Köprüsü,SSO,TRY,24649.00,0,aylik
+PRV-SUP-0006,Kıdemli Müşteri Yöneticisi,SUP,USD,1050.00,0,aylik
+PRV-EDU-0007,Eğitim Kurumu 60 Koltuk Aylık,EDU,TRY,6939.00,60,aylik
+PRV-SEC-0008,SCIM Eşitleme,SEC,USD,8800.00,0,yillik
+PRV-TRN-0009,Yönetici Eğitimi,TRN,USD,1200.00,0,aylik
+PRV-STR-0010,Starter 10 Koltuk Yıllık,STR,TRY,15409.00,10,yillik
+PRV-PRO-0011,Professional 10 Koltuk Yıllık,PRO,TRY,34659.00,10,yillik
+PRV-ENT-0012,Enterprise Yıllık 500,ENT,TRY,9432509.00,500,yillik
+PRV-ADD-0013,Webhook Paketi 25 Paket,ADD,TRY,9639.00,0,yillik
+PRV-API-0014,API Çağrı Paketi 10M,API,USD,240.00,0,aylik
+PRV-SSO-0015,OIDC SSO,SSO,USD,320.00,0,aylik
+PRV-SUP-0016,Kıdemli Müşteri Yöneticisi,SUP,TRY,57759.00,0,yillik
+PRV-EDU-0017,Eğitim Kurumu 120 Koltuk Aylık,EDU,TRY,13869.00,120,aylik
+PRV-SEC-0018,IP Kısıtlama,SEC,TRY,33889.00,0,aylik
+PRV-TRN-0019,Geliştirici Atölyesi,TRN,TRY,770009.00,0,yillik
+PRV-STR-0020,Starter Aylık,STR,TRY,749.00,5,aylik
+PRV-PRO-0021,Professional 50 Koltuk Yıllık,PRO,USD,4500.00,50,yillik
+PRV-ENT-0022,Enterprise Yıllık 200,ENT,TRY,3773009.00,200,yillik
+PRV-ADD-0023,Denetim Günlüğü Saklama 5 Paket,ADD,USD,2250.00,0,yillik
+PRV-API-0024,API Çağrı Paketi 25M,API,TRY,138609.00,0,yillik
+PRV-SSO-0025,Azure AD Eşitleme,SSO,TRY,123209.00,0,yillik
+PRV-SUP-0026,Öncelikli Destek,SUP,USD,12000.00,0,yillik
+PRV-EDU-0027,Eğitim Kurumu 30 Koltuk Aylık,EDU,USD,90.00,30,aylik
+PRV-SEC-0028,Veri Yerleşimi TR,SEC,USD,13200.00,0,yillik
+PRV-TRN-0029,Raporlama Eğitimi,TRN,USD,400.00,0,aylik
+PRV-STR-0030,Starter 10 Koltuk Aylık,STR,TRY,1549.00,10,aylik
+PRV-PRO-0031,Professional 10 Koltuk Yıllık,PRO,TRY,34659.00,10,yillik
+PRV-ENT-0032,Enterprise Aylık 200,ENT,USD,9800.00,200,aylik
+PRV-ADD-0033,Gelişmiş Raporlama 90 Gün,ADD,TRY,7709.00,0,aylik
+PRV-API-0034,API Çağrı Paketi 25M,API,USD,1800.00,0,yillik
+PRV-SSO-0035,Azure AD Eşitleme,SSO,TRY,18489.00,0,aylik
+PRV-SUP-0036,Kıdemli Müşteri Yöneticisi,SUP,USD,9000.00,0,yillik
+PRV-EDU-0037,Eğitim Kurumu 30 Koltuk Yıllık,EDU,USD,900.00,30,yillik
+PRV-SEC-0038,Veri Yerleşimi AB,SEC,USD,880.00,0,aylik
+PRV-TRN-0039,Geliştirici Atölyesi,TRN,TRY,616009.00,0,yillik
+PRV-STR-0040,Starter 3 Koltuk Aylık,STR,TRY,469.00,3,aylik
+PRV-PRO-0041,Professional 50 Koltuk Yıllık,PRO,USD,4500.00,50,yillik
+PRV-ENT-0042,Enterprise Yıllık 250,ENT,USD,14900.00,250,yillik
+PRV-ADD-0043,Webhook Paketi 250 GB,ADD,USD,1250.00,0,yillik
+PRV-API-0044,API Çağrı Paketi 25M,API,TRY,9249.00,0,aylik
+PRV-SSO-0045,OIDC SSO,SSO,TRY,30809.00,0,yillik
+PRV-SUP-0046,Standart Destek,SUP,TRY,40439.00,0,aylik
+PRV-EDU-0047,Eğitim Kurumu 60 Koltuk Yıllık,EDU,USD,1800.00,60,yillik
+PRV-SEC-0048,Veri Yerleşimi TR,SEC,TRY,25419.00,0,aylik
+PRV-TRN-0049,Geliştirici Atölyesi,TRN,TRY,1386009.00,0,yillik
+PRV-STR-0050,Starter 5 Koltuk Aylık,STR,TRY,779.00,5,aylik
+PRV-PRO-0051,Professional 50 Koltuk Aylık,PRO,USD,450.00,50,aylik
+PRV-ENT-0052,Enterprise Yıllık 150,ENT,TRY,2829759.00,150,yillik
+PRV-ADD-0053,Özel Alan Adı 25 Paket,ADD,USD,1750.00,0,yillik
+PRV-API-0054,API Çağrı Paketi 10M,API,TRY,2319.00,0,aylik
+PRV-SSO-0055,OIDC SSO,SSO,TRY,12329.00,0,aylik
+PRV-SUP-0056,Kıdemli Müşteri Yöneticisi,SUP,USD,6000.00,0,yillik
+PRV-EDU-0057,Eğitim Kurumu 120 Koltuk Aylık,EDU,TRY,13869.00,120,aylik
+PRV-SEC-0058,Veri Yerleşimi TR,SEC,TRY,508209.00,0,yillik
+PRV-TRN-0059,Geliştirici Atölyesi,TRN,TRY,154009.00,0,yillik
+PRV-STR-0060,Starter 10 Koltuk Aylık,STR,TRY,1549.00,10,aylik
+PRV-PRO-0061,Professional 25 Koltuk Aylık,PRO,USD,225.00,25,aylik
+PRV-ENT-0062,Enterprise Aylık 500,ENT,TRY,943259.00,500,aylik
+PRV-ADD-0063,Gelişmiş Raporlama 365 Gün,ADD,TRY,77009.00,0,yillik
+PRV-API-0064,API Çağrı Paketi 25M,API,TRY,69309.00,0,yillik
+PRV-SSO-0065,Azure AD Eşitleme,SSO,USD,4800.00,0,yillik
+PRV-SUP-0066,7/24 Premium Destek,SUP,USD,2100.00,0,yillik
+PRV-EDU-0067,Eğitim Kurumu 120 Koltuk Yıllık,EDU,TRY,138609.00,120,yillik
+PRV-SEC-0068,IP Kısıtlama,SEC,TRY,677609.00,0,yillik
+PRV-TRN-0069,Rota Motoru Eğitimi,TRN,USD,32000.00,0,yillik
+PRV-STR-0070,Starter 3 Koltuk Aylık,STR,TRY,469.00,3,aylik
+PRV-PRO-0071,Professional 25 Koltuk Yıllık,PRO,USD,2250.00,25,yillik
+PRV-ENT-0072,Enterprise Yıllık 300,ENT,TRY,5659509.00,300,yillik
+PRV-ADD-0073,Ek Rota Kuralı 90 Gün,ADD,USD,2000.00,0,yillik
+PRV-API-0074,API Çağrı Paketi 100K,API,USD,60.00,0,aylik
+PRV-SSO-0075,OIDC SSO,SSO,TRY,15409.00,0,aylik
+PRV-SUP-0076,Yerinde Kurulum Günü,SUP,TRY,51989.00,0,aylik
+PRV-EDU-0077,Eğitim Kurumu 60 Koltuk Aylık,EDU,TRY,6939.00,60,aylik
+PRV-SEC-0078,Veri Yerleşimi AB,SEC,USD,1320.00,0,aylik
+PRV-TRN-0079,Geliştirici Atölyesi,TRN,TRY,924009.00,0,yillik
+PRV-STR-0080,Starter 3 Koltuk Aylık,STR,USD,12.00,3,aylik
+PRV-PRO-0081,Professional 75 Koltuk Yıllık,PRO,USD,6750.00,75,yillik
+PRV-ENT-0082,Enterprise Aylık 500,ENT,TRY,943259.00,500,aylik
+PRV-ADD-0083,Ek Rota Kuralı 100 GB,ADD,USD,1750.00,0,yillik
+PRV-API-0084,API Çağrı Paketi 1M,API,USD,540.00,0,aylik
+PRV-SSO-0085,Azure AD Eşitleme,SSO,USD,400.00,0,aylik
+PRV-SUP-0086,Yerinde Kurulum Günü,SUP,USD,4500.00,0,yillik
+PRV-EDU-0087,Eğitim Kurumu 30 Koltuk Aylık,EDU,TRY,3479.00,30,aylik
+PRV-SEC-0088,IP Kısıtlama,SEC,USD,220.00,0,aylik
+PRV-TRN-0089,Raporlama Eğitimi,TRN,TRY,924009.00,0,yillik
+PRV-STR-0090,Starter 10 Koltuk Yıllık,STR,USD,400.00,10,yillik
+PRV-PRO-0091,Professional 50 Koltuk Yıllık,PRO,USD,4500.00,50,yillik
+PRV-ENT-0092,Enterprise Aylık 300,ENT,USD,14700.00,300,aylik
+PRV-ADD-0093,Sandbox Ortamı 365 Gün,ADD,TRY,48139.00,0,yillik
+PRV-API-0094,API Çağrı Paketi 100K,API,TRY,46209.00,0,yillik
+PRV-SSO-0095,OIDC SSO,SSO,USD,80.00,0,aylik
+PRV-SUP-0096,Yerinde Kurulum Günü,SUP,USD,1350.00,0,aylik
+PRV-EDU-0097,Eğitim Kurumu 60 Koltuk Yıllık,EDU,USD,1800.00,60,yillik
+PRV-SEC-0098,Müşteri Yönetimli Anahtar,SEC,TRY,84709.00,0,yillik
+PRV-TRN-0099,Raporlama Eğitimi,TRN,USD,2400.00,0,aylik
+PRV-STR-0100,Starter 3 Koltuk Aylık,STR,TRY,469.00,3,aylik
+PRV-PRO-0101,Professional 50 Koltuk Yıllık,PRO,USD,4500.00,50,yillik
+PRV-ENT-0102,Enterprise Aylık 150,ENT,TRY,282989.00,150,aylik
+PRV-ADD-0103,Ek Depolama 250 GB,ADD,TRY,7709.00,0,aylik
+PRV-API-0104,API Çağrı Paketi 25M,API,TRY,2319.00,0,aylik
+PRV-SSO-0105,OIDC SSO,SSO,USD,800.00,0,yillik
+PRV-SUP-0106,Yerinde Kurulum Günü,SUP,TRY,46209.00,0,aylik
+PRV-EDU-0107,Eğitim Kurumu 60 Koltuk Aylık,EDU,USD,180.00,60,aylik
+PRV-SEC-0108,Müşteri Yönetimli Anahtar,SEC,TRY,254109.00,0,yillik
+PRV-TRN-0109,Geliştirici Atölyesi,TRN,TRY,61609.00,0,aylik
+PRV-STR-0110,Starter 10 Koltuk Aylık,STR,TRY,1549.00,10,aylik
+PRV-PRO-0111,Professional 75 Koltuk Yıllık,PRO,TRY,259889.00,75,yillik
+PRV-ENT-0112,Enterprise Aylık 100,ENT,USD,4900.00,100,aylik
+PRV-ADD-0113,Ek Depolama 500 GB,ADD,TRY,1890.00,0,aylik
+PRV-API-0114,API Çağrı Paketi 10M,API,TRY,92409.00,0,yillik
+PRV-SSO-0115,SAML SSO,SSO,USD,320.00,0,aylik
+PRV-SUP-0116,Kıdemli Müşteri Yöneticisi,SUP,USD,750.00,0,aylik
+PRV-EDU-0117,Eğitim Kurumu 30 Koltuk Yıllık,EDU,USD,900.00,30,yillik
+PRV-SEC-0118,Veri Yerleşimi AB,SEC,USD,17600.00,0,yillik
+PRV-TRN-0119,Yönetici Eğitimi,TRN,TRY,77009.00,0,aylik
+PRV-STR-0120,Starter 10 Koltuk Aylık,STR,TRY,1549.00,10,aylik
+PRV-PRO-0121,Professional 75 Koltuk Aylık,PRO,TRY,25999.00,75,aylik
+PRV-ENT-0122,Enterprise Aylık 150,ENT,USD,7350.00,150,aylik
+PRV-ADD-0123,Özel Alan Adı 365 Gün,ADD,TRY,86639.00,0,yillik
+PRV-API-0124,API Çağrı Paketi 5M,API,USD,420.00,0,aylik
+PRV-SSO-0125,SAML SSO,SSO,TRY,24649.00,0,aylik
+PRV-SUP-0126,Standart Destek,SUP,TRY,46209.00,0,aylik
+PRV-EDU-0127,Eğitim Kurumu 400 Koltuk Aylık,EDU,TRY,46209.00,400,aylik
+PRV-SEC-0128,IP Kısıtlama,SEC,TRY,762309.00,0,yillik
+PRV-TRN-0129,Geliştirici Atölyesi,TRN,TRY,30809.00,0,aylik
+PRV-STR-0130,Starter 5 Koltuk Yıllık,STR,TRY,7709.00,5,yillik
+PRV-PRO-0131,Professional 50 Koltuk Yıllık,PRO,USD,4500.00,50,yillik
+PRV-ENT-0132,Enterprise Yıllık 150,ENT,USD,73500.00,150,yillik
+PRV-ADD-0133,Özel Alan Adı 250 GB,ADD,USD,100.00,0,aylik
+PRV-API-0134,API Çağrı Paketi 5M,API,TRY,184809.00,0,yillik
+PRV-SSO-0135,Azure AD Eşitleme,SSO,USD,480.00,0,aylik
+PRV-SUP-0136,Standart Destek,SUP,TRY,57759.00,0,yillik
+PRV-EDU-0137,Eğitim Kurumu 30 Koltuk Aylık,EDU,TRY,3479.00,30,aylik
+PRV-SEC-0138,SCIM Eşitleme,SEC,TRY,67769.00,0,aylik
+PRV-TRN-0139,Raporlama Eğitimi,TRN,USD,400.00,0,aylik
+PRV-STR-0140,Starter 5 Koltuk Aylık,STR,USD,20.00,5,aylik
+PRV-PRO-0141,Professional 10 Koltuk Aylık,PRO,TRY,3479.00,10,aylik
+PRV-ENT-0142,Enterprise Yıllık 200,ENT,TRY,3773009.00,200,yillik
+PRV-ADD-0143,Mobil Saha Modülü 50 GB,ADD,USD,200.00,0,aylik
+PRV-API-0144,API Çağrı Paketi 500K,API,TRY,18489.00,0,aylik
+PRV-SSO-0145,Azure AD Eşitleme,SSO,USD,160.00,0,aylik
+PRV-SUP-0146,Kıdemli Müşteri Yöneticisi,SUP,USD,150.00,0,aylik
+PRV-EDU-0147,Eğitim Kurumu 400 Koltuk Aylık,EDU,TRY,46209.00,400,aylik
+PRV-SEC-0148,SCIM Eşitleme,SEC,TRY,67769.00,0,aylik
+PRV-TRN-0149,Raporlama Eğitimi,TRN,USD,8000.00,0,yillik
+PRV-STR-0150,Starter 5 Koltuk Aylık,STR,USD,20.00,5,aylik
+PRV-PRO-0151,Professional 50 Koltuk Aylık,PRO,USD,450.00,50,aylik
+PRV-ENT-0152,Enterprise Yıllık 300,ENT,TRY,5659509.00,300,yillik
+PRV-ADD-0153,Denetim Günlüğü Saklama 365 Gün,ADD,TRY,57759.00,0,yillik
+PRV-API-0154,API Çağrı Paketi 100K,API,USD,5400.00,0,yillik
+PRV-SSO-0155,OIDC SSO,SSO,USD,1600.00,0,yillik
+PRV-SUP-0156,Öncelikli Destek,SUP,TRY,51989.00,0,aylik
+PRV-EDU-0157,Eğitim Kurumu Lisansı,EDU,TRY,58000.00,400,yillik
+PRV-SEC-0158,IP Kısıtlama,SEC,TRY,254109.00,0,yillik
+PRV-TRN-0159,Geliştirici Atölyesi,TRN,USD,16000.00,0,yillik
+PRV-STR-0160,Starter 3 Koltuk Aylık,STR,TRY,469.00,3,aylik
+PRV-PRO-0161,Professional 25 Koltuk Yıllık,PRO,USD,2250.00,25,yillik
+PRV-ENT-0162,Enterprise Yıllık 500,ENT,TRY,9432509.00,500,yillik
+PRV-ADD-0163,Ek Depolama 250 GB,ADD,TRY,48139.00,0,yillik
+PRV-API-0164,API Çağrı Paketi 10M,API,USD,1200.00,0,yillik
+PRV-SSO-0165,OIDC SSO,SSO,USD,720.00,0,aylik
+PRV-SUP-0166,Standart Destek,SUP,USD,13500.00,0,yillik
+PRV-EDU-0167,Eğitim Kurumu 400 Koltuk Yıllık,EDU,TRY,462009.00,400,yillik
+PRV-SEC-0168,IP Kısıtlama,SEC,USD,6600.00,0,yillik
+PRV-TRN-0169,Rota Motoru Eğitimi,TRN,USD,28000.00,0,yillik
+PRV-STR-0170,Starter 10 Koltuk Aylık,STR,TRY,1549.00,10,aylik
+PRV-PRO-0171,Professional 25 Koltuk Yıllık,PRO,USD,2250.00,25,yillik
+PRV-ENT-0172,Enterprise Yıllık 500,ENT,TRY,9432509.00,500,yillik
+PRV-ADD-0173,Ek Rota Kuralı 365 Gün,ADD,USD,1500.00,0,yillik
+PRV-API-0174,API Çağrı Paketi 100K,API,TRY,16179.00,0,aylik
+PRV-SSO-0175,OIDC SSO,SSO,USD,6400.00,0,yillik
+PRV-SUP-0176,Öncelikli Destek,SUP,USD,900.00,0,aylik
+PRV-EDU-0177,Eğitim Kurumu 30 Koltuk Aylık,EDU,USD,90.00,30,aylik
+PRV-SEC-0178,IP Kısıtlama,SEC,USD,440.00,0,aylik
+PRV-TRN-0179,Yönetici Eğitimi,TRN,USD,28000.00,0,yillik
+PRV-STR-0180,Starter 5 Koltuk Aylık,STR,USD,20.00,5,aylik
+PRV-PRO-0181,Professional 75 Koltuk Yıllık,PRO,USD,6750.00,75,yillik
+PRV-ENT-0182,Enterprise Aylık 150,ENT,TRY,282989.00,150,aylik
+PRV-ADD-0183,Webhook Paketi 100 GB,ADD,TRY,8669.00,0,aylik
+PRV-API-0184,API Çağrı Paketi 10M,API,TRY,115509.00,0,yillik
+PRV-SSO-0185,LDAP Köprüsü,SSO,USD,6400.00,0,yillik
+PRV-SUP-0186,Standart Destek,SUP,TRY,5789.00,0,aylik
+PRV-EDU-0187,Eğitim Kurumu 60 Koltuk Yıllık,EDU,TRY,69309.00,60,yillik
+PRV-SEC-0188,Veri Yerleşimi AB,SEC,USD,660.00,0,aylik
+PRV-TRN-0189,Raporlama Eğitimi,TRN,USD,8000.00,0,yillik
+PRV-STR-0190,Starter 3 Koltuk Aylık,STR,USD,12.00,3,aylik
+PRV-PRO-0191,Professional 50 Koltuk Yıllık,PRO,TRY,173259.00,50,yillik
+PRV-ENT-0192,Enterprise Aylık 500,ENT,USD,24500.00,500,aylik
+PRV-ADD-0193,Gelişmiş Raporlama 5 Paket,ADD,USD,2250.00,0,yillik
+PRV-API-0194,API Çağrı Paketi 25M,API,USD,600.00,0,yillik
+PRV-SSO-0195,OIDC SSO,SSO,TRY,3089.00,0,aylik
+PRV-SUP-0196,Standart Destek,SUP,USD,1200.00,0,aylik
+PRV-EDU-0197,Eğitim Kurumu 30 Koltuk Yıllık,EDU,TRY,34659.00,30,yillik
+PRV-SEC-0198,Müşteri Yönetimli Anahtar,SEC,USD,880.00,0,aylik
+PRV-TRN-0199,Yönetici Eğitimi,TRN,USD,2000.00,0,aylik
+PRV-STR-0200,Starter 10 Koltuk Yıllık,STR,TRY,15409.00,10,yillik
+PRV-PRO-0201,Professional 25 Koltuk Aylık,PRO,USD,225.00,25,aylik
+PRV-ENT-0202,Enterprise Yıllık 200,ENT,USD,98000.00,200,yillik
+PRV-ADD-0203,Denetim Günlüğü Saklama 10 Paket,ADD,TRY,7709.00,0,aylik
+PRV-API-0204,API Çağrı Paketi 25M,API,TRY,115509.00,0,yillik
+PRV-SSO-0205,Azure AD Eşitleme,SSO,USD,80.00,0,aylik
+PRV-SUP-0206,Öncelikli Destek,SUP,USD,150.00,0,aylik
+PRV-EDU-0207,Eğitim Kurumu 60 Koltuk Aylık,EDU,USD,180.00,60,aylik
+PRV-SEC-0208,SCIM Eşitleme,SEC,USD,1760.00,0,aylik
+PRV-TRN-0209,Raporlama Eğitimi,TRN,TRY,154009.00,0,yillik
+PRV-STR-0210,Starter 3 Koltuk Yıllık,STR,TRY,4629.00,3,yillik
+PRV-PRO-0211,Professional 75 Koltuk Yıllık,PRO,USD,6750.00,75,yillik
+PRV-ENT-0212,Enterprise Aylık 100,ENT,USD,4900.00,100,aylik
+PRV-ADD-0213,Ek Rota Kuralı 10 Paket,ADD,TRY,67389.00,0,yillik
+PRV-API-0214,API Çağrı Paketi 10M,API,USD,4800.00,0,yillik
+PRV-SSO-0215,Azure AD Eşitleme,SSO,USD,160.00,0,aylik
+PRV-SUP-0216,Kıdemli Müşteri Yöneticisi,SUP,TRY,11559.00,0,aylik
+PRV-EDU-0217,Eğitim Kurumu 30 Koltuk Aylık,EDU,USD,90.00,30,aylik
+PRV-SEC-0218,SCIM Eşitleme,SEC,TRY,33889.00,0,aylik
+PRV-TRN-0219,Geliştirici Atölyesi,TRN,USD,28000.00,0,yillik
+PRV-STR-0220,Starter 10 Koltuk Aylık,STR,TRY,1549.00,10,aylik
+PRV-PRO-0221,Professional 10 Koltuk Aylık,PRO,TRY,3479.00,10,aylik
+PRV-ENT-0222,Enterprise Yıllık 150,ENT,USD,73500.00,150,yillik
+PRV-ADD-0223,Denetim Günlüğü Saklama 365 Gün,ADD,TRY,4819.00,0,aylik
+PRV-API-0224,API Çağrı Paketi 5M,API,TRY,18489.00,0,aylik
+PRV-SSO-0225,OIDC SSO,SSO,TRY,154009.00,0,yillik
+PRV-SUP-0226,Kıdemli Müşteri Yöneticisi,SUP,TRY,28889.00,0,aylik
+PRV-EDU-0227,Eğitim Kurumu 400 Koltuk Yıllık,EDU,TRY,462009.00,400,yillik
+PRV-SEC-0228,Veri Yerleşimi TR,SEC,TRY,338809.00,0,yillik
+PRV-TRN-0229,Yönetici Eğitimi,TRN,TRY,924009.00,0,yillik
+PRV-STR-0230,Starter 3 Koltuk Yıllık,STR,TRY,4629.00,3,yillik
+PRV-PRO-0231,Professional 10 Koltuk Yıllık,PRO,USD,900.00,10,yillik
+PRV-ENT-0232,Enterprise Aylık 200,ENT,TRY,377309.00,200,aylik
+PRV-ADD-0233,Webhook Paketi 365 Gün,ADD,TRY,28889.00,0,yillik
+PRV-API-0234,API Çağrı Paketi 2M,API,USD,320.00,0,aylik
+PRV-SSO-0235,LDAP Köprüsü,SSO,TRY,27729.00,0,aylik
+PRV-SUP-0236,Öncelikli Destek,SUP,USD,9000.00,0,yillik
+PRV-EDU-0237,Eğitim Kurumu 120 Koltuk Yıllık,EDU,TRY,138609.00,120,yillik
+PRV-SEC-0238,Veri Yerleşimi TR,SEC,TRY,508209.00,0,yillik
+PRV-TRN-0239,Geliştirici Atölyesi,TRN,TRY,462009.00,0,yillik
+PRV-STR-0240,Starter 10 Koltuk Aylık,STR,TRY,1549.00,10,aylik
+PRV-PRO-0241,Professional 50 Koltuk Yıllık,PRO,TRY,173259.00,50,yillik
+PRV-ENT-0242,Enterprise Yıllık 150,ENT,USD,73500.00,150,yillik
+PRV-ADD-0243,Ek Rota Kuralı 100 GB,ADD,TRY,1939.00,0,aylik
+PRV-API-0244,API Çağrı Paketi 1M,API,USD,420.00,0,aylik
+PRV-SSO-0245,Azure AD Eşitleme,SSO,TRY,61609.00,0,yillik
+PRV-SUP-0246,Kıdemli Müşteri Yöneticisi,SUP,TRY,5789.00,0,aylik
+PRV-EDU-0247,Eğitim Kurumu 400 Koltuk Aylık,EDU,USD,1200.00,400,aylik
+PRV-SEC-0248,Veri Yerleşimi TR,SEC,TRY,50829.00,0,aylik
+PRV-TRN-0249,Raporlama Eğitimi,TRN,TRY,123209.00,0,aylik
+PRV-STR-0250,Starter 5 Koltuk Yıllık,STR,USD,200.00,5,yillik
+PRV-PRO-0251,Professional 75 Koltuk Yıllık,PRO,USD,6750.00,75,yillik
+PRV-ENT-0252,Enterprise Aylık 200,ENT,USD,9800.00,200,aylik
+PRV-ADD-0253,Ek Depolama 10 Paket,ADD,TRY,28889.00,0,yillik
+PRV-API-0254,API Çağrı Paketi 5M,API,USD,360.00,0,aylik
+PRV-SSO-0255,LDAP Köprüsü,SSO,USD,2400.00,0,yillik
+PRV-SUP-0256,Yerinde Kurulum Günü,SUP,TRY,34659.00,0,aylik
+PRV-EDU-0257,Eğitim Kurumu 60 Koltuk Yıllık,EDU,USD,1800.00,60,yillik
+PRV-SEC-0258,Veri Yerleşimi AB,SEC,TRY,8479.00,0,aylik
+PRV-TRN-0259,Raporlama Eğitimi,TRN,USD,3600.00,0,aylik
+PRV-STR-0260,Starter 10 Koltuk Aylık,STR,USD,40.00,10,aylik
+PRV-PRO-0261,Professional 50 Koltuk Aylık,PRO,USD,450.00,50,aylik
+PRV-ENT-0262,Enterprise Yıllık 150,ENT,USD,73500.00,150,yillik
+PRV-ADD-0263,Ek Depolama 50 GB,ADD,TRY,19259.00,0,yillik
+PRV-API-0264,API Çağrı Paketi 5M,API,USD,300.00,0,aylik
+PRV-SSO-0265,OIDC SSO,SSO,USD,5600.00,0,yillik
+PRV-SUP-0266,Yerinde Kurulum Günü,SUP,USD,1050.00,0,aylik
+PRV-EDU-0267,Eğitim Kurumu 400 Koltuk Aylık,EDU,TRY,46209.00,400,aylik
+PRV-SEC-0268,Veri Yerleşimi AB,SEC,USD,220.00,0,aylik
+PRV-TRN-0269,Raporlama Eğitimi,TRN,TRY,77009.00,0,aylik
+PRV-STR-0270,Starter 3 Koltuk Yıllık,STR,TRY,4629.00,3,yillik
+PRV-PRO-0271,Professional 75 Koltuk Yıllık,PRO,USD,6750.00,75,yillik
+PRV-ENT-0272,Enterprise Aylık 150,ENT,TRY,282989.00,150,aylik
+PRV-ADD-0273,Özel Alan Adı 5 Paket,ADD,USD,1000.00,0,yillik
+PRV-API-0274,API Çağrı Paketi 5M,API,USD,3000.00,0,yillik
+PRV-SSO-0275,LDAP Köprüsü,SSO,TRY,12329.00,0,aylik
+PRV-SUP-0276,Kıdemli Müşteri Yöneticisi,SUP,TRY,115509.00,0,yillik
+PRV-EDU-0277,Eğitim Kurumu 120 Koltuk Yıllık,EDU,TRY,138609.00,120,yillik
+PRV-SEC-0278,SCIM Eşitleme,SEC,USD,1760.00,0,aylik
+PRV-TRN-0279,Geliştirici Atölyesi,TRN,USD,24000.00,0,yillik
+PRV-STR-0280,Starter 3 Koltuk Aylık,STR,USD,12.00,3,aylik
+PRV-PRO-0281,Professional 75 Koltuk Aylık,PRO,TRY,25999.00,75,aylik
+PRV-ENT-0282,Enterprise Aylık 100,ENT,USD,4900.00,100,aylik
+PRV-ADD-0283,Ek Depolama 90 Gün,ADD,USD,150.00,0,aylik
+PRV-API-0284,API Çağrı Paketi 1M,API,USD,1200.00,0,yillik
+PRV-SSO-0285,Azure AD Eşitleme,SSO,USD,5600.00,0,yillik
+PRV-SUP-0286,Uzaktan Kurulum Günü,SUP,TRY,28889.00,0,aylik
+PRV-EDU-0287,Eğitim Kurumu 30 Koltuk Yıllık,EDU,USD,900.00,30,yillik
+PRV-SEC-0288,IP Kısıtlama,SEC,TRY,67769.00,0,aylik
+PRV-TRN-0289,Yönetici Eğitimi,TRN,TRY,1386009.00,0,yillik
+PRV-STR-0290,Starter 3 Koltuk Aylık,STR,TRY,469.00,3,aylik
+PRV-PRO-0291,Professional 25 Koltuk Aylık,PRO,USD,225.00,25,aylik
+PRV-ENT-0292,Enterprise Aylık 200,ENT,TRY,377309.00,200,aylik
+PRV-ADD-0293,Denetim Günlüğü Saklama 25 Paket,ADD,USD,250.00,0,yillik
+PRV-API-0294,API Çağrı Paketi 500K,API,USD,4800.00,0,yillik
+PRV-SSO-0295,OIDC SSO,SSO,USD,240.00,0,aylik
+PRV-SUP-0296,Öncelikli Destek,SUP,TRY,34659.00,0,aylik
+PRV-EDU-0297,Eğitim Kurumu 400 Koltuk Aylık,EDU,USD,1200.00,400,aylik
+PRV-SEC-0298,SCIM Eşitleme,SEC,USD,6600.00,0,yillik
+PRV-TRN-0299,Rota Motoru Eğitimi,TRN,USD,3200.00,0,aylik
+PRV-STR-0300,Starter 5 Koltuk Yıllık,STR,USD,200.00,5,yillik
+PRV-PRO-0301,Professional 25 Koltuk Aylık,PRO,TRY,8669.00,25,aylik
+PRV-ENT-0302,Enterprise Aylık 300,ENT,USD,14700.00,300,aylik
+PRV-ADD-0303,Özel Alan Adı 5 Paket,ADD,USD,200.00,0,aylik
+PRV-API-0304,API Çağrı Paketi 100K,API,USD,2400.00,0,yillik
+PRV-SSO-0305,SAML SSO Eklentisi,SSO,TRY,4250.00,0,aylik
+PRV-SUP-0306,Yerinde Kurulum Günü,SUP,TRY,51989.00,0,aylik
+PRV-EDU-0307,Eğitim Kurumu 60 Koltuk Aylık,EDU,USD,180.00,60,aylik
+PRV-SEC-0308,Veri Yerleşimi TR,SEC,TRY,67769.00,0,aylik
+PRV-TRN-0309,Yönetici Eğitimi,TRN,TRY,61609.00,0,aylik
+PRV-STR-0310,Starter 10 Koltuk Yıllık,STR,TRY,15409.00,10,yillik
+PRV-PRO-0311,Professional 75 Koltuk Yıllık,PRO,TRY,259889.00,75,yillik
+PRV-ENT-0312,Enterprise Aylık 500,ENT,USD,24500.00,500,aylik
+PRV-ADD-0313,Denetim Günlüğü Saklama 50 GB,ADD,USD,750.00,0,yillik
+PRV-API-0314,API Çağrı Paketi 100K,API,USD,300.00,0,aylik
+PRV-SSO-0315,LDAP Köprüsü,SSO,TRY,15409.00,0,aylik
+PRV-SUP-0316,Standart Destek,SUP,USD,750.00,0,aylik
+PRV-EDU-0317,Eğitim Kurumu 400 Koltuk Yıllık,EDU,TRY,462009.00,400,yillik
+PRV-SEC-0318,Müşteri Yönetimli Anahtar,SEC,USD,2200.00,0,yillik
+PRV-TRN-0319,Yönetici Eğitimi,TRN,TRY,61609.00,0,aylik
+PRV-STR-0320,Starter 10 Koltuk Aylık,STR,USD,40.00,10,aylik
+PRV-PRO-0321,Professional 75 Koltuk Yıllık,PRO,TRY,259889.00,75,yillik
+PRV-ENT-0322,Enterprise Yıllık 100,ENT,USD,49000.00,100,yillik
+PRV-ADD-0323,Mobil Saha Modülü 25 Paket,ADD,TRY,6749.00,0,aylik
+PRV-API-0324,API Çağrı Paketi 100K,API,TRY,11559.00,0,aylik
+PRV-SSO-0325,LDAP Köprüsü,SSO,USD,160.00,0,aylik
+PRV-SUP-0326,Kıdemli Müşteri Yöneticisi,SUP,TRY,40439.00,0,aylik
+PRV-EDU-0327,Eğitim Kurumu 120 Koltuk Aylık,EDU,TRY,13869.00,120,aylik
+PRV-SEC-0328,Müşteri Yönetimli Anahtar,SEC,USD,19800.00,0,yillik
+PRV-TRN-0329,Rota Motoru Eğitimi,TRN,USD,400.00,0,aylik
+PRV-STR-0330,Starter 10 Koltuk Aylık,STR,USD,40.00,10,aylik
+PRV-PRO-0331,Professional 75 Koltuk Yıllık,PRO,TRY,259889.00,75,yillik
+PRV-ENT-0332,Enterprise Aylık 300,ENT,TRY,565959.00,300,aylik

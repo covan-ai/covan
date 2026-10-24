@@ -307,3 +307,59 @@ describe("retrieveForAgent with a passage index", () => {
     expect(ranked).toMatchObject({ p_vector_ids: [], p_vector_similarities: [] });
   });
 });
+
+/**
+ * What retrieval ranked, and whether it could rank at all. The benchmark in
+ * `eval/retrieval/` scores the ranked list, and an error swallowed into an
+ * empty one would read there as "found nothing" rather than "broke".
+ */
+describe("retrieveForAgent's ranked passages", () => {
+  const withDocuments = {
+    agent_bundles: { select: () => ({ data: [{ bundle_id: "b1" }], error: null }) },
+    documents: { select: () => ({ data: [{ name: "a.md" }, { name: "b.md" }], error: null }) },
+  };
+
+  it("hands back every matched passage in the order the search ranked them", async () => {
+    const rows = ["first", "second", "third"].map((content, i) => ({
+      document_id: `d${i}`,
+      document_name: i === 1 ? "b.md" : "a.md",
+      content,
+      similarity: 0.5 - i * 0.1,
+    }));
+    const fake = fakeDb({
+      tables: withDocuments,
+      rpc: { match_chunks: () => ({ data: rows, error: null }) },
+    });
+
+    const result = await retrieveForAgent(fake.db as never, {} as never, "agent-1", "q", []);
+
+    expect(result.passages.map((p) => p.content)).toEqual(["first", "second", "third"]);
+    expect(result.passages[1].documentName).toBe("b.md");
+    expect(result.failed).toBe(false);
+  });
+
+  it("says it failed when the search returns an error", async () => {
+    const fake = fakeDb({
+      tables: withDocuments,
+      rpc: { match_chunks: () => ({ data: null, error: { message: "boom" } }) },
+    });
+
+    const result = await retrieveForAgent(fake.db as never, {} as never, "agent-1", "q", []);
+
+    expect(result.failed).toBe(true);
+    expect(result.passages).toEqual([]);
+  });
+
+  it("has nothing to rank and nothing failed when the agent has no documents", async () => {
+    const fake = fakeDb({
+      tables: {
+        agent_bundles: { select: () => ({ data: [], error: null }) },
+      },
+    });
+
+    const result = await retrieveForAgent(fake.db as never, {} as never, "agent-1", "q", []);
+
+    expect(result.failed).toBe(false);
+    expect(result.passages).toEqual([]);
+  });
+});

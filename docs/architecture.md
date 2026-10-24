@@ -221,6 +221,16 @@ p_min_similarity => 0.25, p_query_terms => terms)`. `p_query_terms` is `[]`
    mean a bad term just fails to contribute, rather than dragging in noise the
    way a missing floor would on the vector side.
 
+   **With `RAG_RERANK_MODEL` set**, the search asks for 30 candidates instead
+   of 10, and `lib/rerank.ts` hands all of them, with the question, to that
+   model, which scores each 0–3 for whether it answers. The ten best scored
+   1 or higher go on, in that order; the rest are dropped. It only reorders
+   and trims what Postgres returned, so it can never widen what the caller
+   may read. A reply it cannot use, or a call that fails, leaves the search's
+   own order. Its cost is `Retrieval.rerankSpend`, charged wherever the
+   question's embedding is (`rerank-spend.static.test.ts` holds every caller
+   to that). `worker/eval/retrieval/` is how it was chosen.
+
 4. Matching chunks are assembled by `buildContextBlock` (`lib/rag.ts`) under a
    4000-character budget, in fused-RRF order (the `order by fused_score desc`
    from step 3, not raw cosine similarity), and dropped once the budget is

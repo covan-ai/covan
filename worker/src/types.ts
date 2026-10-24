@@ -354,6 +354,13 @@ export type Bindings = SyncEnv & {
    */
   RAG_LEXICAL?: string;
   /**
+   * A model that re-orders what retrieval found before it reaches the prompt
+   * (`lib/rerank.ts`). Unset means off. Measured by `eval/retrieval/`:
+   * `gpt-4.1-mini` raised MRR from 0.449 to 0.701 for about 0.9 s and 7,000
+   * input tokens a search, charged to the workspace.
+   */
+  RAG_RERANK_MODEL?: string;
+  /**
    * The project's JWT signing secret, and the one thing that makes API keys
    * possible: a key is exchanged for a short-lived JWT for its owner, so the
    * request reaches Postgres as that person and RLS decides as it always does.

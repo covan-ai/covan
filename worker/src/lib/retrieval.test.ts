@@ -53,3 +53,19 @@ describe("retrieveForAgent", () => {
     }
   });
 });
+
+describe("retrieveForAgent when the embedding call throws", () => {
+  it("says it failed rather than reporting an empty search", async () => {
+    const fake = fakeDb({
+      tables: {
+        agent_bundles: { select: () => ({ data: [{ bundle_id: "b1" }], error: null }) },
+        documents: { select: () => ({ data: [{ name: "notes.md" }], error: null }) },
+      },
+    });
+
+    const result = await retrieveForAgent(fake.db as never, {} as never, "agent-1", "hello", []);
+
+    expect(result.failed).toBe(true);
+    expect(result.passages).toEqual([]);
+  });
+});

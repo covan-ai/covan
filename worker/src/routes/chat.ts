@@ -319,17 +319,18 @@ chat.post("/chat/stream", async (c) => {
   // was written out here until a Slack thread needed to ask an agent the same
   // question — see `lib/retrieval.ts` for why one copy rather than two.
   const knowledgeScope = knowledgeScopeFor(session);
-  const { docNames, ragBlock, sources, grounding, embeddingTokens } = await retrieveForAgent(
-    db,
-    env,
-    session.agent_id,
-    question,
-    turns.map((m: { role: string; content: string }) => ({
-      role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
-      content: m.content,
-    })),
-    knowledgeScope,
-  );
+  const { docNames, ragBlock, sources, grounding, embeddingTokens, rerankSpend } =
+    await retrieveForAgent(
+      db,
+      env,
+      session.agent_id,
+      question,
+      turns.map((m: { role: string; content: string }) => ({
+        role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+        content: m.content,
+      })),
+      knowledgeScope,
+    );
 
   // Manifest: a stable, cacheable line telling the agent which documents it has,
   // appended to the persona system prefix. This is the "file referencing" that
@@ -620,6 +621,7 @@ chat.post("/chat/stream", async (c) => {
           c,
           spends(
             embeddingSpend(embeddingModel(env), embeddingTokens, "retrieval"),
+            rerankSpend,
             completionSpend(
               model,
               {

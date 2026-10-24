@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Bindings } from "../../types";
 import { serviceClient } from "../supabase";
+import type { Spend } from "../entitlements";
 import { retrieveForAgent, type KnowledgeScope } from "../retrieval";
 import {
   selectHistory,
@@ -44,7 +45,7 @@ export type EnqueueInput = {
 };
 
 export type EnqueueResult =
-  | { ok: true; job: DocumentJobDto; embeddingTokens: number }
+  | { ok: true; job: DocumentJobDto; embeddingTokens: number; rerankSpend: Spend | null }
   | { ok: false; status: 403 | 404 | 500; reason: string };
 
 export async function enqueueDocumentJob(input: EnqueueInput): Promise<EnqueueResult> {
@@ -109,7 +110,7 @@ export async function enqueueDocumentJob(input: EnqueueInput): Promise<EnqueueRe
   // The instruction is the question retrieval answers, not the last thing
   // said: "write this up for the board" is what the document is about, and the
   // history is only there to say what "this" refers to.
-  const { ragBlock, embeddingTokens } = await retrieveForAgent(
+  const { ragBlock, embeddingTokens, rerankSpend } = await retrieveForAgent(
     db,
     env,
     input.agent.id,
@@ -148,5 +149,5 @@ export async function enqueueDocumentJob(input: EnqueueInput): Promise<EnqueueRe
 
   await kickDocumentJob(env, job.id as string);
 
-  return { ok: true, job: mapDocumentJob(job, []), embeddingTokens };
+  return { ok: true, job: mapDocumentJob(job, []), embeddingTokens, rerankSpend };
 }

@@ -117,7 +117,7 @@ export const searchDocumentsTool: AgentTool = {
       return { kind: "error", message: "query is required and must be a non-empty string" };
     }
 
-    const { ragBlock, sources, embeddingTokens } = await retrieveForAgent(
+    const { ragBlock, sources, embeddingTokens, rerankSpend } = await retrieveForAgent(
       ctx.db,
       ctx.env,
       ctx.agentId,
@@ -132,7 +132,10 @@ export const searchDocumentsTool: AgentTool = {
     // The query was embedded to search with, and the route that charged for
     // the turn never saw it — the model chose to search, as many times as it
     // liked. Charged here, the way a connected-service call is.
-    await spend(ctx, spends(embeddingSpend(embeddingModel(ctx.env), embeddingTokens, "retrieval")));
+    await spend(
+      ctx,
+      spends(embeddingSpend(embeddingModel(ctx.env), embeddingTokens, "retrieval"), rerankSpend),
+    );
 
     if (!ragBlock.trim()) {
       return { kind: "ok", content: noPassageMatched(await connectedApps(ctx)) };

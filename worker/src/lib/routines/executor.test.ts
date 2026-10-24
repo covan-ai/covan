@@ -1481,6 +1481,37 @@ describe("runRoutine", () => {
     expect(recorded).toEqual([{ workspaceId: "w1", spend: [S(45), E(900)] }]);
   });
 
+  // A run that fails after retrieving has still paid for the retrieval — and
+  // with a reranker on, that is a model call, which a transient failure's
+  // retry would buy again.
+  it("charges retrieval to the owner when the run fails after it", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const rerank: Spend = {
+      kind: "completion",
+      model: "gpt-4.1-mini",
+      promptTokens: 7000,
+      completionTokens: 12,
+      purpose: "rerank",
+    };
+    retrieve = vi.fn(async () => ({
+      ragBlock: "block",
+      embeddingTokens: 900,
+      rerankSpend: rerank,
+    }));
+    summarise = vi.fn(async () => {
+      throw new Error("model unavailable");
+    });
+    const { db } = makeDb();
+    const r = routine({
+      cursor: { seenKeys: ["a"], lastPublishedAt: null, etag: null, contentHash: null },
+    });
+
+    const out = await runRoutine(r, makeDeps(db) as any);
+
+    expect(out.status).toBe("failed");
+    expect(recorded).toEqual([{ workspaceId: "w1", spend: [E(900), rerank] }]);
+  });
+
   it("still delivers, ungrounded, when retrieval throws", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
     retrieve = vi.fn(async () => {

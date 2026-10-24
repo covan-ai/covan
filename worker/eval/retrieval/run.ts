@@ -7,7 +7,7 @@ import { isAccountError, loadEnv } from "../env";
 import { CASES, loadCorpus } from "./cases";
 import { cachedEmbedder } from "./embed-cache";
 import { rankOf, score, type CaseResult, type Report } from "./metrics";
-import { missingStackVars } from "./preflight";
+import { invalidRetrieval, missingStackVars } from "./preflight";
 import { seedCorpus, teardown } from "./stack";
 
 /**
@@ -86,11 +86,8 @@ async function main() {
     const started = performance.now();
     const r = await retrieveForAgent(seeded.user.db, env, seeded.agentId, c.question, history);
     const ms = Math.round(performance.now() - started);
-    if (r.failed) {
-      // Retrieval logs its own error just above. A failed search is not a
-      // search that found nothing, and scoring it as one would be a lie.
-      throw new Error(`retrieval failed on case ${c.id}; the run is not valid`);
-    }
+    const invalid = invalidRetrieval(r, c.id);
+    if (invalid) throw new Error(invalid);
     results.push({
       id: c.id,
       category: c.category,

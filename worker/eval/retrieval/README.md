@@ -97,4 +97,32 @@ A delta smaller than the noise floor below is not a result in either direction.
 
 ## Baseline
 
-_Not yet recorded._
+2026-10-24, `main` at `8e6581b` plus this benchmark, `text-embedding-3-small`,
+default `RAG_MIN_SIMILARITY` and `RAG_LEXICAL`, 173 passages, 62 cases
+(`results/baseline.json`).
+
+| category       | cases | R@5   | R@10  | MRR   | pass  |
+| -------------- | ----- | ----- | ----- | ----- | ----- |
+| exact-term     | 8     | 75.0% | 87.5% | 0.556 |       |
+| paraphrase     | 7     | 100%  | 100%  | 0.571 |       |
+| morphology     | 8     | 62.5% | 75.0% | 0.580 |       |
+| cross-language | 8     | 12.5% | 12.5% | 0.063 |       |
+| table          | 7     | 57.1% | 71.4% | 0.192 |       |
+| follow-up      | 7     | 42.9% | 57.1% | 0.342 |       |
+| versions       | 8     | 87.5% | 87.5% | 0.813 |       |
+| negative       | 9     |       |       |       | 44.4% |
+| **overall**    |       | 62.3% | 69.8% | 0.449 | 44.4% |
+
+By language: Turkish R@5 59.4% / MRR 0.468, English 66.7% / 0.421.
+Retrieval p50 214 ms, p95 254 ms. Negative cases still put ~3,900 characters
+in front of the model on average.
+
+### Noise floor
+
+The same baseline run twice (`compare.ts baseline baseline-rerun`): overall
+R@5 moved 0.019 and overall MRR 0.001 — one case of 53. Within a category the
+largest moves were R@5 0.125 (morphology, one case of eight) and MRR 0.095
+(follow-up). **With seven or eight cases a category, one case flipping is
+0.125–0.143, more than the 0.05 per-category threshold above** — so that
+clause, as written, would flag noise. The overall thresholds are well above
+the noise.

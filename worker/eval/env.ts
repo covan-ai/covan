@@ -64,7 +64,11 @@ export function isAccountError(err: unknown): boolean {
     text.includes("credit balance is too low") ||
     text.includes("authentication_error") ||
     text.includes("permission_error") ||
-    text.includes("invalid x-api-key")
+    text.includes("invalid x-api-key") ||
+    // OpenAI's, for the retrieval benchmark's embedding calls.
+    text.includes("incorrect api key") ||
+    text.includes("invalid_api_key") ||
+    text.includes("insufficient_quota")
   );
 }
 

@@ -1,0 +1,632 @@
+{
+  "label": "baseline",
+  "ranAt": "2026-10-24T04:20:03.056Z",
+  "model": "text-embedding-3-small",
+  "overall": {
+    "recallAt5": 0.6226415094339622,
+    "recallAt10": 0.6981132075471698,
+    "mrr": 0.44949086552860135,
+    "negativePassRate": 0.4444444444444444,
+    "p50ms": 214,
+    "p95ms": 254
+  },
+  "byCategory": {
+    "exact-term": {
+      "cases": 8,
+      "recallAt5": 0.75,
+      "recallAt10": 0.875,
+      "mrr": 0.5555555555555556
+    },
+    "paraphrase": {
+      "cases": 7,
+      "recallAt5": 1,
+      "recallAt10": 1,
+      "mrr": 0.5714285714285714
+    },
+    "morphology": {
+      "cases": 8,
+      "recallAt5": 0.625,
+      "recallAt10": 0.75,
+      "mrr": 0.5803571428571428
+    },
+    "cross-language": {
+      "cases": 8,
+      "recallAt5": 0.125,
+      "recallAt10": 0.125,
+      "mrr": 0.0625
+    },
+    "table": {
+      "cases": 7,
+      "recallAt5": 0.5714285714285714,
+      "recallAt10": 0.7142857142857143,
+      "mrr": 0.19183673469387755
+    },
+    "follow-up": {
+      "cases": 7,
+      "recallAt5": 0.42857142857142855,
+      "recallAt10": 0.5714285714285714,
+      "mrr": 0.34183673469387754
+    },
+    "versions": {
+      "cases": 8,
+      "recallAt5": 0.875,
+      "recallAt10": 0.875,
+      "mrr": 0.8125
+    },
+    "negative": {
+      "cases": 9,
+      "passRate": 0.4444444444444444,
+      "meanBlockChars": 3941.222222222222
+    }
+  },
+  "byLang": {
+    "tr": {
+      "recallAt5": 0.59375,
+      "mrr": 0.4683035714285714
+    },
+    "en": {
+      "recallAt5": 0.6666666666666666,
+      "mrr": 0.4208238851095994
+    }
+  },
+  "cases": [
+    {
+      "id": "exact-term-clause-payment-due",
+      "category": "exact-term",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 301
+    },
+    {
+      "id": "exact-term-req-19",
+      "category": "exact-term",
+      "lang": "en",
+      "rank": 1,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 213
+    },
+    {
+      "id": "exact-term-sku-support",
+      "category": "exact-term",
+      "lang": "en",
+      "rank": 9,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 215
+    },
+    {
+      "id": "exact-term-error-rt-503",
+      "category": "exact-term",
+      "lang": "tr",
+      "rank": null,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 214
+    },
+    {
+      "id": "exact-term-clause-12-3-cloudhost",
+      "category": "exact-term",
+      "lang": "en",
+      "rank": 2,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 263
+    },
+    {
+      "id": "exact-term-schedule-c-subprocessors",
+      "category": "exact-term",
+      "lang": "tr",
+      "rank": 3,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 210
+    },
+    {
+      "id": "exact-term-ec-11",
+      "category": "exact-term",
+      "lang": "en",
+      "rank": 2,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 210
+    },
+    {
+      "id": "exact-term-sync-409",
+      "category": "exact-term",
+      "lang": "en",
+      "rank": 1,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 226
+    },
+    {
+      "id": "paraphrase-office-days",
+      "category": "paraphrase",
+      "lang": "tr",
+      "rank": 3,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 228
+    },
+    {
+      "id": "paraphrase-first-draft-speed",
+      "category": "paraphrase",
+      "lang": "en",
+      "rank": 1,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 202
+    },
+    {
+      "id": "paraphrase-forgot-computer-in-taxi",
+      "category": "paraphrase",
+      "lang": "en",
+      "rank": 2,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 196
+    },
+    {
+      "id": "paraphrase-sla-refund",
+      "category": "paraphrase",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 278
+    },
+    {
+      "id": "paraphrase-buddy",
+      "category": "paraphrase",
+      "lang": "tr",
+      "rank": 3,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 207
+    },
+    {
+      "id": "paraphrase-year-end-extra-pay",
+      "category": "paraphrase",
+      "lang": "tr",
+      "rank": 2,
+      "cited": 3,
+      "blockChars": 4000,
+      "ms": 232
+    },
+    {
+      "id": "paraphrase-password-expiry",
+      "category": "paraphrase",
+      "lang": "en",
+      "rank": 3,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 193
+    },
+    {
+      "id": "morphology-terminate-notice",
+      "category": "morphology",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 216
+    },
+    {
+      "id": "morphology-my-expense",
+      "category": "morphology",
+      "lang": "tr",
+      "rank": 7,
+      "cited": 3,
+      "blockChars": 4000,
+      "ms": 231
+    },
+    {
+      "id": "morphology-lose-devices",
+      "category": "morphology",
+      "lang": "tr",
+      "rank": 2,
+      "cited": 2,
+      "blockChars": 3982,
+      "ms": 226
+    },
+    {
+      "id": "morphology-delay-payment",
+      "category": "morphology",
+      "lang": "tr",
+      "rank": null,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 210
+    },
+    {
+      "id": "morphology-oncall-pay",
+      "category": "morphology",
+      "lang": "tr",
+      "rank": null,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 250
+    },
+    {
+      "id": "morphology-leavers-accounts",
+      "category": "morphology",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 221
+    },
+    {
+      "id": "morphology-resign-weeks",
+      "category": "morphology",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 236
+    },
+    {
+      "id": "morphology-export-data",
+      "category": "morphology",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 206
+    },
+    {
+      "id": "cross-language-super-cap",
+      "category": "cross-language",
+      "lang": "tr",
+      "rank": null,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 227
+    },
+    {
+      "id": "cross-language-kvkk-72",
+      "category": "cross-language",
+      "lang": "tr",
+      "rank": null,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 219
+    },
+    {
+      "id": "cross-language-routing-daily-limit",
+      "category": "cross-language",
+      "lang": "tr",
+      "rank": null,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 192
+    },
+    {
+      "id": "cross-language-cloudhost-renewal-notice",
+      "category": "cross-language",
+      "lang": "tr",
+      "rank": null,
+      "cited": 3,
+      "blockChars": 4000,
+      "ms": 216
+    },
+    {
+      "id": "cross-language-remote-abroad",
+      "category": "cross-language",
+      "lang": "en",
+      "rank": 2,
+      "cited": 3,
+      "blockChars": 4000,
+      "ms": 217
+    },
+    {
+      "id": "cross-language-acme-availability",
+      "category": "cross-language",
+      "lang": "en",
+      "rank": null,
+      "cited": 3,
+      "blockChars": 4000,
+      "ms": 254
+    },
+    {
+      "id": "cross-language-september-mrr",
+      "category": "cross-language",
+      "lang": "en",
+      "rank": null,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 189
+    },
+    {
+      "id": "cross-language-runway",
+      "category": "cross-language",
+      "lang": "en",
+      "rank": null,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 211
+    },
+    {
+      "id": "table-sku-enterprise",
+      "category": "table",
+      "lang": "en",
+      "rank": 2,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 199
+    },
+    {
+      "id": "table-sku-storage",
+      "category": "table",
+      "lang": "tr",
+      "rank": null,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 219
+    },
+    {
+      "id": "table-sku-starter",
+      "category": "table",
+      "lang": "en",
+      "rank": 4,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 240
+    },
+    {
+      "id": "table-sku-api",
+      "category": "table",
+      "lang": "tr",
+      "rank": null,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 226
+    },
+    {
+      "id": "table-saml-sso",
+      "category": "table",
+      "lang": "en",
+      "rank": 7,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 215
+    },
+    {
+      "id": "table-premium-support",
+      "category": "table",
+      "lang": "tr",
+      "rank": 5,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 251
+    },
+    {
+      "id": "table-edu-licence",
+      "category": "table",
+      "lang": "en",
+      "rank": 4,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 189
+    },
+    {
+      "id": "follow-up-acme-late-payment",
+      "category": "follow-up",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 3,
+      "blockChars": 4000,
+      "ms": 203
+    },
+    {
+      "id": "follow-up-cloudhost-early-exit",
+      "category": "follow-up",
+      "lang": "en",
+      "rank": null,
+      "cited": 0,
+      "blockChars": 3895,
+      "ms": 194
+    },
+    {
+      "id": "follow-up-leave-carryover",
+      "category": "follow-up",
+      "lang": "tr",
+      "rank": null,
+      "cited": 4,
+      "blockChars": 4000,
+      "ms": 220
+    },
+    {
+      "id": "follow-up-enterprise-cost",
+      "category": "follow-up",
+      "lang": "en",
+      "rank": 4,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 241
+    },
+    {
+      "id": "follow-up-routing-over-limit",
+      "category": "follow-up",
+      "lang": "tr",
+      "rank": null,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 208
+    },
+    {
+      "id": "follow-up-incident-next",
+      "category": "follow-up",
+      "lang": "en",
+      "rank": 1,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 207
+    },
+    {
+      "id": "follow-up-expense-approval",
+      "category": "follow-up",
+      "lang": "tr",
+      "rank": 7,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 214
+    },
+    {
+      "id": "versions-annual-leave-1-5",
+      "category": "versions",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 238
+    },
+    {
+      "id": "versions-annual-leave-5-15",
+      "category": "versions",
+      "lang": "tr",
+      "rank": 2,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 208
+    },
+    {
+      "id": "versions-carry-over-deadline",
+      "category": "versions",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 205
+    },
+    {
+      "id": "versions-paternity",
+      "category": "versions",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 3829,
+      "ms": 204
+    },
+    {
+      "id": "versions-volunteer-leave",
+      "category": "versions",
+      "lang": "en",
+      "rank": null,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 215
+    },
+    {
+      "id": "versions-unpaid-leave-cap",
+      "category": "versions",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 229
+    },
+    {
+      "id": "versions-sick-no-report",
+      "category": "versions",
+      "lang": "en",
+      "rank": 1,
+      "cited": 3,
+      "blockChars": 4000,
+      "ms": 221
+    },
+    {
+      "id": "versions-leave-notice",
+      "category": "versions",
+      "lang": "tr",
+      "rank": 1,
+      "cited": 2,
+      "blockChars": 4000,
+      "ms": 214
+    },
+    {
+      "id": "negative-crypto-salary",
+      "category": "negative",
+      "lang": "tr",
+      "rank": null,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 219
+    },
+    {
+      "id": "negative-parental-surrogacy",
+      "category": "negative",
+      "lang": "en",
+      "rank": null,
+      "cited": 0,
+      "blockChars": 3883,
+      "ms": 189
+    },
+    {
+      "id": "negative-sabbatical",
+      "category": "negative",
+      "lang": "en",
+      "rank": null,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 201
+    },
+    {
+      "id": "negative-company-car",
+      "category": "negative",
+      "lang": "tr",
+      "rank": null,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 220
+    },
+    {
+      "id": "negative-office-dogs",
+      "category": "negative",
+      "lang": "en",
+      "rank": null,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 203
+    },
+    {
+      "id": "negative-iso-9001",
+      "category": "negative",
+      "lang": "tr",
+      "rank": null,
+      "cited": 1,
+      "blockChars": 4000,
+      "ms": 207
+    },
+    {
+      "id": "negative-vesting",
+      "category": "negative",
+      "lang": "en",
+      "rank": null,
+      "cited": 0,
+      "blockChars": 4000,
+      "ms": 198
+    },
+    {
+      "id": "negative-birthday-leave",
+      "category": "negative",
+      "lang": "tr",
+      "rank": null,
+      "cited": 3,
+      "blockChars": 3796,
+      "ms": 201
+    },
+    {
+      "id": "negative-berlin-office",
+      "category": "negative",
+      "lang": "en",
+      "rank": null,
+      "cited": 3,
+      "blockChars": 3792,
+      "ms": 196
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { SyncEnv } from "../../types";
 import { completionSpend, embeddingSpend, spends, type Entitlements } from "../entitlements";
-import { chunkText, embedTexts, embeddingModel, tokensSpentBefore } from "../embeddings";
+import { embedTexts, embeddingModel, tokensSpentBefore } from "../embeddings";
 import { replaceChunks } from "../chunk-store";
 import { passageIndex } from "../passages";
 import { getDocStore } from "../docstore";
@@ -15,7 +15,7 @@ import {
   safeName,
 } from "../extract";
 import { sidecarKey } from "../document-text";
-import { tableHeader, withBearings } from "../bearings";
+import { preparePassages } from "../bearings";
 import { ceilingReason, passageCeiling, passagesOutside } from "../knowledge-ceiling";
 import { planLimits } from "../limits";
 import { ocrAvailable, ocrPdf, OCR_MAX_BYTES, type OcrEnv } from "../formats/read/ocr";
@@ -743,8 +743,8 @@ async function importOne(
   // hosted database is sized for. A file that does not fit is this file's
   // problem, named on the run, and its version is not recorded, so it imports
   // itself once somebody makes room.
-  const chunks = chunkText(text);
-  await makeRoom(deps, connection, existing, chunks.length, room);
+  const passages = preparePassages(file.name, text);
+  await makeRoom(deps, connection, existing, passages.length, room);
 
   // The file as the source has it when there is one, and its text beside it
   // either way. The text is what every reader here asks for first
@@ -836,10 +836,9 @@ async function importOne(
   // uses, and the reason a half-synced document still answers questions.
   // Under the document's name, and a table's header row, exactly as an upload
   // is embedded (`lib/bearings.ts`). The stored passage stays as it was.
-  const header = tableHeader(file.name, text);
   const embedded = await embedTexts(
     runEnv,
-    chunks.map((content) => withBearings(file.name, header, content)),
+    passages.map((p) => p.embedInput),
   );
   // Raw embedding tokens: what the ledger is charged and what the run row keeps.
   const tokens = embedded.tokens;
@@ -849,7 +848,7 @@ async function importOne(
   const { error: chunkError } = await replaceChunks(
     deps.db,
     documentId,
-    chunks.map((content, index) => ({
+    passages.map(({ content }, index) => ({
       document_id: documentId,
       bundle_id: passageBundleId,
       workspace_id: connection.workspace_id,

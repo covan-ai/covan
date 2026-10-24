@@ -10,7 +10,7 @@ import { UnreadableFile } from "../formats/read";
 import { readStoredText, sidecarKey, type StoredText } from "../document-text";
 import { ceilingReason, passageCeiling, passagesOutside } from "../knowledge-ceiling";
 import { passageIndex } from "../passages";
-import { tableHeader, withBearings } from "../bearings";
+import { preparePassages } from "../bearings";
 
 /**
  * One document's indexing, a unit at a time.
@@ -117,10 +117,9 @@ export async function advanceIndexJob(
     }
 
     const text = await sidecarText(store, doc);
-    const header = tableHeader(doc.name, text);
-    const chunks = chunkText(text);
+    const passages = preparePassages(doc.name, text);
     const from = doc.index_cursor;
-    const slice = chunks.slice(from, from + UNIT);
+    const slice = passages.slice(from, from + UNIT);
     const generation = doc.index_generation ?? 0;
 
     if (slice.length > 0) {
@@ -131,12 +130,12 @@ export async function advanceIndexJob(
       // matched by, not what the model reads.
       const embedded = await embedTexts(
         env,
-        slice.map((content) => withBearings(doc.name, header, content)),
+        slice.map((p) => p.embedInput),
       );
       tokens = embedded.tokens;
       const { error } = await insertChunkRows(
         db,
-        slice.map((content, i) => ({
+        slice.map(({ content }, i) => ({
           document_id: doc.id,
           bundle_id: doc.bundle_id,
           workspace_id: workspaceId,
@@ -154,7 +153,7 @@ export async function advanceIndexJob(
     tokens = 0;
 
     const cursor = from + slice.length;
-    if (cursor < chunks.length) {
+    if (cursor < passages.length) {
       await db
         .from("documents")
         .update({ index_cursor: cursor, index_attempts: 0, index_lease_until: null })

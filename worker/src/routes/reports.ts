@@ -85,7 +85,10 @@ reports.post("/sessions/:id/report", async (c) => {
 
   await recordCredits(
     c,
-    spends(embeddingSpend(embeddingModel(c.env), started.embeddingTokens, "retrieval")),
+    spends(
+      embeddingSpend(embeddingModel(c.env), started.embeddingTokens, "retrieval"),
+      started.rerankSpend,
+    ),
     { sessionId: session.id as string },
   );
 

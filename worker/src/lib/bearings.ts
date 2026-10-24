@@ -1,3 +1,4 @@
+import { chunkText } from "./embeddings";
 import { extOf } from "./extract";
 
 /**
@@ -23,4 +24,22 @@ export function tableHeader(name: string, text: string): string {
 export function withBearings(name: string, header: string, content: string): string {
   const head = header && !content.startsWith(header) ? `${header}\n` : "";
   return `${name}\n\n${head}${content}`;
+}
+
+export type PreparedPassage = { content: string; embedInput: string };
+
+/**
+ * A document's passages, each as it is stored and as it is embedded.
+ *
+ * The indexing job and the sync each did this inline, and the retrieval
+ * benchmark (`eval/retrieval/`) has to index exactly the way they do — so it is
+ * one function, and anything later added to what a passage is embedded with
+ * (its place in the document, say) is added here once.
+ */
+export function preparePassages(name: string, text: string): PreparedPassage[] {
+  const header = tableHeader(name, text);
+  return chunkText(text).map((content) => ({
+    content,
+    embedInput: withBearings(name, header, content),
+  }));
 }

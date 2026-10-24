@@ -713,7 +713,8 @@ describe("settleBrowserTask", () => {
 describe("charging what the run really cost", () => {
   const charged = () => {
     const record = vi.fn(async () => {});
-    return { record };
+    const release = vi.fn(async () => {});
+    return { record, release };
   };
 
   it("charges the task's workspace the provider's figure, against the task", async () => {
@@ -727,6 +728,40 @@ describe("charging what the run really cost", () => {
       [{ kind: "browser_task", stage: "settled", browserTaskId: "bt-1", costUsd: 0.12 }],
       { userId: "user-1", sessionId: "chat-1", browserTaskId: "bt-1" },
     );
+    // The ceiling held under the task's id when it started, let go after the charge.
+    expect(entitlements.release).toHaveBeenCalledWith("bt-1");
+    expect(entitlements.record.mock.invocationCallOrder[0]).toBeLessThan(
+      entitlements.release.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("lets go of the held ceiling even when there is no figure to charge", async () => {
+    const { deps } = setup();
+    const entitlements = charged();
+
+    await settleBrowserTask(
+      ENV,
+      taskRow() as BrowserTaskRow,
+      { ...DONE, costUsd: null },
+      { ...deps, entitlements },
+    );
+
+    expect(entitlements.release).toHaveBeenCalledWith("bt-1");
+  });
+
+  it("settles all the same when the hold cannot be let go", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { deps } = setup();
+    const entitlements = {
+      record: vi.fn(async () => {}),
+      release: vi.fn(async () => {
+        throw new Error("ledger down");
+      }),
+    };
+
+    expect(
+      await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, { ...deps, entitlements }),
+    ).toBe(true);
   });
 
   it("charges nothing more when the provider gave no figure, so the hold stands", async () => {
@@ -760,6 +795,8 @@ describe("charging what the run really cost", () => {
     await settleBrowserTask(ENV, taskRow() as BrowserTaskRow, DONE, { ...deps, entitlements });
 
     expect(entitlements.record).not.toHaveBeenCalled();
+    // Nor lets go of a hold: the clock that settled it did.
+    expect(entitlements.release).not.toHaveBeenCalled();
   });
 });
 

@@ -224,6 +224,7 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     RAG_MIN_SIMILARITY: source.RAG_MIN_SIMILARITY,
     WORKSPACE_MAX_PASSAGES: source.WORKSPACE_MAX_PASSAGES,
     RAG_LEXICAL: source.RAG_LEXICAL,
+    RAG_RERANK_MODEL: source.RAG_RERANK_MODEL,
     ROUTINE_SECRET_KEY: source.ROUTINE_SECRET_KEY!,
     // Composio's catalogue, on the same terms as the OAuth pairs below:
     // optional, and absent means the feature is simply not offered. This list

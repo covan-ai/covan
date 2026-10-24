@@ -47,6 +47,33 @@ describe("search_documents", () => {
     expect(spent[0]).toMatchObject({ kind: "embedding", tokens: 12, purpose: "retrieval" });
   });
 
+  it("charges for the reranker in the same write, when one ran", async () => {
+    record.mockClear();
+    retrieveForAgent.mockResolvedValue({
+      ragBlock: "Document: Handbook.md\nTwenty days.",
+      sources: [{ id: "d1", name: "Handbook.md" }],
+      embeddingTokens: 12,
+      rerankSpend: {
+        kind: "completion",
+        model: "gpt-4.1-mini",
+        promptTokens: 7000,
+        completionTokens: 12,
+        purpose: "rerank",
+      },
+    });
+
+    await searchDocumentsTool.run({ query: "holidays" }, ctx);
+
+    expect(record).toHaveBeenCalledTimes(1);
+    const [, spent] = record.mock.calls[0] as [string, Array<Record<string, unknown>>];
+    expect(spent).toHaveLength(2);
+    expect(spent[1]).toMatchObject({
+      kind: "completion",
+      model: "gpt-4.1-mini",
+      purpose: "rerank",
+    });
+  });
+
   it("charges for a search that found nothing, which was embedded all the same", async () => {
     record.mockClear();
     retrieveForAgent.mockResolvedValue({ ragBlock: "", sources: [], embeddingTokens: 9 });

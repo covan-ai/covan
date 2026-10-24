@@ -13,6 +13,9 @@ import type { RetrievedChunk } from "./rag";
 import { nearestPassages, passageIndex, type PassageEnv } from "./passages";
 import { refersToDocuments, namesDocument } from "./doc-question";
 import { lexicalSearchEnabled, searchTerms } from "./search-terms";
+import { RERANK_CANDIDATES, rerankPassages } from "./rerank";
+import type { CompletionEnv } from "./completion";
+import type { Spend } from "./entitlements";
 
 /**
  * What an agent knows, assembled for one question.
@@ -97,6 +100,19 @@ export type Retrieval = {
   grounding: "chunks" | "documents" | "none";
   /** Embedding tokens spent asking. The caller records them. */
   embeddingTokens: number;
+  /**
+   * Every passage the search returned, in its ranked order, before the char
+   * budget had a say. What the retrieval benchmark (`eval/retrieval/`) scores.
+   */
+  passages: RetrievedChunk[];
+  /**
+   * The search could not run: the embedding call or the query failed. The
+   * turn still goes ahead ungrounded, but an empty `passages` then means
+   * "broke", not "nothing matched".
+   */
+  failed: boolean;
+  /** What the reranker cost, when one ran. The caller records it. */
+  rerankSpend: Spend | null;
 };
 
 /**
@@ -117,9 +133,15 @@ export type Retrieval = {
 export type KnowledgeScope = { viewer?: string; sharedOnly?: boolean };
 
 export type RetrievalConfig = EmbeddingConfig &
-  PassageEnv & {
+  PassageEnv &
+  Partial<CompletionEnv> & {
     RAG_MIN_SIMILARITY?: string;
     RAG_LEXICAL?: string;
+    /**
+     * A model to re-order what the search found (`lib/rerank.ts`). Unset, the
+     * search's own order stands, as it always has.
+     */
+    RAG_RERANK_MODEL?: string;
   };
 
 /**
@@ -199,6 +221,10 @@ export async function retrieveForAgent(
   // Embedding the question costs tokens too. Carried to the end of the turn and
   // recorded with the completion's, so one reply means one counter write.
   let embeddingTokens = 0;
+  /** Whether the search itself failed, as against finding nothing. */
+  let failed = false;
+  const rerankModel = env.RAG_RERANK_MODEL?.trim() || null;
+  let rerankSpend: Spend | null = null;
   /** What the block may hold. Raised only for a document asked for by name. */
   let budget = RAG_BLOCK_CHARS;
 
@@ -263,7 +289,9 @@ export async function retrieveForAgent(
       if (queryEmbedding) {
         const shared = {
           p_agent_id: agentId,
-          p_match_count: RAG_MATCH_COUNT,
+          // Wider when a reranker will read the list: its whole point is
+          // finding the right passage further down than the search put it.
+          p_match_count: rerankModel ? RERANK_CANDIDATES : RAG_MATCH_COUNT,
           p_min_similarity: ragMinSimilarity(env),
           p_query_terms: lexicalSearchEnabled(env) ? searchTerms(query) : [],
           // Only when there is something to narrow by, so a call through a
@@ -279,6 +307,7 @@ export async function retrieveForAgent(
             })
           : await db.rpc("match_chunks", { ...shared, p_query_embedding: queryEmbedding });
         if (matchError) {
+          failed = true;
           console.error("match_chunks failed", matchError);
         } else if (matches && matches.length > 0) {
           const typed = matches as Array<{
@@ -298,9 +327,21 @@ export async function retrieveForAgent(
             // `null` from the lexical arm alone; see `citable`.
             similarity: typeof m.similarity === "number" ? m.similarity : null,
           }));
+          if (rerankModel) {
+            const reranked = await rerankPassages(
+              env,
+              rerankModel,
+              query,
+              matched,
+              RAG_MATCH_COUNT,
+            );
+            matched = reranked.passages;
+            rerankSpend = reranked.spend;
+          }
         }
       }
     } catch (e) {
+      failed = true;
       console.error("retrieval failed (continuing persona-only)", e);
     }
   }
@@ -436,9 +477,18 @@ export async function retrieveForAgent(
     }
     // What the model read and what the answer is shown as coming from are two
     // lists. The block holds everything above the floor that fit; the chips
-    // hold only what clearly bears on the question (`citable`).
-    for (const u of citable(block.used, citationFloor(env))) {
-      addSource(u.documentId ?? null, u.documentName);
+    // hold only what clearly bears on the question — by the reranker's score
+    // where it read the passage (2 or more: answers at least in part), by
+    // `citable` everywhere else.
+    const bySimilarity = new Set(
+      citable(
+        block.used.filter((u) => u.rerankScore === undefined),
+        citationFloor(env),
+      ),
+    );
+    for (const u of block.used) {
+      const cited = u.rerankScore === undefined ? bySimilarity.has(u) : u.rerankScore >= 2;
+      if (cited) addSource(u.documentId ?? null, u.documentName);
     }
   }
 
@@ -449,6 +499,9 @@ export async function retrieveForAgent(
     sources: [...sources.values()],
     grounding,
     embeddingTokens,
+    passages: matched,
+    failed,
+    rerankSpend,
   };
 }
 

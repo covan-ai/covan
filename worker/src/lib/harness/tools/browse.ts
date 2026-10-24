@@ -2,7 +2,7 @@ import { hasBrowserKey } from "../../browser/client";
 import { savedLogin, siteHostOf } from "../../browser/credentials";
 import { QUEUE_MAX, queueBrowserTask, waitingInLine } from "../../browser/queue";
 import { ensureBrowserSession, releaseBrowserSession } from "../../browser/sessions";
-import { beginConversationRun, finishRunStart } from "../../browser/start";
+import { beginConversationRun, finishRunStart, releaseHold } from "../../browser/start";
 import { recordBrowserTask } from "../../browser/tasks";
 import { heldTakeover, profileFor } from "../../browser/takeover";
 import { entitlementsFor } from "../../entitlements";
@@ -748,10 +748,14 @@ export const browseTool: AgentTool = {
      * refused browse decrypts nothing. `lib/browser/start.ts` is shared with
      * the queue, so a task that waited its turn starts exactly as this one.
      */
+    // The task's id, chosen now so the run's ceiling is held under it before
+    // the run starts and let go by the settle that charges it.
+    const taskId = crypto.randomUUID();
     const begun = await beginConversationRun(ctx.env, {
       userId: ctx.userId,
       agentId: ctx.agentId,
       workspaceId: ctx.workspaceId,
+      holdId: taskId,
       task,
       site,
       browser: session.value,
@@ -815,6 +819,7 @@ export const browseTool: AgentTool = {
      * grant stays shut rather than being relaxed.
      */
     const recorded = await recordBrowserTask(ctx.env, {
+      id: taskId,
       workspaceId: ctx.workspaceId,
       agentId: ctx.agentId,
       userId: ctx.userId,
@@ -832,6 +837,8 @@ export const browseTool: AgentTool = {
     });
 
     if (!recorded) {
+      // Nothing will settle it, so nothing else lets go of its ceiling.
+      await releaseHold(entitlementsFor(ctx.env), taskId);
       return {
         kind: "error",
         message:

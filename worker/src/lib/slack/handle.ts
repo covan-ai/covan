@@ -334,7 +334,10 @@ export async function handleSlackEvent(
     console.error("slack completion failed", err);
     // The spend still happened up to the failure — the embedding, at least.
     await charge(
-      spends(embeddingSpend(embeddingModel(runEnv), retrieval.embeddingTokens, "retrieval")),
+      spends(
+        embeddingSpend(embeddingModel(runEnv), retrieval.embeddingTokens, "retrieval"),
+        retrieval.rerankSpend,
+      ),
     );
     await say("Something went wrong reaching the model. Try again in a moment.");
     return;
@@ -360,6 +363,7 @@ export async function handleSlackEvent(
   await charge(
     spends(
       embeddingSpend(embeddingModel(runEnv), retrieval.embeddingTokens, "retrieval"),
+      retrieval.rerankSpend,
       completionSpend(model, completion.usage, "slack"),
     ),
   );

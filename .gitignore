@@ -99,3 +99,6 @@ tasklet-ai-analysis.md
 # by different rules, and `git add -A` will commit it without comment. The tool
 # is not wrong; the artifact is just not ours to keep.
 package-lock.json
+
+# Embedding cache for the retrieval benchmark (`worker/eval/retrieval/`).
+worker/eval/retrieval/.cache/

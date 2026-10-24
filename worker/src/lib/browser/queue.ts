@@ -6,7 +6,7 @@ import { serviceClient } from "../supabase";
 import { hasBrowserKey } from "./client";
 import { deliverBrowserTask } from "./deliver";
 import type { BrowserTaskRow, FinishedTask } from "./poller";
-import { beginConversationRun, finishRunStart, type RunBrowser } from "./start";
+import { beginConversationRun, finishRunStart, releaseHold, type RunBrowser } from "./start";
 import { heldTakeover } from "./takeover";
 import { cancelRun } from "./v4";
 import { completeHeldRun } from "../routines/held";
@@ -85,7 +85,7 @@ export type QueueDeps = {
   heldTakeover: typeof heldTakeover;
   cancelRun: typeof cancelRun;
   deliver: typeof deliverBrowserTask;
-  entitlements: Pick<ReturnType<typeof entitlementsFor>, "check" | "record">;
+  entitlements: Pick<ReturnType<typeof entitlementsFor>, "check" | "record" | "release">;
 };
 
 function resolve(env: RoutineEnv, overrides: Partial<QueueDeps>): QueueDeps {
@@ -268,6 +268,7 @@ async function startWaiting(
       userId: row.user_id,
       agentId: row.agent_id,
       workspaceId: row.workspace_id,
+      holdId: row.id,
       task: row.task,
       site: row.login_host ?? null,
       browser,
@@ -307,6 +308,8 @@ async function startWaiting(
       if (cancelled.kind === "error") {
         console.error("could not cancel a run nothing records", row.id, cancelled.status);
       }
+      // No settle will charge it, so nothing else lets go of its ceiling.
+      await releaseHold(deps.entitlements, row.id);
       return "backed_off";
     }
 

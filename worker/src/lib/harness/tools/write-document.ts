@@ -130,7 +130,10 @@ export const writeDocumentTool: AgentTool = {
 
     await spend(
       ctx,
-      spends(embeddingSpend(embeddingModel(ctx.env), started.embeddingTokens, "retrieval")),
+      spends(
+        embeddingSpend(embeddingModel(ctx.env), started.embeddingTokens, "retrieval"),
+        started.rerankSpend,
+      ),
     );
 
     return {

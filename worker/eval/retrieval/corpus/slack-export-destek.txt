@@ -1,0 +1,262 @@
+# destek kanalı export (#destek), 2026-07-27 → 2026-09-18
+
+[2026-07-27 09:21] taner: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-07-27 11:00] cem: we got a feature request: export of the route list to Excel, logged as FR-146
+[2026-07-27 13:02] elif: Karadeniz Fındık 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-07-27 14:52] burak: Bosna Yapı Market fatura PDF'ini indiremiyor, export hatası
+[2026-07-27 16:01] cem: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-07-27 16:49] kemal: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-07-27 17:31] rabia: is the beta feedback button posting to #destek yet?
+[2026-07-28 08:30] cem: Karadeniz Fındık 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-07-28 10:15] kemal: Kuzey Gıda fatura PDF'ini indiremiyor, export hatası
+[2026-07-28 11:50] taner: evet, dün akşam çıktı
+[2026-07-28 13:36] nilufer: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-07-28 14:10] kemal: invoice export macro v3 is in the help centre now
+[2026-07-28 15:25] cem: Akdeniz Liman 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-07-28 17:04] kemal: can someone take #4014? I am in a customer call until 15:00
+[2026-07-28 17:58] taner: reminder: first response target is 60 min, today's median is 33 min
+[2026-07-28 18:34] taner: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-07-29 08:52] cem: gün sonu özeti: 9 yeni, 6 kapanan, 2 bekleyen
+[2026-07-29 11:09] kemal: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-07-29 11:18] burak: gün sonu özeti: 8 yeni, 3 kapanan, 4 bekleyen
+[2026-07-29 12:24] gizem: invoice export macro v3 is in the help centre now
+[2026-07-29 12:53] kemal: webhook retries for Ege Eczacılık are failing with 502, upstream is theirs
+[2026-07-29 14:30] burak: #4022 kapattım, cache temizlenince düzeldi
+[2026-07-29 15:53] cem: ben alıyorum
+[2026-07-29 17:30] kemal: reminder: first response target is 60 min, today's median is 52 min
+[2026-07-29 17:49] gizem: we got a feature request: export of the route list to Excel, logged as FR-174
+[2026-07-29 18:46] nilufer: webhook retries for Marmara Soğuk Zincir are failing with 502, upstream is theirs
+[2026-07-30 08:31] cem: #4027 kapattım, cache temizlenince düzeldi
+[2026-07-30 10:10] rabia: status page updated, resolved at 14:26
+[2026-07-30 11:08] kemal: Anadolu Tarım Koop. için kullanıcı limitini 5 artırdım, plan PRO 50 koltuk
+[2026-07-30 12:00] gizem: is the beta feedback button posting to #destek yet?
+[2026-07-30 14:06] kemal: heads up, Android sync fix SYNC-409 ships in app build 5.12.3 on Aug 19
+[2026-07-30 15:07] kemal: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-07-30 16:45] nilufer: ben alıyorum
+[2026-07-30 17:38] burak: ben alıyorum
+[2026-07-30 18:22] burak: #4035 kapattım, cache temizlenince düzeldi
+[2026-07-31 08:44] cem: reminder: first response target is 60 min, today's median is 54 min
+[2026-07-31 10:15] gizem: Bosna Yapı Market ticket #4037 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-07-31 12:03] taner: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-07-31 12:28] gizem: Karadeniz Fındık için kullanıcı limitini 5 artırdım, plan PRO 50 koltuk
+[2026-07-31 14:10] nilufer: reminder: first response target is 60 min, today's median is 36 min
+[2026-07-31 16:32] burak: API key rotated for Bosna Yapı Market at their request
+[2026-07-31 18:23] gizem: webhook retries for Doğu Kargo are failing with 502, upstream is theirs
+[2026-08-01 08:55] nilufer: Anadolu Tarım Koop. 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-01 09:33] cem: we got a feature request: export of the route list to Excel, logged as FR-167
+[2026-08-01 09:58] kemal: is the beta feedback button posting to #destek yet?
+[2026-08-01 11:19] cem: status page updated, resolved at 15:35
+[2026-08-01 12:23] taner: Kuzey Gıda fatura PDF'ini indiremiyor, export hatası
+[2026-08-01 13:45] elif: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-08-01 15:02] rabia: Bosna Yapı Market ticket #4049 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-08-01 16:31] nilufer: can someone take #4050? I am in a customer call until 15:00
+[2026-08-01 17:03] burak: evet, dün akşam çıktı
+[2026-08-01 17:13] burak: is the beta feedback button posting to #destek yet?
+[2026-08-02 08:55] nilufer: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-02 10:57] gizem: can someone take #4054? I am in a customer call until 15:00
+[2026-08-02 11:27] taner: checked DKIM for the sending domain, looks fine now
+[2026-08-02 11:47] elif: reminder: first response target is 60 min, today's median is 23 min
+[2026-08-02 13:20] rabia: evet, dün akşam çıktı
+[2026-08-02 13:33] elif: invoice export macro v3 is in the help centre now
+[2026-08-02 15:39] kemal: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-02 16:02] gizem: #4060 kapattım, cache temizlenince düzeldi
+[2026-08-02 16:23] burak: evet, dün akşam çıktı
+[2026-08-02 17:38] burak: reminder: first response target is 60 min, today's median is 25 min
+[2026-08-02 17:53] burak: lütfen müşteri verisini ekran görüntüsüne koymayın, maskeleyin
+[2026-08-02 18:46] nilufer: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-03 08:43] nilufer: evet, dün akşam çıktı
+[2026-08-03 09:16] elif: gün sonu özeti: 14 yeni, 11 kapanan, 4 bekleyen
+[2026-08-03 10:00] kemal: Rabia'da, linki atıyorum: help.pervane.test/sifre-sifirlama
+[2026-08-03 12:09] kemal: invoice export macro v3 is in the help centre now
+[2026-08-03 13:23] gizem: evet, dün akşam çıktı
+[2026-08-03 14:44] kemal: checked DKIM for the sending domain, looks fine now
+[2026-08-03 15:32] rabia: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-08-03 17:41] rabia: evet, dün akşam çıktı
+[2026-08-03 18:31] rabia: lütfen müşteri verisini ekran görüntüsüne koymayın, maskeleyin
+[2026-08-04 08:30] burak: evet, dün akşam çıktı
+[2026-08-04 09:35] nilufer: status page updated, resolved at 16:25
+[2026-08-04 11:35] burak: webhook retries for Karadeniz Fındık are failing with 502, upstream is theirs
+[2026-08-04 13:17] taner: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-08-04 14:17] burak: Ege Eczacılık 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-04 16:11] rabia: Anadolu Tarım Koop. ticket #4079 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-08-04 16:38] kemal: ben alıyorum
+[2026-08-04 17:14] elif: lütfen müşteri verisini ekran görüntüsüne koymayın, maskeleyin
+[2026-08-05 08:51] gizem: Akdeniz Liman için kullanıcı limitini 5 artırdım, plan PRO 50 koltuk
+[2026-08-05 09:56] nilufer: lütfen müşteri verisini ekran görüntüsüne koymayın, maskeleyin
+[2026-08-05 10:32] rabia: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-05 10:56] elif: Doğu Kargo için kullanıcı limitini 5 artırdım, plan PRO 50 koltuk
+[2026-08-05 11:44] burak: invoice export macro v3 is in the help centre now
+[2026-08-05 12:57] nilufer: #4087 kapattım, cache temizlenince düzeldi
+[2026-08-05 13:07] rabia: Ege Eczacılık için kullanıcı limitini 5 artırdım, plan PRO 50 koltuk
+[2026-08-05 14:40] cem: ben alıyorum
+[2026-08-05 15:07] elif: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-08-05 15:11] nilufer: status page updated, resolved at 15:48
+[2026-08-05 15:17] burak: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-08-05 16:11] nilufer: invoice export macro v3 is in the help centre now
+[2026-08-05 16:15] taner: we got a feature request: export of the route list to Excel, logged as FR-123
+[2026-08-05 16:58] rabia: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-06 08:57] nilufer: status page updated, resolved at 12:17
+[2026-08-06 09:01] nilufer: Mersin liman talebi: SSO testini Perşembe 14:00'te yapıyoruz, Cem katılacak
+[2026-08-06 11:23] elif: thanks, escalating to #muhendislik
+[2026-08-06 12:45] kemal: Bosna Yapı Market 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-06 13:14] elif: invoice export macro v3 is in the help centre now
+[2026-08-06 13:53] nilufer: we got a feature request: export of the route list to Excel, logged as FR-125
+[2026-08-06 16:02] rabia: invoice export macro v3 is in the help centre now
+[2026-08-06 16:36] taner: Marmara Soğuk Zincir fatura PDF'ini indiremiyor, export hatası
+[2026-08-06 16:51] taner: #4104 kapattım, cache temizlenince düzeldi
+[2026-08-06 17:53] taner: Kuzey Gıda 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-07 08:36] nilufer: thanks, escalating to #muhendislik
+[2026-08-07 10:06] cem: who owns the macro for password resets?
+[2026-08-07 12:23] nilufer: Ege Eczacılık için kullanıcı limitini 5 artırdım, plan PRO 50 koltuk
+[2026-08-07 13:46] kemal: Anadolu Tarım Koop. 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-07 14:44] taner: is the beta feedback button posting to #destek yet?
+[2026-08-07 15:29] taner: API key rotated for Karadeniz Fındık at their request
+[2026-08-07 16:10] kemal: ben alıyorum
+[2026-08-07 17:14] rabia: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-08-07 18:40] taner: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-08 08:41] nilufer: Bosna Yapı Market fatura PDF'ini indiremiyor, export hatası
+[2026-08-08 09:20] gizem: lütfen müşteri verisini ekran görüntüsüne koymayın, maskeleyin
+[2026-08-08 11:07] rabia: is the beta feedback button posting to #destek yet?
+[2026-08-08 12:54] elif: can someone take #4118? I am in a customer call until 15:00
+[2026-08-08 15:05] gizem: thanks, escalating to #muhendislik
+[2026-08-08 15:33] taner: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-08 15:57] elif: can someone take #4121? I am in a customer call until 15:00
+[2026-08-08 16:21] burak: invoice export macro v3 is in the help centre now
+[2026-08-08 18:12] kemal: webhook retries for Kuzey Gıda are failing with 502, upstream is theirs
+[2026-08-09 08:48] taner: reminder: first response target is 60 min, today's median is 34 min
+[2026-08-09 10:10] gizem: Karadeniz Fındık fatura PDF'ini indiremiyor, export hatası
+[2026-08-09 11:39] taner: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-09 12:57] taner: webhook retries for Akdeniz Liman are failing with 502, upstream is theirs
+[2026-08-09 13:07] cem: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-09 14:09] burak: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-09 14:27] elif: Bosna Yapı Market için kullanıcı limitini 5 artırdım, plan PRO 25 koltuk
+[2026-08-09 16:46] taner: gün sonu özeti: 6 yeni, 14 kapanan, 5 bekleyen
+[2026-08-09 18:09] nilufer: checked DKIM for the sending domain, looks fine now
+[2026-08-10 08:51] kemal: Marmara Soğuk Zincir fatura PDF'ini indiremiyor, export hatası
+[2026-08-10 09:54] burak: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-08-10 10:43] nilufer: #4135 kapattım, cache temizlenince düzeldi
+[2026-08-10 10:47] rabia: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-10 12:03] burak: we got a feature request: export of the route list to Excel, logged as FR-114
+[2026-08-10 13:21] taner: can someone take #4138? I am in a customer call until 15:00
+[2026-08-10 14:33] elif: we got a feature request: export of the route list to Excel, logged as FR-102
+[2026-08-10 16:46] cem: invoice export macro v3 is in the help centre now
+[2026-08-10 16:52] nilufer: lütfen müşteri verisini ekran görüntüsüne koymayın, maskeleyin
+[2026-08-10 18:54] taner: the DKIM record for the secondary mail provider was pasted into the wrong TXT host, fixed on Aug 4
+[2026-08-11 08:57] elif: can someone take #4143? I am in a customer call until 15:00
+[2026-08-11 11:09] kemal: API key rotated for Marmara Soğuk Zincir at their request
+[2026-08-11 13:00] burak: Marmara Soğuk Zincir için kullanıcı limitini 5 artırdım, plan PRO 25 koltuk
+[2026-08-11 14:33] gizem: Marmara Soğuk Zincir için kullanıcı limitini 5 artırdım, plan PRO 25 koltuk
+[2026-08-11 15:33] elif: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-08-11 16:14] nilufer: evet, dün akşam çıktı
+[2026-08-11 16:54] nilufer: reminder: first response target is 60 min, today's median is 49 min
+[2026-08-11 18:34] gizem: invoice export macro v3 is in the help centre now
+[2026-08-12 08:51] kemal: Anadolu Tarım Koop. ticket #4151 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-08-12 09:54] nilufer: webhook retries for Marmara Soğuk Zincir are failing with 502, upstream is theirs
+[2026-08-12 11:32] gizem: Doğu Kargo ticket #4153 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-08-12 12:59] nilufer: thanks, escalating to #muhendislik
+[2026-08-12 13:11] nilufer: thanks, escalating to #muhendislik
+[2026-08-12 13:25] cem: can someone take #4156? I am in a customer call until 15:00
+[2026-08-12 13:42] burak: status page updated, resolved at 10:40
+[2026-08-12 15:57] nilufer: status page updated, resolved at 16:05
+[2026-08-12 17:06] elif: Bosna Yapı Market ticket #4159 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-08-12 17:30] nilufer: status page updated, resolved at 11:28
+[2026-08-12 17:52] cem: Rabia'da, linki atıyorum: help.pervane.test/sifre-sifirlama
+[2026-08-12 18:57] taner: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-13 08:56] nilufer: Ege Eczacılık 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-13 10:54] taner: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-08-13 11:15] burak: is the beta feedback button posting to #destek yet?
+[2026-08-13 13:34] gizem: checked DKIM for the sending domain, looks fine now
+[2026-08-13 14:40] taner: status page updated, resolved at 13:16
+[2026-08-13 16:56] kemal: Doğu Kargo ticket #4168 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-08-13 17:00] gizem: checked DKIM for the sending domain, looks fine now
+[2026-08-13 18:55] gizem: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-14 08:39] kemal: API key rotated for Anadolu Tarım Koop. at their request
+[2026-08-14 09:56] taner: ben alıyorum
+[2026-08-14 11:04] kemal: ben alıyorum
+[2026-08-14 12:16] burak: ben alıyorum
+[2026-08-14 13:40] gizem: is the beta feedback button posting to #destek yet?
+[2026-08-14 15:59] nilufer: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-08-14 16:35] taner: #4177 kapattım, cache temizlenince düzeldi
+[2026-08-14 17:18] cem: status page updated, resolved at 09:16
+[2026-08-15 08:41] nilufer: Marmara Soğuk Zincir için kullanıcı limitini 5 artırdım, plan PRO 50 koltuk
+[2026-08-15 09:19] rabia: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-08-15 10:31] nilufer: evet, dün akşam çıktı
+[2026-08-15 11:57] kemal: checked DKIM for the sending domain, looks fine now
+[2026-08-15 12:46] nilufer: evet, dün akşam çıktı
+[2026-08-15 14:19] rabia: evet, dün akşam çıktı
+[2026-08-15 15:16] rabia: thanks, escalating to #muhendislik
+[2026-08-15 16:54] gizem: reminder: first response target is 60 min, today's median is 44 min
+[2026-08-15 17:16] kemal: API key rotated for Karadeniz Fındık at their request
+[2026-08-15 18:46] rabia: help centre password reset article is /sifre-sifirlama, updated 2026-08-21
+[2026-08-16 08:31] cem: status page updated, resolved at 16:58
+[2026-08-16 10:14] elif: invoice export macro v3 is in the help centre now
+[2026-08-16 10:34] taner: API key rotated for Marmara Soğuk Zincir at their request
+[2026-08-16 12:51] gizem: checked DKIM for the sending domain, looks fine now
+[2026-08-16 13:16] burak: Bosna Yapı Market 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-16 15:28] burak: evet, dün akşam çıktı
+[2026-08-16 15:46] elif: gün sonu özeti: 6 yeni, 6 kapanan, 0 bekleyen
+[2026-08-16 16:51] elif: Anadolu Tarım Koop. 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-16 18:02] burak: evet, dün akşam çıktı
+[2026-08-17 08:53] nilufer: invoice export macro v3 is in the help centre now
+[2026-08-17 10:28] burak: status page updated, resolved at 15:40
+[2026-08-17 10:50] cem: we got a feature request: export of the route list to Excel, logged as FR-178
+[2026-08-17 13:01] cem: Doğu Kargo ticket #4201 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-08-17 15:20] burak: we got a feature request: export of the route list to Excel, logged as FR-167
+[2026-08-17 16:40] rabia: invoice export macro v3 is in the help centre now
+[2026-08-17 17:18] gizem: checked DKIM for the sending domain, looks fine now
+[2026-08-17 17:47] burak: checked DKIM for the sending domain, looks fine now
+[2026-08-18 08:49] nilufer: who owns the macro for password resets?
+[2026-08-18 10:23] nilufer: is the beta feedback button posting to #destek yet?
+[2026-08-18 10:27] rabia: #4208 kapattım, cache temizlenince düzeldi
+[2026-08-18 12:37] burak: rota ekranında durak sırası kayıyor, ekran görüntüsü ekte
+[2026-08-18 12:50] nilufer: can someone take #4210? I am in a customer call until 15:00
+[2026-08-18 15:05] nilufer: Anadolu Tarım Koop. ticket #4211 açtı, sürücü uygulaması giriş ekranında takılıyor
+[2026-08-18 16:39] rabia: reminder: first response target is 60 min, today's median is 25 min
+[2026-08-18 18:34] cem: thanks, escalating to #muhendislik
+[2026-08-19 08:57] kemal: Karadeniz Fındık fatura PDF'ini indiremiyor, export hatası
+[2026-08-19 10:16] elif: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-08-19 11:33] taner: invoice export macro v3 is in the help centre now
+[2026-08-19 12:19] kemal: invoice export macro v3 is in the help centre now
+[2026-08-19 12:34] nilufer: status page updated, resolved at 14:43
+[2026-08-19 13:58] taner: thanks, escalating to #muhendislik
+[2026-08-19 14:29] rabia: reminder: first response target is 60 min, today's median is 51 min
+[2026-08-19 15:17] taner: API key rotated for Marmara Soğuk Zincir at their request
+[2026-08-19 16:13] burak: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-19 17:27] taner: evet, dün akşam çıktı
+[2026-08-19 18:53] cem: API key rotated for Marmara Soğuk Zincir at their request
+[2026-08-20 08:41] nilufer: gün sonu özeti: 6 yeni, 6 kapanan, 3 bekleyen
+[2026-08-20 10:28] gizem: is the beta feedback button posting to #destek yet?
+[2026-08-20 11:38] cem: invoice export macro v3 is in the help centre now
+[2026-08-20 13:39] burak: gün sonu özeti: 11 yeni, 11 kapanan, 0 bekleyen
+[2026-08-20 13:45] nilufer: ben alıyorum
+[2026-08-20 14:13] gizem: on-call this week is Cem, handover Monday 10:00, phone number is in the runbook
+[2026-08-20 15:15] cem: Doğu Kargo fatura PDF'ini indiremiyor, export hatası
+[2026-08-20 17:27] gizem: Doğu Kargo 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-21 08:39] gizem: status page updated, resolved at 12:54
+[2026-08-21 10:54] gizem: who owns the macro for password resets?
+[2026-08-21 11:42] rabia: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-21 12:22] elif: #4236 kapattım, cache temizlenince düzeldi
+[2026-08-21 12:58] rabia: gün sonu özeti: 14 yeni, 10 kapanan, 1 bekleyen
+[2026-08-21 13:54] kemal: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-08-21 14:35] rabia: is the beta feedback button posting to #destek yet?
+[2026-08-21 16:35] taner: who owns the macro for password resets?
+[2026-08-21 18:06] burak: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-22 08:57] rabia: Kuzey Gıda için kullanıcı limitini 5 artırdım, plan PRO 50 koltuk
+[2026-08-22 10:03] cem: checked DKIM for the sending domain, looks fine now
+[2026-08-22 11:08] elif: can someone take #4244? I am in a customer call until 15:00
+[2026-08-22 11:52] nilufer: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım
+[2026-08-22 13:00] rabia: #4246 kapattım, cache temizlenince düzeldi
+[2026-08-22 13:24] rabia: ben alıyorum
+[2026-08-22 14:29] gizem: invoice export macro v3 is in the help centre now
+[2026-08-22 14:32] burak: API key rotated for Marmara Soğuk Zincir at their request
+[2026-08-22 16:45] kemal: status page updated, resolved at 15:10
+[2026-08-22 17:58] elif: is the beta feedback button posting to #destek yet?
+[2026-08-23 08:58] cem: lütfen müşteri verisini ekran görüntüsüne koymayın, maskeleyin
+[2026-08-23 09:19] gizem: yes, it repro'd on a Pixel 6, Cem is looking at it
+[2026-08-23 11:40] burak: Doğu Kargo 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-23 12:44] nilufer: can someone take #4255? I am in a customer call until 15:00
+[2026-08-23 14:14] kemal: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-23 14:27] elif: gün sonu özeti: 9 yeni, 12 kapanan, 3 bekleyen
+[2026-08-23 16:26] burak: anyone seen the offline sync error "SYNC-409" on Android 13?
+[2026-08-23 16:56] gizem: Anadolu Tarım Koop. 2FA kodu gelmiyor diye yazdı, authenticator önerdim
+[2026-08-23 18:54] taner: müşteri davet e-postası gelmedi diyor, spam klasörüne baktırdım

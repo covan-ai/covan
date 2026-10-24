@@ -13,6 +13,9 @@ import type { RetrievedChunk } from "./rag";
 import { nearestPassages, passageIndex, type PassageEnv } from "./passages";
 import { refersToDocuments, namesDocument } from "./doc-question";
 import { lexicalSearchEnabled, searchTerms } from "./search-terms";
+import { RERANK_CANDIDATES, rerankPassages } from "./rerank";
+import type { CompletionEnv } from "./completion";
+import type { Spend } from "./entitlements";
 
 /**
  * What an agent knows, assembled for one question.
@@ -108,6 +111,8 @@ export type Retrieval = {
    * "broke", not "nothing matched".
    */
   failed: boolean;
+  /** What the reranker cost, when one ran. The caller records it. */
+  rerankSpend: Spend | null;
 };
 
 /**
@@ -128,9 +133,15 @@ export type Retrieval = {
 export type KnowledgeScope = { viewer?: string; sharedOnly?: boolean };
 
 export type RetrievalConfig = EmbeddingConfig &
-  PassageEnv & {
+  PassageEnv &
+  Partial<CompletionEnv> & {
     RAG_MIN_SIMILARITY?: string;
     RAG_LEXICAL?: string;
+    /**
+     * A model to re-order what the search found (`lib/rerank.ts`). Unset, the
+     * search's own order stands, as it always has.
+     */
+    RAG_RERANK_MODEL?: string;
   };
 
 /**
@@ -212,6 +223,8 @@ export async function retrieveForAgent(
   let embeddingTokens = 0;
   /** Whether the search itself failed, as against finding nothing. */
   let failed = false;
+  const rerankModel = env.RAG_RERANK_MODEL?.trim() || null;
+  let rerankSpend: Spend | null = null;
   /** What the block may hold. Raised only for a document asked for by name. */
   let budget = RAG_BLOCK_CHARS;
 
@@ -276,7 +289,9 @@ export async function retrieveForAgent(
       if (queryEmbedding) {
         const shared = {
           p_agent_id: agentId,
-          p_match_count: RAG_MATCH_COUNT,
+          // Wider when a reranker will read the list: its whole point is
+          // finding the right passage further down than the search put it.
+          p_match_count: rerankModel ? RERANK_CANDIDATES : RAG_MATCH_COUNT,
           p_min_similarity: ragMinSimilarity(env),
           p_query_terms: lexicalSearchEnabled(env) ? searchTerms(query) : [],
           // Only when there is something to narrow by, so a call through a
@@ -312,6 +327,17 @@ export async function retrieveForAgent(
             // `null` from the lexical arm alone; see `citable`.
             similarity: typeof m.similarity === "number" ? m.similarity : null,
           }));
+          if (rerankModel) {
+            const reranked = await rerankPassages(
+              env,
+              rerankModel,
+              query,
+              matched,
+              RAG_MATCH_COUNT,
+            );
+            matched = reranked.passages;
+            rerankSpend = reranked.spend;
+          }
         }
       }
     } catch (e) {
@@ -466,6 +492,7 @@ export async function retrieveForAgent(
     embeddingTokens,
     passages: matched,
     failed,
+    rerankSpend,
   };
 }
 

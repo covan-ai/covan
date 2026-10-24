@@ -37,6 +37,7 @@ const env: RetrievalConfig = {
   EMBEDDING_DIMENSIONS: process.env.EMBEDDING_DIMENSIONS,
   RAG_MIN_SIMILARITY: process.env.RAG_MIN_SIMILARITY,
   RAG_LEXICAL: process.env.RAG_LEXICAL,
+  RAG_RERANK_MODEL: process.env.RAG_RERANK_MODEL,
 };
 
 const missing = missingStackVars({ ...process.env, OPENAI_API_KEY: env.OPENAI_API_KEY });
@@ -81,6 +82,7 @@ async function main() {
   console.log(`indexed ${seeded.passages} passages`);
 
   const results: CaseResult[] = [];
+  const rerankTokens = { prompt: 0, completion: 0 };
   for (const c of CASES) {
     const history = c.history ? [...c.history, { role: "user" as const, content: c.question }] : [];
     const started = performance.now();
@@ -88,6 +90,10 @@ async function main() {
     const ms = Math.round(performance.now() - started);
     const invalid = invalidRetrieval(r, c.id);
     if (invalid) throw new Error(invalid);
+    if (r.rerankSpend?.kind === "completion") {
+      rerankTokens.prompt += r.rerankSpend.promptTokens;
+      rerankTokens.completion += r.rerankSpend.completionTokens;
+    }
     results.push({
       id: c.id,
       category: c.category,
@@ -99,11 +105,28 @@ async function main() {
     });
   }
 
-  const report = score(label as string, embeddingModel(env), results);
+  const report: Report = {
+    ...score(label as string, embeddingModel(env), results),
+    ...(env.RAG_RERANK_MODEL
+      ? {
+          rerank: {
+            model: env.RAG_RERANK_MODEL,
+            promptTokens: rerankTokens.prompt,
+            completionTokens: rerankTokens.completion,
+          },
+        }
+      : {}),
+  };
   mkdirSync(join(here, "results"), { recursive: true });
   const file = join(here, "results", `${label}.json`);
   writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
   printTable(report);
+  if (report.rerank) {
+    const { model, promptTokens, completionTokens } = report.rerank;
+    console.log(
+      `rerank ${model}: ${promptTokens} prompt + ${completionTokens} completion tokens over ${results.length} cases`,
+    );
+  }
   console.log(`wrote ${file}`);
 }
 

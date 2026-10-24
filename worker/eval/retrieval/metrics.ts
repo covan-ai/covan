@@ -35,6 +35,8 @@ export type Report = {
   byCategory: Partial<Record<Category, CategoryScore>>;
   byLang: Record<"tr" | "en", { recallAt5: number; mrr: number }>;
   cases: CaseResult[];
+  /** Set when the run used a reranker (`RAG_RERANK_MODEL`): what it read and wrote. */
+  rerank?: { model: string; promptTokens: number; completionTokens: number };
 };
 
 export function rankOf(passages: RetrievedChunk[], expect: string[]): number | null {

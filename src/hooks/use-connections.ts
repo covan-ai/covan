@@ -181,7 +181,13 @@ export function useComposioToolkitDetail(slug: string | null) {
 export function useConnectComposio() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { toolkit: string; label?: string; expectRedirect?: boolean }) => {
+    mutationFn: async (input: {
+      toolkit: string;
+      label?: string;
+      expectRedirect?: boolean;
+      /** Where to land after consent; the worker checks it is a path in this app. */
+      returnTo?: string;
+    }) => {
       const { expectRedirect = true, ...body } = input;
       const { url } = await api.composio.connect(body);
       await queryClient.invalidateQueries({ queryKey: toolConnectionsKey });

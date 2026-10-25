@@ -1544,6 +1544,8 @@ export const api = {
     connect: (input: {
       toolkit: string;
       label?: string;
+      /** A path in this app to land on after consent; Integrations when absent. */
+      returnTo?: string;
     }): Promise<{ url: string; connection: ToolConnection }> =>
       request("POST", "/composio/connect", input),
     status: (id: string): Promise<{ status: "pending" | "active" | "failed" }> =>

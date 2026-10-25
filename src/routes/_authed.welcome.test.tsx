@@ -33,6 +33,10 @@ const h = vi.hoisted(() => ({
   incoming: vi.fn(),
   events: vi.fn(),
   workspaceUpdate: vi.fn(),
+  latest: vi.fn(),
+  start: vi.fn(),
+  toolConnections: vi.fn(),
+  composioComplete: vi.fn(),
   metadata: {} as Record<string, unknown>,
   /** What the session read waits on: the app reads it after /me is cached. */
   sessionRead: Promise.resolve() as Promise<unknown>,
@@ -48,10 +52,16 @@ vi.mock("@/lib/api-client", () => ({
       events: h.events,
     },
     invitations: { incoming: h.incoming },
+    arrivals: { latest: h.latest, start: h.start, get: vi.fn(), setRoutine: vi.fn() },
+    toolConnections: { list: h.toolConnections },
+    composio: { connect: vi.fn(), complete: h.composioComplete },
+    routines: { create: vi.fn() },
+    deliveryChannels: { list: vi.fn(async () => []) },
     workspaces: { create: vi.fn() },
     workspace: { update: h.workspaceUpdate },
   },
   getAccessToken: () => Promise.resolve("tok"),
+  assetSrc: (path: string) => path,
   ApiError: class ApiError extends Error {},
 }));
 vi.mock("@/lib/supabase/client", () => ({
@@ -119,15 +129,18 @@ beforeEach(() => {
   h.events.mockResolvedValue({ accepted: 1 });
   h.complete.mockResolvedValue({ completed: true });
   h.workspaceUpdate.mockResolvedValue({});
+  h.latest.mockResolvedValue(null);
+  h.start.mockResolvedValue({ id: "scan-1", status: "queued" });
+  h.toolConnections.mockResolvedValue({ connections: [], tools: [] });
 });
 
 describe("the first run", () => {
-  it("starts on naming the workspace, step 1 of 3, on the name given at sign-up", async () => {
+  it("starts on naming the workspace, step 1 of 4, on the name given at sign-up", async () => {
     h.metadata = { workspace_name: "Acme Robotics" };
     await renderWelcome();
 
     expect(await screen.findByRole("heading", { name: "Name your workspace" })).toBeInTheDocument();
-    expect(screen.getByText("Step 1 of 3")).toBeInTheDocument();
+    expect(screen.getByText("Step 1 of 4")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText("Name")).toHaveValue("Acme Robotics"));
   });
 
@@ -161,13 +174,13 @@ describe("the first run", () => {
     expect(h.workspaceUpdate).toHaveBeenCalledWith({ name: "Globex Robotics" });
   });
 
-  it("makes the agent with its mark and jobs, then asks for its documents", async () => {
+  it("makes the agent with its mark and jobs, then asks where work arrives", async () => {
     search = { step: "assistant" };
     h.me.mockResolvedValue(meWith({ ...EMPTY, lastStep: "assistant" }));
     h.finish.mockResolvedValue({ completed: true, agentId: "a9", sessionId: "s9", created: true });
     await renderWelcome();
 
-    expect(await screen.findByText("Step 2 of 3")).toBeInTheDocument();
+    expect(await screen.findByText("Step 2 of 4")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Name"), "Support");
     await userEvent.click(screen.getByRole("radio", { name: /owl/i }));
     await userEvent.click(screen.getByRole("button", { name: "Draft replies" }));
@@ -176,7 +189,7 @@ describe("the first run", () => {
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith({
         to: "/welcome",
-        search: { step: "first-docs", agent: "a9", s: "s9" },
+        search: { step: "connect", agent: "a9", s: "s9" },
         replace: true,
       }),
     );
@@ -201,7 +214,7 @@ describe("the first run", () => {
     h.finish.mockResolvedValue({ completed: true, agentId: "a9", sessionId: "s9", created: true });
     await renderWelcome();
 
-    expect(await screen.findByText("Step 2 of 3")).toBeInTheDocument();
+    expect(await screen.findByText("Step 2 of 4")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Name"), "Support");
     await userEvent.click(screen.getByRole("button", { name: "Create Support" }));
 
@@ -221,7 +234,7 @@ describe("the first run", () => {
     expect(
       await screen.findByRole("heading", { name: "What should Support know?" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Step 3 of 3")).toBeInTheDocument();
+    expect(screen.getByText("Step 4 of 4")).toBeInTheDocument();
     expect(screen.getByText(/earns the workspace 200 credits/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Open Support" }));
     expect(navigate).toHaveBeenCalledWith({
@@ -258,7 +271,112 @@ describe("the first run", () => {
     await renderWelcome();
 
     expect(await screen.findByRole("heading", { name: "You've been invited" })).toBeInTheDocument();
-    expect(screen.queryByText(/Step \d of 3/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Step \d of \d/)).not.toBeInTheDocument();
     expect(screen.getByText("Globex")).toBeInTheDocument();
+  });
+
+  // 0139: where work arrives, connected inside the run, and what arrived.
+  describe("where work arrives", () => {
+    const AFTER = { step: "connect", agent: "a9", s: "s9" };
+
+    it("offers the mailbox and the calendar as step 3 of 4", async () => {
+      search = AFTER;
+      h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
+      await renderWelcome();
+
+      expect(
+        await screen.findByRole("heading", { name: "Where does your work arrive?" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Step 3 of 4")).toBeInTheDocument();
+      expect(screen.getByText("Gmail")).toBeInTheDocument();
+      expect(screen.getByText("Google Calendar")).toBeInTheDocument();
+    });
+
+    it("can be left for later, keeping the agent and its thread", async () => {
+      search = AFTER;
+      h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
+      await renderWelcome();
+      await userEvent.click(await screen.findByRole("button", { name: "I'll do this later" }));
+
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/welcome",
+        search: { step: "first-docs", agent: "a9", s: "s9" },
+        replace: true,
+      });
+      expect(h.start).not.toHaveBeenCalled();
+    });
+
+    it("starts a scan of what is connected and moves on", async () => {
+      search = AFTER;
+      h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
+      h.toolConnections.mockResolvedValue({
+        connections: [
+          { id: "c-1", transport: "composio", toolkitSlug: "gmail", status: "active", mine: true, label: "Gmail", logoPath: "" },
+        ],
+        tools: [],
+      });
+      await renderWelcome();
+      const next = await screen.findByRole("button", { name: "Continue" });
+      await waitFor(() => expect(next).toBeEnabled());
+      await userEvent.click(next);
+
+      await waitFor(() => expect(h.start).toHaveBeenCalled());
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/welcome",
+        search: { step: "first-docs", agent: "a9", s: "s9" },
+        replace: true,
+      });
+    });
+
+    it("finishes a connection the consent screen sent back, and starts the scan", async () => {
+      search = AFTER;
+      sessionStorage.setItem(
+        "covan.pending-grant",
+        JSON.stringify({ kind: "composio", toolkit: "gmail", nonce: "n-1" }),
+      );
+      h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
+      h.composioComplete.mockResolvedValue({ status: "active" });
+      await renderWelcome();
+
+      await waitFor(() => expect(h.composioComplete).toHaveBeenCalledWith("n-1"));
+      await waitFor(() => expect(h.start).toHaveBeenCalled());
+    });
+
+    it("shows what arrived as the last step once there is a scan", async () => {
+      search = { step: "arrivals", agent: "a9", s: "s9" };
+      h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
+      h.latest.mockResolvedValue({
+        id: "scan-1",
+        status: "done",
+        total: 31,
+        unanswered: 5,
+        buckets: [
+          { kind: "question", label: "", count: 9, unanswered: 5, examples: [], templateId: "arrivals-questions", routineId: null },
+        ],
+      });
+      await renderWelcome();
+
+      expect(await screen.findByText("Step 5 of 5")).toBeInTheDocument();
+      expect(screen.getByText("31")).toBeInTheDocument();
+      expect(screen.getByText(/ada@acme\.test/)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Not now" }));
+      await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/app", replace: true }));
+    });
+
+    it("goes from the documents to what arrived when a scan is under way", async () => {
+      search = { step: "first-docs", agent: "a9", s: "s9" };
+      h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
+      h.latest.mockResolvedValue({ id: "scan-1", status: "running", total: null, unanswered: null, buckets: [] });
+      await renderWelcome();
+
+      expect(await screen.findByText("Step 4 of 5")).toBeInTheDocument();
+      expect(screen.getByText(/Reading your last thirty days/)).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/welcome",
+        search: { step: "arrivals", agent: "a9", s: "s9" },
+        replace: true,
+      });
+    });
   });
 });

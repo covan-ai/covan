@@ -64,6 +64,7 @@ describe("capabilitiesFor", () => {
       "search_documents",
       "list_documents",
       "ask_person",
+      "remember",
       "covan_guide",
     ]);
     // No manifest at all, so an agent with no connections and no channels
@@ -82,6 +83,7 @@ describe("capabilitiesFor", () => {
       "list_documents",
       "find_tool",
       "ask_person",
+      "remember",
       "covan_guide",
     ]);
   });
@@ -94,6 +96,7 @@ describe("capabilitiesFor", () => {
       "describe_connection",
       "query_database",
       "ask_person",
+      "remember",
       "covan_guide",
     ]);
     expect(manifest).toContain("conn-1");
@@ -144,6 +147,7 @@ describe("capabilitiesFor", () => {
       "search_documents",
       "list_documents",
       "ask_person",
+      "remember",
       "covan_guide",
     ]);
   });
@@ -204,9 +208,24 @@ describe("capabilitiesFor", () => {
     expect(tools.map((t) => t.name)).not.toContain("schedule_job");
     // A question nobody would see is not offered either.
     expect(tools.map((t) => t.name)).not.toContain("ask_person");
+    // A note is kept in a conversation, where the person can see it land.
+    expect(tools.map((t) => t.name)).not.toContain("remember");
     // What it CAN do is still named, because that is what it is there for.
     expect(tools.map((t) => t.name)).toContain("query_database");
     expect(manifest).toContain("Covan Supabase");
+  });
+
+  it("remember is offered in chat and never on a schedule", async () => {
+    const chat = await ask(dbWith([], []));
+    expect(chat.tools.map((t) => t.name)).toContain("remember");
+    const scheduled = await capabilitiesFor({
+      db: dbWith([], []),
+      env: FULL,
+      workspaceId: "ws-1",
+      userId: "user-1",
+      surface: "schedule",
+    });
+    expect(scheduled.tools.map((t) => t.name)).not.toContain("remember");
   });
 
   it("still answers when the connection lookup fails, rather than failing the turn", async () => {
@@ -227,6 +246,7 @@ describe("capabilitiesFor", () => {
       "search_documents",
       "list_documents",
       "ask_person",
+      "remember",
       "covan_guide",
     ]);
   });

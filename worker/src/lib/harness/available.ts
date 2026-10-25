@@ -92,6 +92,9 @@ export async function capabilitiesFor(input: {
     if (tool.name === "write_document" && scheduled) return false;
     // A question in a run nobody is watching would never be seen.
     if (tool.name === "ask_person" && scheduled) return false;
+    // A note is kept in a conversation, where the person can see it land and
+    // remove it; a routine run has nobody to say "that is not what I meant".
+    if (tool.name === "remember" && scheduled) return false;
     // Starting another routine: in chat, for somebody who has somewhere for
     // a routine to deliver (anybody with a routine does) — and on a schedule
     // whatever the channels, because routines handing work to one another is

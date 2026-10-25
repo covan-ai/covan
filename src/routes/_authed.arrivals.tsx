@@ -76,7 +76,9 @@ function Arrivals() {
     }
   }, [isPending, scan, search.scan, start]);
 
-  const agentId = me?.onboarding?.agentId ?? agents[0]?.id ?? "";
+  // The agent the welcome made, if it is still one of this workspace's —
+  // it may have been deleted, or made in another workspace — else the first.
+  const agentId = agents.find((a) => a.id === me?.onboarding?.agentId)?.id ?? agents[0]?.id ?? "";
   const settled = scan && (scan.status === "done" || scan.status === "failed");
 
   return (

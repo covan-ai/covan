@@ -33,6 +33,7 @@ const h = vi.hoisted(() => {
   return {
     ApiError,
     me: vi.fn(),
+    create: vi.fn(),
     latest: vi.fn(),
     start: vi.fn(),
     toolConnections: vi.fn(),
@@ -44,7 +45,7 @@ vi.mock("@/lib/api-client", () => ({
     arrivals: { latest: h.latest, start: h.start, get: vi.fn(), setRoutine: vi.fn() },
     toolConnections: { list: h.toolConnections },
     composio: { connect: vi.fn(), complete: vi.fn() },
-    routines: { create: vi.fn() },
+    routines: { create: h.create },
     deliveryChannels: { list: vi.fn(async () => []) },
   },
   assetSrc: (path: string) => path,
@@ -57,6 +58,7 @@ vi.mock("@/lib/agents-store", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+import userEvent from "@testing-library/user-event";
 import { meFixture } from "@/test/me-fixture";
 
 const NOW = Date.parse("2026-10-26T09:00:00Z");
@@ -128,6 +130,21 @@ describe("the arrivals page", () => {
     h.latest.mockResolvedValue(doneScan(1));
     await renderPage();
     await waitFor(() => expect(h.start).toHaveBeenCalledTimes(1));
+  });
+
+  // The agent the person's welcome made may be gone, or in another workspace;
+  // the routines go to an agent of this workspace that is still here.
+  it("makes the routines for an agent of this workspace, not a gone one", async () => {
+    h.me.mockResolvedValue({
+      ...meFixture(),
+      onboarding: { completed: true, answers: {}, agentId: "gone-elsewhere" },
+    });
+    h.latest.mockResolvedValue(doneScan(2));
+    h.create.mockResolvedValue({ id: "r-1", deliveryChannelId: "ch-1" });
+    await renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Turn these on" }));
+    await waitFor(() => expect(h.create).toHaveBeenCalled());
+    expect(h.create.mock.calls[0][0].agentId).toBe("a9");
   });
 
   it("offers the mailbox and calendar when nothing is connected to read", async () => {

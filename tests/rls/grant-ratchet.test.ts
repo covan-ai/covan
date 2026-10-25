@@ -81,6 +81,10 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // 0106: private until shared.
   "knowledge_bundles INSERT": "created_by,description,name,scope,workspace_id",
   "knowledge_bundles UPDATE": "description,name,scope",
+  // 0138: what the agent was told to keep in mind. Sharing is an UPDATE of
+  // scope; the trigger allows only private to shared, and only by the author.
+  "memory_notes INSERT": "about,created_by,scope,source,source_session_id,text,workspace_id",
+  "memory_notes UPDATE": "scope,text,updated_at",
   // 0094 onwards: each table the columns the API writes with a caller's client.
   "messages INSERT": "content,role,sender_id,session_id",
   "messages UPDATE": "content",

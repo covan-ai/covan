@@ -185,6 +185,24 @@ describe("references that point outside what the caller could see", () => {
     expect(droppedReferences["ideas.source_message_id"]).toBe(1);
   });
 
+  it("drop the thread a shared note was first said in, when only its author could read it", () => {
+    // A team note said in a private thread and shared afterwards (0138) names
+    // that thread; the admin exporting it reads the note and not the thread.
+    const { sql, droppedReferences } = renderSql(
+      base({
+        chat_sessions: [{ id: "s1", workspace_id: "w1", user_id: "u1", created_at: "t" }],
+        memory_notes: [
+          { id: "n1", workspace_id: "w1", source_session_id: "s1", created_at: "t" },
+          { id: "n2", workspace_id: "w1", source_session_id: "private-s2", created_at: "t" },
+        ],
+      }),
+    );
+
+    expect(sql).toContain("'s1'");
+    expect(sql).not.toContain("'private-s2'");
+    expect(droppedReferences["memory_notes.source_session_id"]).toBe(1);
+  });
+
   it("drop the API key a routine was made with, which no archive carries", () => {
     // Keys are never exported, so `routines.api_key_id` (0088) always points
     // outside the archive, and restoring it would fail the foreign key.

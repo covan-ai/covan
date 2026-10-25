@@ -6,6 +6,7 @@ import { useTranslation } from "@/i18n";
 import { ApiError, api } from "@/lib/api-client";
 import { useAgentsStore } from "@/lib/agents-store";
 import type { ArrivalScan } from "@/lib/arrivals";
+import { browserTimeZone } from "@/lib/timezones";
 import { TopBar } from "@/components/top-bar";
 import { PageBody } from "@/components/page";
 import { Button } from "@/components/ui/button";
@@ -103,6 +104,7 @@ function Arrivals() {
             scan={scan}
             agentId={agentId}
             email={me?.user.email ?? ""}
+            timezone={me?.workspace.timezone ?? browserTimeZone() ?? "UTC"}
             onDone={() => void navigate({ to: "/routines" })}
             onSkip={() => void navigate({ to: "/routines" })}
             onRetry={() => start()}

@@ -99,7 +99,9 @@ const connectSchema = z.object({
   /** What a person wants to call it. Defaults to the toolkit's own name. */
   label: z.string().trim().min(1).max(120).optional(),
   /** Where to land after consent instead of Integrations; see `safeReturnPath`. */
-  returnTo: z.string().max(512).optional(),
+  // No length cap here: `safeReturnPath` ignores a long one rather than
+  // failing the whole connect.
+  returnTo: z.string().optional(),
 });
 
 const grantSchema = z.object({

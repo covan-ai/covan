@@ -364,6 +364,7 @@ describe("POST /composio/connect", () => {
     "/\\evil.example",
     "welcome",
     "/welcome#frag",
+    `/welcome?step=connect&x=${"a".repeat(600)}`,
   ])("ignores a return address that could leave the app: %s", async (returnTo) => {
     await call(appWith(), "POST", "/composio/connect", { toolkit: "gmail", returnTo });
     const link = createLink.mock.calls[0][1] as { callbackUrl: string };

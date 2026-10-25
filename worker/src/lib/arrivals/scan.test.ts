@@ -149,7 +149,7 @@ describe("runArrivalScan", () => {
       lease_until: null,
       error: null,
     });
-    expect(row.finished_at).toBe(NOW.toISOString());
+    expect(typeof row.finished_at).toBe("string");
     expect(db.tables.arrival_buckets).toEqual([
       expect.objectContaining({
         scan_id: "scan-1",
@@ -298,6 +298,26 @@ describe("runArrivalScan", () => {
     expect(subjects.get("question")).toEqual(["Subject 1", "Subject 0"]);
   });
 
+  it("says when it finished, not when it was claimed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: NOW.getTime() + 20_000 });
+    try {
+      seed([scan()]);
+      await runArrivalScan(ENV, "scan-1", NOW);
+      expect(db.tables.arrival_scans[0].finished_at).toBe(
+        new Date(NOW.getTime() + 20_000).toISOString(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a failure's words short", async () => {
+    readSource.mockRejectedValue(new ArrivalReadError("y".repeat(1000), [], 400));
+    seed([scan()]);
+    await runArrivalScan(ENV, "scan-1", NOW);
+    expect(String(db.tables.arrival_scans[0].error)).toHaveLength(200);
+  });
+
   it("finishes an empty mailbox as nothing arrived, without naming anything", async () => {
     readSource.mockResolvedValue({ items: [], calls: ["GMAIL_FETCH_EMAILS"], selfDomains: [] });
     classifyItems.mockResolvedValue({ kinds: [], spent: [] });
@@ -428,7 +448,11 @@ describe("sweepArrivalScans", () => {
       scan({ id: "fresh", status: "queued", created_at: "2026-10-26T08:59:50.000Z" }),
     ]);
     expect(await sweepArrivalScans(ENV, NOW)).toBe(true);
-    const status = Object.fromEntries(db.tables.arrival_scans.map((r) => [r.id, r.status]));
+    let status = Object.fromEntries(db.tables.arrival_scans.map((r) => [r.id, r.status]));
+    // One re-run per tick, the oldest first: a scan is up to ~20 subrequests.
+    expect(status).toEqual({ stalled: "done", never: "queued", live: "running", fresh: "queued" });
+    await sweepArrivalScans(ENV, NOW);
+    status = Object.fromEntries(db.tables.arrival_scans.map((r) => [r.id, r.status]));
     expect(status).toEqual({ stalled: "done", never: "done", live: "running", fresh: "queued" });
   });
 

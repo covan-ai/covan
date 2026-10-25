@@ -146,7 +146,7 @@ describe("bucketise", () => {
   it("counts a reply owed only on questions and requests, older than two days, never answered", () => {
     const items = [
       mail(0), // question, waiting six days
-      mail(1, { repliedByMe: true }), // question, answered
+      mail(1, { repliedByMe: true, fromMe: true }), // question, answered last
       mail(2, { at: "2026-10-25T09:00:00.000Z" }), // question, one day old
       mail(3), // update, nobody waiting
       mail(4), // request, waiting
@@ -158,6 +158,18 @@ describe("bucketise", () => {
     );
     const by = Object.fromEntries(buckets.map((b) => [b.kind, b.unanswered]));
     expect(by).toEqual({ question: 1, update: 0, request: 1 });
+  });
+
+  // The spec's rule: waiting is "the last message is not the person's". A
+  // thread they answered once and that was written into again is waiting.
+  it("counts a thread written into again after the person's reply as waiting", () => {
+    const [bucket] = bucketise([mail(0, { repliedByMe: true, fromMe: false })], ["question"], NOW);
+    expect(bucket.unanswered).toBe(1);
+  });
+
+  it("keeps an example subject to two hundred characters", () => {
+    const [bucket] = bucketise([mail(0, { subject: "x".repeat(400) })], ["admin"], NOW);
+    expect(bucket.examples[0]).toHaveLength(200);
   });
 
   it("keeps at most three subjects, the newest", () => {

@@ -31,8 +31,16 @@ export const SCAN_MAX_ATTEMPTS = 3;
 export const BUCKET_RETENTION_DAYS = 90;
 /** A queued scan nobody started within this long is the tick's. */
 const UNSTARTED_MS = 2 * 60_000;
-/** Scans the sweep runs in one tick. Each is a dozen subrequests or so. */
-const SWEEP_RUNS = 2;
+/**
+ * Scans the sweep runs in one tick. A scan of Gmail, Outlook and a calendar
+ * is about twenty subrequests (seven Composio calls, up to nine model calls,
+ * the claim, the connections, the earlier scans, the writes and the ledger),
+ * and the stages above this one have spent a handful already, so one fits a
+ * Free invocation's fifty and two might not.
+ */
+const SWEEP_RUNS = 1;
+/** A failure's own words are kept to this many characters. */
+const ERROR_CHARS = 200;
 /**
  * What a scan may cost at most, in provider dollars, held before it starts
  * where the deployment holds credit (`reserve?`). Measured: see 0139's header.
@@ -288,7 +296,7 @@ export async function runArrivalScan(
       unanswered,
       error: null,
       lease_until: null,
-      finished_at: at,
+      finished_at: new Date().toISOString(),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -297,7 +305,10 @@ export async function runArrivalScan(
       // The lease stays: the tick tries again once it runs out.
       console.error("arrivals: a scan attempt failed, the tick will retry", err);
     } else {
-      await fail(message.slice(0, 500), err instanceof ArrivalReadError ? "source" : "other");
+      await fail(
+        message.slice(0, ERROR_CHARS),
+        err instanceof ArrivalReadError ? "source" : "other",
+      );
     }
   } finally {
     const all = [

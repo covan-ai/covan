@@ -31,6 +31,7 @@ import { ArrivalsReport } from "@/components/arrivals/arrivals-report";
 import { StatusDot } from "@/components/status-dot";
 import { useToolConnections } from "@/hooks/use-connections";
 import { SCAN_TOOLKITS } from "@/lib/arrivals";
+import { browserTimeZone } from "@/lib/timezones";
 import { WorkspaceStep } from "@/components/welcome/workspace-step";
 import { InviteAcceptStep } from "@/components/welcome/invite-accept-step";
 
@@ -419,6 +420,7 @@ function Welcome() {
           scan={scan}
           agentId={agentId ?? ""}
           email={me?.user.email ?? ""}
+          timezone={me?.workspace.timezone ?? browserTimeZone() ?? "UTC"}
           onDone={() => {
             trackStep(step, "completed");
             void flushEvents();
@@ -427,7 +429,7 @@ function Welcome() {
           onSkip={() => {
             trackStep(step, "skipped");
             void flushEvents();
-            home();
+            open();
           }}
           onRetry={() => {
             void api.arrivals

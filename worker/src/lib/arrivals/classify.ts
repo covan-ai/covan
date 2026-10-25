@@ -41,6 +41,8 @@ export const LABEL_MIN = 2;
 /** Subjects per kind sent to the label call. */
 const LABEL_SUBJECTS = 30;
 const EXAMPLES = 3;
+/** An example subject is kept to this many characters. */
+const EXAMPLE_CHARS = 200;
 /** "Never got a reply" starts here: two days without an answer. */
 const WAITING_MS = 2 * 86_400_000;
 
@@ -136,8 +138,9 @@ export async function classifyItems(
   return { kinds, spent };
 }
 
+/** The spec's rule: the last message is not the person's, and it is over two days old. */
 function waiting(item: ArrivalItem, now: Date): boolean {
-  if (item.fromMe || item.repliedByMe) return false;
+  if (item.fromMe) return false;
   const at = Date.parse(item.at);
   return Number.isFinite(at) && now.getTime() - at > WAITING_MS;
 }
@@ -154,7 +157,7 @@ export function bucketise(items: ArrivalItem[], kinds: ArrivalKind[], now: Date)
       count: mine.length,
       unanswered: UNANSWERED_KINDS.has(kind) ? mine.filter((item) => waiting(item, now)).length : 0,
       examples: mine
-        .map((item) => item.subject.trim())
+        .map((item) => item.subject.trim().slice(0, EXAMPLE_CHARS))
         .filter(Boolean)
         .slice(0, EXAMPLES),
       templateId: PROPOSAL_FOR[kind] ?? null,

@@ -375,8 +375,16 @@ describe("the first run", () => {
       expect(await screen.findByText("Step 5 of 5")).toBeInTheDocument();
       expect(screen.getByText("31")).toBeInTheDocument();
       expect(screen.getByText(/ada@acme\.test/)).toBeInTheDocument();
+      // Ends the run the way the other steps do: in the agent's thread.
       await userEvent.click(screen.getByRole("button", { name: "Not now" }));
-      await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/app", replace: true }));
+      await waitFor(() =>
+        expect(navigate).toHaveBeenCalledWith({
+          to: "/agents/$agentId/chat",
+          params: { agentId: "a9" },
+          search: { s: "s9" },
+          replace: true,
+        }),
+      );
     });
 
     it("goes from the documents to what arrived when a scan is under way", async () => {

@@ -20,6 +20,8 @@ type ReportProps = {
   scan: ArrivalScan;
   agentId: string;
   email: string;
+  /** The routines' time zone: the workspace's, else the browser's. */
+  timezone?: string;
   /** After "Turn these on", with how many routines were made. */
   onDone: (created: number) => void;
   onRetry: () => void;
@@ -64,7 +66,7 @@ function Failure({ reason }: { reason: ArrivalScan["reason"] }) {
   return <>{t("Covan could not read your mailbox this time.")}</>;
 }
 
-function Report({ scan, agentId, email, onDone, onRetry, onSkip }: ReportProps) {
+function Report({ scan, agentId, email, timezone, onDone, onRetry, onSkip }: ReportProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const proposals = scan.buckets.filter((b) => b.templateId && !b.routineId);
@@ -126,7 +128,7 @@ function Report({ scan, agentId, email, onDone, onRetry, onSkip }: ReportProps) 
       picked: [...picked],
       agentId,
       email,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timezone: timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
       t,
     });
     await Promise.all([
@@ -243,7 +245,7 @@ function Report({ scan, agentId, email, onDone, onRetry, onSkip }: ReportProps) 
 
       <div className="flex gap-2">
         {proposals.length > 0 && (
-          <Button onClick={() => void press()} disabled={busy || picked.size === 0}>
+          <Button onClick={() => void press()} disabled={busy || picked.size === 0 || !agentId}>
             {t("Turn these on")}
           </Button>
         )}

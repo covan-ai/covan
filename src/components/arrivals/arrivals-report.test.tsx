@@ -263,6 +263,43 @@ describe("ArrivalsReport", () => {
     );
   });
 
+  it("makes the routines in the workspace's time zone", async () => {
+    create.mockResolvedValue({ id: "r-1", deliveryChannelId: "ch-1" });
+    const onDone = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ArrivalsReport
+          scan={scan()}
+          agentId="agent-1"
+          email="ada@acme.test"
+          timezone="Asia/Tokyo"
+          onDone={onDone}
+          onRetry={vi.fn()}
+          onSkip={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Turn these on" }));
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(create.mock.calls[0][0].timezone).toBe("Asia/Tokyo");
+  });
+
+  it("offers nothing to turn on without an agent to run it", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ArrivalsReport
+          scan={scan()}
+          agentId=""
+          email="ada@acme.test"
+          onDone={vi.fn()}
+          onRetry={vi.fn()}
+          onSkip={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("button", { name: "Turn these on" })).toBeDisabled();
+  });
+
   it("turns the picked proposals on and says how many", async () => {
     create.mockImplementation(async () => ({
       id: `r-${create.mock.calls.length}`,

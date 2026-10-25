@@ -2124,6 +2124,23 @@ describe("answering the same question again", () => {
     expect(sentMessages().some((m) => m.content === FIRST_ANSWER)).toBe(false);
   });
 
+  it("reads only the versions still standing, so a rejected answer never reaches the model", async () => {
+    // Migration 0050 keeps each regenerated answer as its own row. Without the
+    // filter, every later turn sent the model the discarded answer and its
+    // replacement as consecutive assistant turns.
+    const { app, calls } = appWith({
+      question: "How many vacation days?",
+      cutOffReply: FIRST_ANSWER,
+    });
+
+    await ask(app);
+
+    const read = calls.find((q) => q.table === "messages");
+    expect(read?.filters).toEqual(
+      expect.arrayContaining([expect.objectContaining({ column: "superseded_at" })]),
+    );
+  });
+
   it("answers on another model for one reply, without moving the agent to it", async () => {
     const { app } = appWith({
       question: "How many vacation days?",

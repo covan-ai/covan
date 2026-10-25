@@ -224,10 +224,15 @@ chat.post("/chat/stream", async (c) => {
     return c.json({ error: "not found" }, 404);
   }
 
+  // Only the versions still standing. A regenerated answer stays in the table
+  // as its own row (0050), and read back here it would reach the model as a
+  // second assistant turn beside the one that replaced it, and spend history
+  // budget on every later turn.
   const { data: recentDesc, error: messagesError } = await db
     .from("messages")
     .select("*")
     .eq("session_id", sessionId)
+    .is("superseded_at", null)
     .order("created_at", { ascending: false })
     .limit(MSG_HISTORY_LIMIT);
 

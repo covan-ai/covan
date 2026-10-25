@@ -391,6 +391,49 @@ A file dropped into a conversation goes to your own private chat-uploads bundle
 for that agent. Reports an agent writes go to its shared reports bundle, because
 a report is shown to everyone its conversation is shown to.
 
+## What the agent keeps in mind
+
+A document is what an agent reads. Two other things are put in front of it on
+every turn, and neither is a document: who is on the team, and the short notes
+people have asked it to keep.
+
+**The team.** Every agent, in chat and in Slack, is told who is in the
+workspace: each member's name, role, the one-line bio from their profile and
+their timezone. In chat it is also told who it is talking to, and that person's
+bio. In a shared conversation it sees who said what.
+
+**Notes.** A note is one short sentence, at most 280 characters, and it is
+about one of two things: _the team_ (how it works, its tools, its words) or
+_you_ (how you like answers, what you own). A note about you is never shared.
+
+An agent keeps a note with its `remember` tool, in chat only. It does not do so
+in Slack, and a scheduled run does not either. Where a note lands is decided by
+where it was said, and never by the agent: it is the team's only when it is
+about the team, was said in a shared conversation, and you can edit the
+workspace. Every other note stays yours. So a note about the team said in a
+private conversation stays yours until you press **Share with team** in
+Settings → Memory, and a viewer's notes always stay private, because a viewer
+cannot share one.
+
+Settings → Memory, in the Workspace group, lists every note under two headings.
+_About the team_ is read by everyone in the workspace; people who can edit it
+add notes there and delete them. _About you_ is yours alone: you can add and
+delete notes, and share a note about the team from there. Each note says whether
+it came from a conversation or was written there.
+
+| Note                    | Who can read it                 | Which answers it reaches                                         |
+| ----------------------- | ------------------------------- | ---------------------------------------------------------------- |
+| Private                 | You. Not colleagues, not admins | Your own private conversations. Never a shared one, never Slack  |
+| Shared with the team    | Every member of the workspace   | Every conversation, and Slack                                    |
+
+A note is private when it is about you, or about the team and not yet shared.
+Nobody's export carries another person's private notes: an export holds
+the team's notes and its own author's.
+
+A question asked in a public Slack channel is answered with the roster and the
+team's notes in mind, and Slack guests in that channel can read the answer.
+Scheduled runs do not read the roster or the notes yet.
+
 ## Attaching, detaching and deleting
 
 The switch beside each bundle attaches it to the agent whose tab you are on.

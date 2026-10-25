@@ -548,6 +548,39 @@ Four things are worth knowing before changing any of it:
   would mean a job set up in a conversation behaving differently unattended —
   the one difference nobody could debug.
 
+## The system prefix
+
+`buildSystemPrefix` (`worker/src/lib/prompt.ts`) joins these in this order, each
+part left out when it has nothing to say:
+
+1. the persona, or the one-sentence default when the agent has none;
+2. what Covan is (chat and brainstorm modes only);
+3. the team: the roster, the team's notes, and who the turn is talking to
+   (`lib/team-block.ts`);
+4. the capabilities paragraph, when web search is on;
+5. the date and timezone, when the caller gives a clock;
+6. the mode's instructions (brainstorm, report, document, or the concision
+   default);
+7. the manifest of document names the agent has.
+
+In chat the capabilities manifest for connections is appended after that.
+
+The team block is a pure function of its input, so the prefix stays
+byte-identical for the same people and notes. People are sorted by name and then
+id, notes keep the order they were read in (newest first), and the block holds
+no clock. Each bio and note is collapsed to one line before it is printed, so
+member-written text cannot start a line of its own in the roster. The block is
+cut to 6000 characters by dropping the oldest notes, alternating between the
+team's and the person's; the roster is never cut, and a roster past fifty
+members ends with a count.
+
+`lib/memory.ts` reads it with whichever client the caller holds. Its notes reads
+name the workspace and, for a person's own notes, `created_by`, so a
+service-role caller (Slack) cannot be handed anyone else's. A person's own
+notes are loaded only in a private chat conversation: not in a shared one, not
+in Slack, and no scheduled run loads either list. Any failure leaves the block
+out rather than failing the turn.
+
 ## The two seams
 
 Everything runtime-specific lives behind one of two interfaces. This is what

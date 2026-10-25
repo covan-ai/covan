@@ -370,6 +370,15 @@ recorded per reply and priced accordingly, which makes the estimate lower and
 truer than it was, and makes a change that quietly breaks the arrangement
 visible instead of merely expensive.
 
+### Notes from a private conversation
+
+An agent can keep a short note when it is told something worth remembering. A
+note about the team that it is told in a private conversation stays yours until
+you press **Share with team** in Settings → Memory, and nobody else can read it
+before then, an admin included. Notes about you are never shared. Who can see
+which note, and which answers it reaches, is in
+[what the agent keeps in mind](knowledge.md#what-the-agent-keeps-in-mind).
+
 ## Where the work gets delivered
 
 A delivery channel is a Slack incoming webhook, an email address, or a signed

@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { announceAnswerAction } from "@/lib/answer-events";
 import type { DocumentJob } from "@/lib/api-client";
 import { lastActivityLabel } from "@/lib/day-groups";
 import { saveDocument, type ExportFormat } from "@/lib/document-export";
@@ -64,7 +65,11 @@ export function DocumentPanel({
   const writingIndex = job.status === "writing" ? job.sections.findIndex((s) => !s.done) : -1;
   const canSave = job.status === "ready" && job.documentId !== null;
   const save = (format: ExportFormat) => {
-    if (job.documentId) void saveDocument(job.documentId, `${job.title}.md`, format, t);
+    if (!job.documentId) return;
+    void saveDocument(job.documentId, `${job.title}.md`, format, t);
+    // A job knows its document but not the message that offered it, so the
+    // event names the document and leaves the message out.
+    announceAnswerAction({ action: "saved", documentId: job.documentId, format });
   };
   const when = Date.parse(job.finishedAt ?? job.updatedAt);
 

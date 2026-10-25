@@ -30,10 +30,11 @@ export const MAX_TEAM_NOTES = 40;
 export const MAX_PERSON_NOTES = 25;
 export const BIO_LINE_CHARS = 160;
 
-// The same ceiling the note-writing tool enforces. Declared here so this file
+// The same ceiling the note-writing tool enforces (`harness/tools/remember.ts`
+// re-exports this one, so there is a single number). Declared here so this file
 // stays a pure function with no imports; a note that got in some other way is
 // still cut to it.
-const NOTE_CHARS = 280;
+export const NOTE_CHARS = 280;
 
 /**
  * Collapse every run of whitespace, newlines included, to one space, then cut.

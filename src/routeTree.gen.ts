@@ -43,6 +43,7 @@ import { Route as AuthedSettingsExportRouteImport } from './routes/_authed.setti
 import { Route as AuthedSettingsGeneralRouteImport } from './routes/_authed.settings.general'
 import { Route as AuthedSettingsIntegrationsRouteImport } from './routes/_authed.settings.integrations'
 import { Route as AuthedSettingsMembersRouteImport } from './routes/_authed.settings.members'
+import { Route as AuthedSettingsMemoryRouteImport } from './routes/_authed.settings.memory'
 import { Route as AuthedSettingsPreferencesRouteImport } from './routes/_authed.settings.preferences'
 import { Route as AuthedSettingsProfileRouteImport } from './routes/_authed.settings.profile'
 import { Route as AuthedSettingsSecurityRouteImport } from './routes/_authed.settings.security'
@@ -230,6 +231,11 @@ const AuthedSettingsMembersRoute = AuthedSettingsMembersRouteImport.update({
   path: '/members',
   getParentRoute: () => AuthedSettingsRoute,
 } as any)
+const AuthedSettingsMemoryRoute = AuthedSettingsMemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
+  getParentRoute: () => AuthedSettingsRoute,
+} as any)
 const AuthedSettingsPreferencesRoute =
   AuthedSettingsPreferencesRouteImport.update({
     id: '/preferences',
@@ -354,6 +360,7 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof AuthedSettingsGeneralRoute
   '/settings/integrations': typeof AuthedSettingsIntegrationsRoute
   '/settings/members': typeof AuthedSettingsMembersRoute
+  '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/preferences': typeof AuthedSettingsPreferencesRoute
   '/settings/profile': typeof AuthedSettingsProfileRoute
   '/settings/security': typeof AuthedSettingsSecurityRoute
@@ -402,6 +409,7 @@ export interface FileRoutesByTo {
   '/settings/general': typeof AuthedSettingsGeneralRoute
   '/settings/integrations': typeof AuthedSettingsIntegrationsRoute
   '/settings/members': typeof AuthedSettingsMembersRoute
+  '/settings/memory': typeof AuthedSettingsMemoryRoute
   '/settings/preferences': typeof AuthedSettingsPreferencesRoute
   '/settings/profile': typeof AuthedSettingsProfileRoute
   '/settings/security': typeof AuthedSettingsSecurityRoute
@@ -455,6 +463,7 @@ export interface FileRoutesById {
   '/_authed/settings/general': typeof AuthedSettingsGeneralRoute
   '/_authed/settings/integrations': typeof AuthedSettingsIntegrationsRoute
   '/_authed/settings/members': typeof AuthedSettingsMembersRoute
+  '/_authed/settings/memory': typeof AuthedSettingsMemoryRoute
   '/_authed/settings/preferences': typeof AuthedSettingsPreferencesRoute
   '/_authed/settings/profile': typeof AuthedSettingsProfileRoute
   '/_authed/settings/security': typeof AuthedSettingsSecurityRoute
@@ -508,6 +517,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/members'
+    | '/settings/memory'
     | '/settings/preferences'
     | '/settings/profile'
     | '/settings/security'
@@ -556,6 +566,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/members'
+    | '/settings/memory'
     | '/settings/preferences'
     | '/settings/profile'
     | '/settings/security'
@@ -608,6 +619,7 @@ export interface FileRouteTypes {
     | '/_authed/settings/general'
     | '/_authed/settings/integrations'
     | '/_authed/settings/members'
+    | '/_authed/settings/memory'
     | '/_authed/settings/preferences'
     | '/_authed/settings/profile'
     | '/_authed/settings/security'
@@ -885,6 +897,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsMembersRouteImport
       parentRoute: typeof AuthedSettingsRoute
     }
+    '/_authed/settings/memory': {
+      id: '/_authed/settings/memory'
+      path: '/memory'
+      fullPath: '/settings/memory'
+      preLoaderRoute: typeof AuthedSettingsMemoryRouteImport
+      parentRoute: typeof AuthedSettingsRoute
+    }
     '/_authed/settings/preferences': {
       id: '/_authed/settings/preferences'
       path: '/preferences'
@@ -1026,6 +1045,7 @@ interface AuthedSettingsRouteChildren {
   AuthedSettingsGeneralRoute: typeof AuthedSettingsGeneralRoute
   AuthedSettingsIntegrationsRoute: typeof AuthedSettingsIntegrationsRoute
   AuthedSettingsMembersRoute: typeof AuthedSettingsMembersRoute
+  AuthedSettingsMemoryRoute: typeof AuthedSettingsMemoryRoute
   AuthedSettingsPreferencesRoute: typeof AuthedSettingsPreferencesRoute
   AuthedSettingsProfileRoute: typeof AuthedSettingsProfileRoute
   AuthedSettingsSecurityRoute: typeof AuthedSettingsSecurityRoute
@@ -1042,6 +1062,7 @@ const AuthedSettingsRouteChildren: AuthedSettingsRouteChildren = {
   AuthedSettingsGeneralRoute: AuthedSettingsGeneralRoute,
   AuthedSettingsIntegrationsRoute: AuthedSettingsIntegrationsRoute,
   AuthedSettingsMembersRoute: AuthedSettingsMembersRoute,
+  AuthedSettingsMemoryRoute: AuthedSettingsMemoryRoute,
   AuthedSettingsPreferencesRoute: AuthedSettingsPreferencesRoute,
   AuthedSettingsProfileRoute: AuthedSettingsProfileRoute,
   AuthedSettingsSecurityRoute: AuthedSettingsSecurityRoute,

@@ -87,6 +87,7 @@ import { TopBarPortal } from "@/components/top-bar";
 import { StatusDot } from "@/components/status-dot";
 import { ThreadTitle } from "@/components/chat/thread-title";
 import { AskCard } from "@/components/chat/ask-card";
+import { announceAnswerAction } from "@/lib/answer-events";
 import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
 import { runToolProposal } from "@/lib/connections-api";
@@ -1753,9 +1754,12 @@ function ChatTab() {
     await streamReply(active.id);
   };
 
-  const copyMessage = (content: string) => {
+  const copyMessage = (content: string, messageId: string) => {
     navigator.clipboard?.writeText(content).then(
-      () => toast.success(t("Copied to clipboard")),
+      () => {
+        toast.success(t("Copied to clipboard"));
+        announceAnswerAction({ action: "copied", messageId });
+      },
       () => toast.error(t("Couldn't copy")),
     );
   };
@@ -1840,6 +1844,7 @@ function ChatTab() {
   const onSpeak = useStableCallback((id: string, text: string) => {
     setSpeakingId(id);
     tts.speak(text);
+    announceAnswerAction({ action: "spoken", messageId: id });
   });
   const onStopSpeaking = useStableCallback(() => {
     setSpeakingId(null);

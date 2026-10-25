@@ -165,6 +165,18 @@ export const EXPORTED: TableSpec[] = [
     scope: { kind: "in", column: "session_id", from: { table: "chat_sessions", column: "id" } },
     order: "created_at",
   },
+  {
+    // What the agent was told to keep in mind (0138). The archive is read
+    // through the admin's own client, so it carries every team note and the
+    // admin's own private ones and nobody else's — exactly what the policy says
+    // they may read. Here, the first place below all three of its foreign keys:
+    // `workspace_id`, `created_by` (profiles) and `source_session_id`
+    // (chat_sessions); a thread the exporter could not see is dropped as an
+    // optional reference in `sql.ts`.
+    table: "memory_notes",
+    scope: { kind: "workspace", column: "workspace_id" },
+    order: "created_at",
+  },
   { table: "ideas", scope: { kind: "workspace", column: "workspace_id" }, order: "created_at" },
   {
     table: "favorites",

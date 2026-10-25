@@ -133,8 +133,13 @@ including sessions that are already underway. An agent with no persona falls bac
 to a single sentence: "You are a helpful AI assistant for a team workspace."
 
 What actually reaches the model is a prefix assembled in a fixed order — the
-persona, then the brainstorm instructions if the mode calls for them, then a
-manifest naming the documents the agent has. Passages retrieved for the current
+persona, a paragraph on what Covan is, then the team (who is in the workspace,
+what the team has asked the agent to keep in mind, and who it is talking to),
+the web-search paragraph if the agent has it, the date, the mode's instructions
+(brainstorm, say), and last a manifest naming the documents the agent has. The
+team block holds the notes in [what the agent keeps in
+mind](knowledge.md#what-the-agent-keeps-in-mind); your private notes are in it
+only in your own private conversations. Passages retrieved for the current
 question are deliberately not merged into it; they are sent as a separate system
 message further down. That keeps the prefix byte-identical from one turn to the
 next, which is the condition OpenAI's automatic prompt caching needs in order to

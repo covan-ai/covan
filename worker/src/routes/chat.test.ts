@@ -15,6 +15,7 @@ import type { AgentTool, ToolContext, ToolResult } from "../lib/harness/registry
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import { subrequestMeter } from "../lib/subrequests";
 import { KICKOFF_ASK, KICKOFF_MAX_TOKENS } from "../lib/onboarding-kickoff";
+import { forgetTurnObservers, registerTurnObserver, type TurnEvent } from "../lib/turn-events";
 
 /**
  * What this file is for: the citations under an answer, and what it costs to
@@ -360,7 +361,13 @@ type Match = {
 
 function appWith(spec: {
   question: string;
-  history?: Array<{ role: string; content: string; sender_id?: string | null }>;
+  history?: Array<{
+    role: string;
+    content: string;
+    sender_id?: string | null;
+    /** A reply that regenerating kept beside the one that replaced it (0050). */
+    superseded?: boolean;
+  }>;
   /** Who typed `question`. Undefined leaves `sender_id` off the row. */
   questionSender?: string | null;
   /** The session's `visibility`. Undefined leaves the column absent, as the other tests have it. */
@@ -374,6 +381,10 @@ function appWith(spec: {
     name: string;
     members: Array<{ id: string; name: string | null; role?: string }>;
   };
+  /** Set when the request was made with an API key rather than a session. */
+  apiKeyId?: string;
+  /** The caller's own `scope = 'owner'` notes, which the loader reads for a private session. */
+  ownerNotes?: string[];
   documents?: Doc[];
   matches?: Match[];
   /** The name the session already has. Null — the default — is a new chat. */
@@ -441,6 +452,7 @@ function appWith(spec: {
     role: m.role,
     content: m.content,
     ...("sender_id" in m ? { sender_id: m.sender_id } : {}),
+    ...("superseded" in m && m.superseded ? { superseded_at: "2026-09-09T10:00:00Z" } : {}),
     created_at: `2026-09-0${i + 1}T10:00:00Z`,
     // What the first half of a cut-off reply cost, so a continuation can be
     // checked for adding to it rather than overwriting it.
@@ -514,6 +526,16 @@ function appWith(spec: {
       workspaces: {
         select: () => ({ data: spec.team ? { name: spec.team.name } : null, error: null }),
       },
+      // Only the caller's own notes are ever served, and only to a read that
+      // asks for them by scope; the team's list is empty here.
+      memory_notes: {
+        select: (ctx: QueryContext) => ({
+          data: ctx.filters.some((f) => f.column === "scope" && f.value === "owner")
+            ? (spec.ownerNotes ?? []).map((text) => ({ text }))
+            : [],
+          error: null,
+        }),
+      },
       workspace_members: {
         select: () => ({
           data: (spec.team?.members ?? []).map((m) => ({
@@ -574,6 +596,7 @@ function appWith(spec: {
   app.use("/*", async (c, next) => {
     c.set("user", USER as never);
     c.set("db", db as never);
+    if (spec.apiKeyId) c.set("apiKeyId", spec.apiKeyId);
     // What `middleware/auth.ts` sets, because this stands in for it. The
     // subrequest meter starts there rather than in a route: the caller's own
     // client is the first thing a request builds that spends one, and the
@@ -1266,6 +1289,35 @@ describe("the people the agent works with", () => {
     expect(embedded).toContain("vacation policy");
     expect(embedded).not.toContain("Grace Hopper:");
     expect(embedded).not.toContain("Ada Lovelace:");
+  });
+
+  it("keeps the asker's private notes out of a shared session's prefix", async () => {
+    const note = "Prefers answers as tables.";
+    const shared = appWith({
+      question: "Hello",
+      team: TEAM,
+      visibility: "shared",
+      ownerNotes: [note],
+    });
+    await ask(shared.app);
+    expect(sentMessages()[0].content).toContain("The team:");
+    expect(sentMessages()[0].content).not.toContain(note);
+    expect(
+      shared.calls.some(
+        (c) => c.table === "memory_notes" && c.filters.some((f) => f.value === "owner"),
+      ),
+    ).toBe(false);
+
+    completionCreate.mockClear();
+    answersWith(streamOf("Twenty days."));
+    const priv = appWith({
+      question: "Hello",
+      team: TEAM,
+      visibility: "private",
+      ownerNotes: [note],
+    });
+    await ask(priv.app);
+    expect(sentMessages()[0].content).toContain(note);
   });
 
   it("gives tools whether the session is shared", async () => {
@@ -2273,8 +2325,32 @@ describe("a reply that used a tool", () => {
       (t: { function: { name: string } }) => t.function.name,
     );
     // No connected service and no delivery channel, so only the tools that
-    // need neither: the knowledge tools, asking the person, and the guide.
-    expect(offered).toEqual(["search_documents", "list_documents", "ask_person", "covan_guide"]);
+    // need neither: the knowledge tools, asking the person, keeping a note,
+    // and the guide.
+    expect(offered).toEqual([
+      "search_documents",
+      "list_documents",
+      "ask_person",
+      "remember",
+      "covan_guide",
+    ]);
+  });
+
+  it("offers remember to a session and not to an API key", async () => {
+    const offeredTo = async (apiKeyId?: string) => {
+      completionCreate.mockClear();
+      const { app } = appWith({ question: "How many days?", apiKeyId });
+      await ask(app);
+      return (completionCreate.mock.calls.find((c) => c[0].stream)?.[0].tools ?? []).map(
+        (t: { function: { name: string } }) => t.function.name,
+      );
+    };
+    expect(await offeredTo()).toContain("remember");
+    // A note is standing instructions that outlive the key, which is why
+    // `POST /memory` refuses a key too.
+    const withKey = await offeredTo("key-1");
+    expect(withKey).not.toContain("remember");
+    expect(withKey).toContain("search_documents");
   });
 
   it("offers the connection tools once the workspace has a connection", async () => {
@@ -2355,6 +2431,21 @@ describe("POST /chat/confirm/:id", () => {
       },
       ENV as never,
     );
+
+  it("does not hand remember to a turn resumed with an API key", async () => {
+    const resumedWith = async (apiKeyId?: string) => {
+      parked = PARKED;
+      completionCreate.mockClear();
+      const { app } = appWith({ question: "every monday", apiKeyId });
+      answersWith(streamOf("done"));
+      await (await confirm(app, false)).text();
+      return (completionCreate.mock.calls.find((c) => c[0].stream)?.[0].tools ?? []).map(
+        (t: { function: { name: string } }) => t.function.name,
+      );
+    };
+    expect(await resumedWith()).toContain("remember");
+    expect(await resumedWith("key-1")).not.toContain("remember");
+  });
 
   it("is a 404 when there is nothing parked under that id", async () => {
     const { app } = appWith({ question: "every monday" });
@@ -3757,5 +3848,234 @@ describe("a reply that asks the person (0122)", () => {
     const { app } = appWith({ question: "Hi" });
     await ask(app);
     expect(serviceInsert.mock.calls.at(-1)?.[0].ask).toBeNull();
+  });
+});
+
+/**
+ * What happens around a turn, as an operator's build sees it
+ * (`lib/turn-events`).
+ *
+ * Only the route decides which of its requests is which: an ordinary question,
+ * the same reply asked for again, a continuation, an opening. Each is told to
+ * a registered observer exactly once, and only once the request is known to be
+ * valid.
+ */
+describe("what happens around a turn", () => {
+  const seen: Array<{ event: TurnEvent; db: unknown }> = [];
+  beforeEach(() => {
+    seen.length = 0;
+    registerTurnObserver((event, db) => {
+      seen.push({ event, db });
+    });
+  });
+  afterEach(() => forgetTurnObservers());
+
+  /** Observers run past the response, so let them. */
+  const events = async () => {
+    await new Promise((r) => setTimeout(r, 0));
+    return seen.map((s) => s.event);
+  };
+
+  it("tells an observer a first question was asked, with nothing before it", async () => {
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    await ask(app);
+
+    expect(await events()).toEqual([
+      {
+        kind: "question_asked",
+        workspaceId: "ws-1",
+        userId: "user-1",
+        agentId: "agent-1",
+        sessionId: "sess-1",
+        messageId: "m0",
+        content: "How many vacation days?",
+        senderId: null,
+        at: "2026-09-01T10:00:00Z",
+        previous: null,
+      },
+    ]);
+  });
+
+  it("names who typed the question and who typed the one before it", async () => {
+    const { app } = appWith({
+      question: "And for contractors?",
+      questionSender: "user-1",
+      history: [
+        { role: "user", content: "How many vacation days?", sender_id: "user-2" },
+        { role: "assistant", content: "Twenty." },
+      ],
+    });
+
+    await ask(app);
+
+    expect(await events()).toMatchObject([
+      {
+        kind: "question_asked",
+        senderId: "user-1",
+        previous: { messageId: "m0", senderId: "user-2" },
+      },
+    ]);
+  });
+
+  it("hands the observer the caller's own client", async () => {
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    await ask(app);
+    await events();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].db).toBeDefined();
+    expect(typeof (seen[0].db as { from?: unknown }).from).toBe("function");
+  });
+
+  it("names the question before this one and when it was answered", async () => {
+    const { app } = appWith({
+      question: "And for contractors?",
+      history: [
+        { role: "user", content: "How many vacation days?" },
+        { role: "assistant", content: "Twenty." },
+      ],
+    });
+
+    await ask(app);
+
+    const all = await events();
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({
+      kind: "question_asked",
+      messageId: "m2",
+      content: "And for contractors?",
+      previous: {
+        messageId: "m0",
+        content: "How many vacation days?",
+        repliedAt: "2026-09-02T10:00:00Z",
+      },
+    });
+  });
+
+  it("dates the previous reply by the one standing, not a regenerated one", async () => {
+    const { app } = appWith({
+      question: "And for contractors?",
+      history: [
+        { role: "user", content: "How many vacation days?" },
+        { role: "assistant", content: "Twenty.", superseded: true },
+        { role: "assistant", content: "Twenty-five." },
+      ],
+    });
+
+    await ask(app);
+
+    expect(await events()).toMatchObject([
+      {
+        kind: "question_asked",
+        previous: { messageId: "m0", repliedAt: "2026-09-03T10:00:00Z" },
+      },
+    ]);
+  });
+
+  it("has no previous question when only superseded replies followed it", async () => {
+    const { app } = appWith({
+      question: "And for contractors?",
+      history: [
+        { role: "user", content: "How many vacation days?" },
+        { role: "assistant", content: "Twenty.", superseded: true },
+      ],
+    });
+
+    await ask(app);
+
+    expect(await events()).toMatchObject([{ kind: "question_asked", previous: null }]);
+  });
+
+  it("has no previous question when the one before it was never answered", async () => {
+    const { app } = appWith({
+      question: "Hello?",
+      history: [{ role: "user", content: "Anyone there?" }],
+    });
+
+    await ask(app);
+
+    expect(await events()).toMatchObject([{ kind: "question_asked", previous: null }]);
+  });
+
+  it("tells an observer a reply was asked for again, and the model that answers", async () => {
+    const { app } = appWith({
+      question: "How many vacation days?",
+      cutOffReply: "Twenty, I think.",
+      agentModel: "gpt-4o",
+    });
+
+    await again(app, "gpt-4.1-mini");
+
+    expect(await events()).toEqual([
+      {
+        kind: "reply_regenerated",
+        workspaceId: "ws-1",
+        userId: "user-1",
+        agentId: "agent-1",
+        sessionId: "sess-1",
+        messageId: "m1",
+        model: "gpt-4.1-mini",
+      },
+    ]);
+  });
+
+  it("says nothing of a continuation", async () => {
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: "Half an" });
+
+    await carryOn(app);
+
+    expect(await events()).toEqual([]);
+  });
+
+  it("says nothing of an opening", async () => {
+    const { app } = appWith({
+      question: "",
+      kickoff: true,
+      env: { OPENAI_API_KEY: "sk-test" },
+      onboarding: {
+        completed_at: "2026-10-21T10:00:00Z",
+        assistant_name: "Desk",
+        tools: [],
+        purpose: "sales",
+        mode: "team",
+        agent_id: AGENT.id,
+      },
+    });
+    answersWith(streamOf("Hi Ada."));
+
+    const res = await post(app, { sessionId: SESSION.id, kickoff: true });
+
+    expect(res.status).toBe(200);
+    expect(await events()).toEqual([]);
+  });
+
+  it("says nothing of a request it refused", async () => {
+    const asking = appWith({ question: "How many vacation days?" });
+    expect((await carryOn(asking.app)).status).toBe(400);
+    expect((await again(asking.app)).status).toBe(400);
+
+    const notYours = appWith({ question: "", kickoff: true, sessionOwner: "user-2" });
+    expect((await post(notYours.app, { sessionId: SESSION.id, kickoff: true })).status).toBe(403);
+
+    expect(await events()).toEqual([]);
+  });
+
+  it("still answers when an observer throws", async () => {
+    forgetTurnObservers();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    registerTurnObserver(() => {
+      throw new Error("boom");
+    });
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    const res = await ask(app);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("Twenty days.");
+    expect(log).toHaveBeenCalledWith("turn observer failed", expect.any(Error));
+    log.mockRestore();
   });
 });

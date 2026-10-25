@@ -145,7 +145,7 @@ describe("AnswerTurn", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Copy" }));
-    expect(onCopy).toHaveBeenCalledWith("Integration tickets take 41% of resolution time.");
+    expect(onCopy).toHaveBeenCalledWith("Integration tickets take 41% of resolution time.", "a9");
 
     await userEvent.click(screen.getByRole("button", { name: /something's wrong/i }));
     expect(onRate).toHaveBeenCalledWith("a9", "problem");

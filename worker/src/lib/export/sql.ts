@@ -59,6 +59,9 @@ const SKIP = new Set(["profiles"]);
  */
 const OPTIONAL_REFS: Record<string, string> = {
   "ideas.source_message_id": "messages",
+  // A team note written in a private thread and shared afterwards (0138)
+  // names a thread only its author can read.
+  "memory_notes.source_session_id": "chat_sessions",
   // The key a routine was made with (0088). Keys are never exported -- a hash
   // of a token somebody else holds -- so this is always unreachable, and the
   // restored routine is simply one nobody's key made.

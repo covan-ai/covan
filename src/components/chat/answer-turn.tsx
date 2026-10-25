@@ -97,7 +97,7 @@ export const AnswerTurn = memo(function AnswerTurn({
   speaking: boolean;
   onSpeak: (id: string, text: string) => void;
   onStopSpeaking: () => void;
-  onCopy: (content: string) => void;
+  onCopy: (content: string, messageId: string) => void;
   onShowVersion: (id: string) => void;
   onRate: (id: string, kind: FeedbackKind) => void;
   onContinue: (id: string) => void;
@@ -260,7 +260,7 @@ export const AnswerTurn = memo(function AnswerTurn({
             incidental, which is why the wrapper keeps its `group`. */}
         <div data-part="actions" className="mt-2 flex items-center gap-0.5">
           <span className="mr-1.5 text-xs text-micro-foreground tabular-nums">{time}</span>
-          <MsgAction label={t("Copy")} onClick={() => onCopy(message.content)}>
+          <MsgAction label={t("Copy")} onClick={() => onCopy(message.content, message.id)}>
             <Copy className="h-3.5 w-3.5" />
           </MsgAction>
           {canSpeak && (

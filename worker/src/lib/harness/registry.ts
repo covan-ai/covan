@@ -20,6 +20,7 @@ import { writeDocumentTool } from "./tools/write-document";
 import { editDocumentTool, listDocumentsTool, readDocumentTool } from "./tools/documents";
 import { askPersonTool } from "./tools/ask-person";
 import { covanGuideTool } from "./tools/covan-guide";
+import { rememberTool } from "./tools/remember";
 
 /**
  * Every tool an agent can be given, in one list.
@@ -458,6 +459,7 @@ export const TOOLS: AgentTool[] = [
   writeDocumentTool,
   editDocumentTool,
   askPersonTool,
+  rememberTool,
   covanGuideTool,
 ];
 

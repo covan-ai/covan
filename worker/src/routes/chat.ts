@@ -29,6 +29,7 @@ import {
   type AgentStep,
   type PassUsage,
 } from "../lib/harness/loop";
+import { apiKeyIdOf } from "../lib/api-key-rule";
 import { capabilitiesFor } from "../lib/harness/available";
 import { egressCountry } from "../lib/browser/egress";
 import { browserTaskNote } from "../lib/browser/task-note";
@@ -70,6 +71,7 @@ import { effectiveMode, effectiveTuning } from "../lib/session-mode";
 import { generateSessionTitle } from "../lib/session-title";
 import { generateFollowUps } from "../lib/follow-ups";
 import { deferred } from "../lib/defer";
+import { observeTurn } from "../lib/turn-events";
 import { guardCredits, recordCredits } from "../lib/entitlements/guard";
 import { completionSpend, embeddingSpend, spends, type Spend } from "../lib/entitlements";
 import { subrequestReport, withMeter } from "../lib/subrequests";
@@ -331,6 +333,9 @@ chat.post("/chat/stream", async (c) => {
   const teamContext = loadTeamContext(db, {
     workspaceId: session.workspace_id as string,
     callerId: c.get("user").id,
+    // A shared session is read by everyone it is shared with, so the asker's
+    // private notes stay out of its prompt.
+    personNotes: !shared,
   });
   const { docNames, ragBlock, sources, grounding, embeddingTokens, rerankSpend } =
     await retrieveForAgent(
@@ -359,6 +364,7 @@ chat.post("/chat/stream", async (c) => {
     workspaceId: session.workspace_id as string,
     userId: c.get("user").id,
     agentId: session.agent_id as string,
+    byApiKey: apiKeyIdOf(c) !== null,
   });
 
   /**
@@ -515,6 +521,57 @@ chat.post("/chat/stream", async (c) => {
   // only the turn's — the title and the embeddings stay on the install's.
   const turnEnv = await withModelEndpoint(env, service, session.workspace_id as string, picked);
   const model = resolveModel(picked, turnEnv);
+
+  // Told here, once the request is known to be valid and before the stream
+  // opens, and only for the turns that are somebody's own move: a question, or
+  // the same reply asked for again. A continuation and an opening are neither.
+  if (regenerate) {
+    observeTurn(c, {
+      kind: "reply_regenerated",
+      workspaceId: session.workspace_id as string,
+      userId: c.get("user").id,
+      agentId: session.agent_id as string,
+      sessionId,
+      messageId: (lastMessage.id as string | undefined) ?? null,
+      model,
+    });
+  } else if (!continuing && !intro) {
+    // The question before this one, if somebody answered it: the nearest user
+    // row behind the latest, and the reply standing after it. A regenerated
+    // reply stays in the list beside the one that replaced it (0050), so the
+    // standing one is the last not superseded.
+    const at = rows.length - 1;
+    let before = at - 1;
+    while (before >= 0 && rows[before].role !== "user") before -= 1;
+    const reply =
+      before >= 0
+        ? rows
+            .slice(before + 1, at)
+            .findLast(
+              (r: { role: string; superseded_at?: string | null }) =>
+                r.role === "assistant" && !r.superseded_at,
+            )
+        : undefined;
+    observeTurn(c, {
+      kind: "question_asked",
+      workspaceId: session.workspace_id as string,
+      userId: c.get("user").id,
+      agentId: session.agent_id as string,
+      sessionId,
+      messageId: lastMessage.id as string,
+      content: lastMessage.content as string,
+      senderId: (lastMessage.sender_id as string | null | undefined) ?? null,
+      at: lastMessage.created_at as string,
+      previous: reply
+        ? {
+            messageId: rows[before].id as string,
+            content: rows[before].content as string,
+            senderId: (rows[before].sender_id as string | null | undefined) ?? null,
+            repliedAt: reply.created_at as string,
+          }
+        : null,
+    });
+  }
 
   // What the half being continued already did. Read before the stream opens,
   // like everything else this turn needs — see `stepsOfReply`.
@@ -1601,6 +1658,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           workspaceId: pause.workspaceId,
           userId: pause.userId,
           agentId: pause.agentId,
+          byApiKey: apiKeyIdOf(c) !== null,
         });
 
         /**

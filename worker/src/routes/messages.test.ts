@@ -1,8 +1,9 @@
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { AppEnv } from "../types";
 import { fakeDb, type FakeDbSpec, type QueryContext } from "../test-support/fake-db";
 import { messages } from "./messages";
+import { forgetTurnObservers, registerTurnObserver, type TurnEvent } from "../lib/turn-events";
 
 const USER = { id: "user-1", email: "a@example.com" };
 const ANCHOR = { id: "msg-1", session_id: "sess-1", created_at: "2026-09-01T10:00:00Z" };
@@ -183,5 +184,148 @@ describe("POST /messages", () => {
   it("still answers 500 when something did break", async () => {
     const res = await posting(() => ({ data: null, error: { code: "XX000", message: "boom" } }));
     expect(res.status).toBe(500);
+  });
+});
+
+describe("PATCH /messages/:id", () => {
+  afterEach(() => forgetTurnObservers());
+
+  const SESSION = { workspace_id: "ws-1", agent_id: "agent-1" };
+
+  function editing(spec: {
+    role?: string;
+    found?: boolean;
+    updateError?: boolean;
+    session?: Record<string, unknown> | null;
+    /** Holds the session read open until called, to see what waits on it. */
+    holdSession?: boolean;
+  }) {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const sessionReads: QueryContext[] = [];
+    const { db } = fakeDb({
+      tables: {
+        messages: {
+          update: () =>
+            spec.updateError
+              ? { data: null, error: { message: "boom" } }
+              : {
+                  data:
+                    (spec.found ?? true)
+                      ? {
+                          id: "msg-1",
+                          session_id: "sess-1",
+                          role: spec.role ?? "user",
+                          content: "Reworded",
+                          created_at: "2026-09-01T10:00:00Z",
+                        }
+                      : null,
+                  error: null,
+                },
+        },
+        chat_sessions: {
+          select: async (ctx) => {
+            sessionReads.push(ctx);
+            if (spec.holdSession) await held;
+            return { data: spec.session === undefined ? SESSION : spec.session, error: null };
+          },
+        },
+      },
+    });
+    const app = new Hono<AppEnv>();
+    app.use("/*", async (c, next) => {
+      c.set("user", USER as never);
+      c.set("db", db as never);
+      await next();
+    });
+    app.route("/", messages);
+    const patch = async () => {
+      const res = await app.request(
+        "/messages/msg-1",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: "Reworded" }),
+        },
+        {} as never,
+      );
+      await new Promise((r) => setTimeout(r, 0));
+      return res;
+    };
+    return { patch, sessionReads, release };
+  }
+
+  function observed() {
+    const seen: TurnEvent[] = [];
+    registerTurnObserver((event) => {
+      seen.push(event);
+    });
+    return seen;
+  }
+
+  it("tells an observer a question was edited, once", async () => {
+    const seen = observed();
+    const { patch } = editing({});
+
+    const res = await patch();
+
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([
+      {
+        kind: "question_edited",
+        workspaceId: "ws-1",
+        userId: "user-1",
+        agentId: "agent-1",
+        sessionId: "sess-1",
+        messageId: "msg-1",
+      },
+    ]);
+  });
+
+  it("says nothing of a reply being edited", async () => {
+    const seen = observed();
+    const { patch } = editing({ role: "assistant" });
+
+    expect((await patch()).status).toBe(200);
+    expect(seen).toEqual([]);
+  });
+
+  it("says nothing when the edit failed or found nothing", async () => {
+    const seen = observed();
+
+    expect((await editing({ updateError: true }).patch()).status).toBe(500);
+    expect((await editing({ found: false }).patch()).status).toBe(404);
+    expect(seen).toEqual([]);
+  });
+
+  it("still answers when the session behind the message cannot be read", async () => {
+    const seen = observed();
+    const { patch } = editing({ session: null });
+
+    expect((await patch()).status).toBe(200);
+    expect(seen).toEqual([]);
+  });
+
+  it("answers without waiting for the session read, and tells the observer after it", async () => {
+    const seen = observed();
+    const { patch, sessionReads, release } = editing({ holdSession: true });
+
+    const res = await patch();
+
+    expect(res.status).toBe(200);
+    expect(sessionReads).toHaveLength(1);
+    expect(seen).toEqual([]);
+
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(seen).toMatchObject([{ kind: "question_edited", workspaceId: "ws-1" }]);
+  });
+
+  it("reads nothing more when nothing is observing", async () => {
+    const { patch, sessionReads } = editing({});
+
+    expect((await patch()).status).toBe(200);
+    expect(sessionReads).toEqual([]);
   });
 });

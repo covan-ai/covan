@@ -3,6 +3,7 @@ import { render, screen, waitFor, act, fireEvent, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
+import { ANSWER_EVENT, type AnswerAction } from "@/lib/answer-events";
 
 /**
  * The chat screen, from the composer to the end of a reply.
@@ -2387,5 +2388,90 @@ describe("a question the agent asked", () => {
     ]);
     await renderChat();
     expect(screen.queryByRole("group", { name: "GTM Agent is asking you" })).toBeNull();
+  });
+});
+
+describe("what is done with an answer", () => {
+  const heard: AnswerAction[] = [];
+  const listener = (e: Event) => heard.push((e as CustomEvent<AnswerAction>).detail);
+  beforeEach(() => {
+    heard.length = 0;
+    window.addEventListener(ANSWER_EVENT, listener);
+    listMessages.mockResolvedValue([question, answer]);
+  });
+  afterEach(() => {
+    window.removeEventListener(ANSWER_EVENT, listener);
+    Reflect.deleteProperty(window, "speechSynthesis");
+    Reflect.deleteProperty(globalThis, "SpeechSynthesisUtterance");
+  });
+
+  const clipboard = (writeText: () => Promise<void>) =>
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+  it("announces a copy once, with the message that was copied", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    clipboard(writeText);
+    await renderChat();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(heard).toEqual([{ action: "copied", messageId: "msg-2" }]));
+    expect(writeText).toHaveBeenCalledWith("Forty dollars a seat.");
+  });
+
+  it("announces nothing when the copy was refused", async () => {
+    clipboard(() => Promise.reject(new Error("denied")));
+    await renderChat();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Copy" }));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(heard).toEqual([]);
+  });
+
+  it("copies all the same when a listener throws", async () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onError = (e: Event) => e.preventDefault();
+    const throwing = () => {
+      throw new Error("boom");
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener(ANSWER_EVENT, throwing);
+    const writeText = vi.fn(() => Promise.resolve());
+    clipboard(writeText);
+    try {
+      await renderChat();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Copy" }));
+
+      await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    } finally {
+      window.removeEventListener(ANSWER_EVENT, throwing);
+      window.removeEventListener("error", onError);
+      quiet.mockRestore();
+    }
+  });
+
+  it("announces reading an answer aloud once, as it starts", async () => {
+    const speak = vi.fn();
+    Object.defineProperty(window, "speechSynthesis", {
+      value: { speak, cancel: vi.fn(), speaking: false },
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "SpeechSynthesisUtterance", {
+      value: class {
+        constructor(public text: string) {}
+      },
+      configurable: true,
+    });
+    await renderChat();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Read aloud" }));
+
+    expect(speak).toHaveBeenCalledTimes(1);
+    expect(heard).toEqual([{ action: "spoken", messageId: "msg-2" }]);
   });
 });

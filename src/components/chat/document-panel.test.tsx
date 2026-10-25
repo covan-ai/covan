@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { DocumentJob } from "@/lib/api-client";
+import { ANSWER_EVENT, type AnswerAction } from "@/lib/answer-events";
 
-vi.mock("@/lib/api-client", () => ({ api: {} }));
+const download = vi.fn();
+const exportDocument = vi.fn();
+vi.mock("@/lib/api-client", () => ({ api: { documents: { download, export: exportDocument } } }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 
 const { DocumentPanel } = await import("./document-panel");
@@ -76,5 +80,47 @@ describe("DocumentPanel", () => {
     );
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Print" })).toBeNull();
+  });
+
+  it("announces a save once, with the format chosen and the document it belongs to", async () => {
+    // The job carries no message id, so the document's own is what goes out.
+    const heard: AnswerAction[] = [];
+    const listener = (e: Event) => heard.push((e as CustomEvent<AnswerAction>).detail);
+    window.addEventListener(ANSWER_EVENT, listener);
+    exportDocument.mockResolvedValue("saved");
+    try {
+      render(<DocumentPanel job={job} onClose={vi.fn()} onStop={vi.fn()} onRetry={vi.fn()} />);
+
+      await userEvent.click(screen.getByRole("button", { name: /Download/ }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: "Word" }));
+
+      expect(heard).toEqual([{ action: "saved", messageId: "doc-1", format: "docx" }]);
+      expect(exportDocument).toHaveBeenCalledWith("doc-1", "docx");
+    } finally {
+      window.removeEventListener(ANSWER_EVENT, listener);
+    }
+  });
+
+  it("saves all the same when a listener throws", async () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onError = (e: Event) => e.preventDefault();
+    const throwing = () => {
+      throw new Error("boom");
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener(ANSWER_EVENT, throwing);
+    exportDocument.mockResolvedValue("saved");
+    try {
+      render(<DocumentPanel job={job} onClose={vi.fn()} onStop={vi.fn()} onRetry={vi.fn()} />);
+
+      await userEvent.click(screen.getByRole("button", { name: /Download/ }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: "PDF" }));
+
+      expect(exportDocument).toHaveBeenCalledWith("doc-1", "pdf");
+    } finally {
+      window.removeEventListener(ANSWER_EVENT, throwing);
+      window.removeEventListener("error", onError);
+      quiet.mockRestore();
+    }
   });
 });

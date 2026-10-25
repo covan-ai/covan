@@ -15,6 +15,7 @@ import type { AgentTool, ToolContext, ToolResult } from "../lib/harness/registry
 import { runtimeLimitFlag } from "../lib/runtime-limit";
 import { subrequestMeter } from "../lib/subrequests";
 import { KICKOFF_ASK, KICKOFF_MAX_TOKENS } from "../lib/onboarding-kickoff";
+import { forgetTurnObservers, registerTurnObserver, type TurnEvent } from "../lib/turn-events";
 
 /**
  * What this file is for: the citations under an answer, and what it costs to
@@ -360,7 +361,13 @@ type Match = {
 
 function appWith(spec: {
   question: string;
-  history?: Array<{ role: string; content: string; sender_id?: string | null }>;
+  history?: Array<{
+    role: string;
+    content: string;
+    sender_id?: string | null;
+    /** A reply that regenerating kept beside the one that replaced it (0050). */
+    superseded?: boolean;
+  }>;
   /** Who typed `question`. Undefined leaves `sender_id` off the row. */
   questionSender?: string | null;
   /** The session's `visibility`. Undefined leaves the column absent, as the other tests have it. */
@@ -443,6 +450,7 @@ function appWith(spec: {
     role: m.role,
     content: m.content,
     ...("sender_id" in m ? { sender_id: m.sender_id } : {}),
+    ...("superseded" in m && m.superseded ? { superseded_at: "2026-09-09T10:00:00Z" } : {}),
     created_at: `2026-09-0${i + 1}T10:00:00Z`,
     // What the first half of a cut-off reply cost, so a continuation can be
     // checked for adding to it rather than overwriting it.
@@ -3805,5 +3813,212 @@ describe("a reply that asks the person (0122)", () => {
     const { app } = appWith({ question: "Hi" });
     await ask(app);
     expect(serviceInsert.mock.calls.at(-1)?.[0].ask).toBeNull();
+  });
+});
+
+/**
+ * What happens around a turn, as an operator's build sees it
+ * (`lib/turn-events`).
+ *
+ * Only the route decides which of its requests is which: an ordinary question,
+ * the same reply asked for again, a continuation, an opening. Each is told to
+ * a registered observer exactly once, and only once the request is known to be
+ * valid.
+ */
+describe("what happens around a turn", () => {
+  const seen: Array<{ event: TurnEvent; db: unknown }> = [];
+  beforeEach(() => {
+    seen.length = 0;
+    registerTurnObserver((event, db) => {
+      seen.push({ event, db });
+    });
+  });
+  afterEach(() => forgetTurnObservers());
+
+  /** Observers run past the response, so let them. */
+  const events = async () => {
+    await new Promise((r) => setTimeout(r, 0));
+    return seen.map((s) => s.event);
+  };
+
+  it("tells an observer a first question was asked, with nothing before it", async () => {
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    await ask(app);
+
+    expect(await events()).toEqual([
+      {
+        kind: "question_asked",
+        workspaceId: "ws-1",
+        userId: "user-1",
+        agentId: "agent-1",
+        sessionId: "sess-1",
+        messageId: "m0",
+        content: "How many vacation days?",
+        at: "2026-09-01T10:00:00Z",
+        previous: null,
+      },
+    ]);
+  });
+
+  it("hands the observer the caller's own client", async () => {
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    await ask(app);
+    await events();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].db).toBeDefined();
+    expect(typeof (seen[0].db as { from?: unknown }).from).toBe("function");
+  });
+
+  it("names the question before this one and when it was answered", async () => {
+    const { app } = appWith({
+      question: "And for contractors?",
+      history: [
+        { role: "user", content: "How many vacation days?" },
+        { role: "assistant", content: "Twenty." },
+      ],
+    });
+
+    await ask(app);
+
+    const all = await events();
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({
+      kind: "question_asked",
+      messageId: "m2",
+      content: "And for contractors?",
+      previous: {
+        messageId: "m0",
+        content: "How many vacation days?",
+        repliedAt: "2026-09-02T10:00:00Z",
+      },
+    });
+  });
+
+  it("dates the previous reply by the one standing, not a regenerated one", async () => {
+    const { app } = appWith({
+      question: "And for contractors?",
+      history: [
+        { role: "user", content: "How many vacation days?" },
+        { role: "assistant", content: "Twenty.", superseded: true },
+        { role: "assistant", content: "Twenty-five." },
+      ],
+    });
+
+    await ask(app);
+
+    expect(await events()).toMatchObject([
+      {
+        kind: "question_asked",
+        previous: { messageId: "m0", repliedAt: "2026-09-03T10:00:00Z" },
+      },
+    ]);
+  });
+
+  it("has no previous question when only superseded replies followed it", async () => {
+    const { app } = appWith({
+      question: "And for contractors?",
+      history: [
+        { role: "user", content: "How many vacation days?" },
+        { role: "assistant", content: "Twenty.", superseded: true },
+      ],
+    });
+
+    await ask(app);
+
+    expect(await events()).toMatchObject([{ kind: "question_asked", previous: null }]);
+  });
+
+  it("has no previous question when the one before it was never answered", async () => {
+    const { app } = appWith({
+      question: "Hello?",
+      history: [{ role: "user", content: "Anyone there?" }],
+    });
+
+    await ask(app);
+
+    expect(await events()).toMatchObject([{ kind: "question_asked", previous: null }]);
+  });
+
+  it("tells an observer a reply was asked for again, and the model that answers", async () => {
+    const { app } = appWith({
+      question: "How many vacation days?",
+      cutOffReply: "Twenty, I think.",
+      agentModel: "gpt-4o",
+    });
+
+    await again(app, "gpt-4.1-mini");
+
+    expect(await events()).toEqual([
+      {
+        kind: "reply_regenerated",
+        workspaceId: "ws-1",
+        userId: "user-1",
+        agentId: "agent-1",
+        sessionId: "sess-1",
+        messageId: "m1",
+        model: "gpt-4.1-mini",
+      },
+    ]);
+  });
+
+  it("says nothing of a continuation", async () => {
+    const { app } = appWith({ question: "How many vacation days?", cutOffReply: "Half an" });
+
+    await carryOn(app);
+
+    expect(await events()).toEqual([]);
+  });
+
+  it("says nothing of an opening", async () => {
+    const { app } = appWith({
+      question: "",
+      kickoff: true,
+      env: { OPENAI_API_KEY: "sk-test" },
+      onboarding: {
+        completed_at: "2026-10-21T10:00:00Z",
+        assistant_name: "Desk",
+        tools: [],
+        purpose: "sales",
+        mode: "team",
+        agent_id: AGENT.id,
+      },
+    });
+    answersWith(streamOf("Hi Ada."));
+
+    const res = await post(app, { sessionId: SESSION.id, kickoff: true });
+
+    expect(res.status).toBe(200);
+    expect(await events()).toEqual([]);
+  });
+
+  it("says nothing of a request it refused", async () => {
+    const asking = appWith({ question: "How many vacation days?" });
+    expect((await carryOn(asking.app)).status).toBe(400);
+    expect((await again(asking.app)).status).toBe(400);
+
+    const notYours = appWith({ question: "", kickoff: true, sessionOwner: "user-2" });
+    expect((await post(notYours.app, { sessionId: SESSION.id, kickoff: true })).status).toBe(403);
+
+    expect(await events()).toEqual([]);
+  });
+
+  it("still answers when an observer throws", async () => {
+    forgetTurnObservers();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    registerTurnObserver(() => {
+      throw new Error("boom");
+    });
+    const { app } = appWith({ question: "How many vacation days?" });
+
+    const res = await ask(app);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("Twenty days.");
+    expect(log).toHaveBeenCalledWith("turn observer failed", expect.any(Error));
+    log.mockRestore();
   });
 });

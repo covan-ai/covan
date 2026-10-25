@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../types";
 import { mapMessage } from "../lib/dto";
 import { refusedByPolicy } from "../lib/refused";
+import { hasTurnObservers, observeTurn } from "../lib/turn-events";
 
 const messages = new Hono<AppEnv>();
 
@@ -81,6 +82,29 @@ messages.patch("/messages/:id", async (c) => {
   }
   if (!data) {
     return c.json({ error: "not found" }, 404);
+  }
+
+  // Only a question. The message does not carry its workspace, so the session
+  // is read for it, and that read happens with the observers' own work, after
+  // the response, so an edit is never slower for being observed.
+  if (data.role === "user" && hasTurnObservers()) {
+    const user = c.get("user");
+    observeTurn(c, async () => {
+      const { data: session } = await db
+        .from("chat_sessions")
+        .select("workspace_id, agent_id")
+        .eq("id", data.session_id)
+        .maybeSingle();
+      if (!session) return null;
+      return {
+        kind: "question_edited",
+        workspaceId: session.workspace_id as string,
+        userId: user.id,
+        agentId: (session.agent_id as string | null) ?? null,
+        sessionId: data.session_id as string,
+        messageId: data.id as string,
+      };
+    });
   }
 
   return c.json(mapMessage(data));

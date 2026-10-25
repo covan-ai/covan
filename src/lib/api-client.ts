@@ -1755,6 +1755,17 @@ export const api = {
     setPreference: (excluded: boolean): Promise<{ ok: true }> =>
       request("PUT", "/coverage/preference", { excluded }),
   },
+  memory: {
+    /** What the caller may read, newest first. */
+    list: (): Promise<{ notes: MemoryNote[] }> => request("GET", "/memory"),
+    /** "team" needs write access and is shared; "person" is the caller's own. */
+    add: (input: { text: string; about: "person" | "team" }): Promise<MemoryNote> =>
+      request("POST", "/memory", input),
+    /** Sharing goes one way: `scope` can only become "workspace". */
+    update: (id: string, patch: { text?: string; scope?: "workspace" }): Promise<MemoryNote> =>
+      request("PATCH", `/memory/${encodeURIComponent(id)}`, patch),
+    remove: (id: string): Promise<void> => request("DELETE", `/memory/${encodeURIComponent(id)}`),
+  },
   apiKeys: {
     list: (): Promise<ApiKeyList> => request("GET", "/api-keys"),
     /** The only response that carries the key itself. Nothing can return it again. */
@@ -2344,6 +2355,22 @@ export type CoverageAgent = {
  * `0053` has not been applied yet, the same window `WorkspaceUsageResponse`
  * describes.
  */
+/**
+ * One thing an agent keeps in mind (Settings › Memory). `about` is who it
+ * says something about; `scope` is who may read it: "owner" is the author
+ * alone, "workspace" is everyone. `mine` is whether the caller wrote it, which
+ * is all the page learns of the author.
+ */
+export type MemoryNote = {
+  id: string;
+  about: "person" | "team";
+  scope: "owner" | "workspace";
+  text: string;
+  source: "agent" | "person";
+  mine: boolean;
+  createdAt: number;
+};
+
 export type CoverageResponse = {
   available: boolean;
   /** The window these figures cover, in days, after clamping. */

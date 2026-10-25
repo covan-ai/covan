@@ -27,6 +27,7 @@ export const SETTINGS_GROUPS: ReadonlyArray<{ label: string; items: readonly Set
       { href: "/settings/integrations", label: msg("Integrations") },
       { href: "/settings/usage", label: msg("Usage and billing") },
       { href: "/settings/coverage", label: msg("Coverage") },
+      { href: "/settings/memory", label: msg("Memory") },
       { href: "/settings/api-keys", label: msg("API keys") },
       { href: "/settings/export", label: msg("Export and deletion") },
     ],

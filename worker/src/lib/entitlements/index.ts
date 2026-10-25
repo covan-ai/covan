@@ -50,7 +50,9 @@ export type CompletionPurpose =
   // (`lib/harness/tools/read-pages.ts`).
   | "reading"
   // Retrieved passages re-ordered for a question (`lib/rerank.ts`).
-  | "rerank";
+  | "rerank"
+  // What arrived in a mailbox, sorted and named (`lib/arrivals/classify.ts`).
+  | "arrivals";
 
 export type EmbeddingPurpose = "retrieval" | "index" | "reindex" | "sync" | "report";
 

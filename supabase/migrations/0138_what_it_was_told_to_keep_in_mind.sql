@@ -88,9 +88,18 @@ alter table public.memory_notes drop constraint if exists memory_notes_owner_nee
 alter table public.memory_notes add constraint memory_notes_owner_needs_author
   check (scope = 'workspace' or created_by is not null);
 
--- The same sentence twice from the same person is one note.
-create unique index if not exists memory_notes_unique_text
-  on public.memory_notes (workspace_id, created_by, lower(text));
+-- The same sentence twice from the same person, at the same scope, is one
+-- note. Scope is in the key on purpose. A unique index is enforced whatever
+-- the policies say, and a writer may change the text of a team note somebody
+-- else wrote; with the author's private notes in the same key, setting that
+-- team note to a guessed sentence and watching for 23505 would tell the
+-- writer whether the author holds that sentence privately. Keyed by scope, a
+-- team note's text can only collide with the author's other team notes, which
+-- every member reads already. So an author may hold one sentence once private
+-- and once shared; sharing the private one then answers 23505, and only the
+-- author can ask that, about their own notes.
+create unique index if not exists memory_notes_unique_text_per_scope
+  on public.memory_notes (workspace_id, created_by, scope, lower(text));
 
 create index if not exists memory_notes_workspace_idx
   on public.memory_notes (workspace_id, scope, created_at);

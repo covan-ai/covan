@@ -250,6 +250,45 @@ describe("memory_notes", () => {
     expect(theirs.error).toBeNull();
   });
 
+  // A unique index is enforced whatever the policies say. Were private and
+  // shared notes one key, a writer could set somebody's team note to a guessed
+  // sentence and read a 23505 as "they hold this privately".
+  it("a team note's text cannot test for its author's private notes", async () => {
+    const secret = "Is interviewing at another company.";
+    await made(author, { about: "person", scope: "owner", text: secret });
+    const team = await made(author, {
+      about: "team",
+      scope: "workspace",
+      text: "The office closes early on Fridays.",
+    });
+
+    for (const guess of [secret, secret.toUpperCase()]) {
+      const edited = await colleague.db
+        .from("memory_notes")
+        .update({ text: guess })
+        .eq("id", team)
+        .select("text");
+      expect(edited.error).toBeNull();
+      expect(edited.data).toEqual([{ text: guess }]);
+    }
+  });
+
+  it("nobody else changes the text of a private note, an admin included", async () => {
+    const text = "Wants the numbers before the narrative.";
+    const mine = await made(author, { about: "person", scope: "owner", text });
+
+    for (const user of [colleague, admin]) {
+      const changed = await user.db
+        .from("memory_notes")
+        .update({ text: "Rewritten by someone else." })
+        .eq("id", mine)
+        .select("id");
+      expect(changed.data ?? []).toEqual([]);
+    }
+    const after = await author.db.from("memory_notes").select("text").eq("id", mine).single();
+    expect(after.data?.text).toBe(text);
+  });
+
   it("refuses an empty note, a note past 280 characters, and one written in somebody else's name", async () => {
     expect((await write(author, { about: "team", scope: "owner", text: "" })).error?.code).toBe(
       "23514",

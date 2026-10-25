@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import { mayChangeThings } from "../role";
 import { NOTE_CHARS } from "../../team-block";
@@ -28,6 +29,37 @@ export function scopeFor(
   canWrite: boolean,
 ): "owner" | "workspace" {
   return about === "team" && ctx.sessionShared === true && canWrite ? "workspace" : "owner";
+}
+
+/** How many notes a scope may hold: per person for `owner`, per workspace for `workspace`. */
+export function capFor(scope: "owner" | "workspace"): number {
+  return scope === "owner" ? MAX_OWNER_NOTES : MAX_WORKSPACE_NOTES;
+}
+
+/**
+ * How many notes already stand in the scope a note is about to join: the
+ * person's own (`owner`) or the workspace's (`workspace`). One count for the
+ * tool and for `/memory`, so the two cannot disagree about what "full" is.
+ *
+ * `exceptId` leaves one note out, for sharing a note that may already be in
+ * the count it would be joining.
+ */
+export async function countNotes(
+  db: SupabaseClient,
+  at: { workspaceId: string; scope: "owner" | "workspace"; userId: string; exceptId?: string },
+): Promise<{ have: number; failed: boolean }> {
+  let count = db
+    .from("memory_notes")
+    .select("id", { count: "exact", head: true })
+    .eq("workspace_id", at.workspaceId);
+  if (at.scope === "owner") count = count.eq("created_by", at.userId);
+  if (at.exceptId) count = count.neq("id", at.exceptId);
+  const { count: have, error } = await count.eq("scope", at.scope);
+  if (error) {
+    console.error("could not count memory notes", error);
+    return { have: 0, failed: true };
+  }
+  return { have: have ?? 0, failed: false };
 }
 
 const WHERE = "Settings › Memory";
@@ -87,18 +119,14 @@ export const rememberTool: AgentTool = {
       about === "team" && ctx.sessionShared === true ? await mayChangeThings(ctx) : false;
     const scope = scopeFor(about, ctx, canWrite);
 
-    let count = ctx.db
-      .from("memory_notes")
-      .select("id", { count: "exact", head: true })
-      .eq("workspace_id", ctx.workspaceId);
-    if (scope === "owner") count = count.eq("created_by", ctx.userId);
-    const { count: have, error: countError } = await count.eq("scope", scope);
-    if (countError) {
-      console.error("could not count memory notes", countError);
-      return { kind: "error", message: "Could not keep that note just now." };
-    }
-    const cap = scope === "owner" ? MAX_OWNER_NOTES : MAX_WORKSPACE_NOTES;
-    if ((have ?? 0) >= cap) {
+    const { have, failed } = await countNotes(ctx.db, {
+      workspaceId: ctx.workspaceId,
+      scope,
+      userId: ctx.userId,
+    });
+    if (failed) return { kind: "error", message: "Could not keep that note just now." };
+    const cap = capFor(scope);
+    if (have >= cap) {
       return {
         kind: "error",
         message:

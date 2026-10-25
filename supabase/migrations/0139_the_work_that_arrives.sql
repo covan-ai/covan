@@ -38,8 +38,12 @@
 -- many unanswered questions somebody has is not one this needs. The function
 -- in 0090 refuses a key the same way; this is the first policy that does.
 --
--- WHAT A SCAN COSTS. Measured once against a real mailbox, see Task 5 of the
--- plan: (not yet measured).
+-- WHAT A SCAN COSTS. Estimated, not yet measured against a live mailbox: at
+-- the caps (200 messages, 250 events) the two classify calls and the label
+-- call send about 18,000 prompt tokens and get about 2,500 back from
+-- gpt-4.1-mini, near one US cent, plus one to seven Composio calls (two per
+-- Gmail, four per Outlook, one per Google Calendar). The scan holds at most
+-- five cents where the deployment holds credit (`SCAN_CEILING_USD`).
 -- =========================================================================
 
 create table if not exists public.arrival_scans (
@@ -86,8 +90,13 @@ create table if not exists public.arrival_buckets (
   examples    text[]  not null default '{}',
   template_id text,
   routine_id  uuid    references public.routines (id) on delete set null,
+  created_at  timestamptz not null default now(),
   primary key (scan_id, kind)
 );
+
+-- The tick deletes buckets after 90 days; see the header.
+create index if not exists arrival_buckets_created_idx
+  on public.arrival_buckets (created_at);
 
 alter table public.arrival_buckets drop constraint if exists arrival_buckets_kind_known;
 alter table public.arrival_buckets add constraint arrival_buckets_kind_known

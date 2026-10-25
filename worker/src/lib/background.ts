@@ -14,6 +14,7 @@ import { syncPassageVectors } from "./passages";
 import { dispatchWebhooks } from "./webhooks/dispatcher";
 import { sendNeedsYouReminders } from "./reports/needs-you";
 import { runWeeklySummaries } from "./reports/weekly-summary";
+import { sweepArrivalScans } from "./arrivals/scan";
 
 /**
  * One scheduled tick, for both Workers that have one.
@@ -128,6 +129,15 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
   // Drive channel is an event somebody will not get.
   const events = await sweepEventSubscriptions(env);
   if (events.claimed > 0) return;
+
+  // Scans of what arrived (0139) that the request starting them did not
+  // finish: a lease that ran out, a queued row nobody picked up. A scan is
+  // started by `POST /arrivals`, not here — this only retries, gives up after
+  // three attempts and deletes buckets past ninety days. A re-run is a dozen
+  // subrequests, two at most per tick; an idle tick costs two, the read and
+  // the retention delete. Below the event subscriptions for the same reason
+  // as the documents: a person may be watching, but nobody is owed a minute.
+  if (await sweepArrivalScans(env)) return;
 
   // Documents whose clock stopped: no Durable Object bound, nobody watching
   // the tab, a worker that died holding the lease. One unit per job, two jobs

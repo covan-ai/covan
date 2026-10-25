@@ -78,11 +78,16 @@ export const EVENT_CAP = 250;
 export const WINDOW_DAYS = 30;
 export const SNIPPET_MAX = 200;
 
-/** A source that could not be read. `calls` were still made, and are still paid for. */
+/**
+ * A source that could not be read. `calls` were still made, and are still paid
+ * for. `status` is Composio's: 5xx is worth another attempt, anything else (an
+ * expired grant, a refused scope, a 200 that said it failed) is not.
+ */
 export class ArrivalReadError extends Error {
   constructor(
     message: string,
     readonly calls: string[],
+    readonly status = 0,
   ) {
     super(message);
     this.name = "ArrivalReadError";
@@ -329,7 +334,7 @@ export async function readSource(env: ComposioEnv, source: ReadSource, now: Date
     });
     if (res.kind === "error") {
       if (billed(res.status)) calls.push(slug);
-      throw new ArrivalReadError(res.message, calls);
+      throw new ArrivalReadError(res.message, calls, res.status);
     }
     calls.push(slug);
     return res.body;

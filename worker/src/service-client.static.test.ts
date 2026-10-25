@@ -135,6 +135,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "a routine's report held for its browser (0100) is finished by whatever settled the browser's last task — a cron tick or an open tab answering for another person's run — so there is no caller whose JWT could resolve the routine, its channel or its run. routine_runs has no client write grant at all (0094), and routines.browser_conversation_id is the engine's column. Every read is keyed to the run id a browser task row carried and the routine row that run names: the channel is held to the routine's own user_id, the agent to the routine's workspace, and the conversation it opens is the routine owner's own, private, under the routine's agent",
   ],
   [
+    "lib/arrivals/scan.ts",
+    "a scan of what arrived (0139) runs after the response that queued it, or on a tick that found it stalled, so there is no caller whose JWT RLS could resolve, and 0139 gives arrival_scans and arrival_buckets no client write beyond queueing one and naming a bucket's routine. It claims the scan row by id, reads only that row's sources and the tool_connections they name — held to the scan's own user (created_by), workspace and status active, the way a routine's run_tool reaches a personal connection — and writes only that row's status, counts and buckets. Nothing a client sent is written except the connection ids the caller's own insert already put on the row; the sweep reads stalled rows and deletes buckets older than 90 days",
+  ],
+  [
     "lib/browser/tasks.ts",
     "the one write `browse` makes, and it has to reach past RLS because 0073 gives browser_tasks no write grant to any client role — a client that could insert could name an arbitrary provider_task_id, and one deployment-wide BROWSER_USE_API_KEY means that id addresses somebody's running browser, whose output the poller would then deliver into the fabricator's conversation. Same shape and same reason as savePausedTurn in lib/harness/turn.ts. It decides nothing: every id it writes comes from ToolContext, which the route resolved from the authenticated request before the tool ran",
   ],

@@ -274,6 +274,64 @@ describe("teamBlock", () => {
     expect(out).not.toContain("- 39");
   });
 
+  it("pops team and person notes alternately when over budget, starting with the team's", () => {
+    const people = Array.from({ length: 10 }, (_, i): TeamPerson => ({
+      id: `u-${String(i).padStart(2, "0")}`,
+      name: `Person ${String(i).padStart(2, "0")}`,
+      bio: null,
+      timezone: null,
+      role: "member",
+    }));
+    // Each note is 280 characters, so the budget holds about twenty of them.
+    const note = (c: string, i: number) => `${c}${String(i).padStart(2, "0")}${"x".repeat(276)}`;
+    const team = Array.from({ length: MAX_TEAM_NOTES }, (_, i) => note("t", i));
+    const own = Array.from({ length: MAX_PERSON_NOTES }, (_, i) => note("p", i));
+    const out = teamBlock({
+      workspaceName: "Acme",
+      people,
+      callerId: "u-00",
+      teamNotes: team,
+      personNotes: own,
+    });
+    expect(out.length).toBeLessThanOrEqual(TEAM_BLOCK_CHARS);
+    const keptTeam = bullets(out).filter((l) => l.startsWith("- t")).length;
+    const keptOwn = bullets(out).filter((l) => l.startsWith("- p")).length;
+    // The two lists lost notes in turn, so the counts that went are equal or
+    // differ by one (the team's goes first), and neither list was emptied.
+    const lostTeam = MAX_TEAM_NOTES - keptTeam;
+    const lostOwn = MAX_PERSON_NOTES - keptOwn;
+    expect(keptTeam).toBeGreaterThan(0);
+    expect(keptOwn).toBeGreaterThan(0);
+    expect([0, 1]).toContain(lostTeam - lostOwn);
+    expect(lostOwn).toBeGreaterThan(0);
+    // The newest of each list survives; the oldest of each is what went.
+    expect(out).toContain("- t00");
+    expect(out).toContain("- p00");
+    expect(out).not.toContain(`- t${MAX_TEAM_NOTES - 1}`);
+    expect(out).not.toContain(`- p${MAX_PERSON_NOTES - 1}`);
+  });
+
+  it("keeps shrinking the team list until it fits when there is no caller", () => {
+    const note = (i: number) => `${String(i).padStart(2, "0")}${"x".repeat(278)}`;
+    const team = Array.from({ length: MAX_TEAM_NOTES }, (_, i) => note(i));
+    const out = teamBlock({
+      workspaceName: "Acme",
+      people: [ada, bo],
+      callerId: null,
+      teamNotes: team,
+      personNotes: Array.from({ length: MAX_PERSON_NOTES }, (_, i) => note(i)),
+    });
+    expect(out.length).toBeLessThanOrEqual(TEAM_BLOCK_CHARS);
+    const kept = bullets(out).filter((l) => l.length > 200);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(MAX_TEAM_NOTES);
+    // Newest first: what survives is the head of the list.
+    expect(kept[0]).toContain("- 00");
+    expect(out).not.toContain(`- ${MAX_TEAM_NOTES - 1}`);
+    // The person notes were never rendered, so they never counted.
+    expect(out).not.toContain("What you have noted");
+  });
+
   it("never cuts the roster, even when the roster alone is over the budget", () => {
     const people = Array.from({ length: MAX_PEOPLE_LINES }, (_, i): TeamPerson => ({
       id: `u-${String(i).padStart(2, "0")}`,

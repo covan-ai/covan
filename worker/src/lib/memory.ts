@@ -1,7 +1,31 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { TeamBlockInput, TeamPerson } from "./team-block";
+import {
+  MAX_PERSON_NOTES,
+  MAX_TEAM_NOTES,
+  type TeamBlockInput,
+  type TeamPerson,
+} from "./team-block";
 
 const ROLES = new Set<TeamPerson["role"]>(["admin", "member", "viewer"]);
+
+type NotesRead = PromiseLike<{ data: unknown; error: unknown }>;
+
+/** One notes list, or `[]` and a log line when it could not be read. */
+async function readNotes(which: string, query: () => NotesRead): Promise<string[]> {
+  try {
+    const { data, error } = await query();
+    if (error) {
+      console.error(`team context: could not read the ${which} notes`, error);
+      return [];
+    }
+    return ((data ?? []) as { text: string | null }[]).flatMap((r) =>
+      typeof r.text === "string" ? [r.text] : [],
+    );
+  } catch (err) {
+    console.error(`team context: the ${which} notes read failed`, err);
+    return [];
+  }
+}
 
 /**
  * Who is on a workspace's team, as the input `teamBlock` renders.
@@ -22,7 +46,16 @@ const ROLES = new Set<TeamPerson["role"]>(["admin", "member", "viewer"]);
  * workspace row that is not there is the same answer: the block opens with the
  * workspace's name and there is nothing true to open with.
  *
- * The note lists are empty here. They arrive with the table that holds them.
+ * The notes are read here too, each by an explicit filter, because a
+ * service-role caller would otherwise be handed everyone's. The team's are
+ * `scope = 'workspace'` in this workspace; the caller's own are
+ * `scope = 'owner'` AND `created_by = callerId` in this workspace, and with no
+ * caller that second read is not made at all. Newest first, with the id as the
+ * tie-break so the same rows always arrive in the same order (the prefix they
+ * land in has to be byte-stable). Only `text` is selected.
+ *
+ * A notes read that fails costs that list and nothing else: it is logged and
+ * the list is empty, and the roster and the other list still return.
  */
 export async function loadTeamContext(
   db: SupabaseClient,
@@ -42,6 +75,34 @@ export async function loadTeamContext(
 
     const rows = (members.data ?? []) as { user_id: string; role: string }[];
     const ids = rows.map((r) => r.user_id);
+
+    // Started before the profiles read and awaited after it, so the three run
+    // together. `readNotes` never rejects.
+    const teamNotes = readNotes("team", () =>
+      db
+        .from("memory_notes")
+        .select("text")
+        .eq("workspace_id", input.workspaceId)
+        .eq("scope", "workspace")
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(MAX_TEAM_NOTES),
+    );
+    const callerId = input.callerId;
+    const personNotes =
+      callerId === null
+        ? Promise.resolve<string[]>([])
+        : readNotes("personal", () =>
+            db
+              .from("memory_notes")
+              .select("text")
+              .eq("workspace_id", input.workspaceId)
+              .eq("created_by", callerId)
+              .eq("scope", "owner")
+              .order("created_at", { ascending: false })
+              .order("id", { ascending: false })
+              .limit(MAX_PERSON_NOTES),
+          );
 
     const profiles = new Map<
       string,
@@ -87,8 +148,8 @@ export async function loadTeamContext(
       workspaceName: name,
       people,
       callerId: input.callerId,
-      teamNotes: [],
-      personNotes: [],
+      teamNotes: await teamNotes,
+      personNotes: await personNotes,
     };
   } catch (err) {
     console.error("team context: the read failed", err);

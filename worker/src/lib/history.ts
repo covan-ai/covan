@@ -1,4 +1,50 @@
+import { BIO_LINE_CHARS, UNNAMED_MEMBER, oneLine } from "./team-block";
+
 export type HistoryTurn = { role: "user" | "assistant"; content: string };
+
+/** What a shared thread calls a sender the workspace can no longer show a name for. */
+export const FORMER_MEMBER = "A former member";
+
+/**
+ * A person's display name as the history labels them, from the team the loader
+ * read: the name collapsed to one line the way the team block collapses it, or
+ * the unnamed form for a member who has none. Ids the map lacks are not here at
+ * all, and `attributeSenders` calls those `FORMER_MEMBER`.
+ */
+export function senderNames(
+  people: ReadonlyArray<{ id: string; name: string | null }>,
+): Map<string, string> {
+  return new Map(
+    people.map((p) => [p.id, oneLine(p.name ?? "", BIO_LINE_CHARS) || UNNAMED_MEMBER]),
+  );
+}
+
+/**
+ * Who said what, for a thread more than one person writes in.
+ *
+ * In a shared session the agent otherwise reads every user turn as one voice,
+ * and "can you do the same for mine?" has no "mine" to resolve. Each person's
+ * turns are sent as `Ada: <text>`, which is how the team block names them.
+ *
+ * A private session returns the turns untouched, role and content only, so the
+ * bytes a provider caches for it do not move. So does a user turn with no
+ * sender (written before `messages.sender_id`, 0008) and every assistant turn.
+ * A sender the map does not know — their profile is no longer readable once
+ * they leave the workspace — is `FORMER_MEMBER`, not left bare: an unlabelled
+ * turn in a labelled thread reads as the person before it.
+ */
+export function attributeSenders(
+  rows: Array<{ role: "user" | "assistant"; content: string; sender_id: string | null }>,
+  names: Map<string, string>,
+  shared: boolean,
+): HistoryTurn[] {
+  return rows.map((r) => {
+    if (!shared || r.role !== "user" || r.sender_id === null) {
+      return { role: r.role, content: r.content };
+    }
+    return { role: r.role, content: `${names.get(r.sender_id) ?? FORMER_MEMBER}: ${r.content}` };
+  });
+}
 
 export const MSG_HISTORY_LIMIT = 60;
 export const HISTORY_CHAR_BUDGET = 32000;

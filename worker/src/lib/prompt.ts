@@ -183,7 +183,9 @@ const CAPABILITIES = [
   // and an agent told it could read them told people the same.
   "You can read the documents the team adds to your knowledge — Word, PowerPoint, Excel, OpenDocument, PDF (when it has a text layer), Markdown, text, CSV, JSON, HTML and RTF files — and analyze what is in them. You cannot see images inside them.",
   "When working with code, you can explain, debug, refactor, or write new code across any language or framework.",
-  "You have access to the team's full conversation history in this workspace.",
+  // This used to claim the team's whole conversation history, which no code
+  // path ever supplied; an agent told it had it answered as though it did.
+  "You remember only this conversation. What you know about the team and the person you are talking to is in the section above.",
 ].join(" ");
 
 /** Whether `Intl` recognises a zone, so an unknown one degrades instead of throwing. */
@@ -254,6 +256,13 @@ export function buildSystemPrefix(input: {
    * text in this file.
    */
   overrides?: PromptOverrides;
+  /**
+   * The team, already rendered (`lib/team-block.ts`): who is in the workspace
+   * and what they have asked the agent to keep in mind. Omitted, null and the
+   * empty string all print nothing, so a prefix built without one is the bytes
+   * it was before the block existed.
+   */
+  team?: string | null;
 }): string {
   const tuned = input.overrides?.parts ?? {};
   const persona =
@@ -267,6 +276,12 @@ export function buildSystemPrefix(input: {
   // only: see ABOUT_COVAN.
   if (input.mode === "normal" || input.mode === "brainstorm") {
     prefix += `\n\n${tuned.about_covan ?? ABOUT_COVAN}`;
+  }
+
+  // Who is in the room, after what Covan is and before what it can do: the
+  // capabilities text points back at this section.
+  if (input.team) {
+    prefix += `\n\n${input.team}`;
   }
 
   // Add capabilities (web search only if enabled)
@@ -320,6 +335,9 @@ export function buildSystemPrefix(input: {
  */
 export type PromptParts = {
   system_chars: number;
+  /** The team block's length. Part of `system_chars`, itemised because it is
+   * the one part of the prefix that varies with the workspace. */
+  team_chars: number;
   manifest_chars: number;
   doc_names: number;
   rag_chars: number;
@@ -336,6 +354,8 @@ export function promptParts(input: {
   systemPrefix: string;
   /** The connection-and-channel manifest, a substring of the above. */
   manifest: string;
+  /** The rendered team block, a substring of the above; "" when there is none. */
+  team: string;
   docNames: string[];
   ragBlock: string;
   history: { role: string; content: string }[];
@@ -346,6 +366,7 @@ export function promptParts(input: {
 }): PromptParts {
   return {
     system_chars: input.systemPrefix.length,
+    team_chars: input.team.length,
     manifest_chars: input.manifest.length,
     doc_names: input.docNames.length,
     rag_chars: input.ragBlock.length,

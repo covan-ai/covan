@@ -110,6 +110,11 @@ export type ToolContext = {
   /** The routine run this turn belongs to, when nobody is. */
   routineRunId?: string;
   /**
+   * Whether the chat session is shared with the workspace. Set by the route
+   * from `chat_sessions.visibility`, never from anything the model wrote.
+   */
+  sessionShared?: boolean;
+  /**
    * A routine run whose owner allowed it the browser (0100), or absent —
    * which is every chat turn and every routine that did not.
    *

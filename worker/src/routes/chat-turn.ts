@@ -132,6 +132,8 @@ export async function buildToolContext(input: {
   foundSources?: RetrievedSource[];
   /** Whose knowledge a search may read. See `ToolContext`. */
   knowledgeScope?: KnowledgeScope;
+  /** Whether the session is shared. See `ToolContext`. */
+  sessionShared?: boolean;
 }): Promise<ToolContext> {
   // Two independent reads of the same table, both on the critical path of every
   // turn, so they overlap rather than queue. Neither can fail the turn: each
@@ -153,6 +155,7 @@ export async function buildToolContext(input: {
     ...(input.confirmed ? { confirmed: true } : {}),
     ...(input.foundSources ? { foundSources: input.foundSources } : {}),
     ...(input.knowledgeScope ? { knowledgeScope: input.knowledgeScope } : {}),
+    ...(input.sessionShared !== undefined ? { sessionShared: input.sessionShared } : {}),
     // One per turn, so the same catalogue search asked twice is answered from
     // the first one. See `searchMemo` in `registry.ts`.
     searchMemo: new Map<string, string>(),

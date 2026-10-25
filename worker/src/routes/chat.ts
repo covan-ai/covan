@@ -47,9 +47,13 @@ import {
   sumOverPasses,
 } from "../lib/harness/usage";
 import { retrieveForAgent, type KnowledgeScope } from "../lib/retrieval";
+import { loadTeamContext } from "../lib/memory";
+import { teamBlock } from "../lib/team-block";
 import { embeddingModel } from "../lib/embeddings";
 import {
+  attributeSenders,
   selectHistory,
+  senderNames,
   MSG_HISTORY_LIMIT,
   HISTORY_CHAR_BUDGET,
   PER_MESSAGE_CHAR_CAP,
@@ -319,6 +323,15 @@ chat.post("/chat/stream", async (c) => {
   // was written out here until a Slack thread needed to ask an agent the same
   // question — see `lib/retrieval.ts` for why one copy rather than two.
   const knowledgeScope = knowledgeScopeFor(session);
+  const shared = isShared(session);
+  // Who is on the team, started here so its three reads overlap the retrieval
+  // and capability reads below and awaited where the prefix is built. It
+  // answers null rather than throwing, so a turn that fails before then leaves
+  // nothing unhandled behind it.
+  const teamContext = loadTeamContext(db, {
+    workspaceId: session.workspace_id as string,
+    callerId: c.get("user").id,
+  });
   const { docNames, ragBlock, sources, grounding, embeddingTokens, rerankSpend } =
     await retrieveForAgent(
       db,
@@ -364,6 +377,8 @@ chat.post("/chat/stream", async (c) => {
    */
   const visitorZone = visitorTimezone(c);
 
+  const team = await teamContext;
+
   const systemPrefix =
     buildSystemPrefix({
       persona: agent.persona,
@@ -373,15 +388,26 @@ chat.post("/chat/stream", async (c) => {
       now: new Date(),
       timezone: visitorZone,
       overrides,
+      team: team ? teamBlock(team) : null,
     }) + (manifest ? `\n\n${manifest}` : "");
 
   // Budget the history down to the most recent turns that fit, so long chats
   // (and giant pasted messages) don't re-inflate the input on every turn.
+  //
+  // In a shared thread each person's turns carry their name, taken from the
+  // same read as the team block. No team, no names: better every sender
+  // unlabelled than every one of them called a former member. Retrieval above
+  // was given the turns as written, so a name is never part of what it searches.
   const history = selectHistory(
-    turns.map((m: { role: string; content: string }) => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-    })),
+    attributeSenders(
+      turns.map((m: { role: string; content: string; sender_id?: string | null }) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        sender_id: m.sender_id ?? null,
+      })),
+      senderNames(team?.people ?? []),
+      shared && team !== null,
+    ),
     { maxChars: HISTORY_CHAR_BUDGET, perMessageCap: PER_MESSAGE_CHAR_CAP },
   );
 
@@ -456,6 +482,7 @@ chat.post("/chat/stream", async (c) => {
   const parts = promptParts({
     systemPrefix,
     manifest,
+    team: team ? teamBlock(team) : "",
     docNames,
     ragBlock: ragBlock ?? "",
     history,
@@ -912,6 +939,7 @@ chat.post("/chat/stream", async (c) => {
             // finds mid-turn is cited beside what retrieval found up front.
             foundSources: sources,
             knowledgeScope,
+            sessionShared: shared,
           }),
           // What the first half spent, so the second half's steps and passes are
           // numbered after it — each marked `uncharged` because the budget does
@@ -1321,6 +1349,7 @@ chat.post("/chat/confirm/:id", async (c) => {
     approvedProposal: pause.proposal,
     foundSources: resumedSources,
     knowledgeScope: knowledgeScopeFor(session),
+    sessionShared: isShared(session),
   });
 
   const stream = new ReadableStream({
@@ -1972,6 +2001,11 @@ function joinHalves(before: string, addition: string): string {
   return `${before}\n\n${addition}`;
 }
 
+/** Whether more than the asker reads this conversation (a missing session is private). */
+function isShared(session: { visibility?: unknown } | null | undefined): boolean {
+  return session?.visibility === "shared";
+}
+
 /**
  * Whose knowledge a conversation's replies may stand on (0106).
  *
@@ -1982,7 +2016,7 @@ function joinHalves(before: string, addition: string): string {
  * already reads exactly what they may.
  */
 function knowledgeScopeFor(session: { visibility?: unknown } | null | undefined): KnowledgeScope {
-  return session?.visibility === "shared" ? { sharedOnly: true } : {};
+  return isShared(session) ? { sharedOnly: true } : {};
 }
 
 export { chat };

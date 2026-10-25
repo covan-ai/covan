@@ -156,6 +156,33 @@ describe("memory_notes", () => {
     expect(after.data?.scope).toBe("owner");
   });
 
+  it("a writer demoted to viewer can no longer reword the shared note they wrote", async () => {
+    const demoted = await createTestUser("notes-demoted");
+    await add(demoted, "member");
+    const text = "Releases go out on Tuesdays.";
+    const id = await made(demoted, { about: "team", scope: "workspace", text });
+
+    const { error } = await serviceClient()
+      .from("workspace_members")
+      .update({ role: "viewer" })
+      .eq("workspace_id", admin.workspaceId)
+      .eq("user_id", demoted.id);
+    expect(error).toBeNull();
+
+    // Still theirs, so the row is in reach, but the result is a shared note
+    // that a viewer could not have written.
+    const reworded = await demoted.db
+      .from("memory_notes")
+      .update({ text: "Releases go out on Fridays." })
+      .eq("id", id)
+      .select("id");
+    expect(reworded.error?.code).toBe("42501");
+    expect(reworded.data ?? []).toEqual([]);
+
+    const after = await author.db.from("memory_notes").select("text").eq("id", id).single();
+    expect(after.data?.text).toBe(text);
+  });
+
   it("only the author moves a note from private to shared, and never back", async () => {
     const id = await made(author, {
       about: "team",

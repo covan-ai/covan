@@ -578,8 +578,9 @@ members ends with a count.
 name the workspace and, for a person's own notes, `created_by`, so a
 service-role caller (Slack) cannot be handed anyone else's. A person's own
 notes are loaded only in a private chat conversation: not in a shared one, not
-in Slack, and no scheduled run loads either list. Any failure leaves the block
-out rather than failing the turn.
+in Slack, and no scheduled run loads either list. A failed roster read leaves
+the block out rather than failing the turn; a failed notes read leaves only that
+list empty, and the roster and the other list still go in.
 
 ## The two seams
 

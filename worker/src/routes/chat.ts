@@ -29,6 +29,7 @@ import {
   type AgentStep,
   type PassUsage,
 } from "../lib/harness/loop";
+import { apiKeyIdOf } from "../lib/api-key-rule";
 import { capabilitiesFor } from "../lib/harness/available";
 import { egressCountry } from "../lib/browser/egress";
 import { browserTaskNote } from "../lib/browser/task-note";
@@ -363,6 +364,7 @@ chat.post("/chat/stream", async (c) => {
     workspaceId: session.workspace_id as string,
     userId: c.get("user").id,
     agentId: session.agent_id as string,
+    byApiKey: apiKeyIdOf(c) !== null,
   });
 
   /**
@@ -558,11 +560,13 @@ chat.post("/chat/stream", async (c) => {
       sessionId,
       messageId: lastMessage.id as string,
       content: lastMessage.content as string,
+      senderId: (lastMessage.sender_id as string | null | undefined) ?? null,
       at: lastMessage.created_at as string,
       previous: reply
         ? {
             messageId: rows[before].id as string,
             content: rows[before].content as string,
+            senderId: (rows[before].sender_id as string | null | undefined) ?? null,
             repliedAt: reply.created_at as string,
           }
         : null,
@@ -1654,6 +1658,7 @@ chat.post("/chat/confirm/:id", async (c) => {
           workspaceId: pause.workspaceId,
           userId: pause.userId,
           agentId: pause.agentId,
+          byApiKey: apiKeyIdOf(c) !== null,
         });
 
         /**

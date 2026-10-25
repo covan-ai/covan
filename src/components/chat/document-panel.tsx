@@ -68,8 +68,8 @@ export function DocumentPanel({
     if (!job.documentId) return;
     void saveDocument(job.documentId, `${job.title}.md`, format, t);
     // A job knows its document but not the message that offered it, so the
-    // document's id stands in for the message's.
-    announceAnswerAction({ action: "saved", messageId: job.documentId, format });
+    // event names the document and leaves the message out.
+    announceAnswerAction({ action: "saved", documentId: job.documentId, format });
   };
   const when = Date.parse(job.finishedAt ?? job.updatedAt);
 

@@ -53,9 +53,9 @@ async function readNotes(which: string, query: () => NotesRead): Promise<string[
  * caller, or when `personNotes` is false, that second read is not made at all.
  * `personNotes` has no default so each surface decides: a room other people
  * read must not carry one person's private notes, however well the asker is
- * known. Newest first, with the id as the
- * tie-break so the same rows always arrive in the same order (the prefix they
- * land in has to be byte-stable). Only `text` is selected.
+ * known. Newest first, with the id as the tie-break so the same rows always
+ * arrive in the same order (the prefix they land in has to be byte-stable).
+ * Only `text` is selected.
  *
  * A notes read that fails costs that list and nothing else: it is logged and
  * the list is empty, and the roster and the other list still return.

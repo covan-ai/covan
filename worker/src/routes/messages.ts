@@ -85,8 +85,8 @@ messages.patch("/messages/:id", async (c) => {
   }
 
   // Only a question. The message does not carry its workspace, so the session
-  // is read for it, and that read happens with the observers' own work, after
-  // the response, so an edit is never slower for being observed.
+  // is read for it, and that read happens with the observers' own work, which
+  // the request does not await, so an edit is never slower for being observed.
   if (data.role === "user" && hasTurnObservers()) {
     const user = c.get("user");
     observeTurn(c, async () => {

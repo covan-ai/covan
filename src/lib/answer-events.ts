@@ -7,7 +7,10 @@
 
 export type AnswerAction = {
   action: "copied" | "spoken" | "saved";
-  messageId: string;
+  /** The reply it was done to. Absent for a document, which knows its own id but not the message that offered it. */
+  messageId?: string;
+  /** The document it was done to, when that is a filed document rather than a reply. */
+  documentId?: string;
   /** Only for `saved`. */
   format?: "md" | "docx" | "pdf";
 };

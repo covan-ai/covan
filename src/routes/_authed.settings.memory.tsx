@@ -47,7 +47,9 @@ function MemorySettingsPage() {
         />
         <MemoryNotesSection
           label={t("About you", { context: "memory", defaultValue: "About you" })}
-          lede={t("Only you can see these. Agents keep them in mind when they work with you.")}
+          lede={t(
+            "Only you can see these. Agents keep them in mind in your own private conversations.",
+          )}
           notes={notes.filter((n) => n.mine && n.scope === "owner")}
           canAdd
           about="person"

@@ -94,7 +94,7 @@ describe("DocumentPanel", () => {
       await userEvent.click(screen.getByRole("button", { name: /Download/ }));
       await userEvent.click(await screen.findByRole("menuitem", { name: "Word" }));
 
-      expect(heard).toEqual([{ action: "saved", messageId: "doc-1", format: "docx" }]);
+      expect(heard).toEqual([{ action: "saved", documentId: "doc-1", format: "docx" }]);
       expect(exportDocument).toHaveBeenCalledWith("doc-1", "docx");
     } finally {
       window.removeEventListener(ANSWER_EVENT, listener);

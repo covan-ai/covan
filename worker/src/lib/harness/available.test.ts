@@ -228,6 +228,18 @@ describe("capabilitiesFor", () => {
     expect(scheduled.tools.map((t) => t.name)).not.toContain("remember");
   });
 
+  it("leaves remember out of a request made with an API key", async () => {
+    const keyed = await capabilitiesFor({
+      db: dbWith([], []),
+      env: FULL,
+      workspaceId: "ws-1",
+      userId: "user-1",
+      byApiKey: true,
+    });
+    expect(keyed.tools.map((t) => t.name)).not.toContain("remember");
+    expect(keyed.tools.map((t) => t.name)).toContain("search_documents");
+  });
+
   it("still answers when the connection lookup fails, rather than failing the turn", async () => {
     const broken = {
       from: (table: string) =>

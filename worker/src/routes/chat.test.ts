@@ -381,6 +381,8 @@ function appWith(spec: {
     name: string;
     members: Array<{ id: string; name: string | null; role?: string }>;
   };
+  /** Set when the request was made with an API key rather than a session. */
+  apiKeyId?: string;
   /** The caller's own `scope = 'owner'` notes, which the loader reads for a private session. */
   ownerNotes?: string[];
   documents?: Doc[];
@@ -594,6 +596,7 @@ function appWith(spec: {
   app.use("/*", async (c, next) => {
     c.set("user", USER as never);
     c.set("db", db as never);
+    if (spec.apiKeyId) c.set("apiKeyId", spec.apiKeyId);
     // What `middleware/auth.ts` sets, because this stands in for it. The
     // subrequest meter starts there rather than in a route: the caller's own
     // client is the first thing a request builds that spends one, and the
@@ -2333,6 +2336,23 @@ describe("a reply that used a tool", () => {
     ]);
   });
 
+  it("offers remember to a session and not to an API key", async () => {
+    const offeredTo = async (apiKeyId?: string) => {
+      completionCreate.mockClear();
+      const { app } = appWith({ question: "How many days?", apiKeyId });
+      await ask(app);
+      return (completionCreate.mock.calls.find((c) => c[0].stream)?.[0].tools ?? []).map(
+        (t: { function: { name: string } }) => t.function.name,
+      );
+    };
+    expect(await offeredTo()).toContain("remember");
+    // A note is standing instructions that outlive the key, which is why
+    // `POST /memory` refuses a key too.
+    const withKey = await offeredTo("key-1");
+    expect(withKey).not.toContain("remember");
+    expect(withKey).toContain("search_documents");
+  });
+
   it("offers the connection tools once the workspace has a connection", async () => {
     const { app } = appWith({
       question: "How many orders?",
@@ -2411,6 +2431,21 @@ describe("POST /chat/confirm/:id", () => {
       },
       ENV as never,
     );
+
+  it("does not hand remember to a turn resumed with an API key", async () => {
+    const resumedWith = async (apiKeyId?: string) => {
+      parked = PARKED;
+      completionCreate.mockClear();
+      const { app } = appWith({ question: "every monday", apiKeyId });
+      answersWith(streamOf("done"));
+      await (await confirm(app, false)).text();
+      return (completionCreate.mock.calls.find((c) => c[0].stream)?.[0].tools ?? []).map(
+        (t: { function: { name: string } }) => t.function.name,
+      );
+    };
+    expect(await resumedWith()).toContain("remember");
+    expect(await resumedWith("key-1")).not.toContain("remember");
+  });
 
   it("is a 404 when there is nothing parked under that id", async () => {
     const { app } = appWith({ question: "every monday" });
@@ -3855,8 +3890,30 @@ describe("what happens around a turn", () => {
         sessionId: "sess-1",
         messageId: "m0",
         content: "How many vacation days?",
+        senderId: null,
         at: "2026-09-01T10:00:00Z",
         previous: null,
+      },
+    ]);
+  });
+
+  it("names who typed the question and who typed the one before it", async () => {
+    const { app } = appWith({
+      question: "And for contractors?",
+      questionSender: "user-1",
+      history: [
+        { role: "user", content: "How many vacation days?", sender_id: "user-2" },
+        { role: "assistant", content: "Twenty." },
+      ],
+    });
+
+    await ask(app);
+
+    expect(await events()).toMatchObject([
+      {
+        kind: "question_asked",
+        senderId: "user-1",
+        previous: { messageId: "m0", senderId: "user-2" },
       },
     ]);
   });

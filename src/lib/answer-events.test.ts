@@ -11,6 +11,12 @@ afterEach(() => {
 });
 
 describe("announceAnswerAction", () => {
+  it("carries a document's id without a message's", () => {
+    window.addEventListener(ANSWER_EVENT, listener);
+    announceAnswerAction({ action: "saved", documentId: "d1", format: "pdf" });
+    expect(heard).toEqual([{ action: "saved", documentId: "d1", format: "pdf" }]);
+  });
+
   it("dispatches one event carrying exactly what it was given", () => {
     window.addEventListener(ANSWER_EVENT, listener);
 

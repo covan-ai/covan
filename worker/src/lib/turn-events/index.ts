@@ -30,10 +30,20 @@ export type TurnEvent =
       sessionId: string;
       messageId: string;
       content: string;
+      /** Who typed it: the row's `sender_id`, null on a row from before senders were recorded. */
+      senderId: string | null;
       /** ISO. When the question row was created. */
       at: string;
-      /** The question before this one and when its reply was written, or null. */
-      previous: { messageId: string; content: string; repliedAt: string } | null;
+      /**
+       * The question before this one, who typed it and when its reply was
+       * written, or null.
+       */
+      previous: {
+        messageId: string;
+        content: string;
+        senderId: string | null;
+        repliedAt: string;
+      } | null;
     }
   | {
       /** A reply is being asked for again. */

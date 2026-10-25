@@ -399,8 +399,9 @@ people have asked it to keep.
 
 **The team.** Every agent, in chat and in Slack, is told who is in the
 workspace: each member's name, role, the one-line bio from their profile and
-their timezone. In chat it is also told who it is talking to, and that person's
-bio. In a shared conversation it sees who said what.
+their timezone. It is also told who it is talking to, and that person's bio: in
+chat the person asking, in Slack the person who mentioned it. In a shared
+conversation it sees who said what.
 
 **Notes.** A note is one short sentence, at most 280 characters, and it is
 about one of two things: _the team_ (how it works, its tools, its words) or
@@ -418,7 +419,8 @@ cannot share one.
 Settings → Memory, in the Workspace group, lists every note under two headings.
 _About the team_ is read by everyone in the workspace; people who can edit it
 add notes there and delete them. _About you_ is yours alone: you can add and
-delete notes, and share a note about the team from there. Each note says whether
+delete notes, and, if you can edit the workspace, share a note about the team
+from there. Each note says whether
 it came from a conversation or was written there.
 
 | Note                    | Who can read it                 | Which answers it reaches                                         |
@@ -428,7 +430,7 @@ it came from a conversation or was written there.
 
 A note is private when it is about you, or about the team and not yet shared.
 Nobody's export carries another person's private notes: an export holds
-the team's notes and its own author's.
+the team's notes and the notes of the person who runs the export.
 
 A question asked in a public Slack channel is answered with the roster and the
 team's notes in mind, and Slack guests in that channel can read the answer.

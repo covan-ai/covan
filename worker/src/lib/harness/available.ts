@@ -66,6 +66,13 @@ export async function capabilitiesFor(input: {
    * and any connection it was told not to use out of what is offered.
    */
   agentId?: string;
+  /**
+   * Whether the request was made with an API key rather than a session. A key
+   * may not write a note (`routes/memory.ts` refuses it), because a note is
+   * standing instructions that outlive the key; offering `remember` in chat
+   * would be the same write by another door.
+   */
+  byApiKey?: boolean;
 }): Promise<AgentCapabilities> {
   const scheduled = input.surface === "schedule";
   const off = input.agentId
@@ -95,6 +102,8 @@ export async function capabilitiesFor(input: {
     // A note is kept in a conversation, where the person can see it land and
     // remove it; a routine run has nobody to say "that is not what I meant".
     if (tool.name === "remember" && scheduled) return false;
+    // And one a key may not write through `POST /memory` is not written here.
+    if (tool.name === "remember" && input.byApiKey) return false;
     // Starting another routine: in chat, for somebody who has somewhere for
     // a routine to deliver (anybody with a routine does) — and on a schedule
     // whatever the channels, because routines handing work to one another is

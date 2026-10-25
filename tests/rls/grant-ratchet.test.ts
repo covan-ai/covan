@@ -46,6 +46,10 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
     "avatar,browser_off,connections_off,created_by,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search,workspace_access,workspace_id",
   "agents UPDATE":
     "avatar,browser_off,connections_off,emoji,mode,model,name,persona,reasoning_effort,temperature,web_search",
+  // 0139: a person queues their own scan; the engine writes the rest. The
+  // routine made from a bucket is the one thing they record on it.
+  "arrival_buckets UPDATE": "routine_id",
+  "arrival_scans INSERT": "sources,taxonomy,user_id,window_days,workspace_id",
   "api_keys INSERT": "name,prefix,token_hash,user_id,workspace_id",
   "api_keys UPDATE": "name,revoked_at",
   "capability_calls UPDATE": "status",

@@ -23,6 +23,7 @@ import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as TwoFactorRouteImport } from './routes/two-factor'
 import { Route as AuthedAppRouteImport } from './routes/_authed.app'
+import { Route as AuthedArrivalsRouteImport } from './routes/_authed.arrivals'
 import { Route as AuthedInboxRouteImport } from './routes/_authed.inbox'
 import { Route as AuthedIntegrationsRouteImport } from './routes/_authed.integrations'
 import { Route as AuthedKnowledgeRouteImport } from './routes/_authed.knowledge'
@@ -128,6 +129,11 @@ const TwoFactorRoute = TwoFactorRouteImport.update({
 const AuthedAppRoute = AuthedAppRouteImport.update({
   id: '/app',
   path: '/app',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedArrivalsRoute = AuthedArrivalsRouteImport.update({
+  id: '/arrivals',
+  path: '/arrivals',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedInboxRoute = AuthedInboxRouteImport.update({
@@ -342,6 +348,7 @@ export interface FileRoutesByFullPath {
   '/terms': typeof TermsRoute
   '/two-factor': typeof TwoFactorRoute
   '/app': typeof AuthedAppRoute
+  '/arrivals': typeof AuthedArrivalsRoute
   '/inbox': typeof AuthedInboxRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/knowledge': typeof AuthedKnowledgeRoute
@@ -394,6 +401,7 @@ export interface FileRoutesByTo {
   '/terms': typeof TermsRoute
   '/two-factor': typeof TwoFactorRoute
   '/app': typeof AuthedAppRoute
+  '/arrivals': typeof AuthedArrivalsRoute
   '/inbox': typeof AuthedInboxRoute
   '/integrations': typeof AuthedIntegrationsRoute
   '/knowledge': typeof AuthedKnowledgeRoute
@@ -445,6 +453,7 @@ export interface FileRoutesById {
   '/terms': typeof TermsRoute
   '/two-factor': typeof TwoFactorRoute
   '/_authed/app': typeof AuthedAppRoute
+  '/_authed/arrivals': typeof AuthedArrivalsRoute
   '/_authed/inbox': typeof AuthedInboxRoute
   '/_authed/integrations': typeof AuthedIntegrationsRoute
   '/_authed/knowledge': typeof AuthedKnowledgeRoute
@@ -499,6 +508,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/two-factor'
     | '/app'
+    | '/arrivals'
     | '/inbox'
     | '/integrations'
     | '/knowledge'
@@ -551,6 +561,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/two-factor'
     | '/app'
+    | '/arrivals'
     | '/inbox'
     | '/integrations'
     | '/knowledge'
@@ -601,6 +612,7 @@ export interface FileRouteTypes {
     | '/terms'
     | '/two-factor'
     | '/_authed/app'
+    | '/_authed/arrivals'
     | '/_authed/inbox'
     | '/_authed/integrations'
     | '/_authed/knowledge'
@@ -755,6 +767,13 @@ declare module '@tanstack/react-router' {
       path: '/app'
       fullPath: '/app'
       preLoaderRoute: typeof AuthedAppRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/arrivals': {
+      id: '/_authed/arrivals'
+      path: '/arrivals'
+      fullPath: '/arrivals'
+      preLoaderRoute: typeof AuthedArrivalsRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/inbox': {
@@ -1103,6 +1122,7 @@ const AuthedAgentsAgentIdRouteWithChildren =
 
 interface AuthedRouteChildren {
   AuthedAppRoute: typeof AuthedAppRoute
+  AuthedArrivalsRoute: typeof AuthedArrivalsRoute
   AuthedInboxRoute: typeof AuthedInboxRoute
   AuthedIntegrationsRoute: typeof AuthedIntegrationsRoute
   AuthedKnowledgeRoute: typeof AuthedKnowledgeRoute
@@ -1117,6 +1137,7 @@ interface AuthedRouteChildren {
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedAppRoute: AuthedAppRoute,
+  AuthedArrivalsRoute: AuthedArrivalsRoute,
   AuthedInboxRoute: AuthedInboxRoute,
   AuthedIntegrationsRoute: AuthedIntegrationsRoute,
   AuthedKnowledgeRoute: AuthedKnowledgeRoute,

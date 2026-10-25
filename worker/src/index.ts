@@ -53,6 +53,7 @@ import { unfitToServe } from "./lib/env";
 import { connections, connectionsPublic } from "./routes/connections";
 import { toolConnections } from "./routes/tool-connections";
 import { composio, composioPublic } from "./routes/composio";
+import { arrivals } from "./routes/arrivals";
 import { composioEvents } from "./routes/composio-events";
 import { routineEvents } from "./routes/routine-events";
 import { notionEvents } from "./routes/notion-events";
@@ -244,6 +245,9 @@ api.use("/document-jobs/:id/retry", rateLimit("expensive"));
 // operator by the minute with a minute as the floor. The §4 headroom check
 // bounds the shared concurrency pool, not the money.
 api.use("/browser/takeovers", rateLimit("expensive"));
+// A scan of what arrived (0139): up to seven Composio calls and three model
+// calls, started after the response. The reads beside it are not counted.
+api.use("/arrivals", rateLimit("expensive"));
 
 // A turn is handed to its host here, after it has been authenticated and
 // counted, so it runs to the end whether or not the tab that asked stays open.
@@ -297,6 +301,7 @@ api.route("/", events);
 api.route("/", connections);
 api.route("/", toolConnections);
 api.route("/", composio);
+api.route("/", arrivals);
 api.route("/", slack);
 
 // Outside the authenticated router, and the only route that is. A browser

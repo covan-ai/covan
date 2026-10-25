@@ -339,6 +339,39 @@ describe("POST /composio/connect", () => {
     expect(JSON.stringify(body)).not.toContain(nonce);
   });
 
+  // The welcome flow connects a mailbox mid-step (0139) and has to land back
+  // on that step, with the run's agent and conversation in the address.
+  it("sends the person back to the page they started from, nonce and all", async () => {
+    await call(appWith(), "POST", "/composio/connect", {
+      toolkit: "gmail",
+      returnTo: "/welcome?step=connect&agent=a9&s=s9",
+    });
+    const link = createLink.mock.calls[0][1] as { callbackUrl: string };
+    const back = new URL(link.callbackUrl);
+    expect(back.origin + back.pathname).toBe("https://app.example.com/welcome");
+    expect(back.searchParams.get("step")).toBe("connect");
+    expect(back.searchParams.get("agent")).toBe("a9");
+    expect(back.searchParams.get("s")).toBe("s9");
+    expect(back.searchParams.get("composio")).toBe("gmail");
+    expect(back.searchParams.get("nonce")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
+  it.each([
+    "//evil.example",
+    "https://evil.example/x",
+    "/a/../b",
+    "\\welcome",
+    "/\\evil.example",
+    "welcome",
+    "/welcome#frag",
+    `/welcome?step=connect&x=${"a".repeat(600)}`,
+  ])("ignores a return address that could leave the app: %s", async (returnTo) => {
+    await call(appWith(), "POST", "/composio/connect", { toolkit: "gmail", returnTo });
+    const link = createLink.mock.calls[0][1] as { callbackUrl: string };
+    const back = new URL(link.callbackUrl);
+    expect(back.origin + back.pathname).toBe("https://app.example.com/integrations");
+  });
+
   /**
    * An application that needs no sign-in, which is connected by writing a row
    * and making no request at all.

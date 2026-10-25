@@ -98,6 +98,10 @@ const connectSchema = z.object({
   toolkit: z.string().trim().toLowerCase().regex(toolkitPattern),
   /** What a person wants to call it. Defaults to the toolkit's own name. */
   label: z.string().trim().min(1).max(120).optional(),
+  /** Where to land after consent instead of Integrations; see `safeReturnPath`. */
+  // No length cap here: `safeReturnPath` ignores a long one rather than
+  // failing the whole connect.
+  returnTo: z.string().optional(),
 });
 
 const grantSchema = z.object({
@@ -113,6 +117,25 @@ const CONNECTION_COLUMNS =
 
 function frontendOrigin(env: Bindings): string {
   return env.ALLOWED_ORIGIN.split(",")[0].trim().replace(/\/+$/, "");
+}
+
+/**
+ * A path in this app to come back to after the consent screen, or null.
+ *
+ * The welcome flow connects a mailbox in the middle of a step (0139) and has
+ * to land on that step again. The callback is still built on
+ * `ALLOWED_ORIGIN`; only the path varies, and only to a path that cannot be
+ * read as another origin: one leading slash and not two, no backslash (which
+ * browsers read as a slash), no `..` segment, no fragment (the nonce goes in
+ * the query after it), nothing but printable ASCII.
+ */
+export function safeReturnPath(x: unknown): string | null {
+  if (typeof x !== "string" || x.length > 512) return null;
+  if (!/^\/[\x21-\x7e]*$/.test(x)) return null;
+  if (x.startsWith("//") || x.includes("\\") || x.includes("#")) return null;
+  const path = x.split("?")[0];
+  if (path.split("/").some((segment) => segment === ".." || segment === ".")) return null;
+  return x;
 }
 
 /** Whether this caller may change what agents in this workspace can reach. */
@@ -260,6 +283,7 @@ composio.post("/composio/connect", async (c) => {
   const parsed = connectSchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const { toolkit } = parsed.data;
+  const returnPath = safeReturnPath(parsed.data.returnTo) ?? "/integrations";
 
   if (!composioConfigured(c.env)) {
     return c.json({ error: "this deployment has no COMPOSIO_API_KEY set" }, 501);
@@ -363,8 +387,8 @@ composio.post("/composio/connect", async (c) => {
         // bar — `useGrantOutcome` in `_authed.integrations.tsx` already does
         // exactly this for Notion and Drive.
         callbackUrl:
-          `${frontendOrigin(c.env)}/integrations` +
-          `?composio=${encodeURIComponent(toolkit)}&nonce=${completionNonce}`,
+          `${frontendOrigin(c.env)}${returnPath}` +
+          `${returnPath.includes("?") ? "&" : "?"}composio=${encodeURIComponent(toolkit)}&nonce=${completionNonce}`,
       })
     : ({ kind: "ok", redirectUrl: "", connectedAccountId: "" } as const);
   if (link.kind === "error") return c.json({ error: link.message }, 502);

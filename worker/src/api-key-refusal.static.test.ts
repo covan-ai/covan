@@ -129,6 +129,15 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "tears down a source the whole workspace syncs from — integrations are set up and removed with a session, never by a script",
   "routes/composio.ts POST /composio/connect":
     "connects an application to the owner's account at a third party, a grant that keeps working after the key is revoked",
+  // 0139: a scan of what arrived is one person's own count of their mailbox,
+  // and its policies refuse a key's token whatever the route does.
+  "routes/arrivals.ts POST /arrivals":
+    "reads a person's mailbox and calendar through their own connections and spends the workspace's credits doing it, after the response — a scan started by a leaked key finishes after it is revoked",
+  "routes/arrivals.ts GET /arrivals/latest":
+    "how many questions one person never answered and what their mail is about: something a person looks at in the product, which the table's policy refuses a key's token anyway",
+  "routes/arrivals.ts GET /arrivals/:id": "the same scan by its id, and the same answer",
+  "routes/arrivals.ts PATCH /arrivals/:id/buckets/:kind":
+    "records which routine a person made from a proposal, a write the table's policy refuses a key's token anyway",
   "routes/composio.ts GET /composio/connections/:id/status":
     "finishes a connection the poll finds active, which is the second half of connecting an application",
   "routes/composio.ts PUT /composio/grants":

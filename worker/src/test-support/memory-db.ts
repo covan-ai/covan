@@ -56,6 +56,11 @@ export function matchesFilters(row: Row, filters: Filter[]): boolean {
         const v = cellOf(row, f.column);
         return v !== null && v !== undefined && String(v) >= String(f.value);
       }
+      case "lt": {
+        // As text, for the same reason as `gte`.
+        const v = cellOf(row, f.column);
+        return v !== null && v !== undefined && String(v) < String(f.value);
+      }
       case "or":
         return matchesOr(row, String(f.value));
       default:
@@ -107,6 +112,9 @@ export function matchesOr(row: Row, expr: string): boolean {
         break;
       case "neq":
         hit = String(cell) !== value;
+        break;
+      case "lt":
+        hit = String(cell) < value;
         break;
       case "in": {
         if (!value.startsWith("(") || !value.endsWith(")")) {
@@ -180,9 +188,14 @@ export function memoryDb(
         // `id uuid primary key default gen_random_uuid()`, as every table here
         // has: an insert that names no id still gets one back, which is what
         // a claim-first writer (`ensureProfile`) keys its fill to.
-        const row = { id: `${name}-${tables[name].length + 1}`, ...ctx.values };
-        tables[name].push(row);
-        return answer([row], ctx);
+        // An array is a bulk insert, as supabase-js sends one.
+        const values = Array.isArray(ctx.values) ? (ctx.values as Row[]) : [ctx.values ?? {}];
+        const rows = values.map((v) => {
+          const row = { id: `${name}-${tables[name].length + 1}`, ...v };
+          tables[name].push(row);
+          return row;
+        });
+        return answer(rows, ctx);
       },
       delete: (ctx) => {
         const stopped = intercept?.(ctx);

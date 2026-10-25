@@ -30,6 +30,8 @@ const SPENDING_IMPORTS = [
   "transcribeAudio",
   "../lib/docs/enqueue",
   "../lib/docs/engine",
+  // A scan of what arrived classifies mail with a model, after the response.
+  "../lib/arrivals/scan",
 ];
 
 /**
@@ -187,6 +189,7 @@ const PAID_ENDPOINTS: Record<string, string[]> = {
   ],
   "reports.ts": ["/sessions/:id/report"],
   "document-jobs.ts": ["/document-jobs/:id/retry"],
+  "arrivals.ts": ["/arrivals"],
 };
 
 describe("the expensive rate limit", () => {

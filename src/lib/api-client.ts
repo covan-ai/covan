@@ -7,6 +7,7 @@ import type { Agent, ChatSession, Idea, Message, SessionTuning } from "./agents-
 import type { AgentSharing } from "./agent-access";
 
 import type { AnswerPatch, OnboardingAnswers } from "./onboarding-flow";
+import type { ArrivalKind, ArrivalScan } from "./arrivals";
 import type {
   Connection,
   ComposioCategoriesResponse,
@@ -1525,6 +1526,33 @@ export const api = {
    * redirect to a consent screen, so a 302 there is a CORS error rather than a
    * login page.
    */
+  /**
+   * What arrived in the caller's own mailbox and calendar (0139). Theirs
+   * alone: nobody else in the workspace, an admin included, can read a scan.
+   */
+  arrivals: {
+    /**
+     * Queues a scan of every mail and calendar connection the caller has and
+     * starts it; answers the one already under way when there is one. A 409
+     * (`statedError` "no_source") means nothing is connected to read.
+     */
+    start: async (): Promise<ArrivalScan> =>
+      (await request<{ scan: ArrivalScan }>("POST", "/arrivals")).scan,
+    /** The newest scan, or null when there has never been one. */
+    latest: async (): Promise<ArrivalScan | null> => {
+      try {
+        return (await request<{ scan: ArrivalScan }>("GET", "/arrivals/latest")).scan;
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    },
+    get: async (id: string): Promise<ArrivalScan> =>
+      (await request<{ scan: ArrivalScan }>("GET", `/arrivals/${id}`)).scan,
+    /** Records the routine made from one bucket's proposal. */
+    setRoutine: (id: string, kind: ArrivalKind, routineId: string): Promise<{ ok: true }> =>
+      request("PATCH", `/arrivals/${id}/buckets/${kind}`, { routineId }),
+  },
   composio: {
     toolkits: (query: {
       search?: string;
@@ -1544,6 +1572,8 @@ export const api = {
     connect: (input: {
       toolkit: string;
       label?: string;
+      /** A path in this app to land on after consent; Integrations when absent. */
+      returnTo?: string;
     }): Promise<{ url: string; connection: ToolConnection }> =>
       request("POST", "/composio/connect", input),
     status: (id: string): Promise<{ status: "pending" | "active" | "failed" }> =>

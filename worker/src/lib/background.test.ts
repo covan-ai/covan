@@ -9,6 +9,7 @@ const {
   startQueuedBrowserTasks,
   sweepHeldRuns,
   sweepEventSubscriptions,
+  sweepArrivalScans,
 } = vi.hoisted(() => ({
   runDueRoutines: vi.fn(),
   runDueConnections: vi.fn(),
@@ -18,6 +19,7 @@ const {
   startQueuedBrowserTasks: vi.fn(async () => ({ expired: 0, started: 0 })),
   sweepHeldRuns: vi.fn(async () => ({ finished: 0 })),
   sweepEventSubscriptions: vi.fn(async () => ({ claimed: 0 })),
+  sweepArrivalScans: vi.fn(async () => false),
 }));
 vi.mock("./routines/dispatcher", () => ({ runDueRoutines }));
 vi.mock("./connections/dispatcher", () => ({ runDueConnections }));
@@ -26,6 +28,7 @@ vi.mock("./browser/sweep", () => ({ sweepAbandonedTakeovers, sweepConversationBr
 vi.mock("./browser/queue", () => ({ startQueuedBrowserTasks }));
 vi.mock("./routines/held", () => ({ sweepHeldRuns }));
 vi.mock("./routines/events/lifecycle", () => ({ sweepEventSubscriptions }));
+vi.mock("./arrivals/scan", () => ({ sweepArrivalScans }));
 
 import { runScheduledWork } from "./background";
 
@@ -325,5 +328,48 @@ describe("the browser line stage", () => {
     await runScheduledWork(base as never);
 
     expect(startQueuedBrowserTasks).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A scan of what arrived (0139) is started by the request that queued it; the
+ * tick only re-runs one that start did not finish. A re-run is a dozen
+ * subrequests, so it is a stage with the either/or, not a line that always
+ * runs.
+ */
+describe("the arrivals sweep", () => {
+  beforeEach(() => {
+    runDueRoutines.mockReset();
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    runDueConnections.mockReset();
+    runDueConnections.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    pollDueBrowserTasks.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    sweepAbandonedTakeovers.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    sweepConversationBrowsers.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    sweepArrivalScans.mockReset();
+    sweepArrivalScans.mockResolvedValue(false);
+  });
+
+  it("is not reached when routines claimed", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
+
+    await runScheduledWork(withStore);
+
+    expect(sweepArrivalScans).not.toHaveBeenCalled();
+  });
+
+  it("runs on an idle tick and lets it go on when it found nothing", async () => {
+    await runScheduledWork(withStore);
+
+    expect(sweepArrivalScans).toHaveBeenCalledWith(withStore);
+    expect(runDueConnections).toHaveBeenCalled();
+  });
+
+  it("ends the tick when it re-ran a scan", async () => {
+    sweepArrivalScans.mockResolvedValue(true);
+
+    await runScheduledWork(withStore);
+
+    expect(runDueConnections).not.toHaveBeenCalled();
   });
 });

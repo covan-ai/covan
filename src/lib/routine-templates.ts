@@ -156,6 +156,129 @@ export function templateById(id: string): RoutineTemplate | undefined {
 }
 
 /**
+ * What every proposal's instruction says about the mailbox, once.
+ *
+ * The routine runs as its owner and reaches their own connected mailbox and
+ * calendar through the tools a scheduled run already has (`find_tool`,
+ * `run_tool`); nothing here names an operation, because which one depends on
+ * whether the person connected Gmail or Outlook.
+ */
+const FROM_THE_MAILBOX =
+  "Read it from my connected mailbox and calendar with the tools you have. Never send, reply to, archive or change anything there — this is a digest for me to read.";
+
+/**
+ * The routines a scan of what arrived proposes (spec: "Proposals"), one per
+ * kind that is worth one. Kept apart from `ROUTINE_TEMPLATES` on purpose:
+ * each names its bucket through `{label}`, which only the report can fill
+ * (`fillTemplate`), so none of them may open from a bare `?template=` link.
+ *
+ * All scheduled, none event-triggered: a per-mail trigger is one run per mail,
+ * and a mailbox that receives five hundred threads a month would spend an
+ * order of magnitude more than a morning digest.
+ */
+export const ARRIVAL_TEMPLATES: RoutineTemplate[] = [
+  {
+    id: "arrivals-questions",
+    label: msg("Questions waiting on you"),
+    blurb: msg(
+      "Each morning: the questions that arrived since yesterday, each with a draft reply from what your team has written down.",
+    ),
+    draft: {
+      name: msg("Questions waiting on me"),
+      sourceKind: "none",
+      scheduleCron: "0 9 * * *",
+      channelKind: "email",
+      instruction: `Each morning, list the questions people outside my team sent me since yesterday that I have not answered yet — mostly "{label}". For each: who it is from (name and company, not the address), the question in one line, and a short draft reply grounded in what my team has written down, naming the document it came from. If the documents do not answer it, say so instead of guessing. ${FROM_THE_MAILBOX}`,
+    },
+    requires: [],
+    endsAfterRuns: null,
+  },
+  {
+    id: "arrivals-requests",
+    label: msg("What is waiting on your decision"),
+    blurb: msg(
+      "Each morning: what is waiting on a decision or an approval from you, oldest first.",
+    ),
+    draft: {
+      name: msg("Waiting on my decision"),
+      sourceKind: "none",
+      scheduleCron: "0 9 * * *",
+      channelKind: "email",
+      instruction: `Each morning, list what is waiting on a decision, an approval or an action from me — mostly "{label}" — that I have not answered yet, oldest first. For each: who asked, what exactly they need from me, and since when. ${FROM_THE_MAILBOX}`,
+    },
+    requires: [],
+    endsAfterRuns: null,
+  },
+  {
+    id: "arrivals-day-ahead",
+    label: msg("Your day ahead"),
+    blurb: msg(
+      "Each morning: today's meetings, who is in them, and the last thread with each of them.",
+    ),
+    draft: {
+      name: msg("My day ahead"),
+      sourceKind: "none",
+      scheduleCron: "0 8 * * *",
+      channelKind: "email",
+      instruction: `Each morning, go through today's meetings — mostly "{label}". For each: the time, what it is about, who is in it, and in one or two lines the last mail thread I had with them, so I walk in knowing where we left off. ${FROM_THE_MAILBOX}`,
+    },
+    requires: [],
+    endsAfterRuns: null,
+  },
+  {
+    id: "arrivals-updates",
+    label: msg("What changed, in one paragraph"),
+    blurb: msg("Each morning: one paragraph of what changed, from the updates that arrived."),
+    draft: {
+      name: msg("What changed"),
+      sourceKind: "none",
+      scheduleCron: "0 9 * * *",
+      channelKind: "email",
+      instruction: `Each morning, read the status updates, reports and FYIs that arrived since yesterday — mostly "{label}" — and write one paragraph of what actually changed, then a short list of anything in them that needs me. Skip anything that changed nothing. ${FROM_THE_MAILBOX}`,
+    },
+    requires: [],
+    endsAfterRuns: null,
+  },
+  {
+    id: "arrivals-admin",
+    label: msg("The week's invoices and admin"),
+    blurb: msg("Each Friday: the invoices, renewals and admin mail of the week, with due dates."),
+    draft: {
+      name: msg("This week's admin"),
+      sourceKind: "none",
+      scheduleCron: "0 9 * * 5",
+      channelKind: "email",
+      instruction: `Each Friday, list the invoices, payments, renewals, contracts and account mail that arrived this week — mostly "{label}". For each: from whom, what it is, the amount if there is one, and the due date if there is one; put anything due in the next two weeks first. ${FROM_THE_MAILBOX}`,
+    },
+    requires: [],
+    endsAfterRuns: null,
+  },
+  {
+    id: "arrivals-candidates",
+    label: msg("New candidates in one list"),
+    blurb: msg("Each morning: new applications and interview mail, in one list."),
+    draft: {
+      name: msg("New candidates"),
+      sourceKind: "none",
+      scheduleCron: "0 9 * * *",
+      channelKind: "email",
+      instruction: `Each morning, list the job applications, interview scheduling and reference mail that arrived since yesterday — mostly "{label}". For each: the candidate's name, the role, what stage it is at, and what, if anything, they are waiting on from me. ${FROM_THE_MAILBOX}`,
+    },
+    requires: [],
+    endsAfterRuns: null,
+  },
+];
+
+export function arrivalTemplateById(id: string): RoutineTemplate | undefined {
+  return ARRIVAL_TEMPLATES.find((t) => t.id === id);
+}
+
+/** A proposal's draft with its bucket's label in place of `{label}`. */
+export function fillTemplate(template: RoutineTemplate, label: string): RoutineTemplate["draft"] {
+  return { ...template.draft, instruction: template.draft.instruction.replace("{label}", label) };
+}
+
+/**
  * No existing exhaustiveness idiom was found elsewhere in this codebase (no
  * `assertNever`, no `: never` default) — this is the standard TypeScript
  * shape, added here because `noImplicitReturns` is off and a switch over a

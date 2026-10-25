@@ -304,6 +304,10 @@ export const EXCLUDED: Record<string, string> = {
     "the same, and about a first run that has already happened. It would mean nothing in a new install.",
   onboarding_events:
     "what that first run looked like step by step — a person's own telemetry (0119), keyed by user with no workspace in it, readable only by them. It describes this install's funnel, not the work, and would mean nothing in a new one.",
+  arrival_scans:
+    "one person's count of what arrived in their own mailbox and calendar (0139), readable by nobody else, an admin included — feedback's reason below, since a workspace archive is the thing an admin downloads. It also describes connections the archive deliberately does not carry, and is made again with one press of Scan again.",
+  arrival_buckets:
+    "the counts, labels and example subjects of an arrival scan (0139), and the same answer: one person's own, deleted after ninety days, and rebuilt by scanning again on the new install.",
   feedback:
     "addressed to the operator, not to the workspace. 0041 keeps it unreadable by anybody but its author for a reason — a note saying what is broken must not be readable by the colleague it is about — and a workspace archive is precisely the thing an admin downloads. Carrying it here would undo the policy through the back door.",
   workspace_events:

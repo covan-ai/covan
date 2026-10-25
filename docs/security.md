@@ -199,6 +199,19 @@ Composio does not hand either one back. Asked about a connection, it returns the
 key redacted to its first few characters, so not even the deployment's own API
 key can read what a member typed.
 
+**A scan of what arrived is one person's own.** When somebody connects a
+mailbox or calendar, Covan can count the last thirty days of it by kind
+(`arrival_scans`, `arrival_buckets`, migration 0139). The read goes through
+that person's own connection, the sorting through a model that sees sender
+domains, subjects and short previews, and what is stored is counts, a short
+label and at most three subjects per kind — never an address or a message. The
+rows are readable by their owner only: not by a teammate, not by a workspace
+admin, and not by an API key's token, which the tables' policies refuse
+outright rather than holding to a workspace. The engine that writes them uses
+the service role, because it runs after the request that queued it; it writes
+only the row it claimed, and reads only the connections that row names that
+are still its owner's own.
+
 **A connection is finished by the person who started it, in the browser that
 started it.** That holds for every kind — Drive, Notion, Slack and a connected
 application. A consent screen sends the browser back to Covan carrying

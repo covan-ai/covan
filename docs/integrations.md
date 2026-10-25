@@ -816,6 +816,46 @@ Composio before the row goes, so does closing the account.
   each one costs the workspace credits, as a reply does. A self-hosted
   deployment charges nobody credits, as for everything else.
 
+#### What a scan reads and keeps
+
+Connecting Gmail, Outlook or Google Calendar — in the welcome, or from
+**Routines** or the mailbox's row on Integrations — offers a scan: the last
+thirty days of what arrived, sorted into ten kinds that are the same for
+everybody (questions to you, requests and approvals, meetings, updates,
+invoices and admin, candidates, pitches, notifications, team threads, other),
+with one morning digest proposed for each kind worth one.
+
+- **What is read.** Through your own connection only, and only what is needed
+  to sort: for mail, the sender's domain (never the address), the subject, the
+  first 200 characters of the newest message and whether you replied — at most
+  200 messages per mailbox, two pages of a hundred; for a calendar, each
+  event's title, length, how many people were in it, whether you organised it
+  and whether it repeats — at most 250 events. Promotions and social mail are
+  left out where Gmail labels them. Nothing is ever sent, archived or changed.
+- **What is sent to a model.** The domain, subject and those 200 characters,
+  to `gpt-4.1-mini`, in two calls at most to sort them and one to name each
+  kind in your own words. Calendar events are counted as meetings without a
+  model call.
+- **What is kept.** Per kind: how many arrived, how many questions and
+  requests went more than two days without a reply, a label of a few words, and
+  at most three subjects as examples. No addresses, no message text, no thread
+  ids. The examples go after ninety days; the counts stay.
+- **Who sees it.** You. Not your teammates and not a workspace admin — the same
+  line a personal connection draws — and not an API key, which is refused
+  outright.
+- **What it costs.** On the hosted service a scan is charged to the workspace's
+  credits like any other model call and connected-app call. Estimated, before
+  it was first measured against a live mailbox: about one US cent of model
+  time and one to seven calls to the connected applications per scan.
+- **How to remove it.** Disconnecting the mailbox stops any further scan;
+  scanning again replaces the previous counts. Deleting your account or the
+  workspace deletes the scans with it.
+
+The digests the scan proposes are ordinary routines: they run each morning as
+you, read your connected mailbox through the same tools an agent uses, and
+deliver to your Covan inbox and your own address. They never send anything on
+your behalf.
+
 ### Routines that start when something happens
 
 A routine can start on an event in a connected app rather than on a clock

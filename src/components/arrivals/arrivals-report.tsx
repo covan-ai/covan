@@ -10,24 +10,13 @@ import { StatusDot } from "@/components/status-dot";
 import { Disclosure } from "@/components/disclosure";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { arrivalTemplateById } from "@/lib/routine-templates";
 import { bucketName, turnOn } from "./turn-on";
 
 /** How many proposals start switched on: enough to matter, few enough to read. */
 const ON_BY_DEFAULT = 3;
 
-/**
- * What arrived in the last thirty days, and what to do about it (spec: "What
- * the person sees"). One component for the welcome step and the `/arrivals`
- * page: the parent supplies the heading and polls while the scan runs.
- */
-export function ArrivalsReport({
-  scan,
-  agentId,
-  email,
-  onDone,
-  onRetry,
-  onSkip,
-}: {
+type ReportProps = {
   scan: ArrivalScan;
   agentId: string;
   email: string;
@@ -35,7 +24,47 @@ export function ArrivalsReport({
   onDone: (created: number) => void;
   onRetry: () => void;
   onSkip: () => void;
-}) {
+};
+
+/**
+ * What arrived in the last thirty days, and what to do about it (spec: "What
+ * the person sees"). One component for the welcome step and the `/arrivals`
+ * page: the parent supplies the heading and polls while the scan runs.
+ *
+ * Keyed by the scan and its status, so a report that mounted while the scan
+ * was reading starts again, with its first proposals switched on, when the
+ * scan finishes in place.
+ */
+export function ArrivalsReport(props: ReportProps) {
+  return <Report key={`${props.scan.id}:${props.scan.status}`} {...props} />;
+}
+
+/** A failure in words, and where its fix is (0139's `reason`). */
+function Failure({ reason }: { reason: ArrivalScan["reason"] }) {
+  const { t } = useTranslation();
+  if (reason === "no_credit") {
+    return (
+      <>
+        {t(
+          "This workspace has no credits left for a scan. A workspace admin can add more, and then it can run again.",
+        )}
+      </>
+    );
+  }
+  if (reason === "source" || reason === "no_source") {
+    return (
+      <>
+        {t("Covan could not read your mailbox. Connect it again, then try again.")}{" "}
+        <Link to="/settings/integrations" className="underline underline-offset-2">
+          {t("Open Integrations")}
+        </Link>
+      </>
+    );
+  }
+  return <>{t("Covan could not read your mailbox this time.")}</>;
+}
+
+function Report({ scan, agentId, email, onDone, onRetry, onSkip }: ReportProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const proposals = scan.buckets.filter((b) => b.templateId && !b.routineId);
@@ -46,10 +75,15 @@ export function ArrivalsReport({
 
   if (scan.status === "queued" || scan.status === "running") {
     return (
-      <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <StatusDot state="running" />
-        {t("Reading your last thirty days…")}
-      </p>
+      <div className="space-y-4">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <StatusDot state="running" />
+          {t("Reading your last thirty days…")}
+        </p>
+        <Button variant="secondary" onClick={onSkip}>
+          {t("Not now")}
+        </Button>
+      </div>
     );
   }
 
@@ -58,7 +92,9 @@ export function ArrivalsReport({
       <div className="space-y-4">
         <p className="flex items-center gap-2 text-sm">
           <StatusDot state="failed" />
-          {t("Covan could not read your mailbox this time.")}
+          <span>
+            <Failure reason={scan.reason} />
+          </span>
         </p>
         <div className="flex gap-2">
           <Button onClick={onRetry}>{t("Try again")}</Button>
@@ -177,6 +213,13 @@ export function ArrivalsReport({
                 />
               ) : null}
             </div>
+            <p className="m-0 mt-0.5 text-meta text-muted-foreground">
+              {bucket.templateId
+                ? lookup(t, arrivalTemplateById(bucket.templateId)?.blurb ?? "")
+                : t("Nothing to do here. About {{count}} a week you can ignore.", {
+                    count: Math.round((bucket.count / scan.windowDays) * 7),
+                  })}
+            </p>
             {bucket.examples.length > 0 && (
               <Disclosure label={t("Examples")} className="mt-1">
                 <ul className="mt-1 space-y-0.5 pl-4 text-meta text-muted-foreground">

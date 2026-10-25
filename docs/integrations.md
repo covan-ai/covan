@@ -833,13 +833,16 @@ with one morning digest proposed for each kind worth one.
   and whether it repeats — at most 250 events. Promotions and social mail are
   left out where Gmail labels them. Nothing is ever sent, archived or changed.
 - **What is sent to a model.** The domain, subject and those 200 characters,
-  to `gpt-4.1-mini`, in two calls at most to sort them and one to name each
-  kind in your own words. Calendar events are counted as meetings without a
-  model call.
+  to `gpt-4.1-mini`: one call per fifty messages, sent together, to sort them,
+  and one more to name each kind in your own words. Calendar events are counted
+  as meetings without being sorted by a model, but their titles are among the
+  subjects sent to name the kinds, and may be kept as examples.
 - **What is kept.** Per kind: how many arrived, how many questions and
   requests went more than two days without a reply, a label of a few words, and
-  at most three subjects as examples. No addresses, no message text, no thread
-  ids. The examples go after ninety days; the counts stay.
+  at most three subjects (or meeting titles) as examples. No addresses, no
+  message text, no thread ids. All of that goes after ninety days, or sooner
+  when you scan again; what stays is the scan itself and its two headline
+  numbers.
 - **Who sees it.** You. Not your teammates and not a workspace admin — the same
   line a personal connection draws — and not an API key, which is refused
   outright.

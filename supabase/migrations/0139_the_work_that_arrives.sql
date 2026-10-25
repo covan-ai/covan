@@ -39,8 +39,8 @@
 -- in 0090 refuses a key the same way; this is the first policy that does.
 --
 -- WHAT A SCAN COSTS. Estimated, not yet measured against a live mailbox: at
--- the caps (200 messages, 250 events) the two classify calls and the label
--- call send about 18,000 prompt tokens and get about 2,500 back from
+-- the caps (200 messages, 250 events) the classify calls (one per fifty
+-- messages, sent together) and the label call send about 18,000 prompt tokens and get about 2,500 back from
 -- gpt-4.1-mini, near one US cent, plus one to seven Composio calls (two per
 -- Gmail, four per Outlook, one per Google Calendar). The scan holds at most
 -- five cents where the deployment holds credit (`SCAN_CEILING_USD`).
@@ -58,6 +58,10 @@ create table if not exists public.arrival_scans (
   total        integer,
   unanswered   integer,
   error        text,
+  -- Why a failed scan failed, for the report to say in words: no_credit,
+  -- no_source (nothing of the person's own still connected), source (the
+  -- mailbox refused), other.
+  reason       text,
   attempts     integer     not null default 0,
   lease_until  timestamptz,
   started_at   timestamptz,
@@ -72,6 +76,18 @@ alter table public.arrival_scans add constraint arrival_scans_status_known
 alter table public.arrival_scans drop constraint if exists arrival_scans_window;
 alter table public.arrival_scans add constraint arrival_scans_window
   check (window_days between 1 and 90);
+
+alter table public.arrival_scans drop constraint if exists arrival_scans_reason_known;
+alter table public.arrival_scans add constraint arrival_scans_reason_known
+  check (reason is null or reason in ('no_credit', 'no_source', 'source', 'other'));
+
+-- One scan per person per workspace at a time, held here rather than only in
+-- the route: a member can insert through PostgREST directly, and two starts
+-- can race (the consent return and a quick Continue). Each scan spends
+-- credits, and a backlog would keep the tick's sweep busy for everybody.
+create unique index if not exists arrival_scans_one_at_a_time
+  on public.arrival_scans (workspace_id, user_id)
+  where status in ('queued', 'running');
 
 -- The newest scan of one person in one workspace is what every read asks for.
 create index if not exists arrival_scans_owner_idx

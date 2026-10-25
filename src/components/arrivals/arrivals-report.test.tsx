@@ -75,6 +75,7 @@ function scan(over: Partial<ArrivalScan> = {}): ArrivalScan {
     total: 40,
     unanswered: 6,
     error: null,
+    reason: null,
     startedAt: null,
     finishedAt: null,
     createdAt: "2026-10-26T09:00:00.000Z",
@@ -195,6 +196,71 @@ describe("ArrivalsReport", () => {
     renderReport(scan({ total: 0, unanswered: 0, buckets: [] }));
     expect(screen.getByText(/Nothing arrived/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Turn these on" })).toBeNull();
+  });
+
+  // I1: the welcome cannot be stuck on a scan that is still reading.
+  it("can be left while the scan is still reading", async () => {
+    const onSkip = vi.fn();
+    renderReport(scan({ status: "running", total: null, buckets: [] }), { onSkip });
+    await userEvent.click(screen.getByRole("button", { name: "Not now" }));
+    expect(onSkip).toHaveBeenCalled();
+  });
+
+  // I2: the report usually mounts while the scan reads and finishes in place.
+  it("switches the first three proposals on when a scan it watched finishes", () => {
+    const client = new QueryClient();
+    const props = {
+      agentId: "agent-1",
+      email: "ada@acme.test",
+      onDone: vi.fn(),
+      onRetry: vi.fn(),
+      onSkip: vi.fn(),
+    };
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <ArrivalsReport scan={scan({ status: "running", total: null, buckets: [] })} {...props} />
+      </QueryClientProvider>,
+    );
+    rerender(
+      <QueryClientProvider client={client}>
+        <ArrivalsReport scan={scan()} {...props} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getAllByRole("switch").map((s) => s.getAttribute("aria-checked"))).toEqual([
+      "true",
+      "true",
+      "true",
+      "false",
+    ]);
+  });
+
+  // I5: a switch says what it turns on, and a kind with no proposal says so.
+  it("says in one sentence what each proposal does", () => {
+    renderReport(scan());
+    const questions = screen.getByText("Order questions").closest("li")!;
+    expect(within(questions).getByText(/Each morning: the questions that arrived/)).toBeTruthy();
+  });
+
+  it("says how much of a kind with no proposal can be ignored", () => {
+    renderReport(scan());
+    const automated = screen.getByText("Notifications and newsletters").closest("li")!;
+    expect(
+      within(automated).getByText("Nothing to do here. About 4 a week you can ignore."),
+    ).toBeTruthy();
+  });
+
+  // I6: a failure says why, and what would fix it.
+  it("says a scan failed for want of credits", () => {
+    renderReport(scan({ status: "failed", reason: "no_credit", buckets: [] }));
+    expect(screen.getByText(/no credits left/i)).toBeTruthy();
+  });
+
+  it("says a mailbox that refused should be connected again", () => {
+    renderReport(scan({ status: "failed", reason: "source", buckets: [] }));
+    expect(screen.getByText(/connect it again/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open Integrations" }).getAttribute("href")).toBe(
+      "/settings/integrations",
+    );
   });
 
   it("turns the picked proposals on and says how many", async () => {

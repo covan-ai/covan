@@ -73,6 +73,13 @@ describe("ConnectCards", () => {
     expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(3);
   });
 
+  // I7: the sentence on the consent step promises exactly what is kept.
+  it("says what a scan keeps: counts, a name per kind and a few subjects", () => {
+    renderCards();
+    expect(screen.getByText(/up to three example subjects/)).toBeTruthy();
+    expect(screen.queryByText(/nothing but the counts/)).toBeNull();
+  });
+
   it("starts a connection that comes back to this page", async () => {
     renderCards();
     const outlook = screen.getByText("Outlook").closest("li")!;

@@ -81,6 +81,8 @@ export type ArrivalScan = {
   total: number | null;
   unanswered: number | null;
   error: string | null;
+  /** Why a failed scan failed, for the report to say in words. */
+  reason: "no_credit" | "no_source" | "source" | "other" | null;
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string;

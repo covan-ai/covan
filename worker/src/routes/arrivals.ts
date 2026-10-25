@@ -24,7 +24,7 @@ export const arrivals = new Hono<AppEnv>();
 
 const SCAN_TOOLKITS = ["gmail", "outlook", "googlecalendar"];
 const SCAN_COLUMNS =
-  "id, workspace_id, user_id, status, taxonomy, sources, window_days, total, unanswered, error, started_at, finished_at, created_at";
+  "id, workspace_id, user_id, status, taxonomy, sources, window_days, total, unanswered, error, reason, started_at, finished_at, created_at";
 const BUCKET_COLUMNS = "kind, label, count, unanswered, examples, template_id, routine_id";
 
 const uuid = z.string().uuid();
@@ -57,6 +57,7 @@ export function mapScan(row: Row, buckets: Row[]) {
     total: row.total ?? null,
     unanswered: row.unanswered ?? null,
     error: row.error ?? null,
+    reason: row.reason ?? null,
     startedAt: row.started_at ?? null,
     finishedAt: row.finished_at ?? null,
     createdAt: row.created_at,
@@ -82,17 +83,22 @@ arrivals.post("/arrivals", async (c) => {
   const workspaceId = await callerWorkspaceId(c);
   if (!workspaceId) return c.json({ error: "no workspace" }, 400);
 
-  // One scan per person per workspace at a time.
-  const { data: running } = await db
-    .from("arrival_scans")
-    .select(SCAN_COLUMNS)
-    .eq("workspace_id", workspaceId)
-    .eq("user_id", userId)
-    .in("status", ["queued", "running"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (running) return c.json({ scan: mapScan(running as Row, []) }, 200);
+  // One scan per person per workspace at a time (0139's unique index holds
+  // it; this answers the common case without an insert).
+  const underWay = async () =>
+    (
+      await db
+        .from("arrival_scans")
+        .select(SCAN_COLUMNS)
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", userId)
+        .in("status", ["queued", "running"])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    ).data as Row | null;
+  const running = await underWay();
+  if (running) return c.json({ scan: mapScan(running, []) }, 200);
 
   const { data: connections, error: readError } = await db
     .from("tool_connections")
@@ -128,6 +134,11 @@ arrivals.post("/arrivals", async (c) => {
     })
     .select(SCAN_COLUMNS)
     .single();
+  if (error?.code === "23505") {
+    // Another start won the race; answer with its scan.
+    const winner = await underWay();
+    if (winner) return c.json({ scan: mapScan(winner, []) }, 200);
+  }
   if (error || !scan) return c.json({ error: error?.message ?? "could not queue the scan" }, 500);
 
   deferred(c, runArrivalScan(c.env, (scan as Row).id as string));

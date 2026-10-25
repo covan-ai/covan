@@ -20,7 +20,13 @@ import type { ArrivalKind } from "./taxonomy";
  * file's entry in `service-client.static.test.ts`.
  */
 
-export const SCAN_LEASE_MS = 10 * 60_000;
+/**
+ * How long a claimed scan is the claimer's. Short on purpose: on Workers a
+ * scan runs inside `waitUntil`, which ends thirty seconds after the response
+ * (`routines/poke-room.ts`), and a scan cut off there is the tick's to finish —
+ * within a few minutes, not ten, while somebody watches "Reading…".
+ */
+export const SCAN_LEASE_MS = 90_000;
 export const SCAN_MAX_ATTEMPTS = 3;
 export const BUCKET_RETENTION_DAYS = 90;
 /** A queued scan nobody started within this long is the tick's. */
@@ -60,6 +66,52 @@ function sourcesOf(raw: unknown): Source[] {
     if (toolkit !== "gmail" && toolkit !== "outlook" && toolkit !== "googlecalendar") return [];
     return [{ connection_id, toolkit }];
   });
+}
+
+type FailReason = "no_credit" | "no_source" | "source" | "other";
+type Db = ReturnType<typeof serviceClient>;
+
+/** The person's other scans in this workspace, and the buckets they still hold. */
+async function earlierScans(
+  db: Db,
+  scan: { id: string; workspace_id: string; user_id: string },
+): Promise<{ ids: string[]; buckets: Array<{ kind: string; routine_id: string | null }> }> {
+  const { data: scans } = await db
+    .from("arrival_scans")
+    .select("id")
+    .eq("workspace_id", scan.workspace_id)
+    .eq("user_id", scan.user_id)
+    .neq("id", scan.id);
+  const ids = ((scans ?? []) as Array<{ id: string }>).map((r) => r.id);
+  if (ids.length === 0) return { ids, buckets: [] };
+  const { data: buckets } = await db
+    .from("arrival_buckets")
+    .select("kind, routine_id")
+    .in("scan_id", ids);
+  return { ids, buckets: (buckets ?? []) as Array<{ kind: string; routine_id: string | null }> };
+}
+
+/** Each kind's routine from an earlier scan, if that routine is still there. */
+async function routinesStillThere(
+  db: Db,
+  buckets: Array<{ kind: string; routine_id: string | null }>,
+): Promise<Map<string, string>> {
+  const wanted = buckets.filter((b) => b.routine_id);
+  if (wanted.length === 0) return new Map();
+  const { data } = await db
+    .from("routines")
+    .select("id")
+    .in(
+      "id",
+      wanted.map((b) => b.routine_id as string),
+    )
+    .is("deleted_at", null);
+  const alive = new Set(((data ?? []) as Array<{ id: string }>).map((r) => r.id));
+  return new Map(
+    wanted
+      .filter((b) => alive.has(b.routine_id as string))
+      .map((b) => [b.kind, b.routine_id as string]),
+  );
 }
 
 /** Subjects per kind, newest first and without repeats, for the label call. */
@@ -116,13 +168,19 @@ export async function runArrivalScan(
 
   const finish = (values: Record<string, unknown>) =>
     db.from("arrival_scans").update(values).eq("id", scanId).eq("attempts", attempts);
-  const fail = (error: string) =>
-    finish({ status: "failed", error, lease_until: null, finished_at: new Date().toISOString() });
+  const fail = (error: string, reason: FailReason) =>
+    finish({
+      status: "failed",
+      error,
+      reason,
+      lease_until: null,
+      finished_at: new Date().toISOString(),
+    });
 
   const entitlements = entitlementsFor(env);
   const verdict = await entitlements.check(scan.workspace_id);
   if (!verdict.allowed) {
-    await fail(NO_CREDIT);
+    await fail(NO_CREDIT, "no_credit");
     return;
   }
 
@@ -168,23 +226,26 @@ export async function runArrivalScan(
       ];
     });
     if (connections.length === 0) {
-      await fail(NO_SOURCE);
+      await fail(NO_SOURCE, "no_source");
       return;
     }
 
+    // Every source at once, for the same thirty seconds; the calls of one
+    // that failed are paid for as much as those of one that did not.
+    const reads = await Promise.allSettled(connections.map((c) => readSource(env, c, now)));
     const items: ArrivalItem[] = [];
     const selfDomains: string[] = [];
-    for (const source of connections) {
-      try {
-        const read = await readSource(env, source, now);
-        calls.push(...read.calls);
-        items.push(...read.items);
-        selfDomains.push(...read.selfDomains);
-      } catch (err) {
-        if (err instanceof ArrivalReadError) calls.push(...err.calls);
-        throw err;
+    for (const read of reads) {
+      if (read.status === "fulfilled") {
+        calls.push(...read.value.calls);
+        items.push(...read.value.items);
+        selfDomains.push(...read.value.selfDomains);
+      } else if (read.reason instanceof ArrivalReadError) {
+        calls.push(...read.reason.calls);
       }
     }
+    const refused = reads.find((r) => r.status === "rejected");
+    if (refused) throw refused.reason;
 
     const classified = await classifyItems(env, items, { selfDomains: [...new Set(selfDomains)] });
     spent.push(...classified.spent);
@@ -195,6 +256,12 @@ export async function runArrivalScan(
       buckets = labelled.buckets;
     }
     const { total, unanswered } = headline(buckets);
+
+    // A new scan replaces the person's earlier ones, and remembers which
+    // proposals they already turned on, so the report shows those as on rather
+    // than proposing them twice.
+    const earlier = await earlierScans(db, scan);
+    const carried = await routinesStillThere(db, earlier.buckets);
 
     await db.from("arrival_buckets").delete().eq("scan_id", scanId);
     if (buckets.length > 0) {
@@ -207,9 +274,13 @@ export async function runArrivalScan(
           unanswered: b.unanswered,
           examples: b.examples,
           template_id: b.templateId,
+          routine_id: carried.get(b.kind) ?? null,
         })),
       );
       if (error) throw new Error(`arrivals: could not write the buckets: ${error.message}`);
+    }
+    if (earlier.ids.length > 0) {
+      await db.from("arrival_buckets").delete().in("scan_id", earlier.ids);
     }
     await finish({
       status: "done",
@@ -226,7 +297,7 @@ export async function runArrivalScan(
       // The lease stays: the tick tries again once it runs out.
       console.error("arrivals: a scan attempt failed, the tick will retry", err);
     } else {
-      await fail(message.slice(0, 500));
+      await fail(message.slice(0, 500), err instanceof ArrivalReadError ? "source" : "other");
     }
   } finally {
     const all = [
@@ -280,6 +351,7 @@ export async function sweepArrivalScans(env: RoutineEnv, now = new Date()): Prom
         .update({
           status: "failed",
           error: `gave up after ${SCAN_MAX_ATTEMPTS} attempts`,
+          reason: "other",
           lease_until: null,
           finished_at: at,
         })

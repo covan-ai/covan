@@ -52,6 +52,8 @@ function scanRow(over: Row = {}): Row {
 type Spec = {
   /** What the newest-scan read answers. */
   scans?: Row[];
+  /** What it answers once an insert has been tried: the scan that won a race. */
+  raced?: Row;
   connections?: Row[];
   buckets?: Row[];
   insert?: QueryResult;
@@ -60,19 +62,24 @@ type Spec = {
 };
 
 function setup(spec: Spec = {}) {
+  let inserted = false;
   const { db, callsTo } = fakeDb({
     tables: {
       ...activeWorkspaceTables(USER.id, WS),
       arrival_scans: {
         select: (ctx: QueryContext) => {
-          const rows = spec.scans ?? [];
+          const rows = inserted && spec.raced ? [spec.raced] : (spec.scans ?? []);
           return { data: ctx.single ? (rows[0] ?? null) : rows, error: null };
         },
-        insert: (ctx) =>
-          spec.insert ?? {
-            data: { ...scanRow({ status: "queued", total: null }), ...ctx.values },
-            error: null,
-          },
+        insert: (ctx) => {
+          inserted = true;
+          return (
+            spec.insert ?? {
+              data: { ...scanRow({ status: "queued", total: null }), ...ctx.values },
+              error: null,
+            }
+          );
+        },
       },
       arrival_buckets: {
         select: () => ({ data: spec.buckets ?? [], error: null }),
@@ -163,6 +170,20 @@ describe("POST /arrivals", () => {
     expect(runArrivalScan).not.toHaveBeenCalled();
   });
 
+  // I4: two starts racing — the consent return and a quick Continue — meet
+  // the database's one-at-a-time index, and the second gets the first's scan.
+  it("answers with the scan that won a race to start", async () => {
+    const { send } = setup({
+      connections: [{ id: "c-1", toolkit_slug: "gmail" }],
+      insert: { data: null, error: { code: "23505", message: "duplicate key" } },
+      raced: scanRow({ status: "queued", total: null }),
+    });
+    const res = await send("POST", "/arrivals");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { scan: Row }).scan.status).toBe("queued");
+    expect(runArrivalScan).not.toHaveBeenCalled();
+  });
+
   it("is refused to an API key", async () => {
     const { send } = setup({ apiKey: true, connections: [{ id: "c-1", toolkit_slug: "gmail" }] });
     const res = await send("POST", "/arrivals");
@@ -200,6 +221,7 @@ describe("GET /arrivals/latest", () => {
       total: 12,
       unanswered: 3,
       error: null,
+      reason: null,
       startedAt: "2026-10-26T09:00:00.000Z",
       finishedAt: "2026-10-26T09:00:20.000Z",
       createdAt: "2026-10-26T09:00:00.000Z",

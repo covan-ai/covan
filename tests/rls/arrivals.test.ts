@@ -104,6 +104,12 @@ describe("arrival scans", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it("cannot queue a second while one is under way", async () => {
+    const { data, error } = await queue(linus);
+    expect(data).toBeNull();
+    expect(error?.code).toBe("23505");
+  });
+
   it("cannot queue one as somebody else", async () => {
     const { data, error } = await queue(linus, { user_id: ada.id });
     expect(data).toBeNull();

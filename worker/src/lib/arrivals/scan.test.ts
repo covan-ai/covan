@@ -100,7 +100,12 @@ function mail(i: number, over: Partial<ArrivalItem> = {}): ArrivalItem {
 }
 
 function seed(scans: Row[], buckets: Row[] = [], connections: Row[] = [CONNECTION]) {
-  db = memoryDb({ arrival_scans: scans, arrival_buckets: buckets, tool_connections: connections });
+  db = memoryDb({
+    arrival_scans: scans,
+    arrival_buckets: buckets,
+    tool_connections: connections,
+    routines: [],
+  });
 }
 
 beforeEach(() => {
@@ -172,6 +177,97 @@ describe("runArrivalScan", () => {
       NOW,
     );
     expect(classifyItems.mock.calls[0][2]).toEqual({ selfDomains: ["covan.test"] });
+  });
+
+  // C1: a scan cut off by waitUntil is picked up by the tick within minutes.
+  it("holds its lease for a minute and a half, not ten", async () => {
+    classifyItems.mockRejectedValue(new Error("the model timed out"));
+    seed([scan()]);
+    await runArrivalScan(ENV, "scan-1", NOW);
+    expect(db.tables.arrival_scans[0].lease_until).toBe(
+      new Date(NOW.getTime() + 90_000).toISOString(),
+    );
+  });
+
+  it("reads its sources at the same time", async () => {
+    let release!: (v: unknown) => void;
+    readSource
+      .mockImplementationOnce(() => new Promise((r) => (release = r)))
+      .mockResolvedValueOnce({ items: [], calls: ["GOOGLECALENDAR_EVENTS_LIST"], selfDomains: [] });
+    seed(
+      [
+        scan({
+          sources: [
+            { connection_id: "c-1", toolkit: "gmail" },
+            { connection_id: "c-3", toolkit: "googlecalendar" },
+          ],
+        }),
+      ],
+      [],
+      [CONNECTION, { ...CONNECTION, id: "c-3", toolkit_slug: "googlecalendar" }],
+    );
+    const running = runArrivalScan(ENV, "scan-1", NOW);
+    await vi.waitFor(() => expect(readSource).toHaveBeenCalledTimes(2));
+    release({ items: [mail(0)], calls: ["GMAIL_FETCH_EMAILS"], selfDomains: [] });
+    await running;
+    expect(db.tables.arrival_scans[0].status).toBe("done");
+  });
+
+  // I3: a new scan replaces the last one, and remembers what was turned on.
+  it("carries a routine made from the last scan forward, and drops the last scan's rows", async () => {
+    seed(
+      [scan({ id: "old", status: "done", created_at: "2026-10-01T00:00:00.000Z" }), scan()],
+      [
+        {
+          scan_id: "old",
+          kind: "question",
+          label: "",
+          count: 4,
+          unanswered: 1,
+          examples: ["Old subject"],
+          routine_id: "r-1",
+        },
+        {
+          scan_id: "old",
+          kind: "admin",
+          label: "",
+          count: 2,
+          unanswered: 0,
+          examples: [],
+          routine_id: "r-gone",
+        },
+      ],
+    );
+    db.tables.routines = [
+      { id: "r-1", deleted_at: null },
+      { id: "r-gone", deleted_at: "2026-10-20T00:00:00.000Z" },
+    ];
+    await runArrivalScan(ENV, "scan-1", NOW);
+    const kept = db.tables.arrival_buckets;
+    expect(kept.every((b) => b.scan_id === "scan-1")).toBe(true);
+    expect(kept.find((b) => b.kind === "question")?.routine_id).toBe("r-1");
+    expect(kept.find((b) => b.kind === "admin")?.routine_id ?? null).toBeNull();
+  });
+
+  // I6: why a scan failed, as a code the report can say in words.
+  it("says a scan failed for want of credits", async () => {
+    allowed = false;
+    seed([scan()]);
+    await runArrivalScan(ENV, "scan-1", NOW);
+    expect(db.tables.arrival_scans[0].reason).toBe("no_credit");
+  });
+
+  it("says a scan failed because the mailbox refused", async () => {
+    readSource.mockRejectedValue(new ArrivalReadError("The grant has expired", [], 401));
+    seed([scan()]);
+    await runArrivalScan(ENV, "scan-1", NOW);
+    expect(db.tables.arrival_scans[0].reason).toBe("source");
+  });
+
+  it("says a scan failed because nothing it may read is connected", async () => {
+    seed([scan()], [], [{ ...CONNECTION, status: "pending" }]);
+    await runArrivalScan(ENV, "scan-1", NOW);
+    expect(db.tables.arrival_scans[0].reason).toBe("no_source");
   });
 
   it("pays for every model call and every Composio call, as the person who asked", async () => {

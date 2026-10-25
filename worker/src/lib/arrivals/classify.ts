@@ -28,7 +28,13 @@ import {
  * third-party text, and `summarise.ts` makes that argument for a watched page.
  */
 
-export const CLASSIFY_BATCH = 150;
+/**
+ * Lines per classify call. Small, and all sent at once: a scan runs inside
+ * `waitUntil`'s thirty seconds on Workers, and a model writes its answer one
+ * token at a time, so four short answers in parallel finish long before one
+ * long one would (C1 of the branch review).
+ */
+export const CLASSIFY_BATCH = 50;
 export const CLASSIFY_MODEL = "gpt-4.1-mini";
 /** A bucket must hold more than this many items to be named by the model. */
 export const LABEL_MIN = 2;
@@ -97,28 +103,36 @@ export async function classifyItems(
   const model = resolveModel(CLASSIFY_MODEL, env);
   const system = classifyInstruction(context.selfDomains ?? []);
 
+  const batches: number[][] = [];
   for (let start = 0; start < mail.length; start += CLASSIFY_BATCH) {
-    const batch = mail.slice(start, start + CLASSIFY_BATCH);
-    const lines = batch.map((at, i) => {
-      const item = items[at];
-      return `${i}. from: ${item.domain || "unknown"} · ${item.subject} · ${item.snippet}`;
-    });
-    const { text, usage } = await complete(env, {
-      model,
-      json: true,
-      maxTokens: 16 * batch.length + 256,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: lines.join("\n") },
-      ],
-    });
+    batches.push(mail.slice(start, start + CLASSIFY_BATCH));
+  }
+  const answers = await Promise.all(
+    batches.map((batch) => {
+      const lines = batch.map((at, i) => {
+        const item = items[at];
+        return `${i}. from: ${item.domain || "unknown"} · ${item.subject} · ${item.snippet}`;
+      });
+      return complete(env, {
+        model,
+        json: true,
+        maxTokens: 16 * batch.length + 256,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: lines.join("\n") },
+        ],
+      });
+    }),
+  );
+  answers.forEach(({ text, usage }, b) => {
+    const batch = batches[b];
     spent.push(...spends(completionSpend(model, usage, "arrivals")));
     for (const row of records(parsed(text), "items")) {
       const i = row.i;
       if (typeof i !== "number" || !Number.isInteger(i) || i < 0 || i >= batch.length) continue;
       if (isKind(row.kind)) kinds[batch[i]] = row.kind;
     }
-  }
+  });
   return { kinds, spent };
 }
 

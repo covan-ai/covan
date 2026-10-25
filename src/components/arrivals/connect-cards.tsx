@@ -118,7 +118,7 @@ export function ConnectCards({
       </ul>
       <p className="text-meta text-muted-foreground">
         {t(
-          "Covan reads the last thirty days, counts what came in, and keeps nothing but the counts.",
+          "Covan reads the last thirty days and keeps only the counts, a short name for each kind and up to three example subjects — never addresses or messages.",
         )}{" "}
         <a
           href={`${docsUrl("integrations")}#what-a-scan-reads-and-keeps`}

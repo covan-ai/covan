@@ -43,7 +43,11 @@ function reply(obj: unknown) {
   };
 }
 
-beforeEach(() => complete.mockReset());
+// A block body: `mockReset` returns the mock, and a function returned from
+// `beforeEach` is run as its teardown.
+beforeEach(() => {
+  complete.mockReset();
+});
 
 describe("classifyItems", () => {
   it("sends mail in batches, numbered from zero in each", async () => {
@@ -58,6 +62,22 @@ describe("classifyItems", () => {
     expect(lines[0]).toBe(
       `0. from: acme.test · Subject ${CLASSIFY_BATCH} · Snippet ${CLASSIFY_BATCH}`,
     );
+  });
+
+  // C1: a scan runs inside waitUntil's thirty seconds, so the batches go out
+  // together rather than one after another.
+  it("asks for every batch at once", async () => {
+    const answers: Array<(v: unknown) => void> = [];
+    complete.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    const items = Array.from({ length: CLASSIFY_BATCH * 2 + 1 }, (_, i) => mail(i));
+    const done = classifyItems(ENV, items);
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(3));
+    for (const answer of answers) answer(reply({ items: [] }));
+    await done;
+  });
+
+  it("sends small batches, so each answer is short", () => {
+    expect(CLASSIFY_BATCH).toBeLessThanOrEqual(50);
   });
 
   it("takes the kind the model gives each line", async () => {

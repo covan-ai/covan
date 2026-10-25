@@ -26,6 +26,7 @@ const DID: Record<string, string> = {
   run_routine: msg("Ran a routine"),
   watch_event: msg("Set up a watch"),
   ask_person: msg("Asked a question"),
+  remember: msg("Noted something"),
 };
 
 export function stepVerb(tool: string, t: Translate = englishT): string {

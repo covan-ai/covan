@@ -9,7 +9,7 @@ import {
   toStepViews,
   type AgentStepView,
 } from "./agent-steps";
-import { stepsSummary } from "@/lib/step-summary";
+import { stepsSummary, stepVerb } from "@/lib/step-summary";
 import type { ToolConnection } from "@/lib/connections-api";
 
 /**
@@ -159,6 +159,16 @@ describe("stepsSummary", () => {
     expect(stepsSummary([{ tool: "write_document", status: "ok", durationMs: 300 }], 1)).toBe(
       "Wrote a document · 1 source · 0.3 s",
     );
+  });
+
+  it("says when an agent noted something, and joins it after another step in lower case", () => {
+    expect(stepVerb("remember")).toBe("Noted something");
+    expect(
+      stepsSummary([
+        { tool: "search_documents", status: "ok" },
+        { tool: "remember", status: "ok" },
+      ]),
+    ).toBe("Searched Knowledge and noted something");
   });
 });
 

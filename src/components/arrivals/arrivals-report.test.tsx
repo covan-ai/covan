@@ -29,12 +29,23 @@ vi.mock("@/lib/api-client", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ to, params, children }: { to: string; params?: Record<string, string>; children: React.ReactNode }) => (
-    <a href={Object.entries(params ?? {}).reduce((p, [k, v]) => p.replace(`$${k}`, v), to)}>{children}</a>
+  Link: ({
+    to,
+    params,
+    children,
+  }: {
+    to: string;
+    params?: Record<string, string>;
+    children: React.ReactNode;
+  }) => (
+    <a href={Object.entries(params ?? {}).reduce((p, [k, v]) => p.replace(`$${k}`, v), to)}>
+      {children}
+    </a>
   ),
 }));
 
-const { ArrivalsReport, turnOn } = await import("./arrivals-report");
+const { ArrivalsReport } = await import("./arrivals-report");
+const { turnOn } = await import("./turn-on");
 
 const t = ((key: string, options?: Record<string, unknown>) =>
   key.replace(/\{\{(\w+)\}\}/g, (_, k) => String(options?.[k] ?? ""))) as never;
@@ -69,7 +80,14 @@ function scan(over: Partial<ArrivalScan> = {}): ArrivalScan {
     createdAt: "2026-10-26T09:00:00.000Z",
     buckets: [
       bucket({ kind: "automated", count: 15 }),
-      bucket({ kind: "question", label: "Order questions", count: 10, unanswered: 4, examples: ["Is the spring order still on?"], templateId: "arrivals-questions" }),
+      bucket({
+        kind: "question",
+        label: "Order questions",
+        count: 10,
+        unanswered: 4,
+        examples: ["Is the spring order still on?"],
+        templateId: "arrivals-questions",
+      }),
       bucket({ kind: "request", count: 6, unanswered: 2, templateId: "arrivals-requests" }),
       bucket({ kind: "scheduling", count: 5, templateId: "arrivals-day-ahead" }),
       bucket({ kind: "admin", count: 4, templateId: "arrivals-admin" }),
@@ -78,7 +96,10 @@ function scan(over: Partial<ArrivalScan> = {}): ArrivalScan {
   };
 }
 
-function renderReport(s: ArrivalScan, handlers: Partial<{ onDone: (n: number) => void; onRetry: () => void; onSkip: () => void }> = {}) {
+function renderReport(
+  s: ArrivalScan,
+  handlers: Partial<{ onDone: (n: number) => void; onRetry: () => void; onSkip: () => void }> = {},
+) {
   const client = new QueryClient();
   return render(
     <QueryClientProvider client={client}>
@@ -126,7 +147,12 @@ describe("ArrivalsReport", () => {
   it("switches on the first three proposals and leaves the rest off", () => {
     renderReport(scan());
     const switches = screen.getAllByRole("switch");
-    expect(switches.map((s) => s.getAttribute("aria-checked"))).toEqual(["true", "true", "true", "false"]);
+    expect(switches.map((s) => s.getAttribute("aria-checked"))).toEqual([
+      "true",
+      "true",
+      "true",
+      "false",
+    ]);
   });
 
   it("says where the digests will go", () => {
@@ -137,7 +163,14 @@ describe("ArrivalsReport", () => {
   it("shows a routine already made from a bucket as on, with no switch", () => {
     renderReport(
       scan({
-        buckets: [bucket({ kind: "question", count: 3, templateId: "arrivals-questions", routineId: "r-1" })],
+        buckets: [
+          bucket({
+            kind: "question",
+            count: 3,
+            templateId: "arrivals-questions",
+            routineId: "r-1",
+          }),
+        ],
       }),
     );
     expect(screen.queryByRole("switch")).toBeNull();
@@ -146,7 +179,9 @@ describe("ArrivalsReport", () => {
 
   it("offers to try again when the scan failed", async () => {
     const onRetry = vi.fn();
-    renderReport(scan({ status: "failed", error: "The grant has expired", buckets: [] }), { onRetry });
+    renderReport(scan({ status: "failed", error: "The grant has expired", buckets: [] }), {
+      onRetry,
+    });
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRetry).toHaveBeenCalled();
   });
@@ -163,7 +198,10 @@ describe("ArrivalsReport", () => {
   });
 
   it("turns the picked proposals on and says how many", async () => {
-    create.mockImplementation(async () => ({ id: `r-${create.mock.calls.length}`, deliveryChannelId: "ch-1" }));
+    create.mockImplementation(async () => ({
+      id: `r-${create.mock.calls.length}`,
+      deliveryChannelId: "ch-1",
+    }));
     const onDone = vi.fn();
     renderReport(scan(), { onDone });
     await userEvent.click(screen.getByRole("button", { name: "Turn these on" }));
@@ -212,7 +250,9 @@ describe("turnOn", () => {
 
   it("skips a bucket that already has its routine, so a second press makes nothing twice", async () => {
     const done = scan({
-      buckets: [bucket({ kind: "question", count: 3, templateId: "arrivals-questions", routineId: "r-1" })],
+      buckets: [
+        bucket({ kind: "question", count: 3, templateId: "arrivals-questions", routineId: "r-1" }),
+      ],
     });
     const out = await turnOn({ ...base, scan: done, picked: ["question"] });
     expect(out).toEqual({ created: 0, failed: false });
@@ -220,8 +260,14 @@ describe("turnOn", () => {
   });
 
   it("stops at the first failure, keeping what it made", async () => {
-    create.mockResolvedValueOnce({ id: "r-1", deliveryChannelId: "ch-1" }).mockRejectedValueOnce(new Error("boom"));
-    const out = await turnOn({ ...base, scan: scan(), picked: ["question", "request", "scheduling"] });
+    create
+      .mockResolvedValueOnce({ id: "r-1", deliveryChannelId: "ch-1" })
+      .mockRejectedValueOnce(new Error("boom"));
+    const out = await turnOn({
+      ...base,
+      scan: scan(),
+      picked: ["question", "request", "scheduling"],
+    });
     expect(out).toEqual({ created: 1, failed: true });
     expect(setRoutine).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledTimes(2);

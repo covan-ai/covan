@@ -78,7 +78,10 @@ describe("ConnectCards", () => {
     const outlook = screen.getByText("Outlook").closest("li")!;
     await userEvent.click(within(outlook).getByRole("button", { name: "Connect" }));
     expect(connect.mutate).toHaveBeenCalledWith(
-      expect.objectContaining({ toolkit: "outlook", returnTo: "/welcome?step=connect&agent=a1&s=s1" }),
+      expect.objectContaining({
+        toolkit: "outlook",
+        returnTo: "/welcome?step=connect&agent=a1&s=s1",
+      }),
       expect.anything(),
     );
   });
@@ -93,7 +96,10 @@ describe("ConnectCards", () => {
   });
 
   it("does not count somebody else's connection, or one never finished", () => {
-    connections.value = [own({ mine: false }), own({ id: "c-2", toolkitSlug: "outlook", status: "pending" })];
+    connections.value = [
+      own({ mine: false }),
+      own({ id: "c-2", toolkitSlug: "outlook", status: "pending" }),
+    ];
     renderCards();
     expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(3);
   });

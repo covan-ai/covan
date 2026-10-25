@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -14,6 +15,7 @@ import {
   useRemoveToolConnection,
 } from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
+import { SCAN_TOOLKITS } from "@/lib/arrivals";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -138,9 +140,19 @@ function ConnectedAppRow({
           .join(" · ")}
         status={status}
         action={
-          <Button size="sm" variant="secondary" onClick={() => setManaging(true)}>
-            {t("Manage")}
-          </Button>
+          <span className="flex items-center gap-1">
+            {connection.mine &&
+              connection.status === "active" &&
+              (SCAN_TOOLKITS as readonly string[]).includes(connection.toolkitSlug ?? "") && (
+                // 0139: a mailbox or calendar of your own leads to what arrives there.
+                <Button asChild size="sm" variant="ghost">
+                  <Link to="/arrivals">{t("What arrives here")}</Link>
+                </Button>
+              )}
+            <Button size="sm" variant="secondary" onClick={() => setManaging(true)}>
+              {t("Manage")}
+            </Button>
+          </span>
         }
       />
 

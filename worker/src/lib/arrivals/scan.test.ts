@@ -30,13 +30,18 @@ vi.mock("./classify", async (importOriginal) => ({
 }));
 
 const { ArrivalReadError } = await import("./read");
-const { BUCKET_RETENTION_DAYS, SCAN_MAX_ATTEMPTS, runArrivalScan, sweepArrivalScans } = await import(
-  "./scan"
-);
+const { BUCKET_RETENTION_DAYS, SCAN_MAX_ATTEMPTS, runArrivalScan, sweepArrivalScans } =
+  await import("./scan");
 
 const NOW = new Date("2026-10-26T09:00:00Z");
 const ENV = {} as never;
-const COMPLETION = { kind: "completion", model: "gpt-4.1-mini", promptTokens: 10, completionTokens: 2, purpose: "arrivals" };
+const COMPLETION = {
+  kind: "completion",
+  model: "gpt-4.1-mini",
+  promptTokens: 10,
+  completionTokens: 2,
+  purpose: "arrivals",
+};
 
 const recorded: Array<{ workspaceId: string; spends: unknown[]; ref: unknown }> = [];
 let allowed = true;
@@ -110,9 +115,15 @@ beforeEach(() => {
     calls: ["GMAIL_FETCH_EMAILS"],
     selfDomains: ["covan.test"],
   });
-  classifyItems.mockResolvedValue({ kinds: ["question", "question", "admin"], spent: [COMPLETION] });
+  classifyItems.mockResolvedValue({
+    kinds: ["question", "question", "admin"],
+    spent: [COMPLETION],
+  });
   labelBuckets.mockImplementation(async (_env, buckets) => ({
-    buckets: buckets.map((b: Row) => ({ ...b, label: b.kind === "question" ? "Order questions" : "" })),
+    buckets: buckets.map((b: Row) => ({
+      ...b,
+      label: b.kind === "question" ? "Order questions" : "",
+    })),
     spent: [COMPLETION],
   }));
 });
@@ -125,15 +136,39 @@ describe("runArrivalScan", () => {
     await runArrivalScan(ENV, "scan-1", NOW);
 
     const [row] = db.tables.arrival_scans;
-    expect(row).toMatchObject({ status: "done", total: 3, unanswered: 2, attempts: 1, lease_until: null, error: null });
+    expect(row).toMatchObject({
+      status: "done",
+      total: 3,
+      unanswered: 2,
+      attempts: 1,
+      lease_until: null,
+      error: null,
+    });
     expect(row.finished_at).toBe(NOW.toISOString());
     expect(db.tables.arrival_buckets).toEqual([
-      expect.objectContaining({ scan_id: "scan-1", kind: "question", label: "Order questions", count: 2, unanswered: 2, template_id: "arrivals-questions" }),
-      expect.objectContaining({ scan_id: "scan-1", kind: "admin", label: "", count: 1, template_id: "arrivals-admin" }),
+      expect.objectContaining({
+        scan_id: "scan-1",
+        kind: "question",
+        label: "Order questions",
+        count: 2,
+        unanswered: 2,
+        template_id: "arrivals-questions",
+      }),
+      expect.objectContaining({
+        scan_id: "scan-1",
+        kind: "admin",
+        label: "",
+        count: 1,
+        template_id: "arrivals-admin",
+      }),
     ]);
     expect(readSource).toHaveBeenCalledWith(
       ENV,
-      { connectionId: "c-1", toolkit: "gmail", account: { connectedAccountId: "ca_1", composioUserId: "cu_1" } },
+      {
+        connectionId: "c-1",
+        toolkit: "gmail",
+        account: { connectedAccountId: "ca_1", composioUserId: "cu_1" },
+      },
       NOW,
     );
     expect(classifyItems.mock.calls[0][2]).toEqual({ selfDomains: ["covan.test"] });
@@ -153,7 +188,11 @@ describe("runArrivalScan", () => {
 
   it("sends the label call the subjects of each kind, newest first", async () => {
     readSource.mockResolvedValue({
-      items: [mail(0, { at: "2026-10-01T00:00:00.000Z" }), mail(1, { at: "2026-10-05T00:00:00.000Z" }), mail(2)],
+      items: [
+        mail(0, { at: "2026-10-01T00:00:00.000Z" }),
+        mail(1, { at: "2026-10-05T00:00:00.000Z" }),
+        mail(2),
+      ],
       calls: [],
       selfDomains: [],
     });
@@ -174,10 +213,16 @@ describe("runArrivalScan", () => {
   });
 
   it("fails at once, in Composio's words, when the mailbox refuses", async () => {
-    readSource.mockRejectedValue(new ArrivalReadError("The grant has expired", ["GMAIL_FETCH_EMAILS"], 401));
+    readSource.mockRejectedValue(
+      new ArrivalReadError("The grant has expired", ["GMAIL_FETCH_EMAILS"], 401),
+    );
     seed([scan()]);
     await runArrivalScan(ENV, "scan-1", NOW);
-    expect(db.tables.arrival_scans[0]).toMatchObject({ status: "failed", error: "The grant has expired", lease_until: null });
+    expect(db.tables.arrival_scans[0]).toMatchObject({
+      status: "failed",
+      error: "The grant has expired",
+      lease_until: null,
+    });
     expect(recorded[0].spends).toEqual([{ kind: "composio_call", toolSlug: "GMAIL_FETCH_EMAILS" }]);
   });
 
@@ -193,9 +238,18 @@ describe("runArrivalScan", () => {
 
   it("gives up on the last attempt", async () => {
     classifyItems.mockRejectedValue(new Error("the model timed out"));
-    seed([scan({ status: "running", attempts: SCAN_MAX_ATTEMPTS - 1, lease_until: "2026-10-26T08:00:00.000Z" })]);
+    seed([
+      scan({
+        status: "running",
+        attempts: SCAN_MAX_ATTEMPTS - 1,
+        lease_until: "2026-10-26T08:00:00.000Z",
+      }),
+    ]);
     await runArrivalScan(ENV, "scan-1", NOW);
-    expect(db.tables.arrival_scans[0]).toMatchObject({ status: "failed", attempts: SCAN_MAX_ATTEMPTS });
+    expect(db.tables.arrival_scans[0]).toMatchObject({
+      status: "failed",
+      attempts: SCAN_MAX_ATTEMPTS,
+    });
   });
 
   it("reads nothing when the workspace has no credits", async () => {
@@ -210,7 +264,12 @@ describe("runArrivalScan", () => {
   it("does nothing to a scan that is finished, or held by a live lease", async () => {
     seed([
       scan({ status: "done" }),
-      scan({ id: "scan-2", status: "running", attempts: 1, lease_until: "2026-10-26T09:05:00.000Z" }),
+      scan({
+        id: "scan-2",
+        status: "running",
+        attempts: 1,
+        lease_until: "2026-10-26T09:05:00.000Z",
+      }),
     ]);
     await runArrivalScan(ENV, "scan-1", NOW);
     await runArrivalScan(ENV, "scan-2", NOW);
@@ -261,7 +320,13 @@ describe("runArrivalScan", () => {
 describe("sweepArrivalScans", () => {
   it("runs a scan whose lease ran out, and one nobody started", async () => {
     seed([
-      scan({ id: "stalled", status: "running", attempts: 1, lease_until: "2026-10-26T08:50:00.000Z", created_at: "2026-10-26T08:30:00.000Z" }),
+      scan({
+        id: "stalled",
+        status: "running",
+        attempts: 1,
+        lease_until: "2026-10-26T08:50:00.000Z",
+        created_at: "2026-10-26T08:30:00.000Z",
+      }),
       scan({ id: "never", status: "queued", created_at: "2026-10-26T08:50:00.000Z" }),
       scan({ id: "live", status: "running", attempts: 1, lease_until: "2026-10-26T09:05:00.000Z" }),
       scan({ id: "fresh", status: "queued", created_at: "2026-10-26T08:59:50.000Z" }),
@@ -273,11 +338,19 @@ describe("sweepArrivalScans", () => {
 
   it("gives up on a scan that has had all its attempts", async () => {
     seed([
-      scan({ status: "running", attempts: SCAN_MAX_ATTEMPTS, lease_until: "2026-10-26T08:50:00.000Z", created_at: "2026-10-26T08:00:00.000Z" }),
+      scan({
+        status: "running",
+        attempts: SCAN_MAX_ATTEMPTS,
+        lease_until: "2026-10-26T08:50:00.000Z",
+        created_at: "2026-10-26T08:00:00.000Z",
+      }),
     ]);
     await sweepArrivalScans(ENV, NOW);
     expect(readSource).not.toHaveBeenCalled();
-    expect(db.tables.arrival_scans[0]).toMatchObject({ status: "failed", error: "gave up after 3 attempts" });
+    expect(db.tables.arrival_scans[0]).toMatchObject({
+      status: "failed",
+      error: "gave up after 3 attempts",
+    });
   });
 
   it("deletes buckets older than ninety days and keeps the rest", async () => {

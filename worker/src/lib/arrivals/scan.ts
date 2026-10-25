@@ -35,7 +35,8 @@ export const SCAN_CEILING_USD = 0.05;
 
 export const NO_CREDIT =
   "This workspace has no credits left for a scan. A workspace admin can add more, and then it can be run again.";
-const NO_SOURCE = "None of the connections this scan was asked to read is still yours and connected.";
+const NO_SOURCE =
+  "None of the connections this scan was asked to read is still yours and connected.";
 
 type ScanRow = {
   id: string;
@@ -63,7 +64,9 @@ function sourcesOf(raw: unknown): Source[] {
 
 /** Subjects per kind, newest first and without repeats, for the label call. */
 function subjectsByKind(items: ArrivalItem[], kinds: ArrivalKind[]): Map<ArrivalKind, string[]> {
-  const order = items.map((item, i) => ({ item, kind: kinds[i] })).sort((a, b) => b.item.at.localeCompare(a.item.at));
+  const order = items
+    .map((item, i) => ({ item, kind: kinds[i] }))
+    .sort((a, b) => b.item.at.localeCompare(a.item.at));
   const out = new Map<ArrivalKind, string[]>();
   for (const { item, kind } of order) {
     const subject = item.subject.trim();
@@ -75,7 +78,11 @@ function subjectsByKind(items: ArrivalItem[], kinds: ArrivalKind[]): Map<Arrival
   return out;
 }
 
-export async function runArrivalScan(env: RoutineEnv, scanId: string, now = new Date()): Promise<void> {
+export async function runArrivalScan(
+  env: RoutineEnv,
+  scanId: string,
+  now = new Date(),
+): Promise<void> {
   const db = serviceClient(env);
   const at = now.toISOString();
 
@@ -143,7 +150,9 @@ export async function runArrivalScan(env: RoutineEnv, scanId: string, now = new 
           .eq("transport", "composio")
       : { data: [] };
     const connections = ((rows ?? []) as Record<string, unknown>[]).flatMap((row) => {
-      const source = sources.find((s) => s.connection_id === row.id && s.toolkit === row.toolkit_slug);
+      const source = sources.find(
+        (s) => s.connection_id === row.id && s.toolkit === row.toolkit_slug,
+      );
       const composioUserId = typeof row.composio_user_id === "string" ? row.composio_user_id : "";
       if (!source || !composioUserId) return [];
       return [
@@ -151,7 +160,8 @@ export async function runArrivalScan(env: RoutineEnv, scanId: string, now = new 
           connectionId: source.connection_id,
           toolkit: source.toolkit,
           account: {
-            connectedAccountId: typeof row.connected_account_id === "string" ? row.connected_account_id : "",
+            connectedAccountId:
+              typeof row.connected_account_id === "string" ? row.connected_account_id : "",
             composioUserId,
           },
         },
@@ -201,7 +211,14 @@ export async function runArrivalScan(env: RoutineEnv, scanId: string, now = new 
       );
       if (error) throw new Error(`arrivals: could not write the buckets: ${error.message}`);
     }
-    await finish({ status: "done", total, unanswered, error: null, lease_until: null, finished_at: at });
+    await finish({
+      status: "done",
+      total,
+      unanswered,
+      error: null,
+      lease_until: null,
+      finished_at: at,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const passing = !(err instanceof ArrivalReadError) || err.status >= 500;
@@ -212,7 +229,10 @@ export async function runArrivalScan(env: RoutineEnv, scanId: string, now = new 
       await fail(message.slice(0, 500));
     }
   } finally {
-    const all = [...spent, ...calls.map((toolSlug): Spend => ({ kind: "composio_call", toolSlug }))];
+    const all = [
+      ...spent,
+      ...calls.map((toolSlug): Spend => ({ kind: "composio_call", toolSlug })),
+    ];
     if (all.length > 0) {
       await entitlements
         .record(scan.workspace_id, all, { userId: scan.user_id })
@@ -242,9 +262,14 @@ export async function sweepArrivalScans(env: RoutineEnv, now = new Date()): Prom
     .lt("created_at", unstarted)
     .order("created_at", { ascending: true })
     .limit(10);
-  const stalled = ((data ?? []) as Array<{ id: string; status: string; attempts: number; lease_until: string | null }>).filter(
-    (scan) => scan.status === "queued" || !scan.lease_until || scan.lease_until < at,
-  );
+  const stalled = (
+    (data ?? []) as Array<{
+      id: string;
+      status: string;
+      attempts: number;
+      lease_until: string | null;
+    }>
+  ).filter((scan) => scan.status === "queued" || !scan.lease_until || scan.lease_until < at);
 
   let acted = false;
   let runs = 0;
@@ -252,7 +277,12 @@ export async function sweepArrivalScans(env: RoutineEnv, now = new Date()): Prom
     if (scan.attempts >= SCAN_MAX_ATTEMPTS) {
       await db
         .from("arrival_scans")
-        .update({ status: "failed", error: `gave up after ${SCAN_MAX_ATTEMPTS} attempts`, lease_until: null, finished_at: at })
+        .update({
+          status: "failed",
+          error: `gave up after ${SCAN_MAX_ATTEMPTS} attempts`,
+          lease_until: null,
+          finished_at: at,
+        })
         .eq("id", scan.id)
         .eq("attempts", scan.attempts);
       acted = true;

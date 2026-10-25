@@ -1,7 +1,8 @@
-import { createFileRoute, Navigate } from "@tanstack/react-router";
+import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import { EmptyPage } from "@/components/empty-page";
+import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 
 export const Route = createFileRoute("/_authed/routines/")({
@@ -24,6 +25,12 @@ function RoutinesIndex() {
       description={t(
         "A routine is work an agent does on its own: a weekly brief, a daily digest, a check when something arrives. Make one from an agent's Routines tab.",
       )}
+      actions={
+        // 0139: the routines worth having are usually in the mail already.
+        <Button asChild variant="secondary">
+          <Link to="/arrivals">{t("See what arrives in your inbox")}</Link>
+        </Button>
+      }
     />
   );
 }

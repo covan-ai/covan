@@ -109,7 +109,10 @@ arrivals.post("/arrivals", async (c) => {
   }));
   if (sources.length === 0) {
     return c.json(
-      { error: "no_source", message: "Connect a mailbox or a calendar first, and then it can be read." },
+      {
+        error: "no_source",
+        message: "Connect a mailbox or a calendar first, and then it can be read.",
+      },
       409,
     );
   }

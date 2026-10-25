@@ -135,8 +135,7 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "reads a person's mailbox and calendar through their own connections and spends the workspace's credits doing it, after the response — a scan started by a leaked key finishes after it is revoked",
   "routes/arrivals.ts GET /arrivals/latest":
     "how many questions one person never answered and what their mail is about: something a person looks at in the product, which the table's policy refuses a key's token anyway",
-  "routes/arrivals.ts GET /arrivals/:id":
-    "the same scan by its id, and the same answer",
+  "routes/arrivals.ts GET /arrivals/:id": "the same scan by its id, and the same answer",
   "routes/arrivals.ts PATCH /arrivals/:id/buckets/:kind":
     "records which routine a person made from a proposal, a write the table's policy refuses a key's token anyway",
   "routes/composio.ts GET /composio/connections/:id/status":

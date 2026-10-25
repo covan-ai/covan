@@ -185,7 +185,10 @@ describe("the proposals a scan of what arrived makes", () => {
   });
 
   it("fills the bucket's label in", () => {
-    const draft = fillTemplate(arrivalTemplateById("arrivals-questions")!, "Questions about the spring order");
+    const draft = fillTemplate(
+      arrivalTemplateById("arrivals-questions")!,
+      "Questions about the spring order",
+    );
     expect(draft.instruction).toContain("Questions about the spring order");
     expect(draft.instruction).not.toContain("{label}");
     expect(draft.scheduleCron).toBe("0 9 * * *");

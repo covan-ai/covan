@@ -133,7 +133,9 @@ function domainOf(sender: string): string {
 function isoOf(raw: unknown): string {
   const s = str(raw).trim();
   if (!s) return "";
-  const ms = /^\d{10,}$/.test(s) ? Number(s) : Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) || !s.includes("T") ? s : `${s}Z`);
+  const ms = /^\d{10,}$/.test(s)
+    ? Number(s)
+    : Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) || !s.includes("T") ? s : `${s}Z`);
   return Number.isFinite(ms) ? new Date(ms).toISOString() : "";
 }
 
@@ -206,7 +208,10 @@ function threads(messages: MailMessage[]): ArrivalItem[] {
   return items.sort(newestFirst);
 }
 
-export function gmailThreads(messages: MailMessage[]): { items: ArrivalItem[]; selfDomains: string[] } {
+export function gmailThreads(messages: MailMessage[]): {
+  items: ArrivalItem[];
+  selfDomains: string[];
+} {
   return {
     items: threads(messages),
     selfDomains: unique(messages.filter((m) => m.mine).map((m) => m.domain)),
@@ -217,11 +222,15 @@ export function gmailThreads(messages: MailMessage[]): { items: ArrivalItem[]; s
 // outlook
 // ---------------------------------------------------------------------------
 
-export function parseOutlookMail(body: string): { messages: MailMessage[]; nextPage: string | null } {
+export function parseOutlookMail(body: string): {
+  messages: MailMessage[];
+  nextPage: string | null;
+} {
   const data = dataOf(body);
   if (!data) return { messages: [], nextPage: null };
   const messages = list(data.value).map((m): MailMessage => {
-    const from = isRecord(m.from) && isRecord(m.from.emailAddress) ? str(m.from.emailAddress.address) : "";
+    const from =
+      isRecord(m.from) && isRecord(m.from.emailAddress) ? str(m.from.emailAddress.address) : "";
     return {
       thread: str(m.conversationId) || str(m.id),
       domain: domainOf(from),
@@ -257,7 +266,13 @@ function minutesBetween(start: string, end: string): number | undefined {
   return Number.isFinite(ms) && ms >= 0 ? Math.round(ms / 60_000) : undefined;
 }
 
-function event(id: string, subject: string, start: string, end: string, extra: Partial<ArrivalItem>): ArrivalItem {
+function event(
+  id: string,
+  subject: string,
+  start: string,
+  end: string,
+  extra: Partial<ArrivalItem>,
+): ArrivalItem {
   return {
     id,
     source: "event",
@@ -277,7 +292,10 @@ function googleTime(x: unknown): string {
   return isoOf(x.dateTime) || isoOf(x.date);
 }
 
-export function parseGoogleCalendar(body: string): { items: ArrivalItem[]; nextPage: string | null } {
+export function parseGoogleCalendar(body: string): {
+  items: ArrivalItem[];
+  nextPage: string | null;
+} {
   const data = dataOf(body);
   if (!data) return { items: [], nextPage: null };
   const items = list(data.items)
@@ -296,7 +314,10 @@ function outlookTime(x: unknown): string {
   return isRecord(x) ? isoOf(x.dateTime) : "";
 }
 
-export function parseOutlookCalendar(body: string): { items: ArrivalItem[]; nextPage: string | null } {
+export function parseOutlookCalendar(body: string): {
+  items: ArrivalItem[];
+  nextPage: string | null;
+} {
   const data = dataOf(body);
   if (!data) return { items: [], nextPage: null };
   const items = list(data.value)
@@ -320,7 +341,11 @@ function billed(status: number): boolean {
   return status !== 501 && status !== 502;
 }
 
-export async function readSource(env: ComposioEnv, source: ReadSource, now: Date): Promise<ReadResult> {
+export async function readSource(
+  env: ComposioEnv,
+  source: ReadSource,
+  now: Date,
+): Promise<ReadResult> {
   const calls: string[] = [];
   const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000).toISOString();
   const until = now.toISOString();
@@ -397,7 +422,11 @@ export async function readSource(env: ComposioEnv, source: ReadSource, now: Date
           top: EVENT_CAP,
         }),
       ).items;
-      return { items: [...mail.items, ...calendar.slice(0, EVENT_CAP)], calls, selfDomains: mail.selfDomains };
+      return {
+        items: [...mail.items, ...calendar.slice(0, EVENT_CAP)],
+        calls,
+        selfDomains: mail.selfDomains,
+      };
     }
     case "googlecalendar": {
       const { items } = parseGoogleCalendar(

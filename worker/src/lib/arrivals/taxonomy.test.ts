@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { KINDS, KIND_GUIDE, PROPOSAL_FOR, TAXONOMY_VERSION, UNANSWERED_KINDS, isKind } from "./taxonomy";
+import {
+  KINDS,
+  KIND_GUIDE,
+  PROPOSAL_FOR,
+  TAXONOMY_VERSION,
+  UNANSWERED_KINDS,
+  isKind,
+} from "./taxonomy";
 
 describe("the taxonomy", () => {
   it("is ten kinds, in the order the report lists them when counts tie", () => {
@@ -23,9 +30,14 @@ describe("the taxonomy", () => {
   });
 
   it("proposes a routine for six kinds, each an arrivals template", () => {
-    expect(Object.keys(PROPOSAL_FOR).sort()).toEqual(
-      ["admin", "people", "question", "request", "scheduling", "update"],
-    );
+    expect(Object.keys(PROPOSAL_FOR).sort()).toEqual([
+      "admin",
+      "people",
+      "question",
+      "request",
+      "scheduling",
+      "update",
+    ]);
     for (const id of Object.values(PROPOSAL_FOR)) expect(id).toMatch(/^arrivals-/);
   });
 

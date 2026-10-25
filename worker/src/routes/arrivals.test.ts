@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppEnv } from "../types";
-import { activeWorkspaceTables, fakeDb, type QueryContext, type QueryResult } from "../test-support/fake-db";
+import {
+  activeWorkspaceTables,
+  fakeDb,
+  type QueryContext,
+  type QueryResult,
+} from "../test-support/fake-db";
 
 /**
  * A scan one person owns, through the caller's own client.
@@ -63,7 +68,11 @@ function setup(spec: Spec = {}) {
           const rows = spec.scans ?? [];
           return { data: ctx.single ? (rows[0] ?? null) : rows, error: null };
         },
-        insert: (ctx) => spec.insert ?? { data: { ...scanRow({ status: "queued", total: null }), ...ctx.values }, error: null },
+        insert: (ctx) =>
+          spec.insert ?? {
+            data: { ...scanRow({ status: "queued", total: null }), ...ctx.values },
+            error: null,
+          },
       },
       arrival_buckets: {
         select: () => ({ data: spec.buckets ?? [], error: null }),
@@ -229,7 +238,9 @@ describe("GET /arrivals/:id", () => {
 describe("PATCH /arrivals/:id/buckets/:kind", () => {
   it("records the routine made from a bucket", async () => {
     const { send, callsTo } = setup();
-    const res = await send("PATCH", `/arrivals/${SCAN_ID}/buckets/question`, { routineId: ROUTINE_ID });
+    const res = await send("PATCH", `/arrivals/${SCAN_ID}/buckets/question`, {
+      routineId: ROUTINE_ID,
+    });
     expect(res.status).toBe(200);
     const [update] = callsTo("arrival_buckets").filter((c) => c.op === "update");
     expect(update.values).toEqual({ routine_id: ROUTINE_ID });
@@ -243,7 +254,9 @@ describe("PATCH /arrivals/:id/buckets/:kind", () => {
 
   it("answers 404 when no bucket of the caller's was changed", async () => {
     const { send } = setup({ update: { data: [], error: null } });
-    const res = await send("PATCH", `/arrivals/${SCAN_ID}/buckets/question`, { routineId: ROUTINE_ID });
+    const res = await send("PATCH", `/arrivals/${SCAN_ID}/buckets/question`, {
+      routineId: ROUTINE_ID,
+    });
     expect(res.status).toBe(404);
   });
 
@@ -255,7 +268,9 @@ describe("PATCH /arrivals/:id/buckets/:kind", () => {
 
   it("is refused to an API key", async () => {
     const { send } = setup({ apiKey: true });
-    const res = await send("PATCH", `/arrivals/${SCAN_ID}/buckets/question`, { routineId: ROUTINE_ID });
+    const res = await send("PATCH", `/arrivals/${SCAN_ID}/buckets/question`, {
+      routineId: ROUTINE_ID,
+    });
     expect(res.status).toBe(403);
   });
 });

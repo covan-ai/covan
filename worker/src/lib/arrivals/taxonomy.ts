@@ -45,7 +45,10 @@ export const KIND_GUIDE: Record<ArrivalKind, string> = {
  * Where somebody is waiting on the person. A newsletter never gets a reply and
  * should not inflate "never got a reply", so only these two are counted.
  */
-export const UNANSWERED_KINDS: ReadonlySet<ArrivalKind> = new Set<ArrivalKind>(["question", "request"]);
+export const UNANSWERED_KINDS: ReadonlySet<ArrivalKind> = new Set<ArrivalKind>([
+  "question",
+  "request",
+]);
 
 /** The routine template proposed for a kind; kinds absent here get none. */
 export const PROPOSAL_FOR: Partial<Record<ArrivalKind, string>> = {

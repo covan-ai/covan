@@ -2,7 +2,14 @@ import { complete, extractJsonObject, type CompletionEnv } from "../completion";
 import { completionSpend, spends, type Spend } from "../entitlements";
 import { resolveModel, type ModelEnv } from "../models";
 import type { ArrivalItem } from "./read";
-import { KINDS, KIND_GUIDE, PROPOSAL_FOR, UNANSWERED_KINDS, isKind, type ArrivalKind } from "./taxonomy";
+import {
+  KINDS,
+  KIND_GUIDE,
+  PROPOSAL_FOR,
+  UNANSWERED_KINDS,
+  isKind,
+  type ArrivalKind,
+} from "./taxonomy";
 
 /**
  * Sorting what arrived into the ten kinds, and naming each for this person.
@@ -54,7 +61,9 @@ function parsed(text: string): unknown {
 function records(x: unknown, key: string): Record<string, unknown>[] {
   if (typeof x !== "object" || x === null) return [];
   const list = (x as Record<string, unknown>)[key];
-  return Array.isArray(list) ? list.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null) : [];
+  return Array.isArray(list)
+    ? list.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
+    : [];
 }
 
 function classifyInstruction(selfDomains: string[]): string {
@@ -80,7 +89,9 @@ export async function classifyItems(
   items: ArrivalItem[],
   context: { selfDomains?: string[] } = {},
 ): Promise<{ kinds: ArrivalKind[]; spent: Spend[] }> {
-  const kinds: ArrivalKind[] = items.map((item) => (item.source === "event" ? "scheduling" : "other"));
+  const kinds: ArrivalKind[] = items.map((item) =>
+    item.source === "event" ? "scheduling" : "other",
+  );
   const mail = items.flatMap((item, at) => (item.source === "mail" ? [at] : []));
   const spent: Spend[] = [];
   const model = resolveModel(CLASSIFY_MODEL, env);
@@ -121,16 +132,17 @@ function waiting(item: ArrivalItem, now: Date): boolean {
 export function bucketise(items: ArrivalItem[], kinds: ArrivalKind[], now: Date): Bucket[] {
   const buckets: Bucket[] = [];
   for (const kind of KINDS) {
-    const mine = items
-      .filter((_, i) => kinds[i] === kind)
-      .sort((a, b) => b.at.localeCompare(a.at));
+    const mine = items.filter((_, i) => kinds[i] === kind).sort((a, b) => b.at.localeCompare(a.at));
     if (mine.length === 0) continue;
     buckets.push({
       kind,
       label: "",
       count: mine.length,
       unanswered: UNANSWERED_KINDS.has(kind) ? mine.filter((item) => waiting(item, now)).length : 0,
-      examples: mine.map((item) => item.subject.trim()).filter(Boolean).slice(0, EXAMPLES),
+      examples: mine
+        .map((item) => item.subject.trim())
+        .filter(Boolean)
+        .slice(0, EXAMPLES),
       templateId: PROPOSAL_FOR[kind] ?? null,
     });
   }
@@ -155,9 +167,12 @@ export async function labelBuckets(
 ): Promise<{ buckets: Bucket[]; spent: Spend[] }> {
   const out = buckets.map((b) => ({ ...b }));
   for (const b of out) {
-    if (b.count <= LABEL_MIN) b.examples = (subjectsByKind.get(b.kind) ?? b.examples).slice(0, EXAMPLES);
+    if (b.count <= LABEL_MIN)
+      b.examples = (subjectsByKind.get(b.kind) ?? b.examples).slice(0, EXAMPLES);
   }
-  const named = out.filter((b) => b.count > LABEL_MIN && (subjectsByKind.get(b.kind)?.length ?? 0) > 0);
+  const named = out.filter(
+    (b) => b.count > LABEL_MIN && (subjectsByKind.get(b.kind)?.length ?? 0) > 0,
+  );
   if (named.length === 0) return { buckets: out, spent: [] };
 
   const model = resolveModel(CLASSIFY_MODEL, env);
@@ -183,7 +198,13 @@ export async function labelBuckets(
     const subjects = subjectsByKind.get(bucket.kind) ?? [];
     const picked = Array.isArray(row.examples)
       ? row.examples
-          .filter((i): i is number => typeof i === "number" && Number.isInteger(i) && i >= 0 && i < Math.min(subjects.length, LABEL_SUBJECTS))
+          .filter(
+            (i): i is number =>
+              typeof i === "number" &&
+              Number.isInteger(i) &&
+              i >= 0 &&
+              i < Math.min(subjects.length, LABEL_SUBJECTS),
+          )
           .map((i) => subjects[i])
       : [];
     if (picked.length) bucket.examples = [...new Set(picked)].slice(0, EXAMPLES);

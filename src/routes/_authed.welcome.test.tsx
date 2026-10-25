@@ -311,7 +311,15 @@ describe("the first run", () => {
       h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
       h.toolConnections.mockResolvedValue({
         connections: [
-          { id: "c-1", transport: "composio", toolkitSlug: "gmail", status: "active", mine: true, label: "Gmail", logoPath: "" },
+          {
+            id: "c-1",
+            transport: "composio",
+            toolkitSlug: "gmail",
+            status: "active",
+            mine: true,
+            label: "Gmail",
+            logoPath: "",
+          },
         ],
         tools: [],
       });
@@ -351,7 +359,15 @@ describe("the first run", () => {
         total: 31,
         unanswered: 5,
         buckets: [
-          { kind: "question", label: "", count: 9, unanswered: 5, examples: [], templateId: "arrivals-questions", routineId: null },
+          {
+            kind: "question",
+            label: "",
+            count: 9,
+            unanswered: 5,
+            examples: [],
+            templateId: "arrivals-questions",
+            routineId: null,
+          },
         ],
       });
       await renderWelcome();
@@ -366,7 +382,13 @@ describe("the first run", () => {
     it("goes from the documents to what arrived when a scan is under way", async () => {
       search = { step: "first-docs", agent: "a9", s: "s9" };
       h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
-      h.latest.mockResolvedValue({ id: "scan-1", status: "running", total: null, unanswered: null, buckets: [] });
+      h.latest.mockResolvedValue({
+        id: "scan-1",
+        status: "running",
+        total: null,
+        unanswered: null,
+        buckets: [],
+      });
       await renderWelcome();
 
       expect(await screen.findByText("Step 4 of 5")).toBeInTheDocument();

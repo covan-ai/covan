@@ -7,7 +7,11 @@ import { SCAN_TOOLKITS, type ScanToolkit } from "@/lib/arrivals";
 import { connectErrorMessage } from "@/lib/connections-api";
 import { docsUrl } from "@/lib/docs";
 import { takePendingGrant } from "@/lib/sensitive-url";
-import { toolConnectionsKey, useConnectComposio, useToolConnections } from "@/hooks/use-connections";
+import {
+  toolConnectionsKey,
+  useConnectComposio,
+  useToolConnections,
+} from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
 import { IntegrationRow } from "@/components/integrations/integration-row";
 import { Button } from "@/components/ui/button";
@@ -51,8 +55,12 @@ export function ConnectCards({
   const queryClient = useQueryClient();
   const { data } = useToolConnections();
   const connect = useConnectComposio();
+  // The latest callback, for an effect that runs once: a grant is finished at
+  // most once, whatever the parent re-renders with in the meantime.
   const reported = useRef(onConnected);
-  reported.current = onConnected;
+  useEffect(() => {
+    reported.current = onConnected;
+  });
 
   useEffect(() => {
     const pending = takePendingGrant();
@@ -109,7 +117,9 @@ export function ConnectCards({
         ))}
       </ul>
       <p className="text-meta text-muted-foreground">
-        {t("Covan reads the last thirty days, counts what came in, and keeps nothing but the counts.")}{" "}
+        {t(
+          "Covan reads the last thirty days, counts what came in, and keeps nothing but the counts.",
+        )}{" "}
         <a
           href={`${docsUrl("integrations")}#what-a-scan-reads-and-keeps`}
           target="_blank"

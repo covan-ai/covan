@@ -139,19 +139,28 @@ describe("arrival scans", () => {
   it("a teammate reads neither", async () => {
     const { data: scans } = await linus.db.from("arrival_scans").select("id").eq("id", scanId);
     expect(scans).toEqual([]);
-    const { data: buckets } = await linus.db.from("arrival_buckets").select("kind").eq("scan_id", scanId);
+    const { data: buckets } = await linus.db
+      .from("arrival_buckets")
+      .select("kind")
+      .eq("scan_id", scanId);
     expect(buckets).toEqual([]);
   });
 
   it("an admin of the workspace reads neither", async () => {
     const { data: scans } = await grace.db.from("arrival_scans").select("id").eq("id", scanId);
     expect(scans).toEqual([]);
-    const { data: buckets } = await grace.db.from("arrival_buckets").select("kind").eq("scan_id", scanId);
+    const { data: buckets } = await grace.db
+      .from("arrival_buckets")
+      .select("kind")
+      .eq("scan_id", scanId);
     expect(buckets).toEqual([]);
   });
 
   it("the owner cannot change the scan itself", async () => {
-    const { error } = await ada.db.from("arrival_scans").update({ status: "done" }).eq("id", scanId);
+    const { error } = await ada.db
+      .from("arrival_scans")
+      .update({ status: "done" })
+      .eq("id", scanId);
     expect(error).not.toBeNull();
   });
 });

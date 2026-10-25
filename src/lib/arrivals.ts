@@ -49,7 +49,10 @@ export const PROPOSAL_FOR: Partial<Record<ArrivalKind, string>> = {
 };
 
 /** The only kinds whose "never got a reply" share the report shows. */
-export const UNANSWERED_KINDS: ReadonlySet<ArrivalKind> = new Set<ArrivalKind>(["question", "request"]);
+export const UNANSWERED_KINDS: ReadonlySet<ArrivalKind> = new Set<ArrivalKind>([
+  "question",
+  "request",
+]);
 
 /** The toolkits a scan can read. A connection to any of these offers one. */
 export const SCAN_TOOLKITS = ["gmail", "outlook", "googlecalendar"] as const;

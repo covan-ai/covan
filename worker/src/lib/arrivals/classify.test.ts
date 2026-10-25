@@ -14,7 +14,8 @@ vi.mock("../completion", async (importOriginal) => ({
   complete: (...args: unknown[]) => complete(...args),
 }));
 
-const { CLASSIFY_BATCH, bucketise, classifyItems, headline, labelBuckets } = await import("./classify");
+const { CLASSIFY_BATCH, bucketise, classifyItems, headline, labelBuckets } =
+  await import("./classify");
 
 const NOW = new Date("2026-10-26T09:00:00Z");
 const ENV = { OPENAI_API_KEY: "sk" } as never;
@@ -35,7 +36,11 @@ function mail(i: number, over: Partial<ArrivalItem> = {}): ArrivalItem {
 }
 
 function reply(obj: unknown) {
-  return { text: typeof obj === "string" ? obj : JSON.stringify(obj), usage: USAGE, finishReason: "stop" };
+  return {
+    text: typeof obj === "string" ? obj : JSON.stringify(obj),
+    usage: USAGE,
+    finishReason: "stop",
+  };
 }
 
 beforeEach(() => complete.mockReset());
@@ -50,12 +55,19 @@ describe("classifyItems", () => {
     expect(second.json).toBe(true);
     const lines = second.messages.at(-1).content.split("\n");
     expect(lines).toHaveLength(10);
-    expect(lines[0]).toBe(`0. from: acme.test · Subject ${CLASSIFY_BATCH} · Snippet ${CLASSIFY_BATCH}`);
+    expect(lines[0]).toBe(
+      `0. from: acme.test · Subject ${CLASSIFY_BATCH} · Snippet ${CLASSIFY_BATCH}`,
+    );
   });
 
   it("takes the kind the model gives each line", async () => {
     complete.mockResolvedValue(
-      reply({ items: [{ i: 0, kind: "question" }, { i: 1, kind: "admin" }] }),
+      reply({
+        items: [
+          { i: 0, kind: "question" },
+          { i: 1, kind: "admin" },
+        ],
+      }),
     );
     const { kinds, spent } = await classifyItems(ENV, [mail(0), mail(1)]);
     expect(kinds).toEqual(["question", "admin"]);
@@ -64,7 +76,13 @@ describe("classifyItems", () => {
 
   it("counts a line the model left out, or put in a kind that does not exist, as other", async () => {
     complete.mockResolvedValue(
-      reply({ items: [{ i: 1, kind: "spam" }, { i: 9, kind: "question" }, { i: "0", kind: "question" }] }),
+      reply({
+        items: [
+          { i: 1, kind: "spam" },
+          { i: 9, kind: "question" },
+          { i: "0", kind: "question" },
+        ],
+      }),
     );
     const { kinds } = await classifyItems(ENV, [mail(0), mail(1), mail(2)]);
     expect(kinds).toEqual(["other", "other", "other"]);
@@ -113,7 +131,11 @@ describe("bucketise", () => {
       mail(3), // update, nobody waiting
       mail(4), // request, waiting
     ];
-    const buckets = bucketise(items, ["question", "question", "question", "update", "request"], NOW);
+    const buckets = bucketise(
+      items,
+      ["question", "question", "question", "update", "request"],
+      NOW,
+    );
     const by = Object.fromEntries(buckets.map((b) => [b.kind, b.unanswered]));
     expect(by).toEqual({ question: 1, update: 0, request: 1 });
   });
@@ -161,7 +183,10 @@ describe("labelBuckets", () => {
   it("keeps the counts' own examples when the reply is unusable", async () => {
     complete.mockResolvedValue(reply("{not json"));
     const { buckets: out } = await labelBuckets(ENV, buckets, new Map(subjects));
-    expect(out.find((b) => b.kind === "admin")).toMatchObject({ label: "", examples: buckets[0].examples });
+    expect(out.find((b) => b.kind === "admin")).toMatchObject({
+      label: "",
+      examples: buckets[0].examples,
+    });
   });
 
   it("makes no call when no bucket is big enough to name", async () => {

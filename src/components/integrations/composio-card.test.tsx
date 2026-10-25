@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type React from "react";
 import type { ToolConnection, ToolConnectionGrant } from "@/lib/connections-api";
 import { ConnectedApps } from "./composio-card";
 
@@ -33,6 +34,12 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
+    <a href={to}>{children}</a>
+  ),
+}));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@tanstack/react-query")>();
@@ -108,6 +115,23 @@ const STANDING: ToolConnectionGrant = {
 };
 
 describe("ConnectedApps", () => {
+  // 0139: a person's own mailbox or calendar leads to what arrives there.
+  it("links a mailbox of the person's own to what arrives there", () => {
+    renderApps([app({})]);
+    expect(screen.getByRole("link", { name: "What arrives here" }).getAttribute("href")).toBe(
+      "/arrivals",
+    );
+  });
+
+  it.each([
+    ["an application a scan does not read", { toolkitSlug: "linear" }],
+    ["a mailbox still being connected", { status: "pending" as const }],
+    ["somebody else's mailbox", { mine: false }],
+  ])("does not link %s", (_what, over) => {
+    renderApps([app(over)]);
+    expect(screen.queryByRole("link", { name: "What arrives here" })).toBeNull();
+  });
+
   it("lists only the connected apps, whose they are and how they are doing", () => {
     renderApps([app(), app({ id: "svc", transport: "http", label: "Orders API" })]);
     expect(screen.getByText("Ana's Gmail")).toBeInTheDocument();

@@ -180,7 +180,9 @@ export const ARRIVAL_TEMPLATES: RoutineTemplate[] = [
   {
     id: "arrivals-questions",
     label: msg("Questions waiting on you"),
-    blurb: msg("Each morning: the questions that arrived since yesterday, each with a draft reply from what your team has written down."),
+    blurb: msg(
+      "Each morning: the questions that arrived since yesterday, each with a draft reply from what your team has written down.",
+    ),
     draft: {
       name: msg("Questions waiting on me"),
       sourceKind: "none",
@@ -194,7 +196,9 @@ export const ARRIVAL_TEMPLATES: RoutineTemplate[] = [
   {
     id: "arrivals-requests",
     label: msg("What is waiting on your decision"),
-    blurb: msg("Each morning: what is waiting on a decision or an approval from you, oldest first."),
+    blurb: msg(
+      "Each morning: what is waiting on a decision or an approval from you, oldest first.",
+    ),
     draft: {
       name: msg("Waiting on my decision"),
       sourceKind: "none",
@@ -208,7 +212,9 @@ export const ARRIVAL_TEMPLATES: RoutineTemplate[] = [
   {
     id: "arrivals-day-ahead",
     label: msg("Your day ahead"),
-    blurb: msg("Each morning: today's meetings, who is in them, and the last thread with each of them."),
+    blurb: msg(
+      "Each morning: today's meetings, who is in them, and the last thread with each of them.",
+    ),
     draft: {
       name: msg("My day ahead"),
       sourceKind: "none",

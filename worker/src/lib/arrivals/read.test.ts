@@ -117,7 +117,10 @@ describe("parseGmail and gmailThreads", () => {
     const body = JSON.stringify({
       data: {
         messages: [
-          gmailMessage({ threadId: "D", messageTimestamp: String(Date.parse("2026-10-23T10:00:00Z")) }),
+          gmailMessage({
+            threadId: "D",
+            messageTimestamp: String(Date.parse("2026-10-23T10:00:00Z")),
+          }),
         ],
       },
     });
@@ -172,7 +175,10 @@ describe("parseOutlookMail and outlookThreads", () => {
   it("joins the inbox to the sent folder by conversation", () => {
     const received = parseOutlookMail(inbox);
     expect(received.nextPage).toBe("n2");
-    const { items, selfDomains } = outlookThreads(received.messages, parseOutlookMail(sent).messages);
+    const { items, selfDomains } = outlookThreads(
+      received.messages,
+      parseOutlookMail(sent).messages,
+    );
     const x = items.find((i) => i.id === "X")!;
     expect(x).toMatchObject({ domain: "harbour.test", repliedByMe: true, fromMe: true });
     const y = items.find((i) => i.id === "Y")!;
@@ -197,7 +203,12 @@ describe("the calendars", () => {
             recurringEventId: "r1",
           },
           { id: "e2", summary: "Dropped", status: "cancelled", start: { date: "2026-10-21" } },
-          { id: "e3", summary: "Offsite", start: { date: "2026-10-22" }, end: { date: "2026-10-23" } },
+          {
+            id: "e3",
+            summary: "Offsite",
+            start: { date: "2026-10-22" },
+            end: { date: "2026-10-23" },
+          },
         ],
       },
       successful: true,
@@ -318,7 +329,11 @@ describe("readSource", () => {
       { connectionId: "c3", toolkit: "outlook", account: ACCOUNT },
       NOW,
     );
-    expect(out.calls).toEqual(["OUTLOOK_LIST_MESSAGES", "OUTLOOK_LIST_MESSAGES", "OUTLOOK_GET_CALENDAR_VIEW"]);
+    expect(out.calls).toEqual([
+      "OUTLOOK_LIST_MESSAGES",
+      "OUTLOOK_LIST_MESSAGES",
+      "OUTLOOK_GET_CALENDAR_VIEW",
+    ]);
     expect(execute.mock.calls[1][1].arguments.folder).toBe("sentitems");
   });
 

@@ -32,12 +32,7 @@ export type AnswerPatch = Partial<{
 }>;
 
 export type OnboardingStep =
-  | "invite-accept"
-  | "workspace"
-  | "assistant"
-  | "connect"
-  | "first-docs"
-  | "arrivals";
+  "invite-accept" | "workspace" | "assistant" | "connect" | "first-docs" | "arrivals";
 
 export type FlowContext = {
   answers: OnboardingAnswers;

@@ -2345,17 +2345,6 @@ export type CoverageAgent = {
 };
 
 /**
- * What the team asked that nothing written was close to, for an admin.
- *
- * By agent and by window, never by person and never the question itself — the
- * functions in `0053` do not select a `user_id` and return no content. Listing
- * the questions is a separate feature with a consent step in front of it.
- *
- * `available` is false in exactly one situation: the API is deployed and
- * `0053` has not been applied yet, the same window `WorkspaceUsageResponse`
- * describes.
- */
-/**
  * One thing an agent keeps in mind (Settings › Memory). `about` is who it
  * says something about; `scope` is who may read it: "owner" is the author
  * alone, "workspace" is everyone. `mine` is whether the caller wrote it, which
@@ -2371,6 +2360,17 @@ export type MemoryNote = {
   createdAt: number;
 };
 
+/**
+ * What the team asked that nothing written was close to, for an admin.
+ *
+ * By agent and by window, never by person and never the question itself — the
+ * functions in `0053` do not select a `user_id` and return no content. Listing
+ * the questions is a separate feature with a consent step in front of it.
+ *
+ * `available` is false in exactly one situation: the API is deployed and
+ * `0053` has not been applied yet, the same window `WorkspaceUsageResponse`
+ * describes.
+ */
 export type CoverageResponse = {
   available: boolean;
   /** The window these figures cover, in days, after clamping. */

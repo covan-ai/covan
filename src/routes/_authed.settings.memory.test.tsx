@@ -169,13 +169,14 @@ describe("/settings/memory", () => {
   it("says so when there is nothing yet", async () => {
     h.list.mockResolvedValue({ notes: [] });
     renderRoute(Route);
-    expect(
-      (
-        await screen.findAllByText(
+    // The role arrives with `me`, a beat after the list; until then no one can add.
+    await waitFor(() =>
+      expect(
+        screen.getAllByText(
           "Nothing yet. Tell an agent something worth keeping, or write it here.",
-        )
-      ).length,
-    ).toBe(2);
+        ),
+      ).toHaveLength(2),
+    );
   });
 
   it("reads in Turkish", async () => {

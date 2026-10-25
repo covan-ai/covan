@@ -76,7 +76,11 @@ export function MemoryNotesSection({
 
       {notes.length === 0 ? (
         <EmptyWell
-          title={t("Nothing yet. Tell an agent something worth keeping, or write it here.")}
+          title={
+            canAdd
+              ? t("Nothing yet. Tell an agent something worth keeping, or write it here.")
+              : t("Nothing yet. Tell an agent something worth keeping.")
+          }
         />
       ) : (
         <ul className="m-0 list-none border-y border-hairline p-0">

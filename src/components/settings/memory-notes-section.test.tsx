@@ -105,6 +105,21 @@ describe("MemoryNotesSection", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
+  it("does not tell a viewer to write a note when there is nowhere to write it", () => {
+    mount({ canAdd: false, notes: [] });
+    expect(
+      screen.getByText("Nothing yet. Tell an agent something worth keeping."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/or write it here/)).not.toBeInTheDocument();
+  });
+
+  it("tells someone who can add that they may write one", () => {
+    mount({ canAdd: true, notes: [] });
+    expect(
+      screen.getByText("Nothing yet. Tell an agent something worth keeping, or write it here."),
+    ).toBeInTheDocument();
+  });
+
   it("lets a viewer delete their own private note but not a team one", () => {
     h.canWrite = false;
     mount({

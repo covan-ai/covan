@@ -331,6 +331,9 @@ chat.post("/chat/stream", async (c) => {
   const teamContext = loadTeamContext(db, {
     workspaceId: session.workspace_id as string,
     callerId: c.get("user").id,
+    // A shared session is read by everyone it is shared with, so the asker's
+    // private notes stay out of its prompt.
+    personNotes: !shared,
   });
   const { docNames, ragBlock, sources, grounding, embeddingTokens, rerankSpend } =
     await retrieveForAgent(

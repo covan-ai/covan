@@ -50,7 +50,10 @@ async function readNotes(which: string, query: () => NotesRead): Promise<string[
  * service-role caller would otherwise be handed everyone's. The team's are
  * `scope = 'workspace'` in this workspace; the caller's own are
  * `scope = 'owner'` AND `created_by = callerId` in this workspace, and with no
- * caller that second read is not made at all. Newest first, with the id as the
+ * caller, or when `personNotes` is false, that second read is not made at all.
+ * `personNotes` has no default so each surface decides: a room other people
+ * read must not carry one person's private notes, however well the asker is
+ * known. Newest first, with the id as the
  * tie-break so the same rows always arrive in the same order (the prefix they
  * land in has to be byte-stable). Only `text` is selected.
  *
@@ -59,7 +62,7 @@ async function readNotes(which: string, query: () => NotesRead): Promise<string[
  */
 export async function loadTeamContext(
   db: SupabaseClient,
-  input: { workspaceId: string; callerId: string | null },
+  input: { workspaceId: string; callerId: string | null; personNotes: boolean },
 ): Promise<TeamBlockInput | null> {
   try {
     const [workspace, members] = await Promise.all([
@@ -90,7 +93,7 @@ export async function loadTeamContext(
     );
     const callerId = input.callerId;
     const personNotes =
-      callerId === null
+      callerId === null || !input.personNotes
         ? Promise.resolve<string[]>([])
         : readNotes("personal", () =>
             db

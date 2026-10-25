@@ -374,6 +374,8 @@ function appWith(spec: {
     name: string;
     members: Array<{ id: string; name: string | null; role?: string }>;
   };
+  /** The caller's own `scope = 'owner'` notes, which the loader reads for a private session. */
+  ownerNotes?: string[];
   documents?: Doc[];
   matches?: Match[];
   /** The name the session already has. Null — the default — is a new chat. */
@@ -513,6 +515,16 @@ function appWith(spec: {
       },
       workspaces: {
         select: () => ({ data: spec.team ? { name: spec.team.name } : null, error: null }),
+      },
+      // Only the caller's own notes are ever served, and only to a read that
+      // asks for them by scope; the team's list is empty here.
+      memory_notes: {
+        select: (ctx: QueryContext) => ({
+          data: ctx.filters.some((f) => f.column === "scope" && f.value === "owner")
+            ? (spec.ownerNotes ?? []).map((text) => ({ text }))
+            : [],
+          error: null,
+        }),
       },
       workspace_members: {
         select: () => ({
@@ -1266,6 +1278,35 @@ describe("the people the agent works with", () => {
     expect(embedded).toContain("vacation policy");
     expect(embedded).not.toContain("Grace Hopper:");
     expect(embedded).not.toContain("Ada Lovelace:");
+  });
+
+  it("keeps the asker's private notes out of a shared session's prefix", async () => {
+    const note = "Prefers answers as tables.";
+    const shared = appWith({
+      question: "Hello",
+      team: TEAM,
+      visibility: "shared",
+      ownerNotes: [note],
+    });
+    await ask(shared.app);
+    expect(sentMessages()[0].content).toContain("The team:");
+    expect(sentMessages()[0].content).not.toContain(note);
+    expect(
+      shared.calls.some(
+        (c) => c.table === "memory_notes" && c.filters.some((f) => f.value === "owner"),
+      ),
+    ).toBe(false);
+
+    completionCreate.mockClear();
+    answersWith(streamOf("Twenty days."));
+    const priv = appWith({
+      question: "Hello",
+      team: TEAM,
+      visibility: "private",
+      ownerNotes: [note],
+    });
+    await ask(priv.app);
+    expect(sentMessages()[0].content).toContain(note);
   });
 
   it("gives tools whether the session is shared", async () => {

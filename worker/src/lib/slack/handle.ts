@@ -290,6 +290,9 @@ export async function handleSlackEvent(
   const teamContext = loadTeamContext(deps.db, {
     workspaceId: installation.workspace_id,
     callerId: userId,
+    // Never in Slack: a thread, even a direct message, is a surface other
+    // people and apps can read. Slack sees the team's notes only.
+    personNotes: false,
   });
 
   // The same history the turn is assembled from. `retrievalQuery` reads the

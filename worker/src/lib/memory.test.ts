@@ -66,6 +66,7 @@ describe("loadTeamContext", () => {
     const out = await loadTeamContext(db as unknown as SupabaseClient, {
       workspaceId: "w1",
       callerId: ADA,
+      personNotes: true,
     });
 
     expect(out?.workspaceName).toBe("Acme");
@@ -97,7 +98,11 @@ describe("loadTeamContext", () => {
 
   it("selects named profile columns, never email and never *, and scopes every read itself", async () => {
     const { db, callsTo } = memoryDb(seed());
-    await loadTeamContext(db as unknown as SupabaseClient, { workspaceId: "w1", callerId: null });
+    await loadTeamContext(db as unknown as SupabaseClient, {
+      workspaceId: "w1",
+      callerId: null,
+      personNotes: true,
+    });
 
     expect(callsTo("profiles")[0]!.columns).toBe("id, name, bio, timezone");
     // A service-role client sees every row, so nothing may lean on RLS to scope.
@@ -117,6 +122,7 @@ describe("loadTeamContext", () => {
     const out = await loadTeamContext(db as unknown as SupabaseClient, {
       workspaceId: "w2",
       callerId: null,
+      personNotes: true,
     });
     expect(out?.workspaceName).toBe("Other Co");
     expect(out?.people.map((p) => p.id)).toEqual([OUTSIDER]);
@@ -127,6 +133,7 @@ describe("loadTeamContext", () => {
     const out = await loadTeamContext(db as unknown as SupabaseClient, {
       workspaceId: "w1",
       callerId: ADA,
+      personNotes: true,
     });
     // Newest first, this workspace only, and only the caller's private ones.
     expect(out?.teamNotes).toEqual([
@@ -192,6 +199,7 @@ describe("loadTeamContext", () => {
     const out = await loadTeamContext(db as unknown as SupabaseClient, {
       workspaceId: "w1",
       callerId: null,
+      personNotes: true,
     });
     expect(out?.teamNotes).toEqual(["third", "second", "first"]);
   });
@@ -201,8 +209,29 @@ describe("loadTeamContext", () => {
     const out = await loadTeamContext(db as unknown as SupabaseClient, {
       workspaceId: "w1",
       callerId: null,
+      personNotes: true,
     });
     expect(out?.personNotes).toEqual([]);
+    expect(out?.teamNotes).toHaveLength(3);
+    const reads = callsTo("memory_notes");
+    expect(reads).toHaveLength(1);
+    expect(reads[0]!.filters.some((f) => f.column === "created_by")).toBe(false);
+    expect(reads.some((r) => r.filters.some((f) => f.value === "owner"))).toBe(false);
+  });
+
+  it("reads no private notes when the surface is not private, caller or not", async () => {
+    // A shared room is read by everyone in it, so the caller's own notes stay
+    // out even though the caller is known and the notes exist. The roster and
+    // the caller are unchanged.
+    const { db, callsTo } = memoryDb({ ...seed(), memory_notes: notes() });
+    const out = await loadTeamContext(db as unknown as SupabaseClient, {
+      workspaceId: "w1",
+      callerId: ADA,
+      personNotes: false,
+    });
+    expect(out?.personNotes).toEqual([]);
+    expect(out?.callerId).toBe(ADA);
+    expect(out?.people.map((p) => p.id).sort()).toEqual([ADA, GRACE, LIN].sort());
     expect(out?.teamNotes).toHaveLength(3);
     const reads = callsTo("memory_notes");
     expect(reads).toHaveLength(1);
@@ -217,6 +246,7 @@ describe("loadTeamContext", () => {
     const out = await loadTeamContext(db as unknown as SupabaseClient, {
       workspaceId: "w1",
       callerId: GRACE,
+      personNotes: true,
     });
     expect(out?.personNotes).toEqual(["Hates long emails."]);
     const createdBy = callsTo("memory_notes").flatMap((r) =>
@@ -239,6 +269,7 @@ describe("loadTeamContext", () => {
       const out = await loadTeamContext(db as unknown as SupabaseClient, {
         workspaceId: "w1",
         callerId: ADA,
+        personNotes: true,
       });
       expect(out?.workspaceName).toBe("Acme");
       expect(out?.people).toHaveLength(3);
@@ -268,6 +299,7 @@ describe("loadTeamContext", () => {
     const out = await loadTeamContext(db as unknown as SupabaseClient, {
       workspaceId: "w1",
       callerId: ADA,
+      personNotes: true,
     });
     expect(out?.people).toHaveLength(3);
     expect(out?.teamNotes).toEqual([]);
@@ -282,6 +314,7 @@ describe("loadTeamContext", () => {
       await loadTeamContext(db as unknown as SupabaseClient, {
         workspaceId: "nope",
         callerId: null,
+        personNotes: true,
       }),
     ).toBeNull();
   });
@@ -296,6 +329,7 @@ describe("loadTeamContext", () => {
       const out = await loadTeamContext(db as unknown as SupabaseClient, {
         workspaceId: "w1",
         callerId: ADA,
+        personNotes: true,
       });
       expect(out).toBeNull();
       expect(log).toHaveBeenCalled();
@@ -310,7 +344,9 @@ describe("loadTeamContext", () => {
         throw new Error("socket closed");
       },
     } as unknown as SupabaseClient;
-    expect(await loadTeamContext(db, { workspaceId: "w1", callerId: null })).toBeNull();
+    expect(
+      await loadTeamContext(db, { workspaceId: "w1", callerId: null, personNotes: true }),
+    ).toBeNull();
     expect(log).toHaveBeenCalled();
     log.mockRestore();
   });

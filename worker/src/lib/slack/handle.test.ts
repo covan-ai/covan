@@ -117,6 +117,8 @@ function db(
     recent?: Array<{ role: string; content: string; sender_id?: string | null }>;
     /** What `chat_sessions.visibility` says for a thread that already has a session. */
     threadVisibility?: "shared" | "private";
+    /** The asker's own `scope = 'owner'` notes; Slack must never read them. */
+    ownerNotes?: string[];
   } = {},
 ) {
   const activeWorkspace = options.activeWorkspace ?? null;
@@ -169,6 +171,14 @@ function db(
                 ],
                 error: null,
               },
+      },
+      memory_notes: {
+        select: (ctx) => ({
+          data: ctx.filters.some((f) => f.column === "scope" && f.value === "owner")
+            ? (options.ownerNotes ?? []).map((text) => ({ text }))
+            : [],
+          error: null,
+        }),
       },
       workspaces: {
         select: () =>
@@ -624,6 +634,19 @@ describe("the room the thread is in", () => {
     expect(sent()[0].content).toContain("The team:");
     expect(sent()[0].content).toContain("Ada Lovelace");
     expect(sent()[0].content).toContain("You are talking to Deniz Kaya");
+  });
+
+  it("never puts the caller's private notes in the prefix", async () => {
+    const note = "Prefers answers as tables.";
+    const fake = db({ identity: true, ownerNotes: [note] });
+
+    await handleSlackEvent(await installation(), mention(), deps(fake));
+
+    expect(sent()[0].content).toContain("You are talking to Deniz Kaya");
+    expect(sent()[0].content).not.toContain(note);
+    expect(
+      fake.callsTo("memory_notes").some((c) => c.filters.some((f) => f.value === "owner")),
+    ).toBe(false);
   });
 
   it("reads the roster for the installation's workspace, since the service role sees every one", async () => {

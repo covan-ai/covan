@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { scheduleError } from "@/components/routines/schedule-picker";
+import { PROPOSAL_FOR } from "./arrivals";
 import {
+  ARRIVAL_TEMPLATES,
   ROUTINE_TEMPLATES,
+  arrivalTemplateById,
+  fillTemplate,
   templateById,
   unmetRequirements,
   requirementReason,
@@ -150,5 +154,40 @@ describe("what a screen's facts leave unmet", () => {
     for (const r of ["documents", "admin", "gapReport", "enoughPeople"] as const) {
       expect(requirementReason(r).length, r).toBeGreaterThan(30);
     }
+  });
+});
+
+describe("the proposals a scan of what arrived makes", () => {
+  it("has one template for every kind that proposes one", () => {
+    expect(ARRIVAL_TEMPLATES.map((t) => t.id).sort()).toEqual(Object.values(PROPOSAL_FOR).sort());
+  });
+
+  it("are morning digests from the mail, never anything else", () => {
+    for (const t of ARRIVAL_TEMPLATES) {
+      expect(t.draft.sourceKind, t.id).toBe("none");
+      expect(t.draft.channelKind, t.id).toBe("email");
+      expect(t.requires, t.id).toEqual([]);
+      expect(t.endsAfterRuns, t.id).toBeNull();
+      expect(scheduleError(t.draft.scheduleCron), `${t.id}'s cron`).toBeNull();
+      expect(t.draft.instruction.split("{label}"), `${t.id} names its bucket once`).toHaveLength(2);
+      expect(t.draft.instruction, t.id).toMatch(/never send/i);
+    }
+  });
+
+  it("runs the day ahead before the others, and the admin once a week", () => {
+    expect(arrivalTemplateById("arrivals-day-ahead")!.draft.scheduleCron).toBe("0 8 * * *");
+    expect(arrivalTemplateById("arrivals-admin")!.draft.scheduleCron).toBe("0 9 * * 5");
+    expect(arrivalTemplateById("arrivals-questions")!.draft.scheduleCron).toBe("0 9 * * *");
+  });
+
+  it("is not offered where a template is picked, since it needs a bucket's label", () => {
+    expect(templateById("arrivals-questions")).toBeUndefined();
+  });
+
+  it("fills the bucket's label in", () => {
+    const draft = fillTemplate(arrivalTemplateById("arrivals-questions")!, "Questions about the spring order");
+    expect(draft.instruction).toContain("Questions about the spring order");
+    expect(draft.instruction).not.toContain("{label}");
+    expect(draft.scheduleCron).toBe("0 9 * * *");
   });
 });

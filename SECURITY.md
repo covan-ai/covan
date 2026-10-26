@@ -4,8 +4,16 @@
 
 Please do not open a public issue.
 
-Email **efe@covan.app** with a description, reproduction steps, and the
-impact you believe it has. You should get an acknowledgement within 72 hours.
+Report it privately, in either of two ways:
+
+- **On GitHub:** the repository's Security tab →
+  [Report a vulnerability](https://github.com/covan-ai/covan/security/advisories/new).
+  Only the maintainers see the report; the conversation and the fix stay
+  private until the fix is released, and the advisory is published then.
+- **By email:** **efe@covan.app**.
+
+Include a description, reproduction steps, and the impact you believe it has.
+You should get an acknowledgement within 72 hours.
 
 ## Scope
 

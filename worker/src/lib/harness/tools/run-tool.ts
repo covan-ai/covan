@@ -1,4 +1,4 @@
-import { composioConfigured, executeTool, type ComposioTool } from "../../composio/client";
+import { composioConfigured, executeTool, getTool, type ComposioTool } from "../../composio/client";
 import { MAX_TOOL_OUTPUT_CHARS } from "../budget";
 import { compactForModel } from "../compact";
 import { loadConnection, unavailableTools, type ToolConnection } from "../connections";
@@ -108,9 +108,14 @@ function confirmationSummary(
       ? ` Covan will read the results for: ${reading.question}`
       : ` Covan will read up to ${reading.pages} pages of results for: ${reading.question}`
     : "";
-  return operation?.destructive === true
-    ? `${label}: ${act}. This changes data there and cannot be undone from here.`
-    : `${label}: ${act}.${pages}`;
+  if (operation?.destructive === true) {
+    return `${label}: ${act}. This changes data there and cannot be undone from here.`;
+  }
+  // `null` is the catalogue having no hint either way, and a change is what
+  // the gate takes it for — so the card says it may be one.
+  return operation?.destructive === false
+    ? `${label}: ${act}.${pages}`
+    : `${label}: ${act}. This may change data there.${pages}`;
 }
 
 /** Long enough to say what to look for; past this it is a prompt, not a question. */
@@ -257,6 +262,25 @@ function complaints(args: Record<string, unknown>, schema: Record<string, unknow
   return out.slice(0, MAX_COMPLAINTS);
 }
 
+/** The refusal for arguments that do not fit the operation's schema, if they do not. */
+function schemaRefusal(
+  slug: string,
+  callArgs: Record<string, unknown>,
+  schema: ComposioTool["inputSchema"] | undefined,
+): ToolResult | null {
+  if (!schema) return null;
+  const wrong = complaints(callArgs, schema);
+  if (wrong.length === 0) return null;
+  return {
+    kind: "error",
+    message:
+      `${slug} was not sent what its schema asks for, so it was not run:\n` +
+      `${wrong.map((w) => `- ${w}`).join("\n")}\n` +
+      "Fix the arguments and call again. This operation's schema is the one that " +
+      "decides, not the service's own API documentation — they differ.",
+  };
+}
+
 /** Whether a standing grant says this operation never needs asking. */
 async function alwaysAllowed(
   ctx: ToolContext,
@@ -287,8 +311,10 @@ export const runToolTool: AgentTool = {
     "Run one operation at an application this workspace has connected — send the mail, " +
     "create the issue, update the record. You give the connection id, the operation slug " +
     "you found with find_tool, and the arguments that operation takes. Find the slug " +
-    "first; a slug you have not seen in a find_tool result will be refused. The person " +
-    "is asked to approve the first action on each service. Ask narrowly on the first " +
+    "first; a slug you have not seen in a find_tool result will be refused. Reading never " +
+    "needs anyone's approval. An operation that changes something asks the person first, " +
+    "unless they have let this agent change things in that application without asking. " +
+    "Ask narrowly on the first " +
     "call: the answer is trimmed, so a wide request comes back cut off and costs you " +
     "another call. Use the smallest time range and result count the operation accepts, " +
     "and name only the fields you need. To go through many results — a mailbox over weeks, " +
@@ -393,21 +419,9 @@ export const runToolTool: AgentTool = {
     // `offeredOperations`. A confirmed call is checked too: the arguments are the
     // ones that were proposed, so if they are wrong, spending the call to be
     // told so is the one outcome nobody wanted.
-    const operation = ctx.offeredOperations?.get(slug);
-    const schema = operation?.inputSchema;
-    if (schema) {
-      const wrong = complaints(callArgs, schema);
-      if (wrong.length > 0) {
-        return {
-          kind: "error",
-          message:
-            `${slug} was not sent what its schema asks for, so it was not run:\n` +
-            `${wrong.map((w) => `- ${w}`).join("\n")}\n` +
-            "Fix the arguments and call again. This operation's schema is the one that " +
-            "decides, not the service's own API documentation — they differ.",
-        };
-      }
-    }
+    let operation = ctx.offeredOperations?.get(slug);
+    const wrongArguments = schemaRefusal(slug, callArgs, operation?.inputSchema);
+    if (wrongArguments) return wrongArguments;
 
     const connection = await loadConnection(ctx, input.connectionId);
     if (!connection) return { kind: "error", message: "no such connection in this workspace" };
@@ -500,6 +514,24 @@ export const runToolTool: AgentTool = {
       };
     }
 
+    // An operation this turn has not described is looked up before anything is
+    // decided about it, because "is this a read" is the whole gate below. Only
+    // `find_tool` fills `offeredOperations`, so this is a slug recalled from an
+    // earlier turn, a person's own instruction, or a scheduled run that knew
+    // what to call. A confirmed call is not looked up: somebody already said
+    // yes to it, and the resumed turn carries the proposal's own row. A lookup
+    // that fails leaves it undescribed, which the gate reads as a change.
+    if (!operation && ctx.confirmed !== true) {
+      const found = await getTool(ctx.env, slug, { signal: ctx.signal });
+      if (found.kind === "ok") {
+        operation = found.tool;
+        ctx.offeredOperations?.set(slug, found.tool);
+        const wrong = schemaRefusal(slug, callArgs, operation.inputSchema);
+        if (wrong) return wrong;
+      }
+    }
+    const schema = operation?.inputSchema;
+
     // A question pages: the same call again with each next token. That is
     // reading only for an operation the catalogue positively marks as reading —
     // `null` is Composio having no hint, which is how it marks GMAIL_SEND_EMAIL.
@@ -508,76 +540,41 @@ export const runToolTool: AgentTool = {
         kind: "error",
         message:
           `question reads every page of an operation, which is only done for one known to ` +
-          `just read. ${operation ? `${slug} is not marked that way` : `${slug} has not been described this turn — find it with find_tool first`}. ` +
+          `just read. ${operation ? `${slug} is not marked that way` : `${slug} could not be described — find it with find_tool first`}. ` +
           "Call it without question.",
       };
     }
 
-    // Guard 3. Three ways to be allowed, in the order that costs least.
+    // Guard 3. What an agent may do in an application somebody connected.
     //
-    // How far the connection's own approval reaches. Everywhere, except onto a
-    // destructive operation nobody has approved yet — see `approvedSlugs`. A
-    // standing grant still wins, because that is per-slug consent given
-    // deliberately on the Integrations page.
+    // A read never asks, in a conversation or on a schedule: connecting the
+    // application is the permission to read it (covan#410). A read is an
+    // operation the catalogue positively marks non-destructive. `null` is
+    // Composio having no hint either way, and GMAIL_SEND_EMAIL is annotated
+    // that way, so `null` is a change (#201), and so is an operation nobody
+    // could describe.
     //
-    // AND ONLY ONTO AN OPERATION THIS TURN ACTUALLY DESCRIBED. `destructive`
-    // comes from `offeredOperations`, which only `find_tool` fills and which
-    // `buildToolContext` builds empty — so it is empty on every resumed turn,
-    // every scheduled run (`lib/routines/agent-run.ts`), and every turn that
-    // reaches for a slug out of its own transcript rather than searching again
-    // (`find-tool.ts`'s cross-turn recall answers with slugs and returns before
-    // anything describes them). On all of those `operation` is undefined, and
-    // `destructive !== true` then said
-    // "harmless" about GOOGLECALENDAR_CLEAR_CALENDAR and GMAIL_SEND_EMAIL
-    // alike: the narrowing that #201 added was unreachable in exactly the turn
-    // shapes where nobody had read a card.
-    //
-    // An empty map is not a bug in itself — it honestly means "nothing
-    // described this slug to me" — so the fix is to stop reading it as
-    // "nothing dangerous here". Unknown now falls back to the per-slug record
-    // of what was actually approved, which is what `approvedSlugs` already is.
-    // Described keeps `!== true`, so `destructive: null` — a real answer for an
-    // operation Composio annotates with none of MCP's hints — is tolerated
-    // exactly as before and the card count on the working path is unchanged.
-    // And `approvedSlugs` still covers the slug on its own either way, which is
-    // #201's other half: repeating the destructive call somebody just approved
-    // must stay free, and that has nothing to do with whether this turn also
-    // happens to hold its catalogue row.
-    //
-    // And `destructive: null` is no longer "harmless". It is Composio saying it
-    // has no hint either way, and `GMAIL_SEND_EMAIL` is one of the operations
-    // it annotates that way — so text in an email the agent had just been
-    // allowed to read could have it send one, covered by the read's approval.
-    // `docs/integrations.md` promised the opposite. Only an operation the
-    // catalogue positively marks non-destructive rides on the connection.
-    // A viewer reads and changes nothing (`lib/harness/role.ts`). Only an
-    // operation the catalogue positively marks non-destructive counts as a
-    // read, for the reason the paragraph above gives about `null`. Asked
-    // before any approval is weighed, so a viewer's own yes on the card does
-    // not get past it.
-    if (operation?.destructive !== false && !(await mayChangeThings(ctx))) {
+    // A change asks, unless a person said yes to this operation on this
+    // connection earlier in the reply, or this agent may change things here
+    // without asking. A viewer changes nothing, whatever they answer
+    // (`lib/harness/role.ts`), so that is asked before any approval is weighed.
+    const read = operation?.destructive === false;
+    if (!read && !(await mayChangeThings(ctx))) {
       return { kind: "error", message: VIEWERS_READ_ONLY };
     }
 
-    const described = ctx.offeredOperations?.has(slug) === true;
-    const approvedSlug = (ctx.approvedSlugs ?? []).includes(slug);
-    const coveredByConnection =
-      (ctx.approvedConnections ?? []).includes(connection.id) &&
-      (approvedSlug || (described && operation?.destructive === false));
-
-    // Which of the three said yes, carried on the result so the loop can tell
-    // a person's yes from a standing grant's (see `approvedConnectionsFrom`).
-    const approval: RunApproval | null =
-      ctx.confirmed === true
+    // Which one let it through, carried on the result so the loop can tell a
+    // person's yes from everything else (see `approvedSlugsFrom`).
+    const key = `${connection.id}:${slug}`;
+    const approval: RunApproval | null = read
+      ? "read"
+      : ctx.confirmed === true || (ctx.approvedSlugs ?? []).includes(key)
         ? "person"
-        : coveredByConnection
-          ? "connection"
-          : (await alwaysAllowed(ctx, connection, slug))
-            ? "grant"
-            : null;
-    const approved = approval !== null;
+        : (await alwaysAllowed(ctx, connection, slug))
+          ? "grant"
+          : null;
 
-    if (!approved) {
+    if (approval === null) {
       // Nobody is watching a scheduled run, so an unanswerable question is
       // worse than an honest failure: `needs_confirmation` would return
       // `paused` from `runAgentTurn` and abandon the rest of the run
@@ -589,9 +586,9 @@ export const runToolTool: AgentTool = {
         return {
           kind: "error",
           message:
-            `${slug} on ${connection.label} needs a person to approve it and nobody is ` +
-            "watching a scheduled run. Report that you could not do it. Somebody can set " +
-            "this operation to always-allow on the Integrations page if it should happen " +
+            `${slug} changes something in ${connection.label} and nobody is watching a ` +
+            "scheduled run. Report that you could not do it. Somebody can set this " +
+            "operation to always-allow on the Integrations page if it should happen " +
             "unattended.",
         };
       }

@@ -171,38 +171,22 @@ export type ToolContext = {
   /**
    * Connections a person has already approved an action on, in this turn.
    *
-   * Computed by `lib/harness/loop.ts` from the steps it can already see, not
-   * stored and not sent by anything the model wrote. It exists because
-   * `confirmed` alone is a dialog box rather than a gate: `routes/chat.ts`
-   * resets it after each approval — correctly, for `send_email`, where the
-   * model names a fresh subject and body every time — and a connected app is
-   * called several times for one instruction. Three clicks to answer "check my
-   * last three threads and reply to Ana", each one re-streaming the transcript,
-   * trains people to approve without reading.
-   *
-   * So the unit is the connection and the scope is the turn. One yes covers
-   * that service until the turn ends; a different service asks again.
-   *
-   * Two things it does not cover, both in `run_tool`'s guard 3: an operation
-   * this turn described as `destructive` (see `approvedSlugs`), and an
-   * operation this turn knows nothing about at all — where "nothing about it"
-   * is the honest state of every resumed turn and every scheduled run, and
-   * reading it as harmless is what the 2026-10-08 audit found.
+   * Computed by `lib/harness/loop.ts` from the steps it can already see. Read
+   * only by `http_request` now, which loses it when HTTP services take the
+   * same rules as connected applications; `run_tool` reads `approvedSlugs`.
    */
   approvedConnections?: string[];
   /**
-   * The operations already approved on those connections, this turn.
+   * The operations a person has said yes to in this reply, each as
+   * `connectionId:slug`.
    *
-   * The connection-wide approval above is right for the case it was written for
-   * — three clicks to answer one instruction trains people to approve without
-   * reading — and wrong for the call that empties the account. On 2026-09-26 a
-   * calendar was cleared by an operation the person had never approved; it asked
-   * only because it happened to be the turn's first call. One create beforehand
-   * and it would not have asked at all.
-   *
-   * So a `destructive` operation is covered by the connection's approval only if
-   * it is the operation that was approved. Repeating an approved destructive call
-   * stays free, which is what the original reasoning protects. #201.
+   * A yes covers the operation it was given for, on the connection it was given
+   * on, for the rest of the reply: repeating an approved call stays free, which
+   * is what three clicks for one instruction would otherwise cost. It covers
+   * nothing else — a different operation, or the same one on another
+   * connection, asks again. On 2026-09-26 a calendar was cleared by an
+   * operation the person had never approved, riding on a yes for another one
+   * on the same connection. #201.
    */
   approvedSlugs?: string[];
   /**
@@ -287,9 +271,9 @@ export type ToolContext = {
    * run and every turn that reaches for a slug out of its own transcript — and
    * on those `run_tool` used to read a missing `destructive` as "not
    * destructive" and let the connection's turn-long approval cover anything.
-   * Now the gate asks whether this map describes the slug at all: described
-   * narrows on `destructive`, undescribed falls back to `approvedSlugs`, the
-   * record of what a person actually approved. The one exception is the resume
+   * Now `run_tool` describes an absent slug from the catalogue itself before
+   * deciding, and one that cannot be described is treated as a change. The one
+   * exception is the resume
    * path, where `routes/chat-turn.ts` seeds it from the stored proposal so the
    * approved call is checked against the operation the half that asked had in
    * hand.
@@ -336,12 +320,14 @@ export type ToolContext = {
 };
 
 /**
- * Who said yes to a call that acts at a connected service: the person, on a
- * card (`person`); a standing always-allow (`grant`); or an earlier yes on the
- * same connection that this call rode on (`connection`). Only the first is
- * somebody looking at what is about to happen — see `approvedConnectionsFrom`.
+ * What let a call at a connected service through: a person's yes, on a card or
+ * earlier in the reply for the same operation (`person`); a standing
+ * always-allow (`grant`); or nothing, because it only reads (`read`). Only the
+ * first is somebody looking at what is about to happen — see
+ * `approvedSlugsFrom`. Steps written before 2026-10-27 may say `connection`,
+ * which counts as nobody's yes.
  */
-export type RunApproval = "person" | "grant" | "connection";
+export type RunApproval = "person" | "grant" | "read";
 
 export type ToolResult =
   | { kind: "ok"; content: string; approval?: RunApproval }

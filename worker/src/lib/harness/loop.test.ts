@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { CompletionEvent, CompletionMessage } from "../completion";
 import type { AgentTool, ToolContext, ToolResult } from "./registry";
+import type { AgentStep } from "./loop";
 import {
   runAgentTurn,
   parseArguments,
   answerUnanswered,
+  approvedSlugsFrom,
   CUT_OFF_ARGUMENTS,
   NO_TOOLS_NOTICE,
   NOT_RUN_FOR_A_QUESTION,
@@ -1727,28 +1729,40 @@ describe("a model that cannot be given tools", () => {
   });
 });
 
-describe("an approval scoped to a connection for the rest of the turn", () => {
+describe("a yes scoped to an operation on a connection for the rest of the reply", () => {
   /** What the loop handed the tool, call by call. */
   /** `approval` is who the stub says let each call through. */
   function recordingRunTool(
     seen: Array<string[] | undefined>,
-    approval: "person" | "grant" | "connection" = "person",
+    approval: "person" | "grant" | "read" = "person",
   ): AgentTool {
     return tool(
       "run_tool",
       async (_args, toolCtx) => {
-        seen.push(toolCtx.approvedConnections);
+        seen.push(toolCtx.approvedSlugs);
         return { kind: "ok", content: "done", approval };
       },
       { destructive: true },
     );
   }
 
-  it("unlocks a connection for the next call once one has landed", async () => {
+  it("covers the same operation for the next call once one has landed", async () => {
     const seen: Array<string[] | undefined> = [];
     scripted([
-      pass("", [{ id: "c1", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
-      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("", [
+        {
+          id: "c1",
+          name: "run_tool",
+          arguments: '{"connectionId":"conn-1","slug":"GMAIL_SEND_EMAIL"}',
+        },
+      ]),
+      pass("", [
+        {
+          id: "c2",
+          name: "run_tool",
+          arguments: '{"connectionId":"conn-1","slug":"GMAIL_SEND_EMAIL"}',
+        },
+      ]),
       pass("done"),
     ]);
     await runAgentTurn({ ...base, tools: [recordingRunTool(seen)] });
@@ -1756,19 +1770,31 @@ describe("an approval scoped to a connection for the rest of the turn", () => {
     // Nothing to go on for the first call — the tool is what asks. By the
     // second, the first has landed with a person's yes behind it.
     expect(seen[0]).toEqual([]);
-    expect(seen[1]).toEqual(["conn-1"]);
+    expect(seen[1]).toEqual(["conn-1:GMAIL_SEND_EMAIL"]);
   });
 
-  it.each(["grant", "connection"] as const)(
-    "does not unlock a connection for a call that landed on a %s",
+  it.each(["grant", "read"] as const)(
+    "does not count a call that landed on a %s as anybody's yes",
     async (approval) => {
       // An always-allow is consent to one operation, not somebody watching
       // this turn. Counted as a yes, one allowed read used to unlock the whole
       // connection — in a scheduled run nobody was watching, too.
       const seen: Array<string[] | undefined> = [];
       scripted([
-        pass("", [{ id: "c1", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
-        pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+        pass("", [
+          {
+            id: "c1",
+            name: "run_tool",
+            arguments: '{"connectionId":"conn-1","slug":"GMAIL_SEND_EMAIL"}',
+          },
+        ]),
+        pass("", [
+          {
+            id: "c2",
+            name: "run_tool",
+            arguments: '{"connectionId":"conn-1","slug":"GMAIL_SEND_EMAIL"}',
+          },
+        ]),
         pass("done"),
       ]);
       await runAgentTurn({ ...base, tools: [recordingRunTool(seen, approval)] });
@@ -1782,7 +1808,13 @@ describe("an approval scoped to a connection for the rest of the turn", () => {
     // step, with `confirmed` deliberately reset to false.
     const seen: Array<string[] | undefined> = [];
     scripted([
-      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("", [
+        {
+          id: "c2",
+          name: "run_tool",
+          arguments: '{"connectionId":"conn-1","slug":"GMAIL_SEND_EMAIL"}',
+        },
+      ]),
       pass("done"),
     ]);
     await runAgentTurn({
@@ -1800,7 +1832,7 @@ describe("an approval scoped to a connection for the rest of the turn", () => {
         },
       ],
     });
-    expect(seen[0]).toEqual(["conn-1"]);
+    expect(seen[0]).toEqual(["conn-1:GMAIL_SEND_EMAIL"]);
   });
 
   it("does not carry a step across a resume that says nothing of who approved it", async () => {
@@ -1809,7 +1841,13 @@ describe("an approval scoped to a connection for the rest of the turn", () => {
     // is a card asked again, never a call let through.
     const seen: Array<string[] | undefined> = [];
     scripted([
-      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("", [
+        {
+          id: "c2",
+          name: "run_tool",
+          arguments: '{"connectionId":"conn-1","slug":"GMAIL_SEND_EMAIL"}',
+        },
+      ]),
       pass("done"),
     ]);
     await runAgentTurn({
@@ -1835,7 +1873,13 @@ describe("an approval scoped to a connection for the rest of the turn", () => {
     // are indistinguishable from here.
     const seen: Array<string[] | undefined> = [];
     scripted([
-      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("", [
+        {
+          id: "c2",
+          name: "run_tool",
+          arguments: '{"connectionId":"conn-1","slug":"GMAIL_SEND_EMAIL"}',
+        },
+      ]),
       pass("done"),
     ]);
     await runAgentTurn({
@@ -1866,7 +1910,13 @@ describe("an approval scoped to a connection for the rest of the turn", () => {
   it("does not let another tool's step unlock anything", async () => {
     const seen: Array<string[] | undefined> = [];
     scripted([
-      pass("", [{ id: "c2", name: "run_tool", arguments: '{"connectionId":"conn-1"}' }]),
+      pass("", [
+        {
+          id: "c2",
+          name: "run_tool",
+          arguments: '{"connectionId":"conn-1","slug":"GMAIL_SEND_EMAIL"}',
+        },
+      ]),
       pass("done"),
     ]);
     await runAgentTurn({
@@ -2047,5 +2097,40 @@ describe("a turn that dies with work already behind it", () => {
       onStep: (step) => statuses.push(step.status),
     });
     expect(statuses).toEqual(["ok", "refused"]);
+  });
+});
+
+describe("what a person said yes to in this reply", () => {
+  const step = (over: Record<string, unknown>): AgentStep => ({
+    index: 0,
+    tool: "run_tool",
+    request: { connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL" },
+    resultExcerpt: "",
+    status: "ok" as const,
+    approval: "person" as const,
+    durationMs: 1,
+    ...over,
+  });
+
+  it("keys a person's yes by connection and operation", () => {
+    expect(approvedSlugsFrom([step({})])).toEqual(["conn-1:GMAIL_SEND_EMAIL"]);
+  });
+
+  it("counts neither a read nor a standing grant as anybody's yes", () => {
+    expect(approvedSlugsFrom([step({ approval: "read" }), step({ approval: "grant" })])).toEqual(
+      [],
+    );
+  });
+
+  it("counts a step from before approvals were recorded as nobody's", () => {
+    expect(approvedSlugsFrom([step({ approval: undefined })])).toEqual([]);
+    // What a connection's approval used to be called; it is not a person's yes.
+    expect(approvedSlugsFrom([step({ approval: "connection" })])).toEqual([]);
+  });
+
+  it("does not count a call that failed or was refused", () => {
+    expect(approvedSlugsFrom([step({ status: "failed" }), step({ status: "refused" })])).toEqual(
+      [],
+    );
   });
 });

@@ -2668,6 +2668,20 @@ describe("a run with more than one destination (0130)", () => {
     expect(summarise.mock.calls[0][0].model).toBe("gpt-4.1");
     expect(summarise.mock.calls[0][0].reasoningEffort).toBe("high");
   });
+
+  it("passes the agent's web_search flag to the run", async () => {
+    // A routine is the same colleague reporting instead of replying, so an
+    // agent allowed to search the web in a conversation may on a schedule too.
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a", "b"]), { status: 200 }));
+    const searching = makeDb({ rows: { agents: { persona: "p", model: null, web_search: true } } });
+    await runRoutine(routine({ cursor: seenA }), makeDeps(searching.db) as any);
+    expect(summarise.mock.calls[0][0].webSearch).toBe(true);
+
+    summarise.mockClear();
+    const plain = makeDb();
+    await runRoutine(routine({ cursor: seenA }), makeDeps(plain.db) as any);
+    expect(summarise.mock.calls[0][0].webSearch).toBe(false);
+  });
 });
 
 describe("a test run (0130)", () => {

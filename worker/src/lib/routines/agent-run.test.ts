@@ -199,6 +199,13 @@ describe("runRoutineWithTools", () => {
     expect(runAgentTurn.mock.calls[0][0].request.showThinking).toBeUndefined();
   });
 
+  it("searches the web only when the agent may", async () => {
+    await runRoutineWithTools(env, db)({ ...input, webSearch: true }, env);
+    expect(runAgentTurn.mock.calls[0][0].request.webSearch).toBe(true);
+    await runRoutineWithTools(env, db)(input, env);
+    expect(runAgentTurn.mock.calls[1][0].request.webSearch).toBe(false);
+  });
+
   /**
    * The one number the two surfaces are allowed to disagree about, and the
    * only thing holding the cron Worker inside Workers Free's fifty

@@ -57,11 +57,18 @@ function RoutinesTab() {
             )}
             actions={
               canWrite ? (
-                <Button asChild>
-                  <Link to="/routines/new" search={{ agent: agentId }}>
-                    {t("New routine")}
-                  </Link>
-                </Button>
+                <>
+                  <Button asChild>
+                    <Link to="/routines/use-cases" search={{ agent: agentId }}>
+                      {t("Browse use cases")}
+                    </Link>
+                  </Button>
+                  <Button asChild variant="secondary">
+                    <Link to="/routines/new" search={{ agent: agentId }}>
+                      {t("New routine")}
+                    </Link>
+                  </Button>
+                </>
               ) : undefined
             }
           />

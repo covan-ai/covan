@@ -108,7 +108,9 @@ function Arrivals() {
             email={me?.user.email ?? ""}
             timezone={me?.workspace.timezone ?? browserTimeZone() ?? "UTC"}
             onDone={() => void navigate({ to: "/routines" })}
-            onSkip={() => void navigate({ to: "/routines" })}
+            // Whoever skips has no routines yet, so not the empty list: the
+            // use cases, which need nothing connected to pick from.
+            onSkip={() => void navigate({ to: "/routines/use-cases" })}
             onRetry={() => start()}
           />
         ) : (

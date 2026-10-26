@@ -6,7 +6,7 @@ import { CreateAgentDialog } from "@/components/create-agent-dialog";
 import { BannerStack } from "@/components/banner-stack";
 import { CommandPalette } from "@/components/command-palette";
 import { useGoKeys } from "@/hooks/use-go-keys";
-import type { ShellApi } from "@/lib/shell";
+import type { CreateAgentInitial, ShellApi } from "@/lib/shell";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,6 +21,9 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  // What the next "New agent" opens filled with, from a use case. Cleared on
+  // close, so the sidebar's "+" afterwards opens an empty one.
+  const [createInitial, setCreateInitial] = useState<CreateAgentInitial | undefined>();
   useGoKeys(agentId);
 
   // A page change closes the drawer, however it happened: noticed while
@@ -31,7 +34,10 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
     setDrawerOpen(false);
   }
   useEffect(() => {
-    const open = () => setCreateOpen(true);
+    const open = () => {
+      setCreateInitial(undefined);
+      setCreateOpen(true);
+    };
     window.addEventListener("open-create-agent", open);
     return () => window.removeEventListener("open-create-agent", open);
   }, []);
@@ -41,7 +47,10 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
       drawerOpen,
       openDrawer: () => setDrawerOpen(true),
       closeDrawer: () => setDrawerOpen(false),
-      openCreateAgent: () => setCreateOpen(true),
+      openCreateAgent: (initial?: CreateAgentInitial) => {
+        setCreateInitial(initial);
+        setCreateOpen(true);
+      },
     }),
     [drawerOpen],
   );
@@ -79,7 +88,14 @@ export function AppShell({ agentId, children }: { agentId?: string; children: Re
           {children}
         </main>
       </div>
-      <CreateAgentDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateAgentDialog
+        open={createOpen}
+        initial={createInitial}
+        onOpenChange={(open) => {
+          setCreateOpen(open);
+          if (!open) setCreateInitial(undefined);
+        }}
+      />
       <CommandPalette agentId={agentId} />
     </ShellProvider>
   );

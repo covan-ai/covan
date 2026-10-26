@@ -148,6 +148,18 @@ describe("a new routine (A28)", () => {
     );
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).not.toBe("");
   });
+
+  // "Describe it in a sentence" on the use-cases page: the link's whole point
+  // is this box, so the cursor starts there — and only when asked.
+  it("puts the cursor in the sentence box when the link asks", () => {
+    const { unmount } = render(
+      <RoutineEditor initialAgentId="a1" focusSentence cancelTo="/routines" onSaved={vi.fn()} />,
+    );
+    expect(screen.getByLabelText("Start from a sentence")).toHaveFocus();
+    unmount();
+    render(<RoutineEditor initialAgentId="a1" cancelTo="/routines" onSaved={vi.fn()} />);
+    expect(screen.getByLabelText("Start from a sentence")).not.toHaveFocus();
+  });
 });
 
 const routine = {

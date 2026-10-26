@@ -15,9 +15,15 @@ vi.mock("@tanstack/react-router", () => ({
     navigated.push(props);
     return null;
   },
-  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
-    <a href={to}>{children}</a>
-  ),
+  Link: ({
+    children,
+    to,
+    search,
+  }: {
+    children: React.ReactNode;
+    to: string;
+    search?: Record<string, string>;
+  }) => <a href={search ? `${to}?${new URLSearchParams(search)}` : to}>{children}</a>,
 }));
 
 const routinesResult = vi.fn();
@@ -52,14 +58,14 @@ describe("an agent's Routines tab", () => {
     });
   });
 
-  it("says what a routine is for when the agent has none, and offers one", () => {
+  it("says what a routine is for when the agent has none, and offers the use cases first", () => {
     routinesResult.mockReturnValue({ data: [], isLoading: false });
     render(<Tab />);
     expect(screen.getByText("No routines yet")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "New routine" })).toHaveAttribute(
-      "href",
-      "/routines/new",
-    );
+    const links = screen.getAllByRole("link");
+    expect(links.map((l) => l.textContent)).toEqual(["Browse use cases", "New routine"]);
+    expect(links[0]).toHaveAttribute("href", "/routines/use-cases?agent=agent-1");
+    expect(links[1]).toHaveAttribute("href", "/routines/new?agent=agent-1");
   });
 
   // An old `?template=` link still lands somewhere: the editor, on it.

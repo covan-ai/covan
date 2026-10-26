@@ -148,11 +148,9 @@ describe("GettingStarted", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /try: schedule a routine/i }));
 
-    expect(navigate).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "/agents/$agentId/routines", params: { agentId: "agent-1" } }),
-    );
+    expect(navigate).toHaveBeenCalledWith(expect.objectContaining({ to: "/routines/use-cases" }));
     expect(openCoachMark).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "new-routine" }),
+      expect.objectContaining({ id: "use-case-card" }),
       expect.objectContaining({ position: { step: 5, total: 5 } }),
     );
   });

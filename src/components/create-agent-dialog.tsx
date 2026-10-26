@@ -41,6 +41,8 @@ import {
   startingModelFor,
 } from "@/lib/agent-meta";
 import { useAgentsStore } from "@/lib/agents-store";
+import { flushEvents, trackStep } from "@/lib/analytics";
+import type { CreateAgentInitial } from "@/lib/shell";
 
 /**
  * "New agent" (A17): one step — a name, a face, what it does, a model and
@@ -48,36 +50,48 @@ import { useAgentsStore } from "@/lib/agents-store";
  * exists, which is where the thread it opens into links.
  *
  * The dialog owns nothing but whether it is open: the form mounts with it and
- * unmounts on close, so a fresh dialog is a fresh form (#68).
+ * unmounts on close, so a fresh dialog is a fresh form (#68). `initial`, from
+ * an agent card on the use-cases page, is what that fresh form starts with.
  */
 export function CreateAgentDialog({
   open,
   onOpenChange,
+  initial,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  initial?: CreateAgentInitial;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="lg">
-        <CreateAgentForm onDone={() => onOpenChange(false)} />
+        <CreateAgentForm initial={initial} onDone={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   );
 }
 
-function CreateAgentForm({ onDone }: { onDone: () => void }) {
+function CreateAgentForm({
+  initial,
+  onDone,
+}: {
+  initial?: CreateAgentInitial;
+  onDone: () => void;
+}) {
   const { t } = useTranslation();
   const { agents, createAgent } = useAgentsStore();
   const navigate = useNavigate();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initial?.name ?? "");
   // The first mark nobody here wears yet, so two new agents do not arrive
-  // with the same face; the monogram once all eight are taken.
-  const [avatar, setAvatar] = useState<string | null>(
-    () => AGENT_MARKS.find((m) => !agents.some((a) => a.avatar === m)) ?? null,
+  // with the same face; the monogram once all eight are taken. A use case
+  // brings its own.
+  const [avatar, setAvatar] = useState<string | null>(() =>
+    initial
+      ? initial.avatar
+      : (AGENT_MARKS.find((m) => !agents.some((a) => a.avatar === m)) ?? null),
   );
-  const [persona, setPersona] = useState("");
+  const [persona, setPersona] = useState(initial?.persona ?? "");
   // Seeded once, when the form mounts with the dialog — not on every change to
   // the workspace default, which would throw away a model just picked.
   const [model, setModel] = useState<string>(() =>
@@ -103,10 +117,14 @@ function CreateAgentForm({ onDone }: { onDone: () => void }) {
         avatar,
         model,
         persona,
-        mode: "normal",
-        webSearch: true,
+        mode: initial?.mode ?? "normal",
+        webSearch: initial?.webSearch ?? true,
         sharing: newAgentSharing(sharing),
       });
+      if (initial?.trackAs) {
+        trackStep(initial.trackAs, "completed");
+        void flushEvents();
+      }
       toast.success(
         sharing === "only"
           ? t("{{name}} is ready", { name: agent.name })

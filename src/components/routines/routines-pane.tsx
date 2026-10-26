@@ -81,15 +81,24 @@ export function RoutinesPane({
         <h2 className="m-0 text-lead font-semibold">{t("Routines")}</h2>
         <span className="text-meta text-muted-foreground">{mine.length}</span>
         {canCreate && (
-          <Link
-            to="/routines/new"
-            search={agentId ? { agent: agentId } : {}}
-            aria-label={t("New routine")}
-            data-coach="new-routine"
-            className="ml-auto grid size-8 place-items-center rounded-md text-foreground hover:bg-surface"
-          >
-            <Plus className="size-4" strokeWidth={1.75} />
-          </Link>
+          <>
+            <Link
+              to="/routines/use-cases"
+              search={agentId ? { agent: agentId } : {}}
+              className="ml-auto inline-flex h-7 items-center rounded-md px-2.5 text-meta font-medium text-muted-foreground hover:bg-surface hover:text-foreground"
+            >
+              {t("Use cases")}
+            </Link>
+            <Link
+              to="/routines/new"
+              search={agentId ? { agent: agentId } : {}}
+              aria-label={t("New routine")}
+              data-coach="new-routine"
+              className="grid size-8 place-items-center rounded-md text-foreground hover:bg-surface"
+            >
+              <Plus className="size-4" strokeWidth={1.75} />
+            </Link>
+          </>
         )}
       </div>
       <div className="overflow-x-auto border-b border-hairline px-3 py-2">

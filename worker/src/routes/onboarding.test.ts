@@ -433,6 +433,23 @@ describe("POST /onboarding/events", () => {
     expect(inserted[0][2]).toMatchObject({ client_id: "5f1c6c3e-5b3a-4a0e-9b4b-0f0f0f0f0f0f" });
   });
 
+  // The use-cases page counts a pick and a create under `use-case:<id>`; a
+  // card id is at most 31 characters so the step fits `STEP_ID`.
+  it("records a use case picked and created", async () => {
+    const { db, inserted } = eventsDb();
+    const res = await post(appWithDb(db), "/onboarding/events", {
+      events: [
+        { step: "use-case:daily-brief", event: "viewed", at: AT },
+        { step: "use-case:daily-brief", event: "completed", at: AT, elapsedMs: 30_000 },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ accepted: 2 });
+    expect(inserted[0][0]).toMatchObject({ step: "use-case:daily-brief", event: "viewed" });
+    expect(inserted[0][1]).toMatchObject({ step: "use-case:daily-brief", event: "completed" });
+  });
+
   // A retried batch must not count twice, and the id that makes that so has
   // to exist even when the client did not send one.
   it("mints a client id for an event that came without one", async () => {

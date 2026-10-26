@@ -23,13 +23,19 @@ function RoutinesIndex() {
     <EmptyPage
       title={t("No routines yet")}
       description={t(
-        "A routine is work an agent does on its own: a weekly brief, a daily digest, a check when something arrives. Make one from an agent's Routines tab.",
+        "A routine is work an agent does on its own: a weekly brief, a daily digest, a check when something arrives. Start from a use case, or from what arrives in your inbox.",
       )}
       actions={
-        // 0139: the routines worth having are usually in the mail already.
-        <Button asChild variant="secondary">
-          <Link to="/arrivals">{t("See what arrives in your inbox")}</Link>
-        </Button>
+        <>
+          {/* The use cases first: picking one needs nothing connected. */}
+          <Button asChild>
+            <Link to="/routines/use-cases">{t("Browse use cases")}</Link>
+          </Button>
+          {/* 0139: the routines worth having are usually in the mail already. */}
+          <Button asChild variant="secondary">
+            <Link to="/arrivals">{t("See what arrives in your inbox")}</Link>
+          </Button>
+        </>
       }
     />
   );

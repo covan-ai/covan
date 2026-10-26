@@ -77,7 +77,7 @@ export function NewThreadButton({
   if (agents.length === 0) {
     if (!canWrite) return null;
     return (
-      <Button variant={variant} size={size} onClick={shell.openCreateAgent}>
+      <Button variant={variant} size={size} onClick={() => shell.openCreateAgent()}>
         {iconOnly ? (
           <Plus aria-label={t("New agent")} />
         ) : (

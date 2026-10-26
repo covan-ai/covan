@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const h = vi.hoisted(() => ({
   createAgent: vi.fn(),
   navigate: vi.fn(),
+  trackStep: vi.fn(),
+  flushEvents: vi.fn(async () => {}),
   agents: [] as Array<{ avatar: string | null }>,
 }));
 
@@ -23,16 +25,18 @@ vi.mock("@/lib/api-client", () => ({
 vi.mock("@/lib/agents-store", () => ({
   useAgentsStore: () => ({ agents: h.agents, createAgent: h.createAgent }),
 }));
+vi.mock("@/lib/analytics", () => ({ trackStep: h.trackStep, flushEvents: h.flushEvents }));
 vi.mock("@/components/generate-persona-button", () => ({ GeneratePersonaButton: () => null }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { CreateAgentDialog } from "./create-agent-dialog";
+import type { CreateAgentInitial } from "@/lib/shell";
 
-function renderDialog() {
+function renderDialog(initial?: CreateAgentInitial) {
   const onOpenChange = vi.fn();
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <CreateAgentDialog open onOpenChange={onOpenChange} />
+      <CreateAgentDialog open onOpenChange={onOpenChange} initial={initial} />
     </QueryClientProvider>,
   );
   return onOpenChange;
@@ -41,6 +45,7 @@ function renderDialog() {
 beforeEach(() => {
   h.createAgent.mockReset().mockResolvedValue({ id: "a9", name: "Research" });
   h.navigate.mockReset();
+  h.trackStep.mockReset();
   h.agents = [];
 });
 
@@ -84,5 +89,45 @@ describe("CreateAgentDialog", () => {
   it("will not create an agent with no name", () => {
     renderDialog();
     expect(screen.getByRole("button", { name: "Create agent" })).toBeDisabled();
+  });
+
+  // An agent card on the use-cases page: the form starts filled in, still
+  // editable, and the create is counted under the card's step.
+  it("starts from a use case and counts the create under it", async () => {
+    renderDialog({
+      name: "Sparring partner",
+      avatar: "owl",
+      persona: "You take the other side.",
+      mode: "brainstorm",
+      webSearch: false,
+      trackAs: "use-case:sparring",
+    });
+    expect(screen.getByLabelText("Name")).toHaveValue("Sparring partner");
+    expect(screen.getByLabelText("What it does")).toHaveValue("You take the other side.");
+    expect(screen.getByRole("radio", { name: /owl/i })).toHaveAttribute("aria-checked", "true");
+
+    await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    expect(h.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Sparring partner",
+        avatar: "owl",
+        persona: "You take the other side.",
+        mode: "brainstorm",
+        webSearch: false,
+      }),
+    );
+    expect(h.trackStep).toHaveBeenCalledWith("use-case:sparring", "completed");
+    expect(h.flushEvents).toHaveBeenCalled();
+  });
+
+  it("counts nothing for an agent made from scratch", async () => {
+    renderDialog();
+    await userEvent.type(screen.getByLabelText("Name"), "Research");
+    await userEvent.click(screen.getByRole("button", { name: "Create agent" }));
+    expect(h.createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "normal", webSearch: true }),
+    );
+    expect(h.trackStep).not.toHaveBeenCalled();
   });
 });

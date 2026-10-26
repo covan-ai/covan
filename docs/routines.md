@@ -355,15 +355,19 @@ fifty-subrequest cap as the tick, and sixteen steps does not fit under it
 either. A run that reaches the cap says what it did not finish rather than
 stopping silently.
 
-The two numbers used to agree by coincidence and no longer do. A conversation on
-a deployment that has set `WORKER_PLAN=paid` is budgeted 24 tool calls and may
-take up to two further rounds past that, because Workers Paid allows one
-invocation ten thousand subrequests rather than fifty. **A scheduled run does
-not follow it**, and the reason is the arithmetic on this page: a chat turn is
-one invocation, where a tick multiplies by the batch size. Raising this one
-means redoing the sum above first.
+A conversation on a deployment that has set `WORKER_PLAN=paid` is budgeted 24
+tool calls and may take up to two further rounds past that, because Workers Paid
+allows one invocation ten thousand subrequests rather than fifty. **A routine
+run there gets 24 as well, and no further rounds.** The sum above, redone for
+Paid: two for the tick, and even at four requests per step — the model call,
+the tool, and the reads a tool makes — a 24-step run is about a hundred, so
+three routines come to roughly 300 of 10,000. The rounds are left out because they
+exist for a conversation somebody is watching. Three times the steps also brings
+the token ceiling a conversation has, so a run that loops stops at the same
+size a chat turn would.
 
-If chat is ever raised again, this stays at eight until the arithmetic above is
+On Free a routine stays at eight, with no token ceiling, exactly as before. If
+chat is ever raised again, Free's number stays until the arithmetic above is
 redone — a routine shares its fifty with the rest of the batch, and chat does
 not.
 
@@ -1267,6 +1271,12 @@ feed would spend a model call per run re-reaching the same answer.
 **A scheduled prompt is never asked.** With no source, there is nothing for its
 output to be irrelevant _to_: the instruction is the whole job. Asking anyway
 would let one `false` silence "remind the team to post standup" permanently.
+
+**A run that did not finish is never asked either.** If the agent stopped at its
+step or token ceiling, or one of its tool calls failed or was refused — an
+operation that needs somebody's approval, say — the report goes out as written.
+A report like that says what did not happen, which is exactly what the question
+is told to call irrelevant, and it is the report its owner most needs to read.
 
 The decision comes back as a field of its own rather than as something to read
 out of the summary text, and **every way of failing to read it delivers**:

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import type { AgentRunInput } from "./executor";
-import { MAX_STEPS, SCHEDULED_MAX_STEPS } from "../harness/budget";
+import { MAX_STEPS, SCHEDULED_MAX_STEPS, chatBudget, routineBudget } from "../harness/budget";
 import { REPLY_IS_THE_REPORT } from "./summarise";
 
 /**
@@ -217,6 +217,60 @@ describe("runRoutineWithTools", () => {
     await runRoutineWithTools(env, db)(input, env);
     expect(runAgentTurn.mock.calls[0][0].budget).toEqual({ maxSteps: SCHEDULED_MAX_STEPS });
     expect(SCHEDULED_MAX_STEPS).toBeLessThanOrEqual(MAX_STEPS);
+  });
+
+  // The same ordering on Paid, where chat has room the cron's fifty
+  // subrequests never gave it — and a routine now has some of it too.
+  it("takes the plan's routine budget on a deployment that has paid for more", async () => {
+    const paid = { ...env, WORKER_PLAN: "paid" } as RoutineEnv;
+    await runRoutineWithTools(env, db)(input, paid);
+    const budget = runAgentTurn.mock.calls[0][0].budget;
+    expect(budget).toEqual(routineBudget(paid));
+    expect(budget.maxSteps).toBeGreaterThan(SCHEDULED_MAX_STEPS);
+    expect(budget.maxSteps).toBeLessThanOrEqual(chatBudget(paid).maxSteps);
+  });
+
+  /**
+   * A report that says "I could not finish" is the one the decision was most
+   * likely to call irrelevant — it is written to say what did not happen —
+   * and the one its owner most needs. On 2026-10-26 an event routine spent
+   * its whole step budget, wrote what it had, and was declined: the history
+   * said "nothing matched" and nobody heard about it.
+   */
+  it("sends a run that stopped at its step budget without asking whether to", async () => {
+    runAgentTurn.mockResolvedValue({
+      text: "I could not check two of the four attendees before the step limit.",
+      usage: { promptTokens: 100, completionTokens: 40, cachedTokens: 0 },
+      steps: [],
+      finishReason: "stop",
+      paused: { reason: "budget", messages: [] },
+    });
+    const out = await runRoutineWithTools(env, db)({ ...input, mayDecline: true }, env);
+    expect(complete).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ declined: false, tokens: 140 });
+    expect(out?.text).toContain("could not check two");
+  });
+
+  it("sends a run in which a tool call failed without asking whether to", async () => {
+    runAgentTurn.mockResolvedValue({
+      text: "Linus is busy then; removing him needs somebody's approval.",
+      usage: { promptTokens: 100, completionTokens: 40, cachedTokens: 0 },
+      steps: [
+        { index: 0, tool: "run_tool", request: {}, resultExcerpt: "", status: "ok", durationMs: 5 },
+        {
+          index: 1,
+          tool: "run_tool",
+          request: {},
+          resultExcerpt: "needs a person to approve it",
+          status: "failed",
+          durationMs: 5,
+        },
+      ],
+      finishReason: "stop",
+    });
+    const out = await runRoutineWithTools(env, db)({ ...input, mayDecline: true }, env);
+    expect(complete).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ declined: false });
   });
 
   it("asks whether to send as a separate turn, never alongside the tools", async () => {

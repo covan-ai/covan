@@ -7,7 +7,7 @@ import { resolveModel } from "../models";
 import { temperatureFor, reasoningEffortFor, maxTokensFor, whenAndWhere } from "../prompt";
 import { capabilitiesFor } from "../harness/available";
 import { runAgentTurn, type PassUsage } from "../harness/loop";
-import { SCHEDULED_MAX_STEPS } from "../harness/budget";
+import { routineBudget } from "../harness/budget";
 import type { RoutineBrowser, ToolEnv } from "../harness/registry";
 import { DECISION_INSTRUCTION, readDecision, REPLY_IS_THE_REPORT } from "./summarise";
 import { replyOutcome, sumOverPasses } from "../harness/usage";
@@ -184,8 +184,9 @@ export function runRoutineWithTools(
       // budget. `lib/harness/budget.ts` argues it — the cron Worker counts
       // subrequests against a ceiling of fifty, and nobody is watching a run
       // that spends four times the tokens to finish something it could have
-      // reported as unfinished.
-      budget: { maxSteps: SCHEDULED_MAX_STEPS },
+      // reported as unfinished. That is Free's argument; on Paid, where the
+      // fifty is ten thousand, `routineBudget` gives a run more (`limits.ts`).
+      budget: routineBudget(runEnv),
       ctx: {
         db,
         env: toolEnv,
@@ -244,8 +245,19 @@ export function runRoutineWithTools(
     // Not asked of a report that is waiting on its browser: the draft has a
     // gap where the answer goes, and "nothing worth sending" cannot be judged
     // of a report that is not finished yet.
+    //
+    // Nor of a run that did not get to do all of it: a turn that stopped at a
+    // ceiling or for a question, or one in which a tool call failed. Its report
+    // is written to say what did not happen, which is exactly what the decision
+    // is told to call irrelevant — and on 2026-10-26 it did, for an event
+    // routine that spent its whole step budget, so the history said "nothing
+    // matched" and its owner heard nothing. `readDecision`'s rule, applied one
+    // step earlier: when anything went wrong, send.
     const heldFor = routineBrowser?.started ?? [];
-    if (input.mayDecline && text.trim() && heldFor.length === 0) {
+    const incomplete =
+      turn.paused !== undefined ||
+      turn.steps.some((s) => s.status === "failed" || s.status === "refused");
+    if (input.mayDecline && text.trim() && heldFor.length === 0 && !incomplete) {
       const decision = await complete(runEnv, {
         model,
         json: true,

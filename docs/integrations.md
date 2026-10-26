@@ -847,9 +847,13 @@ with one morning digest proposed for each kind worth one.
   line a personal connection draws — and not an API key, which is refused
   outright.
 - **What it costs.** On the hosted service a scan is charged to the workspace's
-  credits like any other model call and connected-app call. Estimated, before
-  it was first measured against a live mailbox: about one US cent of model
-  time and one to seven calls to the connected applications per scan.
+  credits like any other model call and connected-app call. Measured on
+  2026-10-26 against a mailbox of about 180 threads over thirty days: about
+  $0.012 of model time and two calls to the connected applications ($0.008),
+  so about $0.02 and 24 credits for the scan. Treat that as an order of
+  magnitude, not a price: it grows with the size of the mailbox and is capped
+  by the readers (200 messages, 250 events), and a scan holds at most $0.05
+  before it starts.
 - **How to remove it.** Disconnecting the mailbox stops any further scan;
   scanning again replaces the previous counts. Deleting your account or the
   workspace deletes the scans with it.

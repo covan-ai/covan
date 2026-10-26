@@ -43,7 +43,7 @@ const SWEEP_RUNS = 1;
 const ERROR_CHARS = 200;
 /**
  * What a scan may cost at most, in provider dollars, held before it starts
- * where the deployment holds credit (`reserve?`). Measured: see 0139's header.
+ * where the deployment holds credit (`reserve?`). Measured: see "What a scan reads and keeps" in docs/integrations.md.
  */
 export const SCAN_CEILING_USD = 0.05;
 

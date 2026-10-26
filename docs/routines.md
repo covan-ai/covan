@@ -263,10 +263,16 @@ What it changes for you:
 - **Write the instruction to be read cold.** The run has your instruction and
   the agent's documents, and none of the conversation the job came out of. Name
   the service and say what to report.
-- **Nothing that needs approval happens.** A tool that would ask a person —
-  sending to a channel, creating another routine — is recorded as wanted and
-  not done, and the delivered message says so at the bottom. A tick has nobody
-  to ask and nowhere to wait.
+- **Reads happen; a change needs the switch on.** The agent reads any
+  connected app it can reach without asking, as it would in a conversation.
+  A change in a connected app or HTTP service — a draft, a label, a record —
+  happens only when **What it may change without asking** on the routine's
+  page is on for that app. Anything else that would ask a person — a change
+  with the switch off, creating another routine — is recorded as wanted and
+  not done, and the delivered message says so at the bottom. A tick has
+  nobody to ask and nowhere to wait.
+- **It can search the web when the agent can.** A routine whose agent has web
+  search switched on searches on a schedule too.
 - **One routine can hand work to another.** `run_routine` starts one of the
   owner's own routines that has no source, with text for it to work from,
   and waits for its report. In a conversation the person approves it first.
@@ -299,20 +305,11 @@ you on a card before it starts, and a scheduled run has nobody to show one to.
 Turning the switch on is that approval, given once, for every run. Only the
 routine's owner can give it.
 
-Under the switch is the choice that matters, which is **what the unattended
-browser carries**:
-
-| Choice                           | What a run's browser has                                                                                               |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Everything, as in a conversation | Your browser's sign-ins (the sites you signed into in the browser panel) and any login you saved, by chat's rules      |
-| One site's saved login only      | None of your sign-ins at all, and only the saved login for the one site you name — typed on that site and nowhere else |
-
-Pick the second for a routine whose material is written by somebody else — a
-feed, a watched page, a webhook payload. That text reaches the model, the model
-writes the browser's instruction, and the second choice is what keeps an
-instruction a stranger shaped away from the accounts you are signed into. A run
-that asks to sign in anywhere but the named site is refused before anything is
-spent.
+A run's browser carries what yours does in a conversation: the sites you
+signed into in the browser panel, and any login you saved, by chat's rules.
+Think about that before switching it on for a routine whose material somebody
+else writes — a webhook payload, a mail it reads. That text reaches the model,
+and the model writes the browser's instruction.
 
 **The report waits for the browser.** A browser task takes minutes and a run's
 turn does not, so a run that starts one writes its report as a draft, records

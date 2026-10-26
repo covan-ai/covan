@@ -125,6 +125,14 @@ that answer without a separate thinking step ignore it entirely.
 Both apply wherever the agent answers: the chat screen, a Slack thread, and a
 routine's scheduled report.
 
+What an agent may do in the apps and services somebody connected is three
+sentences. **It reads them without asking**, in a conversation and on a
+schedule. **It asks before changing anything**, unless somebody said "don't ask
+again" for that app — one switch per agent and app, and on a schedule a change
+happens only with it on. **Whoever connected the app decides that**, or an admin
+for a shared one; a viewer never changes anything. See
+[Integrations](integrations.md#connected-apps) for the asking itself.
+
 ## Persona
 
 The persona is the system prompt every conversation with an agent starts from. It

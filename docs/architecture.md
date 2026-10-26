@@ -458,9 +458,8 @@ unchanged. Its tasks carry the run they answer (`browser_tasks.routine_run_id`),
 the run is written as `waiting` with its draft, and `lib/routines/held.ts`
 sends the report once, with the answers written in, when the last task settles —
 claimed with a conditional update so the open tab and the cron cannot both send
-it — or after two hours with what it has. With `browser_access = 'site'` a run
-carries no cookie jar (`browser_tasks.jarless`, read again when a waiting task
-starts) and only that site's saved login.
+it — or after two hours with what it has. `browser_access` is on or off (0141); `browser_tasks.jarless` survives
+only for tasks queued before the one-site mode went.
 
 **A turn is not its request.** `POST /chat/stream` and `POST /chat/confirm/:id`
 are handed to a turn host before the route runs (`middleware/detach.ts`), and
@@ -633,11 +632,12 @@ production, at the moment a user uploads a file or sends a message.
   has excluded themselves from their workspace's coverage report, with a
   self-only `SELECT` policy, so presence is the fact and nobody — admins
   included — can read anybody else's.
-- `connection_capabilities`, `connection_grants`, `capability_calls` — what an
-  agent may do at a connected source, as opposed to what a person may do in
-  Postgres. All three are empty, which is an exact description of today's
-  behaviour rather than a feature waiting to be switched on:
-  [no row means no](security.md#a-question-row-level-security-cannot-be-asked).
+- `tool_connection_grants` — which agents may change things in which connected
+  apps and services without asking, one row per agent and connection (0140).
+  Reads need no row; a change without one asks first, and on a schedule does
+  not happen. 0058's first design of this (`connection_capabilities`,
+  `connection_grants`, `capability_calls`) was read by nothing and dropped in
+  the same migration.
 
 Migrations are numbered and applied in order, and an applied migration is never
 edited — corrections go in a new file.

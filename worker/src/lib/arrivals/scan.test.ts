@@ -368,6 +368,42 @@ describe("runArrivalScan", () => {
     });
   });
 
+  it("fails a scan whose credit hold is refused, without reading anything", async () => {
+    const release = vi.fn(async () => {});
+    registerEntitlements(
+      () =>
+        ({
+          ...fake,
+          reserve: async () => ({ allowed: false, balance: 0 }),
+          release,
+        }) as Entitlements,
+    );
+    seed([scan()]);
+    await runArrivalScan(ENV, "scan-1", NOW);
+    expect(readSource).not.toHaveBeenCalled();
+    expect(db.tables.arrival_scans[0]).toMatchObject({
+      status: "failed",
+      reason: "no_credit",
+      lease_until: null,
+    });
+    expect(release).toHaveBeenCalledWith("arrivals:scan-1");
+  });
+
+  it("runs a scan whose credit hold is granted", async () => {
+    registerEntitlements(
+      () =>
+        ({
+          ...fake,
+          reserve: async () => ({ allowed: true }),
+          release: async () => {},
+        }) as Entitlements,
+    );
+    seed([scan()]);
+    await runArrivalScan(ENV, "scan-1", NOW);
+    expect(readSource).toHaveBeenCalledTimes(1);
+    expect(db.tables.arrival_scans[0].status).toBe("done");
+  });
+
   it("reads nothing when the workspace has no credits", async () => {
     allowed = false;
     seed([scan()]);

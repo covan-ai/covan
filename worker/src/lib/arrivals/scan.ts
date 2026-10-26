@@ -196,7 +196,13 @@ export async function runArrivalScan(
   const spent: Spend[] = [];
   const calls: string[] = [];
   try {
-    await entitlements.reserve?.(scan.workspace_id, holdId, SCAN_CEILING_USD);
+    // A hold the deployment refuses is the same answer as no credit: the scan
+    // does not run on credit that could not be set aside for it.
+    const held = await entitlements.reserve?.(scan.workspace_id, holdId, SCAN_CEILING_USD);
+    if (held?.allowed === false) {
+      await fail(NO_CREDIT, "no_credit");
+      return;
+    }
 
     // Only the scan owner's own, active connections in the scan's workspace:
     // the row's sources are what the caller's insert wrote, and this is where

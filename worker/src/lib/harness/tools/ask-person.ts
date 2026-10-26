@@ -78,11 +78,11 @@ export const askPersonTool: AgentTool = {
   destructive: false,
   isConfigured: () => true,
   async run(args: unknown, ctx: ToolContext): Promise<ToolResult> {
-    if (ctx.routineRunId) {
+    if (ctx.routineRunId || ctx.continuation) {
       return {
         kind: "error",
         message:
-          "nobody is watching a routine run, so a question would never be seen; say what you " +
+          "nobody is watching this run, so a question would never be seen; say what you " +
           "need in your reply instead",
       };
     }

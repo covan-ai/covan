@@ -113,7 +113,7 @@ export const runRoutineTool: AgentTool = {
     }
 
     const payload = input.payload.slice(0, MAX_PAYLOAD_CHARS);
-    if (!ctx.routineRunId && ctx.confirmed !== true) {
+    if (!ctx.routineRunId && !ctx.continuation && ctx.confirmed !== true) {
       return {
         kind: "needs_confirmation",
         summary: `Run the routine "${routine.name}" now with what you wrote for it?`,

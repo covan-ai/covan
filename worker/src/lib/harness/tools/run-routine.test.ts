@@ -123,4 +123,13 @@ describe("run_routine", () => {
       kind: "error",
     });
   });
+
+  it("runs without a card in a woken turn, where nobody is watching (0142)", async () => {
+    const out = await runRoutineTool.run(
+      ARGS,
+      ctx([routine()], { continuation: { id: "cont-1", browserApproved: false } }),
+    );
+    expect(out.kind).toBe("ok");
+    expect(runPokedRoutine).toHaveBeenCalledTimes(1);
+  });
 });

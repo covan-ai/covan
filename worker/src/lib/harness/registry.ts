@@ -70,14 +70,9 @@ export type ToolEnv = RoutineEnv & RetrievalConfig;
 /** What a routine run lets `browse` do, and where its answers go. See `ToolContext.routineBrowser`. */
 export type RoutineBrowser = {
   /**
-   * `'all'` carries what a conversation's browser would — the owner's jar and
-   * the saved login for a site the task names. `'site'` carries no jar and
-   * only `site`'s saved login.
-   */
-  access: "all" | "site";
-  /** With `'site'`, the one host whose saved login a run may carry. */
-  site: string | null;
-  /**
+   * A routine's browser carries what a conversation's would — the owner's jar
+   * and the saved login for a site the task names (0141: on or off).
+   *
    * The routine's conversation, opened the first time it is asked for. Null
    * when it could not be opened, and then nothing is started.
    */

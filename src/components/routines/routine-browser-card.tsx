@@ -1,35 +1,17 @@
-import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Globe } from "lucide-react";
 import { SectionLabel } from "@/components/section";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type { Routine, UpdateRoutineInput } from "@/lib/routines-api";
 import { Trans, useTranslation } from "@/i18n";
 
 /**
- * Whether this routine may use the browser on its own, and what it carries.
+ * Whether this routine may use the browser on its own.
  *
  * In a conversation every browser task is shown on a card and approved. A
  * scheduled run has nobody to show one to, so the approval is given here, once,
- * for every run — which is why it is off until the owner turns it on.
- *
- * The choice under it is about what an unattended browser can reach, because a
- * feed entry or a watched page reaches the model, and the model writes the
- * browser's instruction:
- *
- *  - **Everything, as in chat** — the owner's browser sign-ins and any login
- *    they saved, by the rules a conversation's browser follows.
- *  - **One site's saved login only** — a browser with none of the owner's
- *    sign-ins in it, carrying one saved login, typed on that site only.
+ * for every run — which is why it is off until the owner turns it on. On, a
+ * run's browser carries what the owner's does in a conversation (0100, 0141).
  *
  * Presentational like `RoutineOutputCard`: the patch goes back through
  * `onSave`, and owner-only is the caller's decision.
@@ -44,23 +26,7 @@ export function RoutineBrowserCard({
   saving: boolean;
 }) {
   const { t } = useTranslation();
-  const on = routine.browserAccess !== "off";
-  // The site is typed, so it is saved on demand rather than on every key. Null
-  // is "nothing typed", which shows what is saved.
-  const [draft, setDraft] = useState<string | null>(null);
-  const site = draft ?? routine.browserSite ?? "";
-  const siteChanged = site.trim() !== (routine.browserSite ?? "");
-  // "One site" picked before any site was named: show the field, save
-  // nothing. Only meaningful while the saved choice is still `all`.
-  const [picking, setPicking] = useState(false);
-  const pickingSite = picking && routine.browserAccess === "all";
-  const setPickingSite = setPicking;
-  const siteName = routine.browserSite ?? t("that site");
-  const saveSite = () => {
-    onSave({ browserAccess: "site", browserSite: site.trim() });
-    setDraft(null);
-    setPicking(false);
-  };
+  const on = routine.browserAccess === "all";
 
   return (
     <section className="mt-2">
@@ -78,13 +44,7 @@ export function RoutineBrowserCard({
             id="routine-browser"
             aria-label={t("Allow the browser on scheduled runs")}
             checked={on}
-            // Turning it on starts with what chat does, unless a site was
-            // already named — then the narrower choice comes back as it was.
-            onCheckedChange={(checked) =>
-              onSave({
-                browserAccess: checked ? (routine.browserSite ? "site" : "all") : "off",
-              })
-            }
+            onCheckedChange={(checked) => onSave({ browserAccess: checked ? "all" : "off" })}
             disabled={saving}
           />
         </div>
@@ -97,65 +57,13 @@ export function RoutineBrowserCard({
           </p>
         ) : (
           <>
-            <div className="space-y-2">
-              <label className="text-xs text-muted-foreground" htmlFor="routine-browser-access">
-                {t("What the browser may use")}
-              </label>
-              <Select
-                value={pickingSite ? "site" : routine.browserAccess}
-                onValueChange={(value) => {
-                  if (value === "site" && !site.trim()) {
-                    // Nothing to save yet: the site field below appears, and
-                    // saving it saves the choice with it.
-                    setPickingSite(true);
-                    return;
-                  }
-                  setPickingSite(false);
-                  onSave(
-                    value === "site"
-                      ? { browserAccess: "site", browserSite: site.trim() }
-                      : { browserAccess: "all" },
-                  );
-                }}
-                disabled={saving}
-              >
-                <SelectTrigger id="routine-browser-access" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t("Everything, as in a conversation")}</SelectItem>
-                  <SelectItem value="site">{t("One site's saved login only")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <SiteField
-              visible={routine.browserAccess === "site" || pickingSite}
-              site={site}
-              onChange={setDraft}
-              onSave={saveSite}
-              canSave={Boolean(site.trim()) && (siteChanged || routine.browserAccess !== "site")}
-              saving={saving}
-            />
-
             <p className="flex items-start gap-2 text-sm">
               <Globe className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-              {routine.browserAccess === "site" || pickingSite ? (
-                <span>
-                  <Trans
-                    t={t}
-                    i18nKey="Each run's browser starts with none of your sign-ins. It is given only your saved login for <b>{{site}}</b>, and can type it on that site and nowhere else."
-                    values={{ site: siteName }}
-                    components={{ b: <strong className="font-medium" /> }}
-                  />
-                </span>
-              ) : (
-                <span>
-                  {t(
-                    "Each run's browser carries what yours does in a conversation: the sites you signed into in the browser panel, and the logins you saved. Choose one site's login only if this routine reads feeds or pages other people write.",
-                  )}
-                </span>
-              )}
+              <span>
+                {t(
+                  "Each run's browser carries what yours does in a conversation: the sites you signed into in the browser panel, and the logins you saved.",
+                )}
+              </span>
             </p>
 
             <p className="text-meta text-muted-foreground">
@@ -186,47 +94,5 @@ export function RoutineBrowserCard({
         )}
       </div>
     </section>
-  );
-}
-
-/** The one-site field, shown once that choice is made or being made. */
-function SiteField({
-  visible,
-  site,
-  onChange,
-  onSave,
-  canSave,
-  saving,
-}: {
-  visible: boolean;
-  site: string;
-  onChange: (value: string) => void;
-  onSave: () => void;
-  canSave: boolean;
-  saving: boolean;
-}) {
-  const { t } = useTranslation();
-  if (!visible) return null;
-  return (
-    <div className="space-y-2">
-      <label className="text-xs text-muted-foreground" htmlFor="routine-browser-site">
-        {t("The site it may sign in to")}
-      </label>
-      <div className="flex gap-2">
-        <Input
-          id="routine-browser-site"
-          value={site}
-          placeholder="linkedin.com"
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && canSave) onSave();
-          }}
-          disabled={saving}
-        />
-        <Button variant="secondary" onClick={onSave} disabled={!canSave || saving}>
-          {t("Save")}
-        </Button>
-      </div>
-    </div>
   );
 }

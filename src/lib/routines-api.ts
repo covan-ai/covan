@@ -56,12 +56,10 @@ export type Routine = {
   /** How many it has delivered. */
   runsDone: number;
   /**
-   * Whether a scheduled run may use the browser, and what it carries: `off`;
-   * `all`, as in a conversation; or `site`, none of the owner's sign-ins and
-   * only `browserSite`'s saved login.
+   * Whether a scheduled run may use the browser: `off`, or `all`, carrying
+   * what the owner's browser does in a conversation.
    */
-  browserAccess: "off" | "all" | "site";
-  browserSite: string | null;
+  browserAccess: "off" | "all";
   /** The conversation this routine's browser works beside, once a run opened one. */
   browserConversationId: string | null;
   status: "active" | "paused" | "completed";
@@ -381,9 +379,7 @@ export type UpdateRoutineInput = Partial<{
    */
   outputBundleId: string | null;
   outputRetention: number;
-  browserAccess: "off" | "all" | "site";
-  /** Null clears it; `site` access needs one, here or already saved. */
-  browserSite: string | null;
+  browserAccess: "off" | "all";
   deliverInbox: boolean;
   /** Null hands the choice back to the agent. */
   model: string | null;

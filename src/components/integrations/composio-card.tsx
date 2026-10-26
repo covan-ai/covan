@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
+import { Link, useRouter } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -7,6 +7,7 @@ import { useTranslation } from "@/i18n";
 import { useLocale } from "@/i18n/provider";
 import { api, assetSrc } from "@/lib/api-client";
 import { scopeWords, type ToolConnection, type ToolConnectionGrant } from "@/lib/connections-api";
+import { dismiss, isDismissed } from "@/lib/dismissed";
 import { canWriteAsRole } from "@/lib/roles";
 import {
   useComposioGrants,
@@ -117,6 +118,7 @@ function ConnectedAppRow({
 
   return (
     <>
+      {isNewScanConnection(connection) && <ScanToast connection={connection} />}
       <IntegrationRow
         logo={<AppLogo src={assetSrc(connection.logoPath)} name={connection.label} size={36} />}
         name={connection.label}
@@ -295,6 +297,50 @@ const PENDING_GIVES_UP_MS = 10 * 60_000;
 
 function isAbandoned(connection: ToolConnection): boolean {
   return connection.status === "pending" && Date.now() - connection.createdAt > PENDING_GIVES_UP_MS;
+}
+
+/**
+ * A mailbox or calendar of the person's own that finished connecting within the
+ * time a sign-in may take: the one moment worth saying that a scan of it exists
+ * (covan#403). An older connection is not new, whatever page it is shown on.
+ */
+function isNewScanConnection(connection: ToolConnection): boolean {
+  return (
+    connection.mine &&
+    connection.status === "active" &&
+    !connection.verifyError &&
+    (SCAN_TOOLKITS as readonly string[]).includes(connection.toolkitSlug ?? "") &&
+    Date.now() - connection.createdAt <= PENDING_GIVES_UP_MS
+  );
+}
+
+/**
+ * Says, once per connection, that what arrives in a mailbox or calendar that has
+ * just connected can be scanned, and offers the scan.
+ *
+ * The marker is kept in the tab's session, so drawing the row again, or
+ * coming back from Composio's window with a reload, does not say it twice.
+ */
+function ScanToast({ connection }: { connection: ToolConnection }) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const announced = useRef(false);
+  const { id, label: app } = connection;
+
+  useEffect(() => {
+    const marker = `arrivals-toast:${id}`;
+    if (announced.current || isDismissed(marker)) return;
+    announced.current = true;
+    dismiss(marker);
+    toast.success(t("{{app}} is connected. Scan it to see what arrives.", { app }), {
+      action: {
+        label: t("Scan now"),
+        onClick: () => router.history.push("/arrivals?scan=1"),
+      },
+    });
+  }, [id, app, router, t]);
+
+  return null;
 }
 
 /** The day a hidden operation is offered again, in the interface's language. */

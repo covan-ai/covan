@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type React from "react";
+import { toast } from "sonner";
 import type { ToolConnection, ToolConnectionGrant } from "@/lib/connections-api";
 import { ConnectedApps } from "./composio-card";
 
@@ -12,7 +13,8 @@ import { ConnectedApps } from "./composio-card";
  * standing permission is listed with a way to take it back. The catalogue
  * and its unconfigured state are `app-catalogue.test.tsx`'s.
  */
-const { connect, removeConnection, revokeGrant, updateConnection } = vi.hoisted(() => ({
+const { connect, push, removeConnection, revokeGrant, updateConnection } = vi.hoisted(() => ({
+  push: vi.fn(),
   connect: { mutate: vi.fn(), isPending: false },
   removeConnection: { mutate: vi.fn(), isPending: false },
   revokeGrant: { mutate: vi.fn(), isPending: false },
@@ -36,6 +38,7 @@ vi.mock("@/lib/api-client", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock("@tanstack/react-router", () => ({
+  useRouter: () => ({ history: { push } }),
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
     <a href={to}>{children}</a>
   ),
@@ -86,6 +89,9 @@ function app(over: Partial<ToolConnection> = {}): ToolConnection {
 beforeEach(() => {
   role = "admin";
   grants = [];
+  sessionStorage.clear();
+  push.mockClear();
+  vi.mocked(toast.success).mockClear();
   connect.mutate.mockClear();
   removeConnection.mutate.mockClear();
   revokeGrant.mutate.mockClear();
@@ -268,5 +274,45 @@ describe("ConnectedApps", () => {
     const dialog = await manage([app({ scope: "workspace", mine: false })]);
     expect(dialog.getByText("Shared")).toBeInTheDocument();
     expect(dialog.queryByRole("button", { name: /^share/i })).toBeNull();
+  });
+});
+
+// covan#403: a mailbox or calendar that has just connected says what arrives
+// there, once, with a way straight into a scan.
+describe("ConnectedApps, a mailbox that has just connected", () => {
+  function fresh(over: Partial<ToolConnection> = {}) {
+    return app({ label: "Gmail", createdAt: Date.now(), ...over });
+  }
+
+  it.each(["gmail", "outlook", "googlecalendar"])(
+    "points a new %s connection at a scan",
+    (toolkitSlug) => {
+      renderApps([fresh({ toolkitSlug })]);
+      expect(toast.success).toHaveBeenCalledTimes(1);
+      const [message, options] = vi.mocked(toast.success).mock.calls[0]!;
+      expect(message).toBe("Gmail is connected. Scan it to see what arrives.");
+      const action = options?.action as { label: string; onClick: () => void };
+      expect(action.label).toBe("Scan now");
+      action.onClick();
+      expect(push).toHaveBeenCalledWith("/arrivals?scan=1");
+    },
+  );
+
+  it("says it once, however often the page is shown again", () => {
+    const connection = fresh();
+    const { unmount } = renderApps([connection]);
+    unmount();
+    renderApps([connection]);
+    expect(toast.success).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["an application a scan does not read", { toolkitSlug: "linear" }],
+    ["a mailbox still being connected", { status: "pending" as const }],
+    ["somebody else's mailbox", { mine: false }],
+    ["a mailbox connected long ago", { createdAt: 1 }],
+  ])("says nothing for %s", (_what, over) => {
+    renderApps([fresh(over)]);
+    expect(toast.success).not.toHaveBeenCalled();
   });
 });

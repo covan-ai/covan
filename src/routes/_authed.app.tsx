@@ -173,6 +173,7 @@ function Home() {
               />
             )}
             <GettingStarted className="mt-7" />
+            {overview && <ArrivalsCard className="mt-7" />}
             {isError && !overview && (
               <p className="mt-7 text-sm text-muted-foreground">
                 {t("Couldn't load the overview.")}{" "}
@@ -190,6 +191,71 @@ function Home() {
         )}
       </PageBody>
     </>
+  );
+}
+
+const ARRIVALS_CARD_KEY = "covan:arrivals-card-dismissed";
+
+function arrivalsCardDismissed(): boolean {
+  try {
+    return localStorage.getItem(ARRIVALS_CARD_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function dismissArrivalsCard(): void {
+  try {
+    localStorage.setItem(ARRIVALS_CARD_KEY, "1");
+  } catch {
+    // Nothing to keep it in; the card shows again, which is the safe way to fail.
+  }
+}
+
+/**
+ * Tells an account with agents that has never scanned its mailbox that What
+ * arrives exists. `null` from the latest-scan read is "no scan yet"; while it
+ * is still being read nothing shows. A scan, or the dismiss, takes it away.
+ */
+function ArrivalsCard({ className }: { className?: string }) {
+  const { t } = useTranslation();
+  const [dismissed, setDismissed] = useState(arrivalsCardDismissed);
+  const { data: scan } = useQuery({
+    queryKey: ["arrivals", "latest"],
+    queryFn: () => api.arrivals.latest(),
+  });
+  if (scan !== null || dismissed) return null;
+  return (
+    <section
+      aria-label={t("What arrives")}
+      className={cn(
+        "flex flex-wrap items-center gap-3 rounded-xl border border-border px-3.5 py-3",
+        className,
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{t("See what arrives in your inbox")}</div>
+        <div className="text-meta text-muted-foreground">
+          {t(
+            "Connect your mailbox or your calendar, and Covan shows what came in over the last thirty days and which of it a routine could take off your hands.",
+          )}
+        </div>
+      </div>
+      <Button asChild>
+        <Link to="/arrivals" search={{ scan: "1" }}>
+          {t("Scan now")}
+        </Link>
+      </Button>
+      <Button
+        variant="ghost"
+        onClick={() => {
+          dismissArrivalsCard();
+          setDismissed(true);
+        }}
+      >
+        {t("Dismiss")}
+      </Button>
+    </section>
   );
 }
 

@@ -12,8 +12,18 @@ vi.mock("@tanstack/react-router", () => ({
     useSearch: () => search,
   }),
   useNavigate: () => navigate,
-  Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
-    <a href={to}>{children}</a>
+  Link: ({
+    children,
+    to,
+    search,
+  }: {
+    children: React.ReactNode;
+    to: string;
+    search?: object;
+  }) => (
+    <a href={to} data-search={search ? JSON.stringify(search) : undefined}>
+      {children}
+    </a>
   ),
 }));
 
@@ -27,7 +37,9 @@ vi.mock("@tanstack/react-query", () => ({
     refetch,
   }),
 }));
-vi.mock("@/lib/api-client", () => ({ api: { me: vi.fn(), home: { overview: vi.fn() } } }));
+vi.mock("@/lib/api-client", () => ({
+  api: { me: vi.fn(), home: { overview: vi.fn() }, arrivals: { latest: vi.fn() } },
+}));
 
 const role = { isAdmin: true };
 vi.mock("@/lib/workspace-role", () => ({
@@ -147,6 +159,7 @@ function overview(over: Partial<HomeOverview> = {}): HomeOverview {
 beforeEach(() => {
   vi.clearAllMocks();
   search = {};
+  localStorage.clear();
   role.isAdmin = true;
   store.canWrite = true;
   store.agents = [
@@ -160,6 +173,7 @@ beforeEach(() => {
     members: [{ id: "u1" }, { id: "u2" }],
   };
   queries["home/overview"] = overview();
+  delete queries["arrivals/latest"];
 });
 
 describe("Home, for an admin with a working week", () => {
@@ -276,6 +290,47 @@ describe("Home, in a workspace with no agents (A24)", () => {
     await renderHome();
     expect(screen.queryByRole("button", { name: "Create agent" })).not.toBeInTheDocument();
     expect(screen.getByText(/Nothing is shared with you yet/)).toBeInTheDocument();
+  });
+});
+
+describe("Home, the arrivals card", () => {
+  it("offers the first scan to an account that has agents and no scan", async () => {
+    queries["arrivals/latest"] = null;
+    await renderHome();
+    const card = screen.getByRole("region", { name: "What arrives" });
+    expect(within(card).getByText("See what arrives in your inbox")).toBeInTheDocument();
+    const scan = within(card).getByRole("link", { name: "Scan now" });
+    expect(scan).toHaveAttribute("href", "/arrivals");
+    expect(scan).toHaveAttribute("data-search", JSON.stringify({ scan: "1" }));
+  });
+
+  it("shows nothing while the latest scan is still being read", async () => {
+    await renderHome();
+    expect(screen.queryByRole("region", { name: "What arrives" })).not.toBeInTheDocument();
+  });
+
+  it("is gone once a scan exists", async () => {
+    queries["arrivals/latest"] = { id: "scan-1", status: "done" };
+    await renderHome();
+    expect(screen.queryByRole("region", { name: "What arrives" })).not.toBeInTheDocument();
+  });
+
+  it("is gone after a dismiss, and stays gone on the next visit", async () => {
+    queries["arrivals/latest"] = null;
+    const { unmount } = await renderHome();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("region", { name: "What arrives" })).not.toBeInTheDocument();
+    unmount();
+    await renderHome();
+    expect(screen.queryByRole("region", { name: "What arrives" })).not.toBeInTheDocument();
+  });
+
+  it("is not shown in a workspace with no agents", async () => {
+    store.agents = [];
+    queries["home/overview"] = overview({ agents: [], spend: undefined, team: undefined });
+    queries["arrivals/latest"] = null;
+    await renderHome();
+    expect(screen.queryByRole("region", { name: "What arrives" })).not.toBeInTheDocument();
   });
 });
 

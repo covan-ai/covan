@@ -72,6 +72,7 @@ import {
   slackKey,
   toolConnectionsKey,
   useToolConnections,
+  connectionGrantsKey,
 } from "@/hooks/use-connections";
 import { DocumentPanel } from "@/components/chat/document-panel";
 import { documentJobsKey, placeJobs, useDocumentJobs } from "@/components/chat/use-document-jobs";
@@ -90,7 +91,7 @@ import { AskCard } from "@/components/chat/ask-card";
 import { announceAnswerAction } from "@/lib/answer-events";
 import { useTTS } from "@/lib/use-tts";
 import { isPinnedToBottom } from "@/lib/chat-scroll";
-import { runToolProposal } from "@/lib/connections-api";
+import { connectionOfProposal, mayGrantStanding } from "@/lib/connections-api";
 import { isAdminRole } from "@/lib/roles";
 import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
 import { mergeRealtimeMessage, optimisticId, settleMessage } from "@/lib/chat-messages";
@@ -277,9 +278,7 @@ function ChatTab() {
   // same lookup: this screen is the one that renders before anything else
   // resolves, and a missing list here throws inside `ChatTab` rather than
   // hiding a button. The answer when it is missing is the safe one anyway.
-  const canGrantStanding = me
-    ? isAdminRole(me.members?.find((m) => m.id === me.user.id)?.role)
-    : false;
+  const isAdmin = me ? isAdminRole(me.members?.find((m) => m.id === me.user.id)?.role) : false;
   // The model this conversation is answered on: its own pick from the dial in
   // the composer, or the agent's when it has none. Everything on this screen
   // that names a model reads this one, so the chip, the sentence under the
@@ -584,7 +583,7 @@ function ChatTab() {
   // the draft and left there — nothing is sent until the person sends it, since
   // a transcription is a guess and this is where they get to correct it.
   const dictation = useDictation(
-    useCallback((text: string) => setInput((draft) => appendDictation(draft, text)), []),
+    useCallback((text: string) => setInput((draft) => appendDictation(draft, text)), [setInput]),
   );
   const tts = useTTS();
   // Reply-in-progress state, scoped to the session it belongs to. `thinking`
@@ -1668,40 +1667,53 @@ function ChatTab() {
   };
 
   /**
-   * Approve this, and stop being asked about this operation.
+   * Approve this, and stop being asked before changing things in this app.
    *
-   * The grant is written FIRST and the approval only follows if it landed.
-   * Doing it the other way round would let the action happen while the
+   * The permission is written FIRST and the approval only follows if it
+   * landed. Doing it the other way round would let the action happen while the
    * permission silently failed — and the person would go on believing they had
    * granted something they had not, which is the worse of the two failures.
    *
-   * Only offered to an admin, because only an admin can write it: 0063's
-   * policy refuses `always` from anybody else. Offering the button and letting
-   * the policy say no would be a control that exists to produce an error.
+   * Only offered to somebody who can write it (`standingApp` below): 0140's
+   * policy refuses anybody but whoever connected the app, or an admin for a
+   * shared one. Offering the button and letting the policy say no would be a
+   * control that exists to produce an error.
    */
   const approveAlways = async () => {
     if (!active || busy || !pendingConfirm) return;
-    const target = runToolProposal(pendingConfirm.proposal);
+    const target = connectionOfProposal(pendingConfirm.proposal);
     if (!target) return;
     try {
-      await api.composio.setGrant({
+      await api.toolConnections.setGrant({
         agentId: agent.id,
         connectionId: target.connectionId,
-        slug: target.slug,
-        mode: "always",
       });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("Could not save that permission"));
       return;
     }
+    void queryClient.invalidateQueries({ queryKey: connectionGrantsKey });
     toast.success(
-      t("{{name}} will run {{operation}} without asking.", {
+      t("{{name}} will change things in {{app}} without asking.", {
         name: agent.name,
-        operation: target.slug,
+        app: target.connectionLabel,
       }),
     );
     await answerConfirmation(true);
   };
+
+  // The app a third button on the card would be about, when there is one to
+  // offer: a connected app or service this person may say "don't ask again"
+  // for. Data only; the button itself is built where the card is.
+  const standingTarget = pendingConfirm ? connectionOfProposal(pendingConfirm.proposal) : null;
+  const standingApp =
+    standingTarget &&
+    mayGrantStanding(
+      toolConnections?.find((c) => c.id === standingTarget.connectionId),
+      { canEditAgent: canEditAgent(agent), isAdmin },
+    )
+      ? standingTarget.connectionLabel
+      : null;
 
   // Answer the last question again, keeping the answer that is already there.
   //
@@ -2401,11 +2413,14 @@ function ChatTab() {
               busy={busy}
               onAnswer={(approve) => void answerConfirmation(approve)}
               standing={
-                // Offered only where it can actually be written: a connected
-                // app's operation, and an admin looking at it. The card knows
-                // neither of those things and should not — see its own note.
-                canGrantStanding && runToolProposal(pendingConfirm.proposal)
-                  ? { label: t("Always allow this"), onChoose: () => void approveAlways() }
+                // Offered only where it can actually be written. The card knows
+                // nothing about connections and should not — see its own note.
+                standingApp
+                  ? {
+                      label: t("Don't ask again for {{app}}", { app: standingApp }),
+                      onChoose: () => void approveAlways(),
+                      app: standingApp,
+                    }
                   : undefined
               }
             />

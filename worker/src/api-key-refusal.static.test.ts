@@ -140,16 +140,16 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
     "records which routine a person made from a proposal, a write the table's policy refuses a key's token anyway",
   "routes/composio.ts GET /composio/connections/:id/status":
     "finishes a connection the poll finds active, which is the second half of connecting an application",
-  "routes/composio.ts PUT /composio/grants":
-    "lets an agent act in a connected application — an always-allow planted by a key keeps firing after it is revoked",
-  "routes/composio.ts DELETE /composio/grants":
-    "changes what an agent may do in a connected application, the same decision as granting it",
   "routes/slack.ts POST /slack/install/start":
     "installs Covan into a Slack workspace, a bot token that keeps answering long after the key is revoked",
   "routes/slack.ts PATCH /slack/installation":
     "changes which agent answers in Slack, deciding who a third party's workspace talks to",
   "routes/slack.ts DELETE /slack/installation":
     "removes the Slack installation a whole team may be relying on",
+  "routes/tool-connections.ts PUT /tool-connection-grants":
+    "lets an agent change things in a connected app without asking — a permission planted by a key keeps firing after it is revoked",
+  "routes/tool-connections.ts DELETE /tool-connection-grants":
+    "changes what an agent may do in a connected app, the same decision as granting it",
   "routes/tool-connections.ts POST /tool-connections":
     "stores a credential for a service the agent can then call on every later run, after the key is revoked",
   "routes/tool-connections.ts PATCH /tool-connections/:id":
@@ -273,7 +273,6 @@ const OPEN_TO_A_KEY = new Set([
   "routes/composio.ts GET /composio/toolkits",
   "routes/composio.ts GET /composio/toolkits/:slug",
   "routes/composio.ts GET /composio/categories",
-  "routes/composio.ts GET /composio/grants",
   "routes/connections.ts GET /connections",
   "routes/connections.ts GET /connections/:id/runs",
   "routes/connections.ts POST /connections/:id/sync",
@@ -362,6 +361,7 @@ const OPEN_TO_A_KEY = new Set([
   "routes/sessions.ts POST /sessions/:id/browser-tasks/continue",
   "routes/slack.ts GET /slack",
   "routes/support.ts POST /support/quota",
+  "routes/tool-connections.ts GET /tool-connection-grants",
   "routes/tool-connections.ts GET /tool-connections",
   "routes/transcribe.ts POST /transcribe",
   "routes/trash.ts GET /trash",

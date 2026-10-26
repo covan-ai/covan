@@ -259,24 +259,19 @@ export type ComposioCategoriesResponse = {
 };
 
 /**
- * What one agent may do at one connected service, without being asked.
- *
- * There is no `never` here because there is none in the table: the absence of a
- * row IS the default, and for a connected application that default is `ask`.
- * So a card lists what it has rows for and says "asks first" about the rest,
- * which is true whether or not a row exists to say it.
+ * "Don't ask again for this app": this agent may change things in this
+ * connection without asking (migration 0140). Reads never ask and need no row;
+ * without one, a change asks first, and on a schedule it is not made.
  */
 export type ToolConnectionGrant = {
   agentId: string;
   connectionId: string;
-  slug: string;
-  mode: "ask" | "always";
   grantedBy: string | null;
   grantedAt: number;
 };
 
 /**
- * The connection and operation a confirmation is about, when it is about one.
+ * The connection a confirmation is about, when it is about one.
  *
  * Lives here rather than in `agent-steps.tsx` on purpose. That card's own
  * comment says it knows nothing about scheduling or email and prints whatever
@@ -285,25 +280,37 @@ export type ToolConnectionGrant = {
  * standing-permission action and the CALLER decides whether there is one to
  * offer; this is how the caller decides.
  *
- * `null` for every other tool's proposal, and for a malformed one — a standing
- * permission written from a half-read object would name an operation nobody
- * approved.
+ * `null` for every other tool's proposal, and for a malformed one — a
+ * permission written from a half-read object would name a connection nobody
+ * was asked about.
  */
-export function runToolProposal(
+export function connectionOfProposal(
   proposal: unknown,
-): { connectionId: string; connectionLabel: string; slug: string } | null {
+): { connectionId: string; connectionLabel: string } | null {
   if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return null;
   const row = proposal as Record<string, unknown>;
-  if (row.kind !== "run_tool") return null;
+  if (row.kind !== "run_tool" && row.kind !== "http_request") return null;
   const connection = row.connection as Record<string, unknown> | undefined;
   const connectionId = typeof connection?.id === "string" ? connection.id : "";
-  const slug = typeof row.slug === "string" ? row.slug : "";
-  if (!connectionId || !slug) return null;
+  if (!connectionId) return null;
   return {
     connectionId,
     connectionLabel: typeof connection?.label === "string" ? connection.label : "this service",
-    slug,
   };
+}
+
+/**
+ * Whether this person may say "don't ask again" for an agent in a connection:
+ * they can edit the agent, and they connected it — or it is shared and they
+ * are an admin. The same rule as 0140's insert policy, asked here only to
+ * decide whether to offer the control; the policy is what decides.
+ */
+export function mayGrantStanding(
+  connection: Pick<ToolConnection, "mine" | "scope"> | null | undefined,
+  opts: { canEditAgent: boolean; isAdmin: boolean },
+): boolean {
+  if (!connection || !opts.canEditAgent) return false;
+  return connection.mine || (connection.scope === "workspace" && opts.isAdmin);
 }
 
 /** One tool this build has, and whether this deployment can run it. */

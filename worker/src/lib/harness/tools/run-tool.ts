@@ -7,6 +7,7 @@ import { affordable, spend, wasBilled } from "../spend";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 import type { RunApproval } from "../registry";
 import { mayChangeThings, VIEWERS_READ_ONLY } from "../role";
+import { mayChangeWithoutAsking } from "../standing";
 import {
   cursorArgument,
   maxPages,
@@ -281,30 +282,6 @@ function schemaRefusal(
   };
 }
 
-/** Whether a standing grant says this operation never needs asking. */
-async function alwaysAllowed(
-  ctx: ToolContext,
-  connection: ToolConnection,
-  slug: string,
-): Promise<boolean> {
-  // Through the caller's own client on the chat path and the engine's on the
-  // scheduled one; both are covered — 0063 grants `select` to `authenticated`
-  // and to `service_role`, and the composite foreign keys are what make a
-  // cross-tenant grant impossible rather than merely disallowed, which matters
-  // precisely because the scheduled read has no caller for RLS to resolve.
-  const { data, error } = await ctx.db
-    .from("tool_connection_grants")
-    .select("mode")
-    .eq("agent_id", ctx.agentId)
-    .eq("tool_connection_id", connection.id)
-    .eq("slug", slug)
-    .maybeSingle();
-  // A grant that cannot be read is not a grant. Failing closed here costs a
-  // question; failing open would let a database hiccup remove the asking.
-  if (error) return false;
-  return data?.mode === "always";
-}
-
 export const runToolTool: AgentTool = {
   name: "run_tool",
   description:
@@ -555,8 +532,8 @@ export const runToolTool: AgentTool = {
     // could describe.
     //
     // A change asks, unless a person said yes to this operation on this
-    // connection earlier in the reply, or this agent may change things here
-    // without asking. A viewer changes nothing, whatever they answer
+    // connection earlier in the reply, or somebody said "don't ask again" for
+    // this agent in this app (`mayChangeWithoutAsking`, 0140). A viewer changes nothing, whatever they answer
     // (`lib/harness/role.ts`), so that is asked before any approval is weighed.
     const read = operation?.destructive === false;
     if (!read && !(await mayChangeThings(ctx))) {
@@ -570,7 +547,7 @@ export const runToolTool: AgentTool = {
       ? "read"
       : ctx.confirmed === true || (ctx.approvedSlugs ?? []).includes(key)
         ? "person"
-        : (await alwaysAllowed(ctx, connection, slug))
+        : (await mayChangeWithoutAsking(ctx, connection.id))
           ? "grant"
           : null;
 
@@ -587,9 +564,9 @@ export const runToolTool: AgentTool = {
           kind: "error",
           message:
             `${slug} changes something in ${connection.label} and nobody is watching a ` +
-            "scheduled run. Report that you could not do it. Somebody can set this " +
-            "operation to always-allow on the Integrations page if it should happen " +
-            "unattended.",
+            "scheduled run. Report that you could not do it. The routine's owner can let " +
+            `this agent change things in ${connection.label} without asking, on the ` +
+            "routine's page.",
         };
       }
       return {

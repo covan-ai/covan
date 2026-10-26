@@ -321,8 +321,9 @@ export type ToolContext = {
 
 /**
  * What let a call at a connected service through: a person's yes, on a card or
- * earlier in the reply for the same operation (`person`); a standing
- * always-allow (`grant`); or nothing, because it only reads (`read`). Only the
+ * earlier in the reply for the same operation (`person`); "don't ask again"
+ * for this agent in this app (`grant`, 0140); or nothing, because it only
+ * reads (`read`). Only the
  * first is somebody looking at what is about to happen — see
  * `approvedSlugsFrom`. Steps written before 2026-10-27 may say `connection`,
  * which counts as nobody's yes.

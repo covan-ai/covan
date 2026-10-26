@@ -55,8 +55,8 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
 });
 
 vi.mock("@/hooks/use-connections", () => ({
-  useComposioGrants: () => ({ data: { grants } }),
-  useRemoveComposioGrant: () => revokeGrant,
+  useConnectionGrants: () => ({ data: { grants } }),
+  useRemoveConnectionGrant: () => revokeGrant,
   useConnectComposio: () => connect,
   useComposioStatus: () => ({ data: undefined }),
   useRemoveToolConnection: () => removeConnection,
@@ -108,8 +108,6 @@ async function manage(connections: ToolConnection[]) {
 const STANDING: ToolConnectionGrant = {
   agentId: "agent-1",
   connectionId: "conn-1",
-  slug: "GMAIL_SEND_EMAIL",
-  mode: "always",
   grantedBy: "user-1",
   grantedAt: 1,
 };
@@ -225,18 +223,18 @@ describe("ConnectedApps", () => {
    * here that is a ROW — everything else asks, and the absence of a row is
    * what the asking is — so it is the only kind that has to be listed.
    */
-  it("names each standing permission and whose it is", async () => {
+  it("names each agent that changes things here without asking", async () => {
     grants = [STANDING];
     const dialog = await manage([app()]);
-    expect(screen.getByText(/1 operation runs without asking/)).toBeInTheDocument();
-    expect(dialog.getByText("GMAIL_SEND_EMAIL")).toBeInTheDocument();
-    expect(dialog.getByText(/Sales runs this without asking/)).toBeInTheDocument();
+    expect(screen.getByText(/1 agent changes things without asking/)).toBeInTheDocument();
+    expect(dialog.getByText("Changes things without asking")).toBeInTheDocument();
+    expect(dialog.getByText("Sales")).toBeInTheDocument();
   });
 
-  it("does not list an ask grant, because asking is what no row already means", async () => {
-    grants = [{ ...STANDING, slug: "GMAIL_FETCH_EMAILS", mode: "ask" }];
+  it("lists nothing when every agent asks, because asking is what no row means", async () => {
+    grants = [];
     const dialog = await manage([app()]);
-    expect(dialog.queryByText("GMAIL_FETCH_EMAILS")).not.toBeInTheDocument();
+    expect(dialog.queryByText("Changes things without asking")).not.toBeInTheDocument();
   });
 
   it("takes a standing permission back in one press, with nothing to confirm", async () => {
@@ -247,7 +245,7 @@ describe("ConnectedApps", () => {
     const dialog = await manage([app()]);
     await userEvent.click(dialog.getByRole("button", { name: "Ask first" }));
     expect(revokeGrant.mutate).toHaveBeenCalledWith(
-      { agentId: "agent-1", connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL" },
+      { agentId: "agent-1", connectionId: "conn-1" },
       expect.anything(),
     );
   });

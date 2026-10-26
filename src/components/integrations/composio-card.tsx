@@ -9,9 +9,9 @@ import { api, assetSrc } from "@/lib/api-client";
 import { scopeWords, type ToolConnection, type ToolConnectionGrant } from "@/lib/connections-api";
 import { canWriteAsRole } from "@/lib/roles";
 import {
-  useComposioGrants,
   useComposioStatus,
-  useRemoveComposioGrant,
+  useConnectionGrants,
+  useRemoveConnectionGrant,
   useRemoveToolConnection,
 } from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
@@ -31,8 +31,8 @@ import { IntegrationRow } from "./integration-row";
  * The applications this workspace has connected, as rows in Connected (A8).
  *
  * Each row says what it is, whose it is and how it is doing; Manage holds
- * the rest — who may use it, the operations it runs without asking, why an
- * operation is hidden, and the way back out. The catalogue to connect more
+ * the rest — who may use it, which agents change things in it without
+ * asking, why an operation is hidden, and the way back out. The catalogue to connect more
  * from is `AppCatalogue`, in Available.
  */
 export function ConnectedApps({
@@ -47,10 +47,9 @@ export function ConnectedApps({
   const myRole = me?.members.find((m) => m.id === me.user.id)?.role;
   const canWrite = me ? canWriteAsRole(myRole) : false;
 
-  const grants = useComposioGrants();
+  const grants = useConnectionGrants();
   const standing = new Map<string, ToolConnectionGrant[]>();
   for (const grant of grants.data?.grants ?? []) {
-    if (grant.mode !== "always") continue;
     const list = standing.get(grant.connectionId);
     if (list) list.push(grant);
     else standing.set(grant.connectionId, [grant]);
@@ -124,9 +123,9 @@ function ConnectedAppRow({
           connection.toolkitSlug,
           scopeWords(connection, t),
           grants.length > 0
-            ? t("{{count}} operation runs without asking", {
+            ? t("{{count}} agent changes things without asking", {
                 count: grants.length,
-                defaultValue_other: "{{count}} operations run without asking",
+                defaultValue_other: "{{count}} agents change things without asking",
               })
             : null,
           connection.unavailable
@@ -213,18 +212,19 @@ function ConnectedAppRow({
               </div>
             ) : null}
 
-            {/* Only the standing permissions are listed, because only they are
-                a thing somebody granted. Everything else on this app asks, and
-                the absence of a row IS the asking (0063). */}
+            {/* Agents read this app without asking. Only the agents somebody
+                let change things here without asking are listed; every other
+                change asks first, and the absence of a row IS the asking (0140). */}
             {grants.length > 0 ? (
               <div>
-                <div className="mb-1 text-sm font-medium">{t("Runs without asking")}</div>
+                <div className="mb-1 text-sm font-medium">{t("Changes things without asking")}</div>
                 <ul className="m-0 flex list-none flex-col gap-1 p-0">
                   {grants.map((grant) => (
                     <StandingGrant
-                      key={`${grant.agentId}:${grant.slug}`}
+                      key={grant.agentId}
                       grant={grant}
                       agentName={agentNames.get(grant.agentId) ?? t("an agent")}
+                      appName={app}
                       canWrite={canWrite}
                     />
                   ))}
@@ -307,13 +307,13 @@ function retryDate(at: number, locale: string): string {
 }
 
 /**
- * One permission an agent was given in advance, and the way back out of it.
+ * One agent that may change things in this app without asking, and the way
+ * back out of it.
  *
- * Removal is an ordinary writer's, not an admin's, and the asymmetry is
- * 0058's: a writer who cannot raise a grant to `always` must still be able to
- * lower one from it, or the only people who could take a standing permission
- * away would be the people who could give it. That gets the direction of
- * caution exactly backwards.
+ * Removal is any writer's who can edit the agent, not only the person who
+ * granted it (0140): taking a standing permission away can never be the unsafe
+ * direction, and the only people able to remove one must not be the people who
+ * could give it.
  *
  * No confirmation step, unlike disconnecting the app above. Removing a
  * permission cannot be the unsafe direction, and a card that asks "are you
@@ -323,20 +323,19 @@ function retryDate(at: number, locale: string): string {
 function StandingGrant({
   grant,
   agentName,
+  appName,
   canWrite,
 }: {
   grant: ToolConnectionGrant;
   agentName: string;
+  appName: string;
   canWrite: boolean;
 }) {
   const { t } = useTranslation();
-  const revoke = useRemoveComposioGrant();
+  const revoke = useRemoveConnectionGrant();
   return (
     <li className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-      <span className="min-w-0 truncate">
-        <span className="font-mono">{grant.slug}</span> ·{" "}
-        {t("{{agent}} runs this without asking", { agent: agentName })}
-      </span>
+      <span className="min-w-0 truncate">{agentName}</span>
       {canWrite ? (
         <Button
           variant="ghost"
@@ -344,17 +343,13 @@ function StandingGrant({
           disabled={revoke.isPending}
           onClick={() =>
             revoke.mutate(
-              {
-                agentId: grant.agentId,
-                connectionId: grant.connectionId,
-                slug: grant.slug,
-              },
+              { agentId: grant.agentId, connectionId: grant.connectionId },
               {
                 onSuccess: () =>
                   toast.success(
-                    t("{{agent}} will ask before {{operation}}.", {
+                    t("{{agent}} will ask before changing anything in {{app}}.", {
                       agent: agentName,
-                      operation: grant.slug,
+                      app: appName,
                     }),
                   ),
                 onError: (err) =>

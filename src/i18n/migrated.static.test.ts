@@ -203,6 +203,7 @@ export const MIGRATED: string[] = [
   "lib/supabase/mfa.ts",
   "lib/toast.ts",
   "lib/uploads.ts",
+  "lib/use-cases.ts",
   "lib/use-chat-uploads.ts",
   "lib/use-dictation.ts",
   "lib/use-report.ts",

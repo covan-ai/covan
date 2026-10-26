@@ -4,7 +4,7 @@ import { RoutineEditor } from "@/components/routines/routine-editor";
 export const Route = createFileRoute("/_authed/routines/new")({
   component: NewRoutine,
   // `?agent=` from an agent's Routines tab; `?template=` from a link that
-  // names one of `routine-templates.ts` — renaming a template breaks it.
+  // names one of the routine cards in `use-cases.ts` — renaming one breaks it.
   validateSearch: (search: Record<string, unknown>): { agent?: string; template?: string } => ({
     agent: typeof search.agent === "string" ? search.agent : undefined,
     template: typeof search.template === "string" ? search.template : undefined,

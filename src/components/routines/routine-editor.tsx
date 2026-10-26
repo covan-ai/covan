@@ -46,7 +46,7 @@ import {
 import { useAgentsStore } from "@/lib/agents-store";
 import { api, ApiError } from "@/lib/api-client";
 import { eventChoiceReady } from "@/lib/event-choice";
-import { templateById } from "@/lib/routine-templates";
+import { templateById } from "@/lib/use-cases";
 import type {
   CreatableSourceKind,
   EventChoice,

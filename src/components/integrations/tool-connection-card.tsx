@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Database, Globe } from "lucide-react";
 import { Trans, useTranslation } from "@/i18n";
@@ -13,7 +14,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useRemoveToolConnection } from "@/hooks/use-connections";
+import { useConnectionGrants, useRemoveToolConnection } from "@/hooks/use-connections";
+import { api } from "@/lib/api-client";
+import { canWriteAsRole } from "@/lib/roles";
+import { StandingGrants } from "./composio-card";
 import { ConnectionScope } from "./connection-scope";
 import { IntegrationRow } from "./integration-row";
 
@@ -37,8 +41,22 @@ import { IntegrationRow } from "./integration-row";
  * runs 4 chip · 8 button · 10 row · 12 card — a child is never tighter than
  * its parent.
  */
-export function ToolConnectionRow({ connection }: { connection: ToolConnection }) {
+export function ToolConnectionRow({
+  connection,
+  agents = [],
+}: {
+  connection: ToolConnection;
+  /** Only to put a name beside a standing permission. */
+  agents?: Array<{ id: string; name: string }>;
+}) {
   const { t } = useTranslation();
+  const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
+  const canWrite = me ? canWriteAsRole(me.members.find((m) => m.id === me.user.id)?.role) : false;
+  // Who writes here without asking (0140). A database is read-only by
+  // construction, so only an HTTP service that may write has any.
+  const grants = (useConnectionGrants().data?.grants ?? []).filter(
+    (g) => g.connectionId === connection.id,
+  );
   const remove = useRemoveToolConnection();
   const [managing, setManaging] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -129,6 +147,15 @@ export function ToolConnectionRow({ connection }: { connection: ToolConnection }
               <span className="text-sm font-medium">{t("Who can use it")}</span>
               <ConnectionScope connection={connection} />
             </div>
+
+            {connection.transport === "http" && writes ? (
+              <StandingGrants
+                grants={grants}
+                agentNames={new Map(agents.map((a) => [a.id, a.name]))}
+                appName={connection.label}
+                canWrite={canWrite}
+              />
+            ) : null}
 
             <div className="flex items-center gap-2 border-t border-hairline pt-3">
               {confirming ? (

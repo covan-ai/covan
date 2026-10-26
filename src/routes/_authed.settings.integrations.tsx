@@ -289,7 +289,7 @@ function IntegrationsPage() {
           ) : null}
           <ConnectedApps connections={apps} agents={agents} />
           {services.map((connection) => (
-            <ToolConnectionRow key={connection.id} connection={connection} />
+            <ToolConnectionRow key={connection.id} connection={connection} agents={agents} />
           ))}
         </ul>
       )}

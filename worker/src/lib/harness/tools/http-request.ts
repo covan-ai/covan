@@ -4,6 +4,7 @@ import { pinnedRequest, readCapped, resolvesPublicly } from "../../routines/sour
 import { loadConnection } from "../connections";
 import { authHeaders } from "../secrets";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
+import { mayChangeWithoutAsking } from "../standing";
 import { mayChangeThings, VIEWERS_READ_ONLY } from "../role";
 
 /**
@@ -187,28 +188,25 @@ export const httpRequestTool: AgentTool = {
     }
 
     /**
-     * A write through a colleague's credential asks first (0098).
+     * The three rules, as for a connected application (0140). A read (GET or
+     * HEAD) never asks. A write asks, on anybody's connection, unless somebody
+     * said "don't ask again" for this agent in this service; on a schedule it
+     * happens only then. `allowed_methods` stays the ceiling: it is the most
+     * this connection may ever do, and nothing here widens it.
      *
-     * `allowed_methods` is what the connection's creator allowed — for their
-     * own use. On a connection they shared, another person's turn writing
-     * through it is writing as them, and until now it never asked: a POST in
-     * the allowed list just went. So it is a card now, unless this person
-     * already approved a write on this connection in this turn. A person's own
-     * connection keeps its methods as they set them.
-     *
-     * A scheduled run has nobody to ask, so a write through somebody else's
-     * connection there is an honest failure, as `run_tool`'s is.
+     * A yes covers that one request. There is no per-reply memory for HTTP: a
+     * second write is a different body to a different path, and asking again
+     * is the honest default.
      */
-    const theirs = connection.created_by !== ctx.userId;
-    const approved =
-      ctx.confirmed === true || (ctx.approvedConnections ?? []).includes(connection.id);
-    if (writes && theirs && !approved) {
+    if (writes && ctx.confirmed !== true && !(await mayChangeWithoutAsking(ctx, connection.id))) {
       if (ctx.routineRunId) {
         return {
           kind: "error",
           message:
-            `${method} on ${connection.label} writes through a connection somebody else shared, ` +
-            "and a scheduled run has nobody to approve that. Report that you could not do it.",
+            `${method} on ${connection.label} changes something and nobody is watching a ` +
+            "scheduled run. Report that you could not do it. The routine's owner can let " +
+            `this agent change things in ${connection.label} without asking, on the ` +
+            "routine's page.",
         };
       }
       return {

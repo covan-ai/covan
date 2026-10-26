@@ -169,14 +169,6 @@ export type ToolContext = {
    */
   confirmedAsListed?: boolean;
   /**
-   * Connections a person has already approved an action on, in this turn.
-   *
-   * Computed by `lib/harness/loop.ts` from the steps it can already see. Read
-   * only by `http_request` now, which loses it when HTTP services take the
-   * same rules as connected applications; `run_tool` reads `approvedSlugs`.
-   */
-  approvedConnections?: string[];
-  /**
    * The operations a person has said yes to in this reply, each as
    * `connectionId:slug`.
    *

@@ -215,22 +215,12 @@ function ConnectedAppRow({
             {/* Agents read this app without asking. Only the agents somebody
                 let change things here without asking are listed; every other
                 change asks first, and the absence of a row IS the asking (0140). */}
-            {grants.length > 0 ? (
-              <div>
-                <div className="mb-1 text-sm font-medium">{t("Changes things without asking")}</div>
-                <ul className="m-0 flex list-none flex-col gap-1 p-0">
-                  {grants.map((grant) => (
-                    <StandingGrant
-                      key={grant.agentId}
-                      grant={grant}
-                      agentName={agentNames.get(grant.agentId) ?? t("an agent")}
-                      appName={app}
-                      canWrite={canWrite}
-                    />
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+            <StandingGrants
+              grants={grants}
+              agentNames={agentNames}
+              appName={app}
+              canWrite={canWrite}
+            />
 
             {canWrite ? (
               <div className="flex items-center gap-2 border-t border-hairline pt-3">
@@ -304,6 +294,42 @@ function retryDate(at: number, locale: string): string {
     month: "long",
     year: "numeric",
   });
+}
+
+/**
+ * The agents somebody let change things in this app or service without asking
+ * (0140), each with the way back out. Nothing when there are none: every other
+ * change asks, and the absence of a row IS the asking.
+ */
+export function StandingGrants({
+  grants,
+  agentNames,
+  appName,
+  canWrite,
+}: {
+  grants: ToolConnectionGrant[];
+  agentNames: Map<string, string>;
+  appName: string;
+  canWrite: boolean;
+}) {
+  const { t } = useTranslation();
+  if (grants.length === 0) return null;
+  return (
+    <div>
+      <div className="mb-1 text-sm font-medium">{t("Changes things without asking")}</div>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {grants.map((grant) => (
+          <StandingGrant
+            key={grant.agentId}
+            grant={grant}
+            agentName={agentNames.get(grant.agentId) ?? t("an agent")}
+            appName={appName}
+            canWrite={canWrite}
+          />
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 /**

@@ -1610,7 +1610,7 @@ chat.post("/chat/confirm/:id", async (c) => {
                       : ("refused" as const),
                 resultExcerpt: resolved,
                 // The person's yes, which is what lets the rest of the turn
-                // treat this connection as approved (`approvedConnectionsFrom`).
+                // treat this operation as approved (`approvedSlugsFrom`).
                 ...(result.kind === "ok" && result.approval ? { approval: result.approval } : {}),
                 // The pause wrote this row with no `result_chars`, because at
                 // that point nothing had been put in front of the model. Now

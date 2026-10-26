@@ -210,6 +210,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "routes/tool-connections.ts",
     "tool_connections has no INSERT grant, for the reason 0059 gives and 0043 gave before it: the row holds a credential this route encrypts before the database sees it, so a client that could insert could insert a plaintext token — and the column grant means it could never read back what it wrote to check. Creation is one of two writes here that go this way; the other is the read of connected_account_id before a Composio row is deleted, which no client role may select and which is the last moment the grant at the third party can be handed back (0063, lib/composio/revoke.ts). The caller's own client does the permission check in front of both, and every other verb in the file goes through that client and its policies",
   ],
+  [
+    "lib/continuations/rows.ts",
+    "a wake-up the agent sets for itself (0142): the row is written from the ids the turn's ToolContext carries, resolved from the authenticated request or the routine row before the tool ran, and no client role may write continuations, because a client that could would be writing a turn nobody asked for, with tools, in a conversation of its choosing. Its reads are the chain's own bound (this conversation's wake-ups today) and the run's own window (routine_runs.started_at), keyed to those same ids",
+  ],
 ]);
 
 /**

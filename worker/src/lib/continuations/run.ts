@@ -201,7 +201,7 @@ export async function runContinuationTurn(
 
     // 5. Whether a browser was ever approved in this conversation, by this person.
     const browserApproved = routine ? false : await browserApprovedIn(db, wake);
-    const browserOn = routine ? routine.browser !== null : browserApproved;
+    const browserOn = routine ? routine.browserOn : browserApproved;
 
     // 6. The tools, as a scheduled run gets them.
     const toolEnv = env as ToolEnv;

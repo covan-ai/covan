@@ -42,14 +42,47 @@ Everything the engine does afterwards is deterministic: the model summarises,
 and it never decides what to fetch or when to run. This is why "why did my
 routine behave differently today?" is not a question anyone has to answer.
 
-## Starting from a template
+## Starting from a use case
 
 The box above is a good second step and a poor first one: it asks you to have
-imagined the routine already. So the first step also offers templates to pick
-instead, and **picking one makes no model call.** A template is the same set of
-fields a draft produces, written down in advance, so choosing it does exactly
-what accepting a draft does — it fills step 2 and leaves you looking at the
-same editable form, with nothing fetched and nothing billed on the way.
+imagined the routine already. So **Routines → Use cases** (`/routines/use-cases`)
+offers about thirty routines and seven agents written in advance, as cards
+grouped by area of work — inbox and calendar, team and knowledge, customers and
+sales, operations, research. Each card is the request in the first person, with
+the apps it needs above it. It is reached from the empty Routines page, an
+agent's Routines tab, the routines pane, the getting-started guide, Skip on
+the arrivals page, and the command palette.
+
+**Picking one makes no model call, and nothing is written until you press
+Create.** A routine card opens the editor filled in — the same set of fields a
+draft produces, so choosing one does exactly what accepting a draft does. An
+agent card opens New agent with a name, a persona and its settings filled in.
+A card shows what is missing for it ("Gmail or Outlook not connected", "Changes
+things in HubSpot", "Uses a browser") but never stops you picking it.
+
+**Needs.** A routine started from a use case has a **Needs** row in the
+editor, between Schedule and Instructions:
+
+- the apps it needs, each _Connected_ or with **Connect** beside it. Connecting
+  goes to the app's consent screen and comes back to the same form, filled as
+  you left it;
+- for a card that changes something in an app — drafts a reply, files an
+  issue — a switch, **Let _agent_ change things in _app_ without asking**. It is
+  on by default and offered only to whoever connected the app, or an admin for
+  a shared one. Left off, the routine still runs, reports what it would have
+  changed, and changes nothing. On, it also stops the asking in conversations
+  with that agent; [Integrations](integrations.md#connected-apps) takes it
+  back;
+- a synced Notion or Drive source, the browser, or the agent's web search,
+  when the card uses one.
+
+Create saves the routine first and then writes what the Needs row said yes to.
+A permission that fails to save never undoes the routine; the message names
+what was not allowed. The cards' instructions say what they may change and
+that they change nothing else, because the switch is per app, not per action.
+
+The two templates that came before the page are still there, under team and
+knowledge, and their old `?template=` links still open them:
 
 - **Somebody's first week** — one note each morning for a week, from what the
   team has written down. Needs one document on this agent.
@@ -63,7 +96,7 @@ same editable form, with nothing fetched and nothing billed on the way.
 routines screen is scoped to one agent and the series reads that agent's
 knowledge, so documents hung off a different agent do not make this one ready.
 
-A template you cannot use yet is still shown, with the reason where its
+A card you cannot use yet is still shown, with the reason where its
 description would be, and is not clickable. Hiding it would mean nobody learns
 the feature exists, and "an admin has to turn this on in Settings" is a useful
 sentence to read. Only the first unmet reason is given: somebody who is not an

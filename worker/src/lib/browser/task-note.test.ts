@@ -11,27 +11,40 @@ import { browserTaskNote } from "./task-note";
 
 const NOW = new Date("2026-10-11T16:00:00.000Z");
 
-/** The read, recorded; `rows` newest first, the way the query orders them. */
-function dbWith(rows: Array<Record<string, unknown>> | Error) {
+/**
+ * The read, recorded; `rows` newest first, the way the query orders them.
+ * `wakeUps` answers the second read, of `continuations` (0142); `seen` keeps
+ * the first table asked, which is the tasks'.
+ */
+function dbWith(
+  rows: Array<Record<string, unknown>> | Error,
+  wakeUps: Array<Record<string, unknown>> = [],
+) {
   const seen: Record<string, unknown> = {};
+  let current = "";
+  // Only the tasks' read is recorded; the wake-up read is answered and that is all.
+  const note = (key: string, value: unknown) => {
+    if (current !== "continuations") seen[key] = value;
+  };
   const chain = {
     select: (columns: string) => {
-      seen.columns = columns;
+      note("columns", columns);
       return chain;
     },
     eq: (column: string, value: unknown) => {
-      seen[`eq:${column}`] = value;
+      note(`eq:${column}`, value);
       return chain;
     },
     gt: (column: string, value: unknown) => {
-      seen[`gt:${column}`] = value;
+      note(`gt:${column}`, value);
       return chain;
     },
     order: (column: string, opts: { ascending: boolean }) => {
-      seen.order = `${column} ${opts.ascending ? "asc" : "desc"}`;
+      note("order", `${column} ${opts.ascending ? "asc" : "desc"}`);
       return chain;
     },
     limit: async (n: number) => {
+      if (current === "continuations") return { data: wakeUps, error: null };
       seen.limit = n;
       return rows instanceof Error
         ? { data: null, error: { message: rows.message, code: "57014" } }
@@ -40,7 +53,8 @@ function dbWith(rows: Array<Record<string, unknown>> | Error) {
   };
   const db = {
     from: (table: string) => {
-      seen.table = table;
+      current = table;
+      seen.table ??= table;
       return chain;
     },
   } as unknown as SupabaseClient;
@@ -125,6 +139,30 @@ describe("browserTaskNote", () => {
     expect(note).toContain('afterwards you said you would: "write the leads to Qrucial"');
     expect(note).not.toMatch(/"read a page" — [^\n]*afterwards/);
     expect(note).toContain("that is not done yet in this conversation, do it now");
+  });
+
+  it("names the wake-up already set, so a watched turn does not set a second (0142)", async () => {
+    const { db } = dbWith(
+      [{ task: "submit the prompt", status: "finished" }],
+      [
+        {
+          note: "open the link and see whether the video is done",
+          wake_at: "2026-10-11T16:15:00.000Z",
+        },
+      ],
+    );
+    const note = String(await browserTaskNote(db, "sess-1", NOW));
+    expect(note).toContain(
+      'A wake-up is already set for 16:15 UTC: "open the link and see whether the video is done". ' +
+        "Do not set another unless the person asks for a different time.",
+    );
+  });
+
+  it("names a wake-up even when no task is listed", async () => {
+    const { db } = dbWith([], [{ note: "look again", wake_at: "2026-10-11T16:15:00.000Z" }]);
+    const note = String(await browserTaskNote(db, "sess-1", NOW));
+    expect(note).toContain("A wake-up is already set for 16:15 UTC");
+    expect(note).not.toContain("Browser tasks in this conversation");
   });
 
   it("says why a task stopped short when the row says", async () => {

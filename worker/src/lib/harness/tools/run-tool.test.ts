@@ -96,6 +96,8 @@ function ctxWith(
     approvedSlugs?: string[];
     confirmed?: boolean;
     routineRunId?: string;
+    /** A woken turn (0142): nobody is watching a conversation. */
+    continuation?: { id: string; browserApproved: boolean };
     /** The caller's role in the workspace; a member unless a test says. */
     role?: "admin" | "member" | "viewer" | null;
     offeredSlugs?: Set<string>;
@@ -154,6 +156,7 @@ function ctxWith(
     ...(over.approvedSlugs ? { approvedSlugs: over.approvedSlugs } : {}),
     ...(over.confirmed ? { confirmed: true } : {}),
     ...(over.routineRunId ? { routineRunId: over.routineRunId } : {}),
+    ...(over.continuation ? { continuation: over.continuation } : {}),
   };
 }
 
@@ -530,6 +533,16 @@ describe("run_tool", () => {
       ctxWith({ routineRunId: "run-1", grant: { mode: "always" } }),
     );
     expect(out).toMatchObject({ kind: "ok", approval: "grant" });
+  });
+
+  it("errors instead of pausing in a woken turn (0142)", async () => {
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({ continuation: { id: "cont-1", browserApproved: true } }),
+    );
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("nobody is watching");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses before the network when the workspace has no credits left", async () => {
@@ -1142,6 +1155,19 @@ describe("how far one approval reaches", () => {
     expect(out).toMatchObject({ kind: "ok", approval: "read" });
     // Kept for the rest of the turn, so the next call does not look it up again.
     expect(ctx.offeredOperations?.has("GOOGLECALENDAR_EVENTS_LIST")).toBe(true);
+  });
+
+  it("refuses an operation the catalogue says belongs to another toolkit", async () => {
+    getToolMock.mockResolvedValueOnce({
+      kind: "ok",
+      tool: { ...op("GOOGLECALENDAR_EVENTS_LIST", false), toolkit: "googlecalendar_beta" },
+    });
+    const out = await runToolTool.run(
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: {} },
+      ctxWith({ row: CALENDAR }),
+    );
+    expect(out.kind).toBe("error");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("asks when the catalogue cannot describe the operation", async () => {

@@ -1,5 +1,5 @@
 import type { RoutineEnv } from "../../types";
-import { planLimits, type ChatLimits } from "../limits";
+import { planLimits, type ChatLimits, type RoutineLimits } from "../limits";
 
 /**
  * What one agent turn is allowed to spend, and why each number is the number.
@@ -111,6 +111,17 @@ export function chatBudget(env: Pick<RoutineEnv, "WORKER_PLAN">): ChatLimits {
  * times the tokens costs money every night.
  */
 export const SCHEDULED_MAX_STEPS = 8;
+
+/**
+ * What a routine run passes to `runAgentTurn`, asked of the deployment.
+ *
+ * On Free it is `{ maxSteps: SCHEDULED_MAX_STEPS }`, exactly what the run
+ * passed before there was a question to ask. `lib/limits.ts` argues the Paid
+ * numbers under `RoutineLimits`.
+ */
+export function routineBudget(env: Pick<RoutineEnv, "WORKER_PLAN">): RoutineLimits {
+  return planLimits(env).routine;
+}
 
 /**
  * How long one tool may take before the turn gives up on it.

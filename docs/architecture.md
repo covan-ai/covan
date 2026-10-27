@@ -458,9 +458,8 @@ unchanged. Its tasks carry the run they answer (`browser_tasks.routine_run_id`),
 the run is written as `waiting` with its draft, and `lib/routines/held.ts`
 sends the report once, with the answers written in, when the last task settles —
 claimed with a conditional update so the open tab and the cron cannot both send
-it — or after two hours with what it has. With `browser_access = 'site'` a run
-carries no cookie jar (`browser_tasks.jarless`, read again when a waiting task
-starts) and only that site's saved login.
+it — or after two hours with what it has. `browser_access` is on or off (0141); `browser_tasks.jarless` survives
+only for tasks queued before the one-site mode went.
 
 **A turn is not its request.** `POST /chat/stream` and `POST /chat/confirm/:id`
 are handed to a turn host before the route runs (`middleware/detach.ts`), and
@@ -517,6 +516,31 @@ four-hour hard timeout, which has no browser left to stop. `browser_sessions`, `
 `browser_takeovers` hold that; all three withhold their provider ids from every
 client role, for the reason `connected_account_id` has one, and the first is
 readable by its owner only.
+
+**A turn can put the job down and be woken later (0142).** The answer to a
+browser task arrives as a message, and until 0142 nothing with tools read it
+unless a tab was open: the step the agent said would follow (`then_step`, 0117)
+was claimed by the tab, and a routine's answer was written into its held report
+by a model call with no tools. Two things changed that. `continue_later` writes
+a `continuations` row — conversation, owner, a note, `wake_at` — from the ids
+the turn already carried, through the service role, since no client role may
+write a turn nobody asked for. And the tick gained a stage, after the routines
+and before the sweeps, that claims due rows with `claim_due_continuations` and
+unclaimed steps with `claim_browser_continuations_unwatched` — the tab's claim
+and the cron's race on `continued_at`, in the statement that selects, and the
+cron waits a minute so an open tab wins — and runs each as a **new** turn in
+the conversation (`lib/continuations/run.ts`): not a resumed one, because a
+turn replays its caller's request and the cron has no caller, but the same
+`runAgentTurn` a scheduled routine run goes through, with the service role and
+the owner as the caller, the conversation read fresh, the wake-up as the last
+user turn, and one assistant message written back. `ToolContext.continuation`
+is the "nobody is watching" marker beside `routineRunId`: `browse` runs without
+a card only where a browser was approved in that conversation before, and never
+with a saved login; `run_tool` goes through on a standing permission or says
+so. A routine's wake-up carries the held run's id, so its tasks attach to the
+report, the report waits while the chain is pending (`chainPending`), and the
+chain's last reply is the report. Bounds: five to 720 minutes, 24 wake-ups per
+conversation per day, and a routine's chain inside the report's two hours.
 
 So connecting HubSpot is a row. Connecting a second Postgres is a row plus a
 function installed on it. The `composio` transport is the same shape with the
@@ -633,11 +657,12 @@ production, at the moment a user uploads a file or sends a message.
   has excluded themselves from their workspace's coverage report, with a
   self-only `SELECT` policy, so presence is the fact and nobody — admins
   included — can read anybody else's.
-- `connection_capabilities`, `connection_grants`, `capability_calls` — what an
-  agent may do at a connected source, as opposed to what a person may do in
-  Postgres. All three are empty, which is an exact description of today's
-  behaviour rather than a feature waiting to be switched on:
-  [no row means no](security.md#a-question-row-level-security-cannot-be-asked).
+- `tool_connection_grants` — which agents may change things in which connected
+  apps and services without asking, one row per agent and connection (0140).
+  Reads need no row; a change without one asks first, and on a schedule does
+  not happen. 0058's first design of this (`connection_capabilities`,
+  `connection_grants`, `capability_calls`) was read by nothing and dropped in
+  the same migration.
 
 Migrations are numbered and applied in order, and an applied migration is never
 edited — corrections go in a new file.

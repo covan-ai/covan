@@ -188,7 +188,7 @@ export function AddServiceDialog({
             </div>
             <p className="text-meta leading-[1.45] text-muted-foreground">
               {t(
-                "This is your decision, not the agent's — it cannot widen the list. Leaving it at GET means nothing it does here can change anything.",
+                "This is the most it may ever do here, and the agent cannot widen it. A write still asks first, unless you tell an agent not to. Leaving it at GET means nothing it does here can change anything.",
               )}
             </p>
           </div>

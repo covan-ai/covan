@@ -109,14 +109,6 @@ function routineQueuedFor(position: number): string {
   );
 }
 
-/**
- * Whether a host is the routine's allowed site or one of its subdomains — the
- * same walk up from a host that `savedLogin` and `credentialsFor` make (R37).
- */
-function withinSite(host: string, site: string): boolean {
-  return host === site || host.endsWith(`.${site}`);
-}
-
 /** What the model is told when the line is full (`QUEUE_MAX`). */
 const QUEUE_FULL =
   `${QUEUE_MAX} browser tasks are already waiting for this conversation's browser, which runs ` +
@@ -496,8 +488,9 @@ export const browseTool: AgentTool = {
         message: "say what to do in one sentence — which site, and what to get or do there",
       };
     }
-    // A routine reports what it found and has no conversation to carry on in.
-    const thenStep = ctx.routineBrowser ? null : thenOf(input.then);
+    // A routine's step too, since 0142: its conversation is carried on from
+    // the cron, and the report waits for the chain (`lib/routines/held.ts`).
+    const thenStep = thenOf(input.then);
     const named = siteOf(input.site);
     if (named === INVALID_SITE) {
       // Before the card and before the meter (ruling R13's order): a refusal
@@ -534,27 +527,10 @@ export const browseTool: AgentTool = {
     }
 
     /**
-     * A routine allowed one site's login and nothing else (`'site'`): its
-     * browser carries no cookie jar, so nothing the owner signed into by hand
-     * is in reach of an instruction a feed entry may have shaped, and the only
-     * login it can be given is that site's. A `site` naming anywhere else is
-     * refused before anything is spent, rather than quietly dropped.
-     */
-    const jarless = routine?.access === "site";
-    if (jarless && named && routine.site && !withinSite(named, routine.site)) {
-      return {
-        kind: "error",
-        message:
-          `this routine may only sign in to ${routine.site}. Leave site out, or report that ` +
-          "the task needed a sign-in it is not allowed.",
-      };
-    }
-
-    /**
      * The profile is read first because it decides, below, whether a shared
-     * login may be typed at all. A jarless run has none to read.
+     * login may be typed at all.
      */
-    const profile = jarless ? null : await profileFor(ctx.env, ctx.userId);
+    const profile = await profileFor(ctx.env, ctx.userId);
 
     /**
      * The model's `site`, or a host the task names that has a saved login —
@@ -570,8 +546,14 @@ export const browseTool: AgentTool = {
      *   their own and into somebody else's, in the session they keep using.
      *   Their own saved login still applies.
      */
-    let site = jarless
-      ? (named ?? routine.site)
+    // - **A woken turn carries the jar and never a saved login (0142).** The
+    //   card that approved this conversation's first task showed the jar;
+    //   no card can show a password typed with nobody watching. So it gets
+    //   the listed-line rule: `site` is ignored and the task's text names
+    //   nothing. A login wall ends the chain with the answer saying so.
+    const woken = Boolean(ctx.continuation) && !routine;
+    let site = woken
+      ? null
       : (named ?? (ctx.confirmedAsListed ? null : await siteFromTask(ctx, task)));
     if (site && (await sharedLoginOverOwnJar(ctx, profile, site))) site = null;
 
@@ -591,7 +573,20 @@ export const browseTool: AgentTool = {
      * than provisioned here, because a proposal somebody declines must leave
      * nothing behind — a profile at the provider least of all.
      */
-    if (ctx.confirmed !== true && !routine) {
+    /**
+     * A woken turn (0142) has nobody to show a card to. Where a browser was
+     * approved in this conversation before, that approval carries; where none
+     * ever was, this is an honest refusal rather than a card nobody answers.
+     */
+    if (ctx.continuation && !ctx.continuation.browserApproved && !routine) {
+      return {
+        kind: "error",
+        message:
+          "nobody is watching this conversation and no browser was ever approved in it, so a " +
+          "browser cannot be opened now. Say so plainly and finish.",
+      };
+    }
+    if (ctx.confirmed !== true && !routine && !ctx.continuation?.browserApproved) {
       const cost = await creditNote(ctx);
       /**
        * Which sites this browser is signed into, on the card.
@@ -638,13 +633,9 @@ export const browseTool: AgentTool = {
      * browser and this run would carry one jar, and the one that stops last
      * writes it. One read, through the service role keyed to `ctx.userId`.
      */
-    // A jarless run writes no jar, so the person's own browser is no reason
-    // to wait for it.
-    if (!jarless) {
-      const ownBrowser = await heldTakeover(ctx.env, ctx.userId);
-      if (ownBrowser === null) return { kind: "error", message: CANNOT_TELL };
-      if (ownBrowser) return { kind: "error", message: OWN_BROWSER_OPEN };
-    }
+    const ownBrowser = await heldTakeover(ctx.env, ctx.userId);
+    if (ownBrowser === null) return { kind: "error", message: CANNOT_TELL };
+    if (ownBrowser) return { kind: "error", message: OWN_BROWSER_OPEN };
 
     /**
      * Where the answer goes: this conversation, or the routine's own — opened
@@ -661,7 +652,7 @@ export const browseTool: AgentTool = {
     }
     // What a task started for a routine carries back to it (0100).
     const forRoutine = routine
-      ? { ...(ctx.routineRunId ? { routineRunId: ctx.routineRunId } : {}), jarless }
+      ? { ...(ctx.routineRunId ? { routineRunId: ctx.routineRunId } : {}) }
       : {};
 
     /**
@@ -762,7 +753,6 @@ export const browseTool: AgentTool = {
       profile,
       egressCountry: ctx.egressCountry ?? null,
       signal: ctx.signal,
-      ...(jarless ? { withoutJar: true } : {}),
     });
     const opening = session.value.providerSessionId === null;
 

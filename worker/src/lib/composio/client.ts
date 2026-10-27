@@ -146,10 +146,8 @@ export type ComposioResult<T> = ({ kind: "ok" } & T) | ComposioError;
  * carry — see `destructiveOf`. It is still `null` for operations annotated with
  * none of them, and that is a real answer rather than a failure. It is shown to
  * the person reading an approval card, where "this one deletes things" is worth
- * a line, and since #201 it also narrows one thing: a connection's turn-long
- * approval does not reach an operation marked `true` (`run_tool`'s guard 3).
- * Narrows, never grants — `false` and `null` buy an operation nothing that the
- * connection's approval did not already buy it.
+ * a line, and since covan#410 `false` is what makes an operation a read, which
+ * runs without asking. `null` and `true` are changes.
  */
 export type ComposioTool = {
   slug: string;
@@ -481,20 +479,13 @@ function toolkitOf(row: Record<string, unknown>, slug: string): string {
  * distinction worth drawing. `null` is still a real answer: plenty of
  * operations carry none of the four.
  *
- * **It never says an operation is safe, and the permission model is built that
- * way.** A read at a third party can pull private content into a turn as easily
- * as a write can change something, so "it only reads" is not a reason to skip
- * asking: every first call on a connection is asked about whatever this
- * returns. What it buys is a line on the approval card, where knowing an
- * operation deletes things is worth having before you press the button — and
- * one narrowing in `run_tool`'s guard 3, where `true` holds back the turn-long
- * approval a connection has already been given (#201).
- *
- * So `null` is read as "not known to be destructive", never as "harmless". The
- * distinction is load-bearing: when there is no row at all — a resumed turn, a
- * scheduled run, a slug recalled from an earlier turn — guard 3 asks the person
- * again rather than reading the absence as a `false`. That direction is the
- * whole of finding 2 in the 2026-10-08 audit.
+ * **`false` is load-bearing.** Since covan#410 an operation marked `false` is a
+ * read, and a read runs with nobody asked — in a conversation and on a
+ * schedule. So `false` is returned only for an operation that says it reads and
+ * says nothing else; two hints that disagree are `null`. `null` is "not known",
+ * which `run_tool` treats as a change: it asks, and on a schedule it needs the
+ * agent's standing permission. That direction is the whole of finding 2 in the
+ * 2026-10-08 audit.
  */
 function destructiveOf(row: Record<string, unknown>): boolean | null {
   if (typeof row.is_destructive === "boolean") return row.is_destructive;
@@ -504,13 +495,14 @@ function destructiveOf(row: Record<string, unknown>): boolean | null {
     const hints = new Set(
       tags.filter((t): t is string => typeof t === "string").map((t) => t.toLowerCase()),
     );
-    // `readOnlyHint` is checked first because it is the specific claim: an
-    // operation carrying both it and a writing hint is being described by two
-    // people, and the narrow statement is the one to believe.
-    if (hints.has("readonlyhint")) return false;
-    if (hints.has("destructivehint") || hints.has("createhint") || hints.has("updatehint")) {
-      return true;
-    }
+    // A read runs with nobody asked (`run_tool`'s gate), so `false` is only
+    // for an operation that says it reads and nothing else. One that carries
+    // both a read and a writing hint is described two ways, and is unknown —
+    // which the gate treats as a change.
+    const writes =
+      hints.has("destructivehint") || hints.has("createhint") || hints.has("updatehint");
+    if (hints.has("readonlyhint")) return writes ? null : false;
+    if (writes) return true;
   }
   return null;
 }

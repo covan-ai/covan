@@ -2123,14 +2123,12 @@ describe("a saved login (Task 2.3)", () => {
 describe("a routine's run, allowed the browser", () => {
   const conversation = vi.fn(async (): Promise<string | null> => "routine-conv-1");
   const routineCtx = (
-    access: "all" | "site",
-    site: string | null = null,
     over: Partial<ToolContext> = {},
   ): ToolContext & { routineBrowser: NonNullable<ToolContext["routineBrowser"]> } => {
     const ctx = ctxWith({
       sessionId: undefined,
       routineRunId: "run-1",
-      routineBrowser: { access, site, conversation, started: [] },
+      routineBrowser: { conversation, started: [] },
       ...over,
     });
     return ctx as ToolContext & { routineBrowser: NonNullable<ToolContext["routineBrowser"]> };
@@ -2142,7 +2140,7 @@ describe("a routine's run, allowed the browser", () => {
   });
 
   it("starts without a card, in the routine's conversation, and says the report waits", async () => {
-    const ctx = routineCtx("all");
+    const ctx = routineCtx();
     const result = await browseTool.run({ task: TASK }, ctx);
 
     expect(result.kind).toBe("ok");
@@ -2152,82 +2150,28 @@ describe("a routine's run, allowed the browser", () => {
     expect(recordBrowserTask.mock.calls[0][1]).toMatchObject({
       sessionId: "routine-conv-1",
       routineRunId: "run-1",
-      jarless: false,
     });
     expect(ctx.routineBrowser.started).toEqual(["bt-1"]);
   });
 
-  it("keeps no step after the browser for a routine, which has no conversation to carry on in", async () => {
-    await browseTool.run({ task: TASK, then: "write it to Qrucial" }, routineCtx("all"));
-    expect("thenStep" in recordBrowserTask.mock.calls[0][1]).toBe(false);
+  it("keeps the step after the browser for a routine, whose conversation carries on from the cron (0142)", async () => {
+    await browseTool.run({ task: TASK, then: "write it to Qrucial" }, routineCtx());
+    expect(recordBrowserTask.mock.calls[0][1].thenStep).toBe("write it to Qrucial");
   });
 
-  it("carries the owner's jar with `all`, as a conversation's browser would", async () => {
+  it("carries the owner's jar, as a conversation's browser would", async () => {
     const JAR = { id: "prof-1", providerProfileId: "prov-1", proxyCountryCode: "de" };
     profileFor.mockResolvedValue(JAR);
 
-    await browseTool.run({ task: TASK }, routineCtx("all"));
+    await browseTool.run({ task: TASK }, routineCtx());
 
     expect(heldTakeover).toHaveBeenCalled();
     expect(sentRun().browserSettings).toMatchObject({ profileId: "prov-1" });
   });
 
-  it("carries no jar with `site`, and only that site's saved login", async () => {
-    const JAR = { id: "prof-1", providerProfileId: "prov-1", proxyCountryCode: "de" };
-    profileFor.mockResolvedValue(JAR);
-    const aliases = credentialAliases("linkedin.com");
-    const login: CredentialBinding = {
-      id: "cred-1",
-      label: "LinkedIn",
-      scope: "owner",
-      siteHost: "linkedin.com",
-      aliases,
-      bindings: [
-        {
-          alias: aliases.username,
-          source: { type: "inline", value: "u" },
-          allowedDomains: ["linkedin.com"],
-        },
-      ],
-    };
-    credentialsFor.mockResolvedValue(login);
-
-    await browseTool.run({ task: TASK }, routineCtx("site", "linkedin.com"));
-
-    // No jar read, none made, and the person's own browser is no reason to wait.
-    expect(profileFor).not.toHaveBeenCalled();
-    expect(runProfile).not.toHaveBeenCalled();
-    expect(heldTakeover).not.toHaveBeenCalled();
-    const body = sentRun();
-    expect(body.browserSettings).toEqual({ profileId: null });
-    expect(body.secretBindings).toEqual(login.bindings);
-    expect(credentialsFor.mock.calls[0][1].host).toBe("linkedin.com");
-    expect(recordBrowserTask.mock.calls[0][1]).toMatchObject({ jarless: true });
-  });
-
-  it("refuses, before anything is spent, a sign-in somewhere `site` does not allow", async () => {
-    const result = await browseTool.run(
-      { task: TASK, site: "facebook.com" },
-      routineCtx("site", "linkedin.com"),
-    );
-
-    expect(result.kind).toBe("error");
-    expect((result as { message: string }).message).toContain("linkedin.com");
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(conversation).not.toHaveBeenCalled();
-  });
-
-  it("allows a subdomain of the one site", async () => {
-    const result = await browseTool.run(
-      { task: TASK, site: "www.linkedin.com" },
-      routineCtx("site", "linkedin.com"),
-    );
-    expect(result.kind).toBe("ok");
-  });
-
   it("starts nothing when the routine's conversation cannot be opened", async () => {
     conversation.mockResolvedValue(null);
-    const result = await browseTool.run({ task: TASK }, routineCtx("all"));
+    const result = await browseTool.run({ task: TASK }, routineCtx());
 
     expect(result.kind).toBe("error");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -2245,15 +2189,14 @@ describe("a routine's run, allowed the browser", () => {
         profileId: null,
       },
     });
-    const ctx = routineCtx("site", "linkedin.com");
-    const result = await browseTool.run({ task: TASK }, ctx);
+    const ctx = routineCtx();
+    const result = await browseTool.run({ task: TASK, site: "linkedin.com" }, ctx);
 
     expect(result.kind).toBe("ok");
     expect((result as { content: string }).content).toMatch(/^Queued/);
     expect(queueBrowserTask.mock.calls[0][1]).toMatchObject({
       sessionId: "routine-conv-1",
       routineRunId: "run-1",
-      jarless: true,
       site: "linkedin.com",
     });
     expect(ctx.routineBrowser.started).toEqual(["bt-waiting"]);
@@ -2268,5 +2211,52 @@ describe("a routine's run, allowed the browser", () => {
     expect(result.kind).toBe("error");
     expect((result as { message: string }).message).toMatch(/allows the browser/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A woken turn (0142): the cron carrying a conversation on with nobody
+ * watching. No card can be shown, so the browser runs only where one was
+ * approved in this conversation before — and never with a saved login, which
+ * no card showed being typed.
+ */
+describe("a woken turn, with nobody watching", () => {
+  const woken = (browserApproved: boolean, over: Partial<ToolContext> = {}) =>
+    ctxWith({ continuation: { id: "cont-1", browserApproved }, ...over });
+
+  it("a continuation without a prior browser is refused the browser", async () => {
+    const result = await browseTool.run({ task: TASK }, woken(false));
+    expect(result.kind).toBe("error");
+    expect((result as { message: string }).message).toMatch(/nobody is watching/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(ensureBrowserSession).not.toHaveBeenCalled();
+  });
+
+  it("a continuation with a prior browser skips the card", async () => {
+    const result = await browseTool.run({ task: TASK, then: "post it to Slack" }, woken(true));
+    expect(result.kind).toBe("ok");
+    expect(runCalls()).toHaveLength(1);
+    expect(recordBrowserTask.mock.calls[0][1]).toMatchObject({
+      sessionId: "sess-1",
+      thenStep: "post it to Slack",
+    });
+  });
+
+  it("a woken turn types no saved login, even when the task names a site", async () => {
+    savedLogin.mockResolvedValue({
+      id: "cred-1",
+      label: "LinkedIn — shared",
+      scope: "agent",
+      siteHost: "linkedin.com",
+    });
+    const result = await browseTool.run(
+      { task: "open linkedin.com and read the first post", site: "linkedin.com" },
+      woken(true),
+    );
+    expect(result.kind).toBe("ok");
+    expect(credentialsFor).not.toHaveBeenCalled();
+    expect(savedLogin).not.toHaveBeenCalled();
+    expect(sentRun()).not.toHaveProperty("secretBindings");
+    expect(recordBrowserTask.mock.calls[0][1]).not.toHaveProperty("credentialId");
   });
 });

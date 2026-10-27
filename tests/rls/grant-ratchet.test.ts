@@ -99,7 +99,7 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "routines INSERT":
     "agent_id,delivery_channel_id,deliver_inbox,ends_after_runs,instruction,model,name,next_run_at,output_bundle_id,output_retention,reasoning_effort,schedule_cron,source_config,source_kind,timezone,trigger_kind,user_id,visibility,workspace_id",
   "routines UPDATE":
-    "browser_access,browser_site,consecutive_failures,delivery_channel_id,deliver_inbox,instruction,model,name,next_run_at,output_bundle_id,output_retention,paused_reason,reasoning_effort,schedule_cron,status,timezone,trigger_kind,updated_at,visibility",
+    "browser_access,consecutive_failures,delivery_channel_id,deliver_inbox,instruction,model,name,next_run_at,output_bundle_id,output_retention,paused_reason,reasoning_effort,schedule_cron,status,timezone,trigger_kind,updated_at,visibility",
   // 0121: when the caller last read a thread, upserted on (session_id, user_id).
   "session_reads INSERT": "last_read_at,session_id,user_id,workspace_id",
   "session_reads UPDATE": "last_read_at,session_id,user_id,workspace_id",

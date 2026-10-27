@@ -136,9 +136,7 @@ export type RoutineRow = {
    * Whether a run may use the browser, and what it carries (0100). Optional
    * for `output_bundle_id`'s reason; absent reads as `'off'`.
    */
-  browser_access?: "off" | "all" | "site" | null;
-  /** With `'site'`, the one host whose saved login a run may carry. */
-  browser_site?: string | null;
+  browser_access?: "off" | "all" | null;
   /** The owner's conversation this routine's browser runs beside, once one is open. */
   browser_conversation_id?: string | null;
   /**
@@ -1396,14 +1394,8 @@ function browserFor(
   deps: ExecutorDeps,
 ): Omit<RoutineBrowser, "started"> | undefined {
   if (isTest(deps)) return undefined;
-  const access = routine.browser_access ?? "off";
-  if (access === "off" || access === null) return undefined;
-  if (access === "site" && !routine.browser_site) return undefined;
-  return {
-    access,
-    site: access === "site" ? (routine.browser_site ?? null) : null,
-    conversation: () => openRoutineConversation(deps.db, routine),
-  };
+  if (routine.browser_access !== "all") return undefined;
+  return { conversation: () => openRoutineConversation(deps.db, routine) };
 }
 
 /**

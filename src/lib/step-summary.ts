@@ -24,6 +24,7 @@ const DID: Record<string, string> = {
   covan_guide: msg("Checked the Covan guide"),
   schedule_job: msg("Scheduled a job"),
   run_routine: msg("Ran a routine"),
+  continue_later: msg("Planned to come back later"),
   watch_event: msg("Set up a watch"),
   ask_person: msg("Asked a question"),
   remember: msg("Noted something"),

@@ -8,6 +8,7 @@ import { useLocale } from "@/i18n/provider";
 import { api, assetSrc } from "@/lib/api-client";
 import { scopeWords, type ToolConnection, type ToolConnectionGrant } from "@/lib/connections-api";
 import { canWriteAsRole } from "@/lib/roles";
+import { canEditAgent, type AgentAccess } from "@/lib/agent-access";
 import {
   useComposioStatus,
   useConnectionGrants,
@@ -41,7 +42,7 @@ export function ConnectedApps({
 }: {
   connections: ToolConnection[];
   /** Only to put a name beside a standing permission. */
-  agents: Array<{ id: string; name: string }>;
+  agents: Array<{ id: string; name: string; myAccess?: AgentAccess }>;
 }) {
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
   const myRole = me?.members.find((m) => m.id === me.user.id)?.role;
@@ -55,6 +56,11 @@ export function ConnectedApps({
     else standing.set(grant.connectionId, [grant]);
   }
   const agentNames = new Map(agents.map((a) => [a.id, a.name]));
+  // Taking a permission away needs edit access to its agent (0140's delete
+  // policy), so "Ask first" is offered only where it would work.
+  const editable = new Set(
+    agents.filter((a) => a.myAccess && canEditAgent({ myAccess: a.myAccess })).map((a) => a.id),
+  );
 
   return (
     <>
@@ -67,6 +73,7 @@ export function ConnectedApps({
             grants={standing.get(c.id) ?? []}
             agentNames={agentNames}
             canWrite={canWrite}
+            editable={editable}
           />
         ))}
     </>
@@ -89,11 +96,14 @@ function ConnectedAppRow({
   grants,
   agentNames,
   canWrite,
+  editable,
 }: {
   connection: ToolConnection;
   grants: ToolConnectionGrant[];
   agentNames: Map<string, string>;
   canWrite: boolean;
+  /** The agents this person can edit, whose permissions they may take away. */
+  editable: Set<string>;
 }) {
   const { t } = useTranslation();
   const locale = useLocale();
@@ -215,22 +225,13 @@ function ConnectedAppRow({
             {/* Agents read this app without asking. Only the agents somebody
                 let change things here without asking are listed; every other
                 change asks first, and the absence of a row IS the asking (0140). */}
-            {grants.length > 0 ? (
-              <div>
-                <div className="mb-1 text-sm font-medium">{t("Changes things without asking")}</div>
-                <ul className="m-0 flex list-none flex-col gap-1 p-0">
-                  {grants.map((grant) => (
-                    <StandingGrant
-                      key={grant.agentId}
-                      grant={grant}
-                      agentName={agentNames.get(grant.agentId) ?? t("an agent")}
-                      appName={app}
-                      canWrite={canWrite}
-                    />
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+            <StandingGrants
+              grants={grants}
+              agentNames={agentNames}
+              appName={app}
+              canWrite={canWrite}
+              editable={editable}
+            />
 
             {canWrite ? (
               <div className="flex items-center gap-2 border-t border-hairline pt-3">
@@ -304,6 +305,45 @@ function retryDate(at: number, locale: string): string {
     month: "long",
     year: "numeric",
   });
+}
+
+/**
+ * The agents somebody let change things in this app or service without asking
+ * (0140), each with the way back out. Nothing when there are none: every other
+ * change asks, and the absence of a row IS the asking.
+ */
+export function StandingGrants({
+  grants,
+  agentNames,
+  appName,
+  canWrite,
+  editable,
+}: {
+  grants: ToolConnectionGrant[];
+  agentNames: Map<string, string>;
+  appName: string;
+  canWrite: boolean;
+  /** The agents this person can edit, whose permissions they may take away (0140). */
+  editable: Set<string>;
+}) {
+  const { t } = useTranslation();
+  if (grants.length === 0) return null;
+  return (
+    <div>
+      <div className="mb-1 text-sm font-medium">{t("Changes things without asking")}</div>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {grants.map((grant) => (
+          <StandingGrant
+            key={grant.agentId}
+            grant={grant}
+            agentName={agentNames.get(grant.agentId) ?? t("an agent")}
+            appName={appName}
+            canWrite={canWrite && editable.has(grant.agentId)}
+          />
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 /**

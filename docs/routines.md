@@ -296,10 +296,16 @@ What it changes for you:
 - **Write the instruction to be read cold.** The run has your instruction and
   the agent's documents, and none of the conversation the job came out of. Name
   the service and say what to report.
-- **Nothing that needs approval happens.** A tool that would ask a person —
-  sending to a channel, creating another routine — is recorded as wanted and
-  not done, and the delivered message says so at the bottom. A tick has nobody
-  to ask and nowhere to wait.
+- **Reads happen; a change needs the switch on.** The agent reads any
+  connected app it can reach without asking, as it would in a conversation.
+  A change in a connected app or HTTP service — a draft, a label, a record —
+  happens only when **What it may change without asking** on the routine's
+  page is on for that app. Anything else that would ask a person — a change
+  with the switch off, creating another routine — is recorded as wanted and
+  not done, and the delivered message says so at the bottom. A tick has
+  nobody to ask and nowhere to wait.
+- **It can search the web when the agent can.** A routine whose agent has web
+  search switched on searches on a schedule too.
 - **One routine can hand work to another.** `run_routine` starts one of the
   owner's own routines that has no source, with text for it to work from,
   and waits for its report. In a conversation the person approves it first.
@@ -332,20 +338,11 @@ you on a card before it starts, and a scheduled run has nobody to show one to.
 Turning the switch on is that approval, given once, for every run. Only the
 routine's owner can give it.
 
-Under the switch is the choice that matters, which is **what the unattended
-browser carries**:
-
-| Choice                           | What a run's browser has                                                                                               |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Everything, as in a conversation | Your browser's sign-ins (the sites you signed into in the browser panel) and any login you saved, by chat's rules      |
-| One site's saved login only      | None of your sign-ins at all, and only the saved login for the one site you name — typed on that site and nowhere else |
-
-Pick the second for a routine whose material is written by somebody else — a
-feed, a watched page, a webhook payload. That text reaches the model, the model
-writes the browser's instruction, and the second choice is what keeps an
-instruction a stranger shaped away from the accounts you are signed into. A run
-that asks to sign in anywhere but the named site is refused before anything is
-spent.
+A run's browser carries what yours does in a conversation: the sites you
+signed into in the browser panel, and any login you saved, by chat's rules.
+Think about that before switching it on for a routine whose material somebody
+else writes — a webhook payload, a mail it reads. That text reaches the model,
+and the model writes the browser's instruction.
 
 **The report waits for the browser.** A browser task takes minutes and a run's
 turn does not, so a run that starts one writes its report as a draft, records
@@ -371,6 +368,43 @@ work, or take it over and sign in when a site asks. A sign-in you make there
 during a take-over is picked up by the retry, and the retry is what the report
 waits for.
 
+### Coming back later
+
+Some jobs are mostly waiting: a video that takes ten minutes to render, an
+export that a site builds in the background. A browser that sits on the page
+until it is done is billed for every one of those minutes. So the agent can
+put the job down instead, with the `continue_later` tool: it ends its turn
+with a note to itself and a number of minutes (five to 720), and the cron
+wakes it that many minutes later — within one tick, which is five — in the
+same conversation, with the note, with its tools, and with nobody watching.
+A woken turn can look again, answer a question a page is asking, post what it
+found, or set another wake-up if it is still not time.
+
+A routine's wake-up runs in the routine's own conversation, with the held
+run's id, so a browser task it starts attaches to the same report. Three rules
+follow from that:
+
+- **It can set a wake-up only while the report is held**, which means after it
+  has started a browser task of its own. A run that has nothing to wait for is
+  sent when its turn ends.
+- **The chain ends inside the report's two hours.** A wake-up that would land
+  later than ten minutes before that is refused, and the tool says how many
+  minutes are left.
+- **The report waits for the chain** the way it waits for a browser task, and
+  goes out once the chain has ended: when a woken turn starts no task and sets
+  no wake-up, its reply is the report, sent as written. The two-hour sweep
+  still sends with what it has, and cancels any wake-up still set.
+
+What a woken turn may do is what a scheduled run may do. The browser runs
+without a card — the switch above is the approval — but carries no saved login
+on a wake-up, since no card showed one being typed. A connected app's change
+goes through on a standing permission, as on any run nobody is watching, and
+otherwise the reply says what it could not do.
+
+The same tool works in a conversation. There the browser runs in a woken turn
+only if a browser was approved in that conversation before, and a conversation
+can be woken at most 24 times in a day.
+
 ### It may not fit on Cloudflare Free
 
 This is a real limit and worth checking before you rely on it. A tick on
@@ -388,15 +422,19 @@ fifty-subrequest cap as the tick, and sixteen steps does not fit under it
 either. A run that reaches the cap says what it did not finish rather than
 stopping silently.
 
-The two numbers used to agree by coincidence and no longer do. A conversation on
-a deployment that has set `WORKER_PLAN=paid` is budgeted 24 tool calls and may
-take up to two further rounds past that, because Workers Paid allows one
-invocation ten thousand subrequests rather than fifty. **A scheduled run does
-not follow it**, and the reason is the arithmetic on this page: a chat turn is
-one invocation, where a tick multiplies by the batch size. Raising this one
-means redoing the sum above first.
+A conversation on a deployment that has set `WORKER_PLAN=paid` is budgeted 24
+tool calls and may take up to two further rounds past that, because Workers Paid
+allows one invocation ten thousand subrequests rather than fifty. **A routine
+run there gets 24 as well, and no further rounds.** The sum above, redone for
+Paid: two for the tick, and even at four requests per step — the model call,
+the tool, and the reads a tool makes — a 24-step run is about a hundred, so
+three routines come to roughly 300 of 10,000. The rounds are left out because they
+exist for a conversation somebody is watching. Three times the steps also brings
+the token ceiling a conversation has, so a run that loops stops at the same
+size a chat turn would.
 
-If chat is ever raised again, this stays at eight until the arithmetic above is
+On Free a routine stays at eight, with no token ceiling, exactly as before. If
+chat is ever raised again, Free's number stays until the arithmetic above is
 redone — a routine shares its fifty with the rest of the batch, and chat does
 not.
 
@@ -1300,6 +1338,12 @@ feed would spend a model call per run re-reaching the same answer.
 **A scheduled prompt is never asked.** With no source, there is nothing for its
 output to be irrelevant _to_: the instruction is the whole job. Asking anyway
 would let one `false` silence "remind the team to post standup" permanently.
+
+**A run that did not finish is never asked either.** If the agent stopped at its
+step or token ceiling, or one of its tool calls failed or was refused — an
+operation that needs somebody's approval, say — the report goes out as written.
+A report like that says what did not happen, which is exactly what the question
+is told to call irrelevant, and it is the report its owner most needs to read.
 
 The decision comes back as a field of its own rather than as something to read
 out of the summary text, and **every way of failing to read it delivers**:

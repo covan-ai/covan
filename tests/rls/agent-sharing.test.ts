@@ -1112,6 +1112,23 @@ describe("what an agent knows and may do is an edit", () => {
   });
 
   // Runs after the insert above, which leaves a grant on the personal agent.
+  it("refuses to let somebody who can only use the agent take a permission away", async () => {
+    const refused = await useM.db
+      .from("tool_connection_grants")
+      .delete()
+      .eq("agent_id", personal)
+      .eq("tool_connection_id", editMApp)
+      .select("agent_id");
+    expect(refused.data ?? []).toEqual([]);
+    const still = await serviceClient()
+      .from("tool_connection_grants")
+      .select("agent_id")
+      .eq("agent_id", personal)
+      .eq("tool_connection_id", editMApp);
+    expect(still.data).toHaveLength(1);
+  });
+
+  // Runs after the insert above, which leaves a grant on the personal agent.
   it("hides an agent's standing permissions from somebody it is not shared with", async () => {
     const hidden = await plain.db
       .from("tool_connection_grants")

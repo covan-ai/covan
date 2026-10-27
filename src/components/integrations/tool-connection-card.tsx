@@ -17,6 +17,7 @@ import {
 import { useConnectionGrants, useRemoveToolConnection } from "@/hooks/use-connections";
 import { api } from "@/lib/api-client";
 import { canWriteAsRole } from "@/lib/roles";
+import { canEditAgent, type AgentAccess } from "@/lib/agent-access";
 import { StandingGrants } from "./composio-card";
 import { ConnectionScope } from "./connection-scope";
 import { IntegrationRow } from "./integration-row";
@@ -46,8 +47,8 @@ export function ToolConnectionRow({
   agents = [],
 }: {
   connection: ToolConnection;
-  /** Only to put a name beside a standing permission. */
-  agents?: Array<{ id: string; name: string }>;
+  /** To put a name beside a standing permission, and know whose can be taken back. */
+  agents?: Array<{ id: string; name: string; myAccess?: AgentAccess }>;
 }) {
   const { t } = useTranslation();
   const { data: me } = useQuery({ queryKey: ["me"], queryFn: () => api.me() });
@@ -154,6 +155,13 @@ export function ToolConnectionRow({
                 agentNames={new Map(agents.map((a) => [a.id, a.name]))}
                 appName={connection.label}
                 canWrite={canWrite}
+                editable={
+                  new Set(
+                    agents
+                      .filter((a) => a.myAccess && canEditAgent({ myAccess: a.myAccess }))
+                      .map((a) => a.id),
+                  )
+                }
               />
             ) : null}
 

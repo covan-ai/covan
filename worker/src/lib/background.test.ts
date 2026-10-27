@@ -10,10 +10,12 @@ const {
   sweepHeldRuns,
   sweepEventSubscriptions,
   sweepArrivalScans,
+  runDueContinuations,
 } = vi.hoisted(() => ({
   runDueRoutines: vi.fn(),
   runDueConnections: vi.fn(),
   pollDueBrowserTasks: vi.fn(),
+  runDueContinuations: vi.fn(async () => ({ claimed: 0 })),
   sweepAbandonedTakeovers: vi.fn(),
   sweepConversationBrowsers: vi.fn(),
   startQueuedBrowserTasks: vi.fn(async () => ({ expired: 0, started: 0 })),
@@ -29,6 +31,7 @@ vi.mock("./browser/queue", () => ({ startQueuedBrowserTasks }));
 vi.mock("./routines/held", () => ({ sweepHeldRuns }));
 vi.mock("./routines/events/lifecycle", () => ({ sweepEventSubscriptions }));
 vi.mock("./arrivals/scan", () => ({ sweepArrivalScans }));
+vi.mock("./continuations/dispatch", () => ({ runDueContinuations }));
 
 import { runScheduledWork } from "./background";
 
@@ -63,6 +66,48 @@ describe("runScheduledWork", () => {
     sweepAbandonedTakeovers.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
     sweepConversationBrowsers.mockReset();
     sweepConversationBrowsers.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    runDueContinuations.mockReset();
+    runDueContinuations.mockResolvedValue({ claimed: 0 });
+  });
+
+  /**
+   * A wake-up (0142) runs after the routines and before the sweeps, under
+   * the same `claimed > 0` rule: a woken turn is a scheduled run's size.
+   */
+  it("wakes continuations on a tick with no routines due", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+
+    await runScheduledWork(withStore);
+
+    expect(runDueContinuations).toHaveBeenCalledWith(withStore);
+  });
+
+  it("does not wake a continuation on a tick that had routines to run", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 1, ok: 1, failed: 0 });
+
+    await runScheduledWork(withStore);
+
+    expect(runDueContinuations).not.toHaveBeenCalled();
+  });
+
+  it("leaves the sweeps and the poll alone on a tick that woke a continuation", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    runDueContinuations.mockResolvedValue({ claimed: 1 });
+
+    await runScheduledWork(withStore);
+
+    expect(sweepAbandonedTakeovers).not.toHaveBeenCalled();
+    expect(pollDueBrowserTasks).not.toHaveBeenCalled();
+    expect(runDueConnections).not.toHaveBeenCalled();
+  });
+
+  it("goes on to the sweeps when the wake-up stage fails", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    runDueContinuations.mockRejectedValue(new Error("claim failed"));
+
+    await runScheduledWork(withStore);
+
+    expect(sweepAbandonedTakeovers).toHaveBeenCalled();
   });
 
   // The whole point of the sequencing: a busy routine tick has already spent

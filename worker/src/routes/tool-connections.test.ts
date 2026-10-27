@@ -615,7 +615,7 @@ describe("/tool-connection-grants", () => {
       grants: {
         delete: () => {
           deleted = true;
-          return { data: null, error: null };
+          return { data: [{ agent_id: AGENT }], error: null };
         },
       },
     });
@@ -626,6 +626,18 @@ describe("/tool-connection-grants", () => {
     );
     expect(status).toBe(204);
     expect(deleted).toBe(true);
+  });
+
+  it("says so when the policy matched nothing, rather than reporting it removed", async () => {
+    // RLS refuses a delete by matching no row: somebody without edit access to
+    // the agent, or a permission that is not there.
+    const app = appWith({ grants: { delete: () => ({ data: [], error: null }) } });
+    const { status } = await send(
+      app,
+      "DELETE",
+      `/tool-connection-grants?agentId=${AGENT}&connectionId=${CONN}`,
+    );
+    expect(status).toBe(403);
   });
 
   it("refuses a delete that does not name both", async () => {

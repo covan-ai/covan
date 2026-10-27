@@ -109,6 +109,35 @@ function outlookTime(value: unknown): string {
   return [str(r.dateTime), str(r.timeZone)].filter(Boolean).join(" ");
 }
 
+/** A Google `{dateTime}` or all-day `{date}`, or a bare string as some deliveries send it. */
+function googleTime(value: unknown): string {
+  const r = rec(value);
+  return r ? str(r.dateTime) || str(r.date) : str(value);
+}
+
+/**
+ * A Google attendee list as one line: "Ada <ada@acme.test> (accepted)".
+ *
+ * The reply is kept because it is what a routine about the guest list most
+ * often turns on, and `needsAction` is left out because it is everyone's
+ * until they answer. A bare string is an address on its own.
+ */
+function googleAttendees(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((a) => {
+      if (typeof a === "string") return a;
+      const r = rec(a);
+      const email = str(r?.email);
+      const name = str(r?.displayName);
+      const who = name && email && name !== email ? `${name} <${email}>` : email || name;
+      const reply = str(r?.responseStatus);
+      return who && reply && reply !== "needsAction" ? `${who} (${reply})` : who;
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
 // ---- config schemas -----------------------------------------------------------
 
 /** An optional bit of text: trimmed, and empty means absent. */
@@ -391,21 +420,39 @@ const gcalCreated: ComposioEventSpec = {
     },
   },
   triggerConfig: calendarTarget,
-  describe: async (data) => {
+  // The delivery names the event but not who is invited, so the event is
+  // asked for — as `outlookEventCreated` does — and the delivery's own fields
+  // stand in for whatever the lookup could not answer. The id and calendar go
+  // into the text as well: a routine that changes the event needs both, and
+  // without them it spent its steps finding the event again (2026-10-26).
+  describe: async (data, fetch) => {
     const id = str(data.event_id);
     if (!id) return null;
-    const organizer = [str(data.organizer_name), str(data.organizer_email)]
-      .filter(Boolean)
-      .join(" ");
+    const calendar = str(data.calendar_id);
+    const event =
+      toolData(
+        await fetch("GOOGLECALENDAR_EVENTS_GET", {
+          event_id: id,
+          ...(calendar ? { calendar_id: calendar } : {}),
+        }),
+      ) ?? {};
+    const organizer =
+      [str(data.organizer_name), str(data.organizer_email)].filter(Boolean).join(" ") ||
+      str(rec(event.organizer)?.email);
+    const header = lines([
+      ["Event", str(event.summary) || str(data.summary) || "(untitled event)"],
+      ["Event id", id],
+      ["Starts", googleTime(event.start) || str(data.start_time)],
+      ["Ends", googleTime(event.end) || str(data.end_time)],
+      ["Where", str(event.location) || str(data.location)],
+      ["Organizer", organizer],
+      ["Attendees", googleAttendees(event.attendees) || googleAttendees(data.attendees)],
+      ["Calendar", calendar],
+    ]);
+    const description = str(event.description) || str(data.description);
     return {
       eventId: `gcal-created:${id}`,
-      text: lines([
-        ["Event", str(data.summary) || "(untitled event)"],
-        ["Starts", str(data.start_time)],
-        ["Ends", str(data.end_time)],
-        ["Organizer", organizer],
-        ["Calendar", str(data.calendar_id)],
-      ]),
+      text: description ? `${header}\n\n${clip(textOfHtml(description), 3_000)}` : header,
     };
   },
 };

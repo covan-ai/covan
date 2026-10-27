@@ -120,6 +120,12 @@ export type BrowserTaskRow = {
    * `api_version`'s reason; `deliverBrowserTask` reads it when absent.
    */
   routine_run_id?: string | null;
+  /**
+   * The step after the browser (0117), which the conversation carries on with
+   * by itself — so the answer is not news yet (0142). Optional for
+   * `routine_run_id`'s reason, and read the same way when absent.
+   */
+  then_step?: string | null;
 };
 
 /** How a task ended, in the shape the delivery step wants. */

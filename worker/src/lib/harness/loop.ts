@@ -730,19 +730,24 @@ export function approvedConnectionsFrom(steps: AgentStep[]): string[] {
 }
 
 /**
- * The operations those approvals were actually about.
+ * The operations a person has said yes to in this reply, as
+ * `connectionId:slug`.
  *
- * Read the same way and from the same steps, so the two cannot disagree: a call
- * that succeeded is one somebody let through. `run_tool` uses it to decide that a
- * destructive operation nobody has approved is not covered by the connection's
- * approval. See `ToolContext.approvedSlugs`.
+ * Read off the steps the same way as `approvedConnectionsFrom`: a `run_tool`
+ * call that succeeded on a person's yes. A read (`approval: "read"`) and a
+ * standing grant are nobody's yes, and a step from before the approval was
+ * recorded counts as nobody's either. See `ToolContext.approvedSlugs`.
  */
 export function approvedSlugsFrom(steps: AgentStep[]): string[] {
   const out = new Set<string>();
   for (const step of steps) {
     if (step.tool !== "run_tool" || step.status !== "ok" || step.approval !== "person") continue;
-    const slug = (step.request as { slug?: unknown } | null)?.slug;
-    if (typeof slug === "string" && slug) out.add(slug);
+    const request = step.request as { connectionId?: unknown; slug?: unknown } | null;
+    const id = request?.connectionId;
+    const slug = request?.slug;
+    if (typeof id === "string" && id && typeof slug === "string" && slug) {
+      out.add(`${id}:${slug.trim()}`);
+    }
   }
   return [...out];
 }

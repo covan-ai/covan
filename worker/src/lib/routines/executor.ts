@@ -170,6 +170,11 @@ export type SummariseInput = {
    */
   temperature?: number | null;
   reasoningEffort?: string | null;
+  /**
+   * The agent's own web search switch (0051), so a routine can search where
+   * the same agent could in a conversation. Absent means off.
+   */
+  webSearch?: boolean;
   instruction: string;
   items: FeedItem[];
   pageText?: string;
@@ -1073,7 +1078,7 @@ export async function runRoutine(
 
     const { data: agent, error: agentError } = await deps.db
       .from("agents")
-      .select("persona, model, temperature, reasoning_effort")
+      .select("persona, model, temperature, reasoning_effort, web_search")
       .eq("id", routine.agent_id)
       .eq("workspace_id", routine.workspace_id)
       // Service-role client, so RLS is not filtering this. `claim_due_routines`
@@ -1131,6 +1136,7 @@ export async function runRoutine(
       model: routine.model ?? agent?.model ?? null,
       temperature: agent?.temperature ?? null,
       reasoningEffort: routine.reasoning_effort ?? agent?.reasoning_effort ?? null,
+      webSearch: agent?.web_search === true,
       instruction: routine.instruction,
       items,
       pageText,

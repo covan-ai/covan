@@ -174,6 +174,9 @@ export function runRoutineWithTools(
         // ceiling. `maxTurnTokens` would still have stopped a runaway, but only
         // after the tokens were bought.
         maxTokens: maxTokensFor("normal"),
+        // The agent's switch, as `routes/chat.ts` sends it. Its searches are
+        // already counted in the run's usage (`webSearches` above).
+        webSearch: input.webSearch === true,
         // Nobody is watching a scheduled run, so a readable account of the
         // model's reasoning is output tokens spent on a paragraph with no
         // reader. See `showThinking` in `lib/completion.ts`.

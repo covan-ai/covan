@@ -44,6 +44,20 @@ vi.mock("../../entitlements", async (importOriginal) => {
   };
 });
 
+// The catalogue lookup an undescribed slug gets before the gate decides. By
+// default the catalogue cannot describe it, which the gate reads as a change;
+// the tests about a recalled read say what it answers. Mocked apart from
+// `fetch` so the calls a test counts are the calls made on somebody's behalf.
+const getToolMock = vi.fn(async (..._args: unknown[]): Promise<unknown> => ({
+  kind: "error",
+  status: 404,
+  message: "not described",
+}));
+vi.mock("../../composio/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../composio/client")>();
+  return { ...actual, getTool: (...args: unknown[]) => getToolMock(...args) };
+});
+
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", (...args: unknown[]) => fetchMock(...args));
 
@@ -79,7 +93,6 @@ function ctxWith(
   over: {
     row?: Record<string, unknown> | null;
     grant?: { mode: string } | null;
-    approved?: string[];
     approvedSlugs?: string[];
     confirmed?: boolean;
     routineRunId?: string;
@@ -140,7 +153,6 @@ function ctxWith(
     workspaceId: "ws-1",
     agentId: "agent-1",
     userId: "user-1",
-    ...(over.approved ? { approvedConnections: over.approved } : {}),
     ...(over.approvedSlugs ? { approvedSlugs: over.approvedSlugs } : {}),
     ...(over.confirmed ? { confirmed: true } : {}),
     ...(over.routineRunId ? { routineRunId: over.routineRunId } : {}),
@@ -185,6 +197,8 @@ function describing(
 }
 
 beforeEach(() => {
+  getToolMock.mockReset();
+  getToolMock.mockResolvedValue({ kind: "error", status: 404, message: "not described" });
   fetchMock.mockReset();
   composioAccount.mockClear();
   composioAccount.mockResolvedValue({ connectedAccountId: "ca_real", composioUserId: "cu_real" });
@@ -235,7 +249,6 @@ describe("run_tool", () => {
     const out = await runToolTool.run(
       { ...CALL, slug: "GMAIL_SEND_EMAIL_TO_MANY" },
       ctxWith({
-        approved: ["conn-1"],
         offeredSlugs: new Set(["GMAIL_SEND_EMAIL", "GMAIL_CREATE_DRAFT"]),
       }),
     );
@@ -250,7 +263,6 @@ describe("run_tool", () => {
     const out = await runToolTool.run(
       CALL,
       ctxWith({
-        approved: ["conn-1"],
         offeredOperations: describing(CALL.slug),
         offeredSlugs: new Set(["GMAIL_SEND_EMAIL"]),
       }),
@@ -283,10 +295,7 @@ describe("run_tool", () => {
   });
 
   it("refuses a slug from another toolkit locally, not by way of a 400", async () => {
-    const out = await runToolTool.run(
-      { ...CALL, slug: "SLACK_SEND_MESSAGE" },
-      ctxWith({ approved: ["conn-1"] }),
-    );
+    const out = await runToolTool.run({ ...CALL, slug: "SLACK_SEND_MESSAGE" }, ctxWith());
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("not an operation of gmail");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -323,7 +332,6 @@ describe("run_tool", () => {
       TEAMS_CALL,
       ctxWith({
         row: TEAMS,
-        approved: ["conn-1"],
         offeredOperations: new Map([
           [
             TEAMS_CALL.slug,
@@ -362,7 +370,7 @@ describe("run_tool", () => {
     // is a different application. Neither path may accept it.
     const out = await runToolTool.run(
       { ...CALL, slug: "MICROSOFT_OUTLOOK_SEND_MAIL" },
-      ctxWith({ row: TEAMS, approved: ["conn-1"] }),
+      ctxWith({ row: TEAMS }),
     );
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("not an operation of microsoft_teams");
@@ -378,7 +386,6 @@ describe("run_tool", () => {
       TEAMS_CALL,
       ctxWith({
         row: TEAMS,
-        approved: ["conn-1"],
         offeredOperations: new Map([
           [
             TEAMS_CALL.slug,
@@ -438,10 +445,7 @@ describe("run_tool", () => {
   });
 
   it("refuses a connection that has not finished connecting", async () => {
-    const out = await runToolTool.run(
-      CALL,
-      ctxWith({ row: { ...CONNECTION, status: "pending" }, approved: ["conn-1"] }),
-    );
+    const out = await runToolTool.run(CALL, ctxWith({ row: { ...CONNECTION, status: "pending" } }));
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("has not finished connecting");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -455,37 +459,48 @@ describe("run_tool", () => {
     expect(out.kind === "error" && out.message).toContain("query_database");
   });
 
-  it("asks the first time, and does not ask again on the same connection", async () => {
+  it("runs a read without asking, in chat", async () => {
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({ offeredOperations: describing(CALL.slug, "gmail", false) }),
+    );
+    expect(out).toMatchObject({ kind: "ok", approval: "read" });
+  });
+
+  it("asks for a change, and not again for the same operation on the same connection this reply", async () => {
     const asked = await runToolTool.run(CALL, ctxWith());
     expect(asked.kind).toBe("needs_confirmation");
     expect(asked.kind === "needs_confirmation" && asked.summary).toContain("GMAIL_SEND_EMAIL");
     expect(fetchMock).not.toHaveBeenCalled();
 
-    // One click unlocks that connection for the rest of the turn. `loop.ts`
-    // derives this set from the steps; here it is handed over directly.
+    // A yes earlier in the reply. `loop.ts` derives this set from the steps;
+    // here it is handed over directly.
     const again = await runToolTool.run(
       CALL,
-      ctxWith({ approved: ["conn-1"], offeredOperations: describing(CALL.slug) }),
+      ctxWith({ approvedSlugs: ["conn-1:GMAIL_SEND_EMAIL"] }),
     );
-    expect(again.kind).toBe("ok");
+    expect(again).toMatchObject({ kind: "ok", approval: "person" });
   });
 
-  it("still asks for a connection nobody approved this turn", async () => {
-    const out = await runToolTool.run(CALL, ctxWith({ approved: ["conn-other"] }));
+  it("a yes on one connection does not cover the same operation on another", async () => {
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({ approvedSlugs: ["conn-other:GMAIL_SEND_EMAIL"] }),
+    );
     expect(out.kind).toBe("needs_confirmation");
   });
 
-  it("does not ask when a standing grant says always", async () => {
+  it("does not ask when the agent may change things in this app", async () => {
     const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
-    expect(out.kind).toBe("ok");
+    expect(out).toMatchObject({ kind: "ok", approval: "grant" });
   });
 
-  it("still asks when the grant says ask, which is what no row means anyway", async () => {
+  it("asks for a change when there is no row", async () => {
     const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "ask" } }));
     expect(out.kind).toBe("needs_confirmation");
   });
 
-  it("returns an error rather than a pause when nobody is watching", async () => {
+  it("returns an error rather than a pause for a change when nobody is watching", async () => {
     // A `needs_confirmation` in a scheduled run returns `paused` from
     // `runAgentTurn` and abandons the rest of the run. An error lets the run
     // finish and say what it could not do — and `agent-run.ts` only appends its
@@ -493,7 +508,31 @@ describe("run_tool", () => {
     const out = await runToolTool.run(CALL, ctxWith({ routineRunId: "run-1" }));
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("nobody is watching");
+    expect(out.kind === "error" && out.message).toContain("changes something in Ana's Gmail");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("runs a read on a scheduled run without asking anyone (covan#410)", async () => {
+    // The routine the mail scan turns on: no person, no grant, nothing
+    // described this run but what find_tool returned. Every read was refused
+    // here before, listing labels included, and the digest said so.
+    const out = await runToolTool.run(
+      { ...CALL, slug: "GMAIL_FETCH_EMAILS", arguments: {} },
+      ctxWith({
+        routineRunId: "run-1",
+        offeredOperations: describing("GMAIL_FETCH_EMAILS", "gmail", false),
+      }),
+    );
+    expect(out).toMatchObject({ kind: "ok", approval: "read" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs a change on a scheduled run with the standing permission", async () => {
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({ routineRunId: "run-1", grant: { mode: "always" } }),
+    );
+    expect(out).toMatchObject({ kind: "ok", approval: "grant" });
   });
 
   it("errors instead of pausing in a woken turn (0142)", async () => {
@@ -691,7 +730,7 @@ describe("checking the arguments against the schema", () => {
         slug: "GMAIL_SEND_EMAIL",
         arguments: { start_datetime: "2026-09-28T22:00:00", send_updates: "all" },
       },
-      ctxWith({ approved: ["conn-1"], offeredOperations: schemas() }),
+      ctxWith({ offeredOperations: schemas() }),
     );
 
     expect(out.kind).toBe("error");
@@ -713,7 +752,7 @@ describe("checking the arguments against the schema", () => {
           attendees: [{ email: "emre@covan.app" }, "mirac@covan.app"],
         },
       },
-      ctxWith({ approved: ["conn-1"], offeredOperations: schemas() }),
+      ctxWith({ offeredOperations: schemas() }),
     );
 
     expect(out.kind).toBe("error");
@@ -731,7 +770,7 @@ describe("checking the arguments against the schema", () => {
         slug: "GMAIL_SEND_EMAIL",
         arguments: { timezone: "Europe/Istanbul" },
       },
-      ctxWith({ approved: ["conn-1"], offeredOperations: schemas() }),
+      ctxWith({ offeredOperations: schemas() }),
     );
 
     expect(out.kind).toBe("error");
@@ -787,7 +826,7 @@ describe("checking the arguments against the schema", () => {
         slug: "GMAIL_SEND_EMAIL",
         arguments: { start_datetime: "2026-09-28T22:00:00", response_detail: "minimal" },
       },
-      ctxWith({ approved: ["conn-1"], offeredOperations: schemas() }),
+      ctxWith({ offeredOperations: schemas() }),
     );
 
     expect(out.kind).toBe("error");
@@ -813,7 +852,6 @@ describe("checking the arguments against the schema", () => {
     const out = await runToolTool.run(
       { connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL", arguments: { anything: 1, at: "all" } },
       ctxWith({
-        approved: ["conn-1"],
         offeredOperations: new Map([
           [
             "GMAIL_SEND_EMAIL",
@@ -902,7 +940,6 @@ describe("an operation the service does not have", () => {
     const out = await runToolTool.run(
       CALL,
       ctxWith({
-        approved: ["conn-1"],
         row: {
           ...CONNECTION,
           config: { unavailable_tools: { GMAIL_SEND_EMAIL: new Date().toISOString() } },
@@ -1033,19 +1070,12 @@ describe("what a confirmation actually says", () => {
 });
 
 /**
- * How far one yes reaches, when the next call is destructive.
+ * What a yes reaches, and what a read needs.
  *
- * `approvedConnections` scopes an approval to the connection for the rest of the
- * turn, and the reason is good: three clicks to answer "check my last three
- * threads and reply to Ana" trains people to approve without reading. But it
- * means any call after the first runs unasked — including one that empties the
- * account. A turn that creates an event and then clears the calendar asks once,
- * about the create.
- *
- * So the reach is narrowed at exactly one point: an operation Composio marks
- * `destructive` asks again unless that same operation has already been approved
- * this turn. Repeating the one that was approved stays free, which is what the
- * original reasoning was protecting. #201.
+ * A read needs nobody. A change needs a yes, and a yes covers the operation it
+ * was given for on the connection it was given on, for the rest of the reply.
+ * On 2026-09-26 a calendar was cleared by an operation the person had never
+ * approved, riding on an approval of another one on the same connection. #201.
  */
 describe("how far one approval reaches", () => {
   const CALENDAR = {
@@ -1068,14 +1098,13 @@ describe("how far one approval reaches", () => {
     ["GOOGLECALENDAR_EVENTS_LIST", op("GOOGLECALENDAR_EVENTS_LIST", false)],
   ]);
 
-  it("asks again for a destructive operation the turn has not already approved", async () => {
+  it("asks again for a destructive operation the reply has not already approved", async () => {
     const out = await runToolTool.run(
       { connectionId: "conn-cal", slug: "GOOGLECALENDAR_CLEAR_CALENDAR", arguments: {} },
       ctxWith({
         row: CALENDAR,
-        // A create earlier in this turn already unlocked the connection.
-        approved: ["conn-cal"],
-        approvedSlugs: ["GOOGLECALENDAR_CREATE_EVENT"],
+        // A create earlier in this reply was approved.
+        approvedSlugs: ["conn-cal:GOOGLECALENDAR_CREATE_EVENT"],
         offeredOperations: known,
       }),
     );
@@ -1084,18 +1113,13 @@ describe("how far one approval reaches", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("still lets a harmless operation through on the connection's approval", async () => {
+  it("a read needs no approval at all", async () => {
     const out = await runToolTool.run(
       { connectionId: "conn-cal", slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: {} },
-      ctxWith({
-        row: CALENDAR,
-        approved: ["conn-cal"],
-        approvedSlugs: ["GOOGLECALENDAR_CREATE_EVENT"],
-        offeredOperations: known,
-      }),
+      ctxWith({ row: CALENDAR, offeredOperations: known }),
     );
 
-    expect(out.kind).toBe("ok");
+    expect(out).toMatchObject({ kind: "ok", approval: "read" });
   });
 
   it("does not re-ask for the destructive operation it already approved", async () => {
@@ -1103,55 +1127,77 @@ describe("how far one approval reaches", () => {
       { connectionId: "conn-cal", slug: "GOOGLECALENDAR_CLEAR_CALENDAR", arguments: {} },
       ctxWith({
         row: CALENDAR,
-        approved: ["conn-cal"],
-        approvedSlugs: ["GOOGLECALENDAR_CLEAR_CALENDAR"],
+        approvedSlugs: ["conn-cal:GOOGLECALENDAR_CLEAR_CALENDAR"],
         offeredOperations: known,
       }),
     );
 
-    expect(out.kind).toBe("ok");
+    expect(out).toMatchObject({ kind: "ok", approval: "person" });
   });
 
   /**
-   * The hole one step further out: an operation this turn never described.
-   *
-   * `offeredOperations` is only ever filled by `find_tool`, and it is built
-   * empty — so it is empty on every resumed turn, every scheduled run, and
-   * every turn that reaches for a slug out of its own transcript. With no
-   * operation in hand `destructive !== true` answered "harmless" about
-   * `GOOGLECALENDAR_CLEAR_CALENDAR`, and the connection's approval covered it.
-   *
-   * So the narrowing is conditional on the operation being known. When it is
-   * not, the connection's approval reaches only the operations that were
-   * actually approved, by slug.
+   * An operation this turn never described: a resumed turn, a scheduled run, a
+   * slug recalled from an earlier turn. It is described from the catalogue
+   * before anything is decided, and treated as a change when it cannot be.
    */
-  it("asks again for an operation this turn never described", async () => {
+  it("describes an undescribed operation from the catalogue before deciding", async () => {
+    getToolMock.mockResolvedValueOnce({
+      kind: "ok",
+      tool: op("GOOGLECALENDAR_EVENTS_LIST", false),
+    });
+    const ctx = ctxWith({ row: CALENDAR, offeredOperations: new Map() });
     const out = await runToolTool.run(
-      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_CLEAR_CALENDAR", arguments: {} },
-      ctxWith({
-        row: CALENDAR,
-        approved: ["conn-cal"],
-        approvedSlugs: ["GOOGLECALENDAR_CREATE_EVENT"],
-        // No `offeredOperations` — the shape a resumed turn, a scheduled run
-        // and a slug recalled from an earlier turn all arrive in.
-      }),
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: {} },
+      ctx,
+    );
+
+    expect(getToolMock).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ kind: "ok", approval: "read" });
+    // Kept for the rest of the turn, so the next call does not look it up again.
+    expect(ctx.offeredOperations?.has("GOOGLECALENDAR_EVENTS_LIST")).toBe(true);
+  });
+
+  it("refuses an operation the catalogue says belongs to another toolkit", async () => {
+    getToolMock.mockResolvedValueOnce({
+      kind: "ok",
+      tool: { ...op("GOOGLECALENDAR_EVENTS_LIST", false), toolkit: "googlecalendar_beta" },
+    });
+    const out = await runToolTool.run(
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: {} },
+      ctxWith({ row: CALENDAR }),
+    );
+    expect(out.kind).toBe("error");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("asks when the catalogue cannot describe the operation", async () => {
+    const out = await runToolTool.run(
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: {} },
+      ctxWith({ row: CALENDAR }),
     );
 
     expect(out.kind).toBe("needs_confirmation");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("does not look up an operation somebody already said yes to", async () => {
+    const out = await runToolTool.run(
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_CLEAR_CALENDAR", arguments: {} },
+      ctxWith({ row: CALENDAR, confirmed: true }),
+    );
+
+    expect(getToolMock).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ kind: "ok", approval: "person" });
+  });
+
   it("refuses an undescribed operation on a scheduled run rather than running it", async () => {
-    // The same hole where nobody can answer the question.
-    // `lib/routines/agent-run.ts` already says the guard stands down on every
-    // scheduled run; this is the other half of that sentence — it stands down
-    // into a refusal that reaches the run report, not into a call.
+    // Where nobody can answer the question, the refusal reaches the run
+    // report rather than becoming a call.
     const out = await runToolTool.run(
       { connectionId: "conn-cal", slug: "GOOGLECALENDAR_CLEAR_CALENDAR", arguments: {} },
       ctxWith({
         row: CALENDAR,
-        approved: ["conn-cal"],
-        approvedSlugs: ["GOOGLECALENDAR_EVENTS_LIST"],
+        approvedSlugs: ["conn-cal:GOOGLECALENDAR_EVENTS_LIST"],
         routineRunId: "run-1",
       }),
     );
@@ -1163,15 +1209,11 @@ describe("how far one approval reaches", () => {
 });
 
 /**
- * Who said yes, and how far that reaches.
- *
  * An operation Composio annotates with no hint — `destructive: null`, which is
- * how it marks `GMAIL_SEND_EMAIL` — used to ride on an earlier approval of the
- * same connection. So text in an email the agent had been allowed to read
- * could have it send one. Only an operation the catalogue positively marks
- * non-destructive does now.
+ * how it marks `GMAIL_SEND_EMAIL` — is a change. Text in an email the agent
+ * was reading must not be able to have it send one.
  */
-describe("how far a connection's approval reaches", () => {
+describe("what counts as a read", () => {
   const described = (destructive: boolean | null) =>
     new Map([
       [
@@ -1189,25 +1231,20 @@ describe("how far a connection's approval reaches", () => {
     ]) as Map<string, import("../../composio/client").ComposioTool>;
   const SEND = { connectionId: "conn-1", slug: "GMAIL_SEND_EMAIL", arguments: {} };
 
-  it("does not cover an operation with no hint either way", async () => {
-    const out = await runToolTool.run(
-      SEND,
-      ctxWith({ approved: ["conn-1"], offeredOperations: described(null) }),
-    );
+  it("treats null as a change", async () => {
+    const out = await runToolTool.run(SEND, ctxWith({ offeredOperations: described(null) }));
     expect(out.kind).toBe("needs_confirmation");
+    expect(out.kind === "needs_confirmation" && out.summary).toContain("may change data there");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("covers one the catalogue marks non-destructive, and says so", async () => {
-    const out = await runToolTool.run(
-      SEND,
-      ctxWith({ approved: ["conn-1"], offeredOperations: described(false) }),
-    );
-    expect(out).toMatchObject({ kind: "ok", approval: "connection" });
+  it("reports a read as read", async () => {
+    const out = await runToolTool.run(SEND, ctxWith({ offeredOperations: described(false) }));
+    expect(out).toMatchObject({ kind: "ok", approval: "read" });
   });
 
-  // The loop counts only a person's yes as approving the connection for the
-  // rest of the turn (`approvedConnectionsFrom`), so the result says whose it is.
+  // The loop counts only a person's yes as covering the operation for the
+  // rest of the reply (`approvedSlugsFrom`), so the result says whose it is.
   it("reports a person's yes as the person's", async () => {
     expect(await runToolTool.run(SEND, ctxWith({ confirmed: true }))).toMatchObject({
       kind: "ok",
@@ -1266,29 +1303,16 @@ describe("reading many results for a question", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a question on an operation this turn never described", async () => {
+  it("refuses a question on an operation the catalogue cannot describe", async () => {
     const out = await runToolTool.run(ASK, ctxWith({ grant: { mode: "always" } }));
     expect(out.kind === "error" && out.message).toMatch(/find it with find_tool first/);
-  });
-
-  it("tells the person on the card that it will read many pages, and for what", async () => {
-    const out = await runToolTool.run(ASK, ctxWith({ offeredOperations: reading() }));
-    expect(out.kind).toBe("needs_confirmation");
-    const summary = out.kind === "needs_confirmation" ? out.summary : "";
-    expect(summary).toMatch(/read up to \d+ pages of results for: complaints about late delivery/);
-    const proposal =
-      out.kind === "needs_confirmation" ? (out.proposal as Record<string, unknown>) : {};
-    expect(proposal.question).toBe("complaints about late delivery");
   });
 
   it("follows the page token and hands back the findings, not the pages", async () => {
     fetchMock.mockReset();
     fetchMock.mockResolvedValueOnce(mail("t2")).mockResolvedValueOnce(mail(null));
-    const out = await runToolTool.run(
-      ASK,
-      ctxWith({ approved: ["conn-1"], offeredOperations: reading() }),
-    );
-    expect(out).toMatchObject({ kind: "ok", approval: "connection" });
+    const out = await runToolTool.run(ASK, ctxWith({ offeredOperations: reading() }));
+    expect(out).toMatchObject({ kind: "ok", approval: "read" });
     expect(out.kind === "ok" && out.content).toMatch(/^Read 2 pages of GMAIL_FETCH_EMAILS/);
     expect(out.kind === "ok" && out.content).toContain("m1: late delivery");
     const second = JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body));
@@ -1305,7 +1329,7 @@ describe("reading many results for a question", () => {
     fetchMock.mockResolvedValueOnce(mail("t2"));
     const out = await runToolTool.run(
       { ...ASK, question: undefined },
-      ctxWith({ approved: ["conn-1"], offeredOperations: reading() }),
+      ctxWith({ offeredOperations: reading() }),
     );
     expect(out.kind === "ok" && out.content).toMatch(
       /\[more results: send page_token: "t2" for the next page/,

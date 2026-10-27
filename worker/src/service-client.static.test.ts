@@ -218,6 +218,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "lib/continuations/run.ts",
     "a woken turn (0142): the tick has no caller, so there is no JWT for RLS to resolve, and the turn runs as a scheduled routine run does — through runAgentTurn with the service role and the owner as the caller (lib/routines/agent-run.ts is the precedent). Everything it touches is keyed to the one continuation or browser task the claim handed it, whose ids an authenticated turn wrote; it checks the conversation still belongs to that person and is not deleted before reading it, writes one assistant message and its steps there, and records the spend on that workspace",
   ],
+  [
+    "lib/continuations/dispatch.ts",
+    "the wake-up engine's tick (0142): the cron has no caller, so it claims with claim_due_continuations and claim_browser_continuations_unwatched, both service_role only, and writes each wake-up's outcome on the row it claimed. It reads nothing else; the turn itself is lib/continuations/run.ts, under its own entry",
+  ],
 ]);
 
 /**

@@ -1006,12 +1006,10 @@ describe("favourites", () => {
   });
 });
 
-const SHARING_CAPABILITY = "notion.sharing_test_read_comment";
-
 describe("what an agent knows and may do is an edit", () => {
   let bundleId: string;
-  let connectionId: string;
-  let toolConnectionId: string;
+  let useMApp: string;
+  let editMApp: string;
 
   beforeAll(async () => {
     const { data: bundle, error: bundleError } = await host.db
@@ -1030,61 +1028,33 @@ describe("what an agent knows and may do is an edit", () => {
     bundleId = bundle.id as string;
 
     const service = serviceClient();
-    const { data: connection, error: connectionError } = await service
-      .from("connections")
-      .insert({
-        workspace_id: host.workspaceId,
-        bundle_id: bundleId,
-        user_id: host.id,
-        provider: "notion",
-        account_label: "Covan HQ",
-        secret_ciphertext: "v1.sharing-test.not-a-real-token",
-      })
-      .select("id")
-      .single();
-    if (connectionError) throw new Error(`could not seed a connection: ${connectionError.message}`);
-    connectionId = connection.id as string;
-
-    const { data: tool, error: toolError } = await service
-      .from("tool_connections")
-      .insert({
-        workspace_id: host.workspaceId,
-        label: `Team Gmail ${crypto.randomUUID()}`,
-        transport: "composio",
-        base_url: "https://backend.composio.dev",
-        auth_kind: "composio",
-        secret_ciphertext: null,
-        toolkit_slug: "gmail",
-        connected_account_id: `ca_${crypto.randomUUID()}`,
-        composio_user_id: `cu_${crypto.randomUUID()}`,
-        status: "active",
-        created_by: host.id,
-        // Shared with the workspace (0098), so a refusal below is the agent's
-        // doing and not the connection's.
-        scope: "workspace",
-      })
-      .select("id")
-      .single();
-    if (toolError) throw new Error(`could not seed a tool connection: ${toolError.message}`);
-    toolConnectionId = tool.id as string;
-
-    // The catalogue ships empty and a grant's capability is a foreign key into
-    // it, so the one row the grant below needs is seeded here, under a name no
-    // other file uses (capability-grants.test.ts seeds and removes its own).
-    const { error: catalogueError } = await service.from("connection_capabilities").insert({
-      provider: "notion",
-      capability: SHARING_CAPABILITY,
-      label: "Read comments (sharing test)",
-      description: "Read the comments on a page.",
-      is_destructive: false,
-    });
-    if (catalogueError) throw new Error(`could not seed the catalogue: ${catalogueError.message}`);
-  });
-
-  afterAll(async () => {
-    const service = serviceClient();
-    await service.from("connection_grants").delete().eq("capability", SHARING_CAPABILITY);
-    await service.from("connection_capabilities").delete().eq("capability", SHARING_CAPABILITY);
+    // One app each, connected by the two people the grant tests compare, so a
+    // refusal below is the agent's doing and not the connection's (0140: only
+    // whoever connected an app may let an agent change things in it).
+    const app = async (createdBy: string) => {
+      const { data: tool, error: toolError } = await service
+        .from("tool_connections")
+        .insert({
+          workspace_id: host.workspaceId,
+          label: `Gmail ${crypto.randomUUID()}`,
+          transport: "composio",
+          base_url: "https://backend.composio.dev",
+          auth_kind: "composio",
+          secret_ciphertext: null,
+          toolkit_slug: "gmail",
+          connected_account_id: `ca_${crypto.randomUUID()}`,
+          composio_user_id: `cu_${crypto.randomUUID()}`,
+          status: "active",
+          created_by: createdBy,
+          scope: "workspace",
+        })
+        .select("id")
+        .single();
+      if (toolError) throw new Error(`could not seed a tool connection: ${toolError.message}`);
+      return tool.id as string;
+    };
+    useMApp = await app(useM.id);
+    editMApp = await app(editM.id);
   });
 
   async function attached(): Promise<boolean> {
@@ -1124,89 +1094,54 @@ describe("what an agent knows and may do is an edit", () => {
     expect(await attached()).toBe(false);
   });
 
-  it("refuses a capability grant at use, and allows one at edit", async () => {
-    const grant = {
-      agent_id: personal,
-      connection_id: connectionId,
-      workspace_id: host.workspaceId,
-      provider: "notion",
-      capability: SHARING_CAPABILITY,
-      mode: "ask",
-    };
-    const refused = await useM.db.from("connection_grants").insert(grant);
-    expect(refused.error?.code).toBe("42501");
-
-    const allowed = await editM.db.from("connection_grants").insert(grant);
-    expect(allowed.error).toBeNull();
-  });
-
   it("refuses a tool grant at use, and allows one at edit", async () => {
-    const grant = {
+    // Each on the app they connected themselves, so only the agent differs.
+    const refused = await useM.db.from("tool_connection_grants").insert({
       agent_id: personal,
-      tool_connection_id: toolConnectionId,
+      tool_connection_id: useMApp,
       workspace_id: host.workspaceId,
-      slug: "GMAIL_FETCH_EMAILS",
-      mode: "ask",
-    };
-    const refused = await useM.db.from("tool_connection_grants").insert(grant);
+    });
     expect(refused.error?.code).toBe("42501");
 
-    const allowed = await editM.db.from("tool_connection_grants").insert(grant);
+    const allowed = await editM.db.from("tool_connection_grants").insert({
+      agent_id: personal,
+      tool_connection_id: editMApp,
+      workspace_id: host.workspaceId,
+    });
     expect(allowed.error).toBeNull();
   });
 
-  // Runs after the two inserts above, which leave a grant of each kind on the
-  // personal agent.
-  it("hides an agent's standing permissions from somebody it is not shared with", async () => {
-    for (const table of ["connection_grants", "tool_connection_grants"]) {
-      const hidden = await plain.db.from(table).select("agent_id").eq("agent_id", personal);
-      expect(hidden.error, table).toBeNull();
-      expect(hidden.data, table).toEqual([]);
-
-      const seen = await useM.db.from(table).select("agent_id").eq("agent_id", personal);
-      expect((seen.data ?? []).length, table).toBeGreaterThan(0);
-    }
+  // Runs after the insert above, which leaves a grant on the personal agent.
+  it("refuses to let somebody who can only use the agent take a permission away", async () => {
+    const refused = await useM.db
+      .from("tool_connection_grants")
+      .delete()
+      .eq("agent_id", personal)
+      .eq("tool_connection_id", editMApp)
+      .select("agent_id");
+    expect(refused.data ?? []).toEqual([]);
+    const still = await serviceClient()
+      .from("tool_connection_grants")
+      .select("agent_id")
+      .eq("agent_id", personal)
+      .eq("tool_connection_id", editMApp);
+    expect(still.data).toHaveLength(1);
   });
 
-  // A pending call carries what the agent was about to send, and approving it
-  // is what sends it.
-  it("keeps a pending call on the agent's side: read and answered by its users only", async () => {
-    const { data: call, error } = await serviceClient()
-      .from("capability_calls")
-      .insert({
-        workspace_id: host.workspaceId,
-        agent_id: personal,
-        connection_id: connectionId,
-        provider: "notion",
-        capability: "notion.create_comment",
-        mode: "ask",
-        status: "pending",
-        request: { body: "something only its users should read" },
-      })
-      .select("id")
-      .single();
-    if (error) throw new Error(`could not seed a pending call: ${error.message}`);
-
-    const hidden = await plain.db.from("capability_calls").select("id").eq("id", call.id);
+  // Runs after the insert above, which leaves a grant on the personal agent.
+  it("hides an agent's standing permissions from somebody it is not shared with", async () => {
+    const hidden = await plain.db
+      .from("tool_connection_grants")
+      .select("agent_id")
+      .eq("agent_id", personal);
+    expect(hidden.error).toBeNull();
     expect(hidden.data).toEqual([]);
 
-    const answered = await plain.db
-      .from("capability_calls")
-      .update({ status: "approved" })
-      .eq("id", call.id)
-      .select("id");
-    expect(answered.data ?? []).toEqual([]);
-
-    const seen = await useM.db.from("capability_calls").select("id").eq("id", call.id);
-    expect(seen.data).toHaveLength(1);
-
-    const approved = await useM.db
-      .from("capability_calls")
-      .update({ status: "approved" })
-      .eq("id", call.id)
-      .select("status");
-    expect(approved.error).toBeNull();
-    expect(approved.data).toEqual([{ status: "approved" }]);
+    const seen = await useM.db
+      .from("tool_connection_grants")
+      .select("agent_id")
+      .eq("agent_id", personal);
+    expect((seen.data ?? []).length).toBeGreaterThan(0);
   });
 });
 

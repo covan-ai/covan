@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
@@ -27,7 +27,17 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { useConnections } from "@/hooks/use-connections";
+import {
+  useConnectComposio,
+  useConnections,
+  useFinishPendingComposioGrant,
+  useToolConnections,
+} from "@/hooks/use-connections";
+import { NeedsBlock, type NeedsGroup } from "@/components/routines/needs-block";
+import { canEditAgent } from "@/lib/agent-access";
+import { flushEvents, trackStep } from "@/lib/analytics";
+import { forgetParkedDraft, parkDraft, readParkedDraft } from "@/lib/routine-draft-park";
+import { isAdminRole } from "@/lib/roles";
 import {
   useCreateRoutine,
   useDeliveryChannels,
@@ -46,7 +56,7 @@ import {
 import { useAgentsStore } from "@/lib/agents-store";
 import { api, ApiError } from "@/lib/api-client";
 import { eventChoiceReady } from "@/lib/event-choice";
-import { templateById } from "@/lib/use-cases";
+import { connectionGroupName, findUseCase, stepIdFor, templateById } from "@/lib/use-cases";
 import type {
   CreatableSourceKind,
   EventChoice,
@@ -155,6 +165,23 @@ export function RoutineEditor({
   const createRoutine = useCreateRoutine();
   const updateRoutine = useUpdateRoutine();
   const template = routine || !templateId ? undefined : templateById(templateId);
+  // The use case behind the template, for what it needs before its first run
+  // (B3). Only on a new routine started from one.
+  const found = template && templateId ? findUseCase(templateId) : undefined;
+  const useCase = found?.kind === "routine" ? found : undefined;
+  const needs = useCase?.needs;
+  const { data: toolData } = useToolConnections();
+  const connectApp = useConnectComposio();
+  // A connect started from here comes back here, and is finished here.
+  useFinishPendingComposioGrant();
+  // A form parked before that round trip (`routine-draft-park.ts`): read in the
+  // initialisers below, and forgotten once the page has it.
+  const [parked] = useState(() =>
+    !routine && templateId ? readParkedDraft("/routines/new", templateId) : null,
+  );
+  useEffect(() => {
+    if (parked) forgetParkedDraft();
+  }, [parked]);
 
   const emailChannels = channels.filter((c) => c.kind === "email");
   const slackChannels = channels.filter((c) => c.kind !== "email");
@@ -166,31 +193,61 @@ export function RoutineEditor({
     routine?.sourceKind ?? template?.draft.sourceKind ?? "none",
   );
   const [name, setName] = useState(
-    routine?.name ?? (template ? lookup(t, template.draft.name) : ""),
+    routine?.name ?? parked?.name ?? (template ? lookup(t, template.draft.name) : ""),
   );
   // Derived until picked: the agents may arrive a beat after the page.
-  const [pickedAgent, setAgentId] = useState(routine?.agentId ?? initialAgentId ?? "");
+  const [pickedAgent, setAgentId] = useState(
+    routine?.agentId ?? parked?.agentId ?? initialAgentId ?? "",
+  );
   const agentId = pickedAgent || agents[0]?.id || "";
-  const [runs, setRuns] = useState<Runs>(start.runs);
+  const [runs, setRuns] = useState<Runs>(
+    (parked?.runs as Runs | undefined) ??
+      (useCase?.routine.triggerKind === "event"
+        ? "event"
+        : needs?.source
+          ? "connection"
+          : start.runs),
+  );
   const [alsoSchedule, setAlsoSchedule] = useState(start.alsoSchedule);
-  const [eventChoice, setEventChoice] = useState<EventChoice | null>(null);
-  const [connectionId, setConnectionId] = useState(routine?.connectionId ?? "");
+  const [eventChoice, setEventChoice] = useState<EventChoice | null>(
+    useCase?.routine.event ?? null,
+  );
+  const [pickedConnection, setConnectionId] = useState(
+    routine?.connectionId ?? parked?.connectionId ?? "",
+  );
+  // A use case that starts from a synced source starts from the first one of
+  // that kind, until somebody picks another.
+  const sourceProvider =
+    needs?.source === "drive" ? "google_drive" : needs?.source === "notion" ? "notion" : null;
+  const connectionId =
+    pickedConnection ||
+    (sourceProvider
+      ? (usableConnections.find((c) => c.provider === sourceProvider)?.id ?? "")
+      : "");
   const [cron, setCron] = useState(
-    routine?.scheduleCron ?? template?.draft.scheduleCron ?? "0 9 * * 1",
+    routine?.scheduleCron ?? parked?.cron ?? template?.draft.scheduleCron ?? "0 9 * * 1",
   );
   const [timezone, setTimezone] = useState(
-    routine?.timezone ?? me?.workspace.timezone ?? browserTimeZone() ?? "UTC",
+    routine?.timezone ?? parked?.timezone ?? me?.workspace.timezone ?? browserTimeZone() ?? "UTC",
   );
   const [instruction, setInstruction] = useState(
-    routine?.instruction ?? template?.draft.instruction ?? "",
+    routine?.instruction ?? parked?.instruction ?? template?.draft.instruction ?? "",
   );
-  const [fileTo, setFileTo] = useState<string | null>(routine?.outputBundleId ?? null);
-  const [emailIds, setEmailIds] = useState<string[] | null>(null);
-  const [slackId, setSlackId] = useState<string | null | undefined>(undefined);
+  const [fileTo, setFileTo] = useState<string | null>(
+    routine?.outputBundleId ?? parked?.fileTo ?? null,
+  );
+  const [emailIds, setEmailIds] = useState<string[] | null>(parked?.emailIds ?? null);
+  const [slackId, setSlackId] = useState<string | null | undefined>(parked?.slackId);
   const [newEmail, setNewEmail] = useState("");
-  const [inbox, setInbox] = useState(routine?.deliverInbox ?? true);
-  const [model, setModel] = useState<string | null>(routine?.model ?? null);
-  const [effort, setEffort] = useState<ReasoningEffort | null>(routine?.reasoningEffort ?? null);
+  const [inbox, setInbox] = useState(routine?.deliverInbox ?? parked?.inbox ?? true);
+  const [model, setModel] = useState<string | null>(routine?.model ?? parked?.model ?? null);
+  const [effort, setEffort] = useState<ReasoningEffort | null>(
+    routine?.reasoningEffort ?? (parked?.effort as ReasoningEffort | null | undefined) ?? null,
+  );
+  // The Needs block's own switches: "don't ask again" is on unless turned off
+  // for a connection, and the browser is on unless turned off.
+  const [allowOff, setAllowOff] = useState<string[]>(parked?.allowOff ?? []);
+  const [browserOn, setBrowserOn] = useState(parked?.browserOn ?? true);
   const [prose, setProse] = useState("");
   const [drafting, setDrafting] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -214,6 +271,49 @@ export function RoutineEditor({
       : (startIds.find((id) => slackChannels.some((c) => c.id === id)) ?? null);
 
   const agent = agents.find((a) => a.id === agentId);
+
+  // ---- what a use case needs (B3) ----------------------------------------
+  const isAdmin = me ? isAdminRole(me.members?.find((m) => m.id === me.user.id)?.role) : false;
+  const activeApps = (toolData?.connections ?? []).filter(
+    (c) => c.transport === "composio" && c.status === "active",
+  );
+  /**
+   * The connection a "don't ask again" would be written for in a group: the
+   * person's own first, then — for an admin — a shared one. The same rule as
+   * 0140's insert policy, asked only to decide what to offer.
+   */
+  const pickConnection = (group: string[]) => {
+    if (!agent || !canEditAgent(agent)) return null;
+    const inGroup = activeApps.filter((c) => group.includes(c.toolkitSlug ?? ""));
+    return (
+      inGroup.find((c) => c.mine) ??
+      (isAdmin ? inGroup.find((c) => c.scope === "workspace") : undefined) ??
+      null
+    );
+  };
+  const needsGroups: NeedsGroup[] = (needs?.connections ?? []).map((group) => {
+    const connected = activeApps.some((c) => group.includes(c.toolkitSlug ?? ""));
+    const changes = (needs?.changes ?? []).some((toolkit) => group.includes(toolkit));
+    const grant = changes ? pickConnection(group) : null;
+    return {
+      key: group.join("|"),
+      name: connectionGroupName(group, t),
+      toolkits: group,
+      connected,
+      ...(changes
+        ? {
+            change: {
+              connectionId: grant?.id ?? null,
+              on: grant ? !allowOff.includes(grant.id) : false,
+            },
+          }
+        : {}),
+    };
+  });
+  const showsNeeds =
+    !routine &&
+    !!needs &&
+    (needsGroups.length > 0 || !!needs.source || !!needs.browser || !!needs.webSearch);
   const readsFolders = bundles.filter((b) => agent?.bundleIds.includes(b.id)).map((b) => b.name);
   const isEvent = runs === "event";
   const needsSchedule = runs === "schedule" || runs === "connection" || alsoSchedule;
@@ -247,7 +347,9 @@ export function RoutineEditor({
   const newAddress = newEmail.trim() || me?.user.email || "";
   const canDeliver = primary !== null || (channels.length === 0 && newAddress !== "");
 
-  const problems = useMemo(() => {
+  // Computed every render: cheap, and the inputs include a value derived from
+  // the connections list, which a manual memo could not track.
+  const problems = (() => {
     const list: string[] = [];
     if (!name.trim()) list.push(NEEDS.name);
     if (!agentId) list.push(NEEDS.agent);
@@ -261,20 +363,7 @@ export function RoutineEditor({
     }
     if (runs === "connection" && !routine && !connectionId) list.push(NEEDS.connection);
     return list;
-  }, [
-    name,
-    agentId,
-    instruction,
-    canDeliver,
-    needsSchedule,
-    cron,
-    isEvent,
-    routine,
-    eventCatalog,
-    eventChoice,
-    runs,
-    connectionId,
-  ]);
+  })();
 
   const saving = createRoutine.isPending || updateRoutine.isPending;
 
@@ -347,6 +436,36 @@ export function RoutineEditor({
         reasoningEffort: effort,
       });
       if (others.length > 0) await api.routines.setChannels(created.id, others);
+      // What the use case's Needs block said yes to, written after the routine
+      // exists. Each is its own request, and none of them undoes the routine:
+      // a permission that did not save is said, and set on Integrations.
+      const missed: string[] = [];
+      for (const g of needsGroups) {
+        if (!g.connected || !g.change?.connectionId || !g.change.on) continue;
+        try {
+          await api.toolConnections.setGrant({ agentId, connectionId: g.change.connectionId });
+        } catch {
+          missed.push(g.name);
+        }
+      }
+      if (needs?.browser && browserOn) {
+        try {
+          await api.routines.update(created.id, { browserAccess: "all" });
+        } catch {
+          missed.push(t("the browser"));
+        }
+      }
+      if (missed.length > 0) {
+        toast.error(
+          t("Routine saved, but could not allow {{things}}. Set it on Integrations.", {
+            things: missed.join(", "),
+          }),
+        );
+      }
+      if (useCase) {
+        trackStep(stepIdFor(useCase.id), "completed");
+        void flushEvents();
+      }
       toast.success(
         created.confirmation
           ? t(
@@ -598,6 +717,76 @@ export function RoutineEditor({
               />
             </Row>
           )}
+
+          {showsNeeds && needs ? (
+            <Row label={t("Needs")}>
+              <NeedsBlock
+                groups={needsGroups}
+                agentName={agent?.name ?? t("this agent")}
+                connecting={connectApp.isPending}
+                onConnect={(toolkit) => {
+                  if (!templateId) return;
+                  parkDraft("/routines/new", templateId, {
+                    agentId,
+                    name,
+                    runs,
+                    connectionId: pickedConnection,
+                    cron,
+                    timezone,
+                    instruction,
+                    fileTo,
+                    emailIds,
+                    slackId,
+                    inbox,
+                    model,
+                    effort,
+                    allowOff,
+                    browserOn,
+                  });
+                  connectApp.mutate(
+                    {
+                      toolkit,
+                      returnTo: `/routines/new?template=${encodeURIComponent(templateId)}&agent=${encodeURIComponent(agentId)}`,
+                    },
+                    {
+                      onError: (e) => {
+                        forgetParkedDraft();
+                        toast.error(e instanceof Error ? e.message : String(e));
+                      },
+                    },
+                  );
+                }}
+                onAllow={(id, on) => {
+                  setAllowOff((list) => (on ? list.filter((x) => x !== id) : [...list, id]));
+                  touch();
+                }}
+                source={
+                  needs.source
+                    ? {
+                        name: needs.source === "drive" ? "Google Drive" : "Notion",
+                        connected: usableConnections.some((c) => c.provider === sourceProvider),
+                      }
+                    : undefined
+                }
+                browser={
+                  needs.browser
+                    ? {
+                        on: browserOn,
+                        onChange: (on) => {
+                          setBrowserOn(on);
+                          touch();
+                        },
+                      }
+                    : undefined
+                }
+                webSearch={
+                  needs.webSearch && agent
+                    ? { on: agent.webSearch === true, agentId: agent.id }
+                    : undefined
+                }
+              />
+            </Row>
+          ) : null}
 
           <Row label={t("Instructions")} htmlFor="routine-instruction">
             <Textarea

@@ -81,7 +81,10 @@ const toolConnections = {
     ],
   },
 };
-vi.mock("@/hooks/use-connections", () => ({ useToolConnections: () => toolConnections }));
+vi.mock("@/hooks/use-connections", () => ({
+  useToolConnections: () => toolConnections,
+  useConnectionGrants: () => ({ data: { grants: [] } }),
+}));
 
 const updateAgent = vi.fn();
 const agent = {

@@ -21,11 +21,16 @@ vi.mock("@/lib/api-client", () => ({
   ApiError: class ApiError extends Error {},
 }));
 vi.mock("@/lib/sensitive-url", () => ({ takePendingGrant: () => pending.value }));
-vi.mock("@/hooks/use-connections", () => ({
-  toolConnectionsKey: ["tool-connections"],
-  useToolConnections: () => ({ data: { connections: connections.value, tools: [] } }),
-  useConnectComposio: () => connect,
-}));
+// The finishing hook is the real one: it is what these tests are about.
+vi.mock("@/hooks/use-connections", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/use-connections")>();
+  return {
+    toolConnectionsKey: ["tool-connections"],
+    useToolConnections: () => ({ data: { connections: connections.value, tools: [] } }),
+    useConnectComposio: () => connect,
+    useFinishPendingComposioGrant: actual.useFinishPendingComposioGrant,
+  };
+});
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const { ConnectCards } = await import("./connect-cards");

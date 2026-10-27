@@ -98,7 +98,7 @@ In a thread you can:
 - **See Sources** under a reply — the documents it was grounded in.
 - **Write a report**: the report control, or typing \`/report\` followed by what it should cover, writes a document instead of a reply.
 - **Search this thread**, rename it, or delete it.
-- **Approve actions.** When the agent wants to do something in a connected app, a card asks first: **Just this once** or **Always allow this**. When it uses the browser you can watch, and **Take over** when a site needs you to sign in.
+- **Approve actions.** When the agent wants to change something in a connected app, a card asks first: **Approve**, **Not now**, or **Don't ask again** for that app. Reading never asks. When it uses the browser you can watch, and **Take over** when a site needs you to sign in.
 
 **Private and shared.** A thread is private to the person who started it. **Share with workspace** lets everyone in the workspace read it and write in it; only the person who started it can edit earlier messages or make it private again. A **Brainstorm** thread is shared from the start and has an **Idea board**: **Extract ideas** pulls candidate ideas from the conversation, and anyone in the thread can add, move and remove cards.
 
@@ -159,7 +159,7 @@ A routine is private to its owner unless shared. If it keeps failing it pauses i
 
 Everything an agent can reach outside Covan is connected under **Settings → Integrations**. Which ones appear depends on how this Covan is set up; some may say **Not configured here**.
 
-**Connected apps — about 1,500.** Gmail, Outlook, Google Calendar, HubSpot, GitHub, Linear and many more. Pick an app and **Connect**: you either sign in at the app or paste a key it gives you. Then on the agent's Configuration (Tools) choose which agents may use it. Agents find the right operation and run it. The first action in an app asks you first, and anything that changes data (sending mail, creating a record) asks every time — unless you chose **Always allow this** for that operation. A connection can be **Only you** or shared with the workspace.
+**Connected apps — about 1,500.** Gmail, Outlook, Google Calendar, HubSpot, GitHub, Linear and many more. Pick an app and **Connect**: you either sign in at the app or paste a key it gives you. Then on the agent's Configuration (Tools) choose which agents may use it. Agents find the right operation and run it. Three rules: an agent reads any app you connected without asking, in a conversation and on a schedule. Anything that changes something (sending mail, creating a record) asks first — unless you chose **Don't ask again** for that app, for that agent. Whoever connected an app decides that for it; an admin decides for a shared one, and a viewer never changes anything. A connection can be **Only you** or shared with the workspace.
 
 **Sources that sync into Knowledge.** **Google Drive** (a folder) and **Notion** (a database) are copied into a folder and kept in sync — additions, edits and removals. **Sync now** forces it.
 

@@ -1,9 +1,12 @@
+import { useEffect, useRef } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { i18n } from "@/i18n";
-import { api } from "@/lib/api-client";
-import type { ProviderId } from "@/lib/connections-api";
+import { ApiError, api } from "@/lib/api-client";
+import { connectErrorMessage, type ProviderId } from "@/lib/connections-api";
 import { beginFlow } from "@/lib/flow-nonce";
 import { navigateAway } from "@/lib/safe-url";
+import { takePendingGrant } from "@/lib/sensitive-url";
 
 // The Integrations page is the only screen that reads any of this, so it lives
 // here rather than in agents-store.tsx, which every authed page pays to load —
@@ -78,7 +81,7 @@ export function useRemoveToolConnection() {
 export const composioToolkitsKey = (search: string, category: string) =>
   ["composio-toolkits", search, category] as const;
 export const composioCategoriesKey = ["composio-categories"] as const;
-export const composioGrantsKey = ["composio-grants"] as const;
+export const connectionGrantsKey = ["connection-grants"] as const;
 
 /**
  * The catalogue, a page at a time.
@@ -263,28 +266,29 @@ export function useComposioStatus(id: string | null, pending: boolean) {
   });
 }
 
-export function useComposioGrants(agentId?: string) {
+/** Which agents may change things in which connections without asking (0140). */
+export function useConnectionGrants(agentId?: string) {
   return useQuery({
-    queryKey: [...composioGrantsKey, agentId ?? "all"],
-    queryFn: () => api.composio.grants(agentId),
+    queryKey: [...connectionGrantsKey, agentId ?? "all"],
+    queryFn: () => api.toolConnections.grants(agentId),
   });
 }
 
-export function useSetComposioGrant() {
+export function useSetConnectionGrant() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: Parameters<typeof api.composio.setGrant>[0]) =>
-      api.composio.setGrant(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: composioGrantsKey }),
+    mutationFn: (input: { agentId: string; connectionId: string }) =>
+      api.toolConnections.setGrant(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: connectionGrantsKey }),
   });
 }
 
-export function useRemoveComposioGrant() {
+export function useRemoveConnectionGrant() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: Parameters<typeof api.composio.removeGrant>[0]) =>
-      api.composio.removeGrant(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: composioGrantsKey }),
+    mutationFn: (input: { agentId: string; connectionId: string }) =>
+      api.toolConnections.removeGrant(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: connectionGrantsKey }),
   });
 }
 
@@ -391,4 +395,40 @@ export function useRemoveSlack() {
     mutationFn: () => api.slack.remove(),
     onSuccess: () => qc.invalidateQueries({ queryKey: slackKey }),
   });
+}
+
+/**
+ * Finish a connected app's consent round trip on the page it came back to.
+ *
+ * Composio sends the person back to `returnTo` with the grant in the address;
+ * `lib/sensitive-url.ts` moves it into session storage, and this finishes it.
+ * The grant is read once, so mount this only on the pages a connect can return
+ * to outside Integrations — the welcome and arrivals cards, and the routine
+ * editor — never on two at a time.
+ *
+ * `onActive` hears about a connection that finished active, at most once.
+ */
+export function useFinishPendingComposioGrant(onActive?: (toolkit: string) => void) {
+  const queryClient = useQueryClient();
+  // The latest callback, for an effect that runs once.
+  const reported = useRef(onActive);
+  useEffect(() => {
+    reported.current = onActive;
+  });
+  useEffect(() => {
+    const pending = takePendingGrant();
+    if (!pending || pending.kind !== "composio") return;
+    void (async () => {
+      try {
+        const done = await api.composio.complete(pending.nonce);
+        if (done.status === "active") reported.current?.(pending.toolkit);
+      } catch (e) {
+        toast.error(
+          connectErrorMessage(e instanceof ApiError ? e.message : "save_failed", i18n.t.bind(i18n)),
+        );
+      } finally {
+        await queryClient.invalidateQueries({ queryKey: toolConnectionsKey });
+      }
+    })();
+  }, [queryClient]);
 }

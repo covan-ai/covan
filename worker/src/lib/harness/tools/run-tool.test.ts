@@ -85,14 +85,15 @@ const CONNECTION = {
 
 /**
  * A context whose chain mirrors what the tool actually calls: `loadConnection`
- * is `select().eq().eq().maybeSingle()`, and the grant read is
- * `select().eq().eq().eq().maybeSingle()`. Told apart by table, because getting
+ * is `select().eq().eq().or().maybeSingle()`, and the standing permission is
+ * `select().eq().eq().maybeSingle()`. Told apart by table, because getting
  * them the wrong way round is how a test proves the wrong thing.
  */
 function ctxWith(
   over: {
     row?: Record<string, unknown> | null;
-    grant?: { mode: string } | null;
+    /** Whether this agent may change things in the connection without asking. */
+    grant?: boolean;
     approvedSlugs?: string[];
     confirmed?: boolean;
     routineRunId?: string;
@@ -126,8 +127,9 @@ function ctxWith(
                 select: () => ({
                   eq: () => ({
                     eq: () => ({
-                      eq: () => ({
-                        maybeSingle: async () => ({ data: over.grant ?? null, error: null }),
+                      maybeSingle: async () => ({
+                        data: over.grant ? { agent_id: "agent-1" } : null,
+                        error: null,
                       }),
                     }),
                   }),
@@ -171,7 +173,7 @@ const CALL = {
  *
  * A connection's approval now reaches an operation only if this turn actually
  * described it, so a test about that reach has to say what was described. The
- * tests that are about something else say `grant: { mode: "always" }` instead —
+ * tests that are about something else say `grant: true` instead —
  * a standing per-slug grant, which is the shape a slug with no `find_tool`
  * result behind it really arrives in.
  */
@@ -227,7 +229,7 @@ describe("run_tool", () => {
         ...CALL,
         arguments: { ...CALL.arguments, connected_account_id: "ca_somebody_else" },
       },
-      ctxWith({ grant: { mode: "always" } }),
+      ctxWith({ grant: true }),
     );
     expect(out.kind).toBe("ok");
 
@@ -275,10 +277,7 @@ describe("run_tool", () => {
     // slug can have come from an earlier turn still in the transcript or from
     // a standing grant, and refusing those would break working behaviour to
     // prevent a mistake that has not happened.
-    const out = await runToolTool.run(
-      CALL,
-      ctxWith({ grant: { mode: "always" }, offeredSlugs: new Set() }),
-    );
+    const out = await runToolTool.run(CALL, ctxWith({ grant: true, offeredSlugs: new Set() }));
     expect(out.kind).toBe("ok");
   });
 
@@ -356,10 +355,7 @@ describe("run_tool", () => {
     // No `offeredOperations` — the slug came from an earlier turn or a standing
     // grant. The convention is all there is, and it has to be read as a prefix
     // ending at a `_` rather than as everything before the first one.
-    const out = await runToolTool.run(
-      TEAMS_CALL,
-      ctxWith({ row: TEAMS, grant: { mode: "always" } }),
-    );
+    const out = await runToolTool.run(TEAMS_CALL, ctxWith({ row: TEAMS, grant: true }));
     expect(out.kind).toBe("ok");
     expect(fetchMock).toHaveBeenCalled();
   });
@@ -421,7 +417,7 @@ describe("run_tool", () => {
           auth_kind: "composio_no_auth",
           toolkit_slug: "hackernews",
         },
-        grant: { mode: "always" },
+        grant: true,
       }),
     );
     expect(out.kind).toBe("ok");
@@ -438,7 +434,7 @@ describe("run_tool", () => {
       { ...CALL, slug: "COMPOSIO_SEARCH" },
       ctxWith({
         row: { ...CONNECTION, label: "Web search", toolkit_slug: "composio_search" },
-        grant: { mode: "always" },
+        grant: true,
       }),
     );
     expect(out.kind).toBe("ok");
@@ -491,12 +487,12 @@ describe("run_tool", () => {
   });
 
   it("does not ask when the agent may change things in this app", async () => {
-    const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
+    const out = await runToolTool.run(CALL, ctxWith({ grant: true }));
     expect(out).toMatchObject({ kind: "ok", approval: "grant" });
   });
 
   it("asks for a change when there is no row", async () => {
-    const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "ask" } }));
+    const out = await runToolTool.run(CALL, ctxWith({ grant: false }));
     expect(out.kind).toBe("needs_confirmation");
   });
 
@@ -528,10 +524,7 @@ describe("run_tool", () => {
   });
 
   it("runs a change on a scheduled run with the standing permission", async () => {
-    const out = await runToolTool.run(
-      CALL,
-      ctxWith({ routineRunId: "run-1", grant: { mode: "always" } }),
-    );
+    const out = await runToolTool.run(CALL, ctxWith({ routineRunId: "run-1", grant: true }));
     expect(out).toMatchObject({ kind: "ok", approval: "grant" });
   });
 
@@ -547,7 +540,7 @@ describe("run_tool", () => {
 
   it("refuses before the network when the workspace has no credits left", async () => {
     entitlements.allowed = false;
-    const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
+    const out = await runToolTool.run(CALL, ctxWith({ grant: true }));
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("no credits left");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -567,7 +560,7 @@ describe("run_tool", () => {
         { status: 200 },
       ),
     );
-    const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
+    const out = await runToolTool.run(CALL, ctxWith({ grant: true }));
     expect(out.kind === "ok" && out.content).toContain("A shared agent.");
     expect(out.kind === "ok" && out.content).not.toContain(encoded);
   });
@@ -576,14 +569,14 @@ describe("run_tool", () => {
     fetchMock.mockResolvedValue(
       new Response('{"error":"unknown field `recipient`"}', { status: 400 }),
     );
-    const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
+    const out = await runToolTool.run(CALL, ctxWith({ grant: true }));
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("unknown field");
   });
 
   it("says so rather than guessing when the row has lost its account", async () => {
     composioAccount.mockResolvedValue(null as never);
-    const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
+    const out = await runToolTool.run(CALL, ctxWith({ grant: true }));
     expect(out.kind === "error" && out.message).toContain("reconnected");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -594,7 +587,7 @@ describe("run_tool", () => {
       recorded.push(...spent);
     });
     fetchMock.mockResolvedValue(new Response("bad request", { status: 400 }));
-    await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
+    await runToolTool.run(CALL, ctxWith({ grant: true }));
     expect(recorded).toEqual([expect.objectContaining({ kind: "composio_call" })]);
   });
 
@@ -605,7 +598,7 @@ describe("run_tool", () => {
     recordSpy.mockImplementation(async (_workspace: string, spent: unknown[]) => {
       recorded.push(...spent);
     });
-    const ctx = ctxWith({ grant: { mode: "always" } });
+    const ctx = ctxWith({ grant: true });
     await runToolTool.run(CALL, { ...ctx, env: { ...ctx.env, COMPOSIO_API_KEY: "" } as ToolEnv });
     expect(recorded).toEqual([]);
   });
@@ -663,7 +656,7 @@ describe("a viewer", () => {
   });
 
   it("cannot run one nothing has described, which is not known to be a read", async () => {
-    const out = await runToolTool.run(CALL, ctxWith({ role: "viewer", grant: { mode: "always" } }));
+    const out = await runToolTool.run(CALL, ctxWith({ role: "viewer", grant: true }));
     expect(out).toMatchObject({ kind: "error", message: expect.stringMatching(/viewer/) });
   });
 
@@ -792,7 +785,7 @@ describe("checking the arguments against the schema", () => {
         slug: "GMAIL_SEND_EMAIL",
         arguments: { send_updates: "all", attendees: [{ email: "a@b.c" }] },
       },
-      ctxWith({ grant: { mode: "always" } }),
+      ctxWith({ grant: true }),
     );
 
     expect(out.kind).toBe("ok");
@@ -905,7 +898,7 @@ describe("an operation the service does not have", () => {
     const offeredSlugs = new Set(["GMAIL_SEND_EMAIL", "GMAIL_FETCH_EMAILS"]);
     fetchMock.mockResolvedValue(NOT_FOUND());
 
-    const out = await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" }, offeredSlugs }));
+    const out = await runToolTool.run(CALL, ctxWith({ grant: true, offeredSlugs }));
 
     expect(out.kind).toBe("error");
     // Withdrawn, so the guard refuses the retry for free instead of buying a
@@ -924,7 +917,7 @@ describe("an operation the service does not have", () => {
     recordUnavailable.mockClear();
     fetchMock.mockResolvedValue(NOT_FOUND());
 
-    await runToolTool.run(CALL, ctxWith({ grant: { mode: "always" } }));
+    await runToolTool.run(CALL, ctxWith({ grant: true }));
 
     expect(recordUnavailable).toHaveBeenCalledTimes(1);
     const [, connection, slug] = recordUnavailable.mock.calls[0];
@@ -964,7 +957,7 @@ describe("an operation the service does not have", () => {
     await runToolTool.run(
       CALL,
       ctxWith({
-        grant: { mode: "always" },
+        grant: true,
         row: { ...CONNECTION, config: { unavailable_tools: { GMAIL_SEND_EMAIL: old } } },
       }),
     );
@@ -1253,7 +1246,7 @@ describe("what counts as a read", () => {
   });
 
   it("reports a standing grant as a grant", async () => {
-    expect(await runToolTool.run(SEND, ctxWith({ grant: { mode: "always" } }))).toMatchObject({
+    expect(await runToolTool.run(SEND, ctxWith({ grant: true }))).toMatchObject({
       kind: "ok",
       approval: "grant",
     });
@@ -1304,7 +1297,7 @@ describe("reading many results for a question", () => {
   });
 
   it("refuses a question on an operation the catalogue cannot describe", async () => {
-    const out = await runToolTool.run(ASK, ctxWith({ grant: { mode: "always" } }));
+    const out = await runToolTool.run(ASK, ctxWith({ grant: true }));
     expect(out.kind === "error" && out.message).toMatch(/find it with find_tool first/);
   });
 

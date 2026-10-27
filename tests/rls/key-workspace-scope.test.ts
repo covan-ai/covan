@@ -226,7 +226,6 @@ describe("the schema", () => {
    */
   const PERSONAL = new Map([
     ["browser_profiles", "a person's own signed-in browser, across workspaces"],
-    ["connection_capabilities", "a catalogue of what each provider can do, the same for everybody"],
     ["notification_preferences", "a person's own settings"],
     ["profiles", "a person; co-member visibility goes through shares_workspace, which is scoped"],
     ["slack_identities", "a Slack user linked to a person"],

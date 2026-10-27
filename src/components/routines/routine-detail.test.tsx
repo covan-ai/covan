@@ -17,6 +17,9 @@ vi.mock("@tanstack/react-router", () => ({
     <a href={to}>{children}</a>
   ),
 }));
+// Its own test is routine-changes-card.test.tsx; here it would need the
+// connection hooks and a query client for a card this file is not about.
+vi.mock("./routine-changes-card", () => ({ RoutineChangesCard: () => null }));
 vi.mock("@/lib/api-client", () => ({
   api: { routines: { trigger: vi.fn(), createTrigger: vi.fn(), removeTrigger: vi.fn() } },
   ApiError: class ApiError extends Error {

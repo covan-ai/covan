@@ -40,6 +40,7 @@ vi.mock("@/lib/api-client", () => ({
 }));
 vi.mock("@/lib/workspace-role", () => ({ useWorkspaceRole: () => ({ isAdmin: h.isAdmin }) }));
 vi.mock("@/hooks/use-connections", () => ({
+  useConnectionGrants: () => ({ data: { grants: [] } }),
   useConnections: () => ({
     data: { connections: [{ id: "c1", provider: "google_drive", bundleId: "product" }] },
   }),

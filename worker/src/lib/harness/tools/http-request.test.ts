@@ -49,9 +49,13 @@ const CONNECTION = {
 
 function ctxWith(
   row: Record<string, unknown> | null = CONNECTION,
-  over: Partial<ToolContext> & { role?: "admin" | "member" | "viewer" } = {},
+  over: Partial<ToolContext> & {
+    role?: "admin" | "member" | "viewer";
+    /** Whether this agent may change things in the service without asking (0140). */
+    grant?: boolean;
+  } = {},
 ): ToolContext {
-  const { role = "member", ...rest } = over;
+  const { role = "member", grant = false, ...rest } = over;
   return {
     db: {
       from: (table: string) =>
@@ -63,15 +67,28 @@ function ctxWith(
                 }),
               }),
             }
-          : {
-              select: () => ({
-                eq: () => ({
+          : table === "tool_connection_grants"
+            ? {
+                select: () => ({
                   eq: () => ({
-                    or: () => ({ maybeSingle: async () => ({ data: row, error: null }) }),
+                    eq: () => ({
+                      maybeSingle: async () => ({
+                        data: grant ? { agent_id: "agent-1" } : null,
+                        error: null,
+                      }),
+                    }),
                   }),
                 }),
-              }),
-            },
+              }
+            : {
+                select: () => ({
+                  eq: () => ({
+                    eq: () => ({
+                      or: () => ({ maybeSingle: async () => ({ data: row, error: null }) }),
+                    }),
+                  }),
+                }),
+              },
     } as unknown as ToolContext["db"],
     env: { ALLOWED_ORIGIN: "https://app.covan.test", ROUTINE_SECRET_KEY: "k" } as ToolEnv,
     workspaceId: "ws-1",
@@ -154,34 +171,64 @@ describe("http_request", () => {
       expect(result.kind).toBe("ok");
     });
 
-    it("asks first when it goes through a connection somebody else shared", async () => {
-      const result = await httpRequestTool.run(post, ctxWith(SHARED));
-      expect(result).toMatchObject({
-        kind: "needs_confirmation",
-        proposal: { kind: "http_request", method: "POST", path: "/orders" },
-      });
+    it("asks first, on anybody's connection", async () => {
+      for (const row of [SHARED, WRITABLE]) {
+        const result = await httpRequestTool.run(post, ctxWith(row));
+        expect(result).toMatchObject({
+          kind: "needs_confirmation",
+          proposal: {
+            kind: "http_request",
+            connection: { id: "conn-1" },
+            method: "POST",
+            path: "/orders",
+          },
+        });
+      }
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("goes once the person said yes, or approved this connection this turn", async () => {
+    it("goes once the person said yes", async () => {
       fetchMock.mockImplementation(async () => new Response("{}", { status: 200 }));
       expect((await httpRequestTool.run(post, ctxWith(SHARED, { confirmed: true }))).kind).toBe(
         "ok",
       );
-      expect(
-        (await httpRequestTool.run(post, ctxWith(SHARED, { approvedConnections: ["conn-1"] })))
-          .kind,
-      ).toBe("ok");
     });
 
-    it("fails honestly on a scheduled run, which has nobody to ask", async () => {
-      const result = await httpRequestTool.run(post, ctxWith(SHARED, { routineRunId: "run-1" }));
-      expect(result).toMatchObject({ kind: "error" });
+    it("goes without asking when the agent may change things in this service", async () => {
+      expect((await httpRequestTool.run(post, ctxWith(SHARED, { grant: true }))).kind).toBe("ok");
+    });
+
+    it("writes on a scheduled run only with that permission", async () => {
+      const refused = await httpRequestTool.run(post, ctxWith(WRITABLE, { routineRunId: "run-1" }));
+      expect(refused).toMatchObject({
+        kind: "error",
+        message: expect.stringMatching(/routine's page/),
+      });
       expect(fetchMock).not.toHaveBeenCalled();
+
+      const allowed = await httpRequestTool.run(
+        post,
+        ctxWith(WRITABLE, { routineRunId: "run-1", grant: true }),
+      );
+      expect(allowed.kind).toBe("ok");
     });
 
-    it("needs no card on the person's own connection, as before", async () => {
-      expect((await httpRequestTool.run(post, ctxWith(WRITABLE))).kind).toBe("ok");
+    it("asks again for a second write in the same reply", async () => {
+      // A yes covers that one request: there is no per-reply memory for HTTP,
+      // and an earlier yes on the same connection does not reach this one.
+      const result = await httpRequestTool.run(
+        post,
+        ctxWith(WRITABLE, { approvedSlugs: ["conn-1:POST"] }),
+      );
+      expect(result.kind).toBe("needs_confirmation");
+    });
+
+    it("never asks to read", async () => {
+      const result = await httpRequestTool.run(
+        { connectionId: "conn-1", method: "GET", path: "/orders" },
+        ctxWith(SHARED, { routineRunId: "run-1" }),
+      );
+      expect(result.kind).toBe("ok");
     });
   });
 
@@ -194,7 +241,7 @@ describe("http_request", () => {
       const body = { title: "Rakip analizi", content: '# Covan\n\n- "quoted"' };
       await httpRequestTool.run(
         { connectionId: "conn-1", method: "PATCH", path: "/docs/1", body },
-        ctxWith(WRITABLE),
+        ctxWith(WRITABLE, { grant: true }),
       );
       expect(sentInit().body).toBe(JSON.stringify(body));
       expect(sentInit().headers["Content-Type"]).toBe("application/json");
@@ -203,7 +250,7 @@ describe("http_request", () => {
     it("sends a string exactly as it was given, as before", async () => {
       await httpRequestTool.run(
         { connectionId: "conn-1", method: "POST", path: "/docs", body: '{"title":"x"}' },
-        ctxWith(WRITABLE),
+        ctxWith(WRITABLE, { grant: true }),
       );
       expect(sentInit().body).toBe('{"title":"x"}');
     });
@@ -211,7 +258,7 @@ describe("http_request", () => {
     it("sends no body on a GET, whatever it was given", async () => {
       await httpRequestTool.run(
         { connectionId: "conn-1", method: "GET", path: "/docs", body: { title: "x" } },
-        ctxWith(WRITABLE),
+        ctxWith(WRITABLE, { grant: true }),
       );
       expect(sentInit()).not.toHaveProperty("body");
       expect(sentInit().headers).not.toHaveProperty("Content-Type");

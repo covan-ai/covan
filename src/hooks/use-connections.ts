@@ -78,7 +78,7 @@ export function useRemoveToolConnection() {
 export const composioToolkitsKey = (search: string, category: string) =>
   ["composio-toolkits", search, category] as const;
 export const composioCategoriesKey = ["composio-categories"] as const;
-export const composioGrantsKey = ["composio-grants"] as const;
+export const connectionGrantsKey = ["connection-grants"] as const;
 
 /**
  * The catalogue, a page at a time.
@@ -263,28 +263,29 @@ export function useComposioStatus(id: string | null, pending: boolean) {
   });
 }
 
-export function useComposioGrants(agentId?: string) {
+/** Which agents may change things in which connections without asking (0140). */
+export function useConnectionGrants(agentId?: string) {
   return useQuery({
-    queryKey: [...composioGrantsKey, agentId ?? "all"],
-    queryFn: () => api.composio.grants(agentId),
+    queryKey: [...connectionGrantsKey, agentId ?? "all"],
+    queryFn: () => api.toolConnections.grants(agentId),
   });
 }
 
-export function useSetComposioGrant() {
+export function useSetConnectionGrant() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: Parameters<typeof api.composio.setGrant>[0]) =>
-      api.composio.setGrant(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: composioGrantsKey }),
+    mutationFn: (input: { agentId: string; connectionId: string }) =>
+      api.toolConnections.setGrant(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: connectionGrantsKey }),
   });
 }
 
-export function useRemoveComposioGrant() {
+export function useRemoveConnectionGrant() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: Parameters<typeof api.composio.removeGrant>[0]) =>
-      api.composio.removeGrant(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: composioGrantsKey }),
+    mutationFn: (input: { agentId: string; connectionId: string }) =>
+      api.toolConnections.removeGrant(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: connectionGrantsKey }),
   });
 }
 

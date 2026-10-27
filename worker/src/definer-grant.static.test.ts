@@ -241,55 +241,9 @@ describe("security definer functions", () => {
   it("revokes the ones whose grant is the whole boundary", () => {
     const revoked = revokedFromPublic();
 
-    for (const name of ["claim_due_routines", "claim_due_connections", "record_capability_call"]) {
+    for (const name of ["claim_due_routines", "claim_due_connections"]) {
       expect(revoked.has(name), `${name} must be revoked from PUBLIC`).toBe(true);
       expect(name in CALLABLE, `${name} must never be exempted`).toBe(false);
     }
-  });
-});
-
-/**
- * The one decision in 0058 that cannot be taken back.
- *
- * `connection_grants.mode` holds `ask` or `always`. It deliberately has no
- * `never`, because `never` is the absence of a row — and two ways to say no can
- * disagree, at which point some code has to pick a winner at the worst possible
- * moment.
- *
- * Adding the third value later is not a migration, it is a change in what every
- * existing install means by silence. This test does not make that impossible;
- * it makes it deliberate, which is the most a test can do about a product
- * decision.
- */
-describe("no row means no", () => {
-  it("keeps `mode` to the two values that are not `never`", () => {
-    const problems: string[] = [];
-
-    for (const { name: file, sql } of readMigrations()) {
-      // Only inside `connection_grants`. `agents.mode` is a different column
-      // with a different meaning, and a rule about one that quietly polices the
-      // other is a rule nobody can read.
-      const table = sql.match(
-        /create table (?:if not exists )?public\.connection_grants \(([\s\S]*?)\n\);/,
-      );
-      const scoped = table?.[1] ?? "";
-      for (const m of scoped.matchAll(/mode\s+text[^,]*check\s*\(\s*mode\s+in\s*\(([^)]*)\)/gi)) {
-        const values = m[1]
-          .split(",")
-          .map((v) => v.trim().replace(/^'|'$/g, ""))
-          .filter(Boolean)
-          .sort();
-        if (values.join(",") !== "always,ask") {
-          problems.push(`${file}: mode in (${values.join(", ")})`);
-        }
-      }
-    }
-
-    expect(
-      problems,
-      "the absence of a grant is what `never` means. A storable `never` would " +
-        "be a second representation of no, and the default a workspace has " +
-        "today is the one that cannot be renegotiated later.",
-    ).toEqual([]);
   });
 });

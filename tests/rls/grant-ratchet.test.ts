@@ -31,7 +31,7 @@ import { closeSql, sql } from "./harness";
  *
  * Since 0094 every table that 0023 granted wholesale is granted only the
  * columns the API writes through a caller's client. The few still listed
- * whole (`connection_grants`, `coverage_opt_outs`, `notification_preferences`,
+ * whole (`coverage_opt_outs`, `notification_preferences`,
  * `user_onboarding`) are tables where every column is the caller's own to set.
  */
 const AUTHENTICATED_WRITES: Record<string, string> = {
@@ -52,14 +52,9 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "arrival_scans INSERT": "sources,taxonomy,user_id,window_days,workspace_id",
   "api_keys INSERT": "name,prefix,token_hash,user_id,workspace_id",
   "api_keys UPDATE": "name,revoked_at",
-  "capability_calls UPDATE": "status",
   "chat_sessions INSERT":
     "agent_id,kind,mode,model,reasoning_effort,title,user_id,visibility,web_search,workspace_id",
   "chat_sessions UPDATE": "mode,model,reasoning_effort,title,visibility,web_search",
-  "connection_grants INSERT":
-    "agent_id,capability,connection_id,granted_at,granted_by,mode,provider,workspace_id",
-  "connection_grants UPDATE":
-    "agent_id,capability,connection_id,granted_at,granted_by,mode,provider,workspace_id",
   "connections UPDATE": "status,sync_interval_minutes",
   "coverage_opt_outs INSERT": "created_at,user_id,workspace_id",
   "delivery_channels UPDATE": "label",
@@ -104,13 +99,12 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   "routines INSERT":
     "agent_id,delivery_channel_id,deliver_inbox,ends_after_runs,instruction,model,name,next_run_at,output_bundle_id,output_retention,reasoning_effort,schedule_cron,source_config,source_kind,timezone,trigger_kind,user_id,visibility,workspace_id",
   "routines UPDATE":
-    "browser_access,browser_site,consecutive_failures,delivery_channel_id,deliver_inbox,instruction,model,name,next_run_at,output_bundle_id,output_retention,paused_reason,reasoning_effort,schedule_cron,status,timezone,trigger_kind,updated_at,visibility",
+    "browser_access,consecutive_failures,delivery_channel_id,deliver_inbox,instruction,model,name,next_run_at,output_bundle_id,output_retention,paused_reason,reasoning_effort,schedule_cron,status,timezone,trigger_kind,updated_at,visibility",
   // 0121: when the caller last read a thread, upserted on (session_id, user_id).
   "session_reads INSERT": "last_read_at,session_id,user_id,workspace_id",
   "session_reads UPDATE": "last_read_at,session_id,user_id,workspace_id",
   "slack_installations UPDATE": "agent_id",
-  "tool_connection_grants INSERT": "agent_id,granted_by,mode,slug,tool_connection_id,workspace_id",
-  "tool_connection_grants UPDATE": "agent_id,mode,slug,tool_connection_id,workspace_id",
+  "tool_connection_grants INSERT": "agent_id,granted_by,tool_connection_id,workspace_id",
   "tool_connections UPDATE": "allowed_methods,config,label,scope",
   // 0119: the six columns an event is made of; id and created_at are defaults.
   "onboarding_events INSERT": "at,client_id,elapsed_ms,event,step,user_id",

@@ -107,8 +107,6 @@ describe("continue_later", () => {
         routineRunId: "run-1",
         continuation: { id: "c-0", browserApproved: true },
         routineBrowser: {
-          access: "all",
-          site: null,
           conversation: async () => "sess-routine",
           started: [],
         },

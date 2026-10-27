@@ -325,11 +325,10 @@ export function mapToolConnection(
  * card renders the operations it has rows for and says "asks first" about
  * everything else — which is true without a row having to exist to say it.
  */
+/** This agent may change things in this connection without asking (0140). */
 export type ToolConnectionGrantDTO = {
   agentId: string;
   connectionId: string;
-  slug: string;
-  mode: "ask" | "always";
   grantedBy: string | null;
   grantedAt: number;
 };
@@ -338,8 +337,6 @@ export function mapToolConnectionGrant(row: Record<string, unknown>): ToolConnec
   return {
     agentId: String(row.agent_id ?? ""),
     connectionId: String(row.tool_connection_id ?? ""),
-    slug: String(row.slug ?? ""),
-    mode: row.mode === "always" ? "always" : "ask",
     grantedBy: typeof row.granted_by === "string" ? row.granted_by : null,
     grantedAt: toEpochMs(String(row.granted_at ?? "")),
   };
@@ -1204,12 +1201,10 @@ export type RoutineDTO = {
   /** How many it has delivered. */
   runsDone: number;
   /**
-   * Whether a scheduled run may use the browser, and what it carries (0100):
-   * `off`; `all`, as in chat; or `site`, no cookie jar and only
-   * `browserSite`'s saved login.
+   * Whether a scheduled run may use the browser (0100, 0141): `off`, or `all`,
+   * carrying what a conversation's browser would.
    */
-  browserAccess: "off" | "all" | "site";
-  browserSite: string | null;
+  browserAccess: "off" | "all";
   /** The conversation this routine's browser reports into, once a run has opened one. */
   browserConversationId: string | null;
   status: "active" | "paused" | "completed";
@@ -1257,7 +1252,6 @@ export function mapRoutine(row: {
   ends_after_runs?: number | null;
   runs_done?: number | null;
   browser_access?: string | null;
-  browser_site?: string | null;
   browser_conversation_id?: string | null;
   status: string;
   paused_reason: string | null;
@@ -1304,9 +1298,7 @@ export function mapRoutine(row: {
     endsAfterRuns: row.ends_after_runs ?? null,
     runsDone: row.runs_done ?? 0,
     // `off` for a row read before 0100, which is what every routine was.
-    browserAccess:
-      row.browser_access === "all" || row.browser_access === "site" ? row.browser_access : "off",
-    browserSite: row.browser_site ?? null,
+    browserAccess: row.browser_access === "all" ? "all" : "off",
     browserConversationId: row.browser_conversation_id ?? null,
     status:
       row.status === "paused" ? "paused" : row.status === "completed" ? "completed" : "active",

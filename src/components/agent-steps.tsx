@@ -480,7 +480,7 @@ function ProposalRows({ proposal, nested }: { proposal: unknown; nested?: boolea
  * out would mean knowing which tools have a standing permission to grant —
  * and this file's whole discipline is that it knows nothing about any tool.
  * The caller decides whether there is one to offer and to whom; see
- * `runToolProposal` in `lib/connections-api.ts`.
+ * `connectionOfProposal` and `mayGrantStanding` in `lib/connections-api.ts`.
  *
  * It is deliberately the LAST and quietest of the three. The safe answer
  * should be the easy one, and a button that reads "never ask me again" sitting
@@ -497,7 +497,8 @@ export function ConfirmCard({
   pending: PendingConfirmation;
   busy: boolean;
   onAnswer: (approve: boolean) => void;
-  standing?: { label: string; onChoose: () => void };
+  /** "Don't ask again for {{app}}", and the app it is about. */
+  standing?: { label: string; onChoose: () => void; app: string };
   /** Who is asking: "Support is asking you". */
   agentName?: string;
 }) {
@@ -534,16 +535,15 @@ export function ConfirmCard({
           ) : null}
         </div>
         {standing ? (
-          /* The destructive clause is not a nicety. Until #202 one yes genuinely did
-           cover the whole service, and this sentence was true; #202 narrowed it so
-           that an operation which changes data is covered only by its own approval,
-           and the sentence was left behind saying somebody had granted more than
-           they had. It is on every connected-app card — `runToolProposal` returns a
-           standing action for every well-formed run_tool proposal — so a person
-           reading it is reading it at the moment they are deciding. #201. */
+          /* Said at the moment somebody is deciding, so it has to be exactly
+           what the two buttons do: a yes covers this operation, here, for the
+           rest of the reply; the third lets the agent change things in this
+           app unasked, on a schedule as well (0140), until somebody turns it
+           off. */
           <p className="text-meta leading-[1.45] text-muted-foreground">
             {t(
-              "Approving covers this service for the rest of this conversation, except for anything that changes data there — that asks again each time. The third option applies to this operation on this agent until somebody removes it, on the Integrations page.",
+              "Approving covers this operation for the rest of this reply. The third option lets {{agent}} change things in {{app}} without asking, in a conversation and on a schedule, until somebody turns it off on the Integrations page.",
+              { agent: agentName ?? t("this agent"), app: standing.app },
             )}
           </p>
         ) : null}

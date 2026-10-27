@@ -1144,6 +1144,19 @@ describe("how far one approval reaches", () => {
     expect(ctx.offeredOperations?.has("GOOGLECALENDAR_EVENTS_LIST")).toBe(true);
   });
 
+  it("refuses an operation the catalogue says belongs to another toolkit", async () => {
+    getToolMock.mockResolvedValueOnce({
+      kind: "ok",
+      tool: { ...op("GOOGLECALENDAR_EVENTS_LIST", false), toolkit: "googlecalendar_beta" },
+    });
+    const out = await runToolTool.run(
+      { connectionId: "conn-cal", slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: {} },
+      ctxWith({ row: CALENDAR }),
+    );
+    expect(out.kind).toBe("error");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("asks when the catalogue cannot describe the operation", async () => {
     const out = await runToolTool.run(
       { connectionId: "conn-cal", slug: "GOOGLECALENDAR_EVENTS_LIST", arguments: {} },

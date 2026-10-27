@@ -518,6 +518,31 @@ four-hour hard timeout, which has no browser left to stop. `browser_sessions`, `
 client role, for the reason `connected_account_id` has one, and the first is
 readable by its owner only.
 
+**A turn can put the job down and be woken later (0142).** The answer to a
+browser task arrives as a message, and until 0142 nothing with tools read it
+unless a tab was open: the step the agent said would follow (`then_step`, 0117)
+was claimed by the tab, and a routine's answer was written into its held report
+by a model call with no tools. Two things changed that. `continue_later` writes
+a `continuations` row — conversation, owner, a note, `wake_at` — from the ids
+the turn already carried, through the service role, since no client role may
+write a turn nobody asked for. And the tick gained a stage, after the routines
+and before the sweeps, that claims due rows with `claim_due_continuations` and
+unclaimed steps with `claim_browser_continuations_unwatched` — the tab's claim
+and the cron's race on `continued_at`, in the statement that selects, and the
+cron waits a minute so an open tab wins — and runs each as a **new** turn in
+the conversation (`lib/continuations/run.ts`): not a resumed one, because a
+turn replays its caller's request and the cron has no caller, but the same
+`runAgentTurn` a scheduled routine run goes through, with the service role and
+the owner as the caller, the conversation read fresh, the wake-up as the last
+user turn, and one assistant message written back. `ToolContext.continuation`
+is the "nobody is watching" marker beside `routineRunId`: `browse` runs without
+a card only where a browser was approved in that conversation before, and never
+with a saved login; `run_tool` goes through on a standing permission or says
+so. A routine's wake-up carries the held run's id, so its tasks attach to the
+report, the report waits while the chain is pending (`chainPending`), and the
+chain's last reply is the report. Bounds: five to 720 minutes, 24 wake-ups per
+conversation per day, and a routine's chain inside the report's two hours.
+
 So connecting HubSpot is a row. Connecting a second Postgres is a row plus a
 function installed on it. The `composio` transport is the same shape with the
 credential column empty: the row names an application and an account held at

@@ -203,12 +203,12 @@ export const httpRequestTool: AgentTool = {
     const approved =
       ctx.confirmed === true || (ctx.approvedConnections ?? []).includes(connection.id);
     if (writes && theirs && !approved) {
-      if (ctx.routineRunId) {
+      if (ctx.routineRunId || ctx.continuation) {
         return {
           kind: "error",
           message:
             `${method} on ${connection.label} writes through a connection somebody else shared, ` +
-            "and a scheduled run has nobody to approve that. Report that you could not do it.",
+            "and nobody is watching this run to approve that. Report that you could not do it.",
         };
       }
       return {

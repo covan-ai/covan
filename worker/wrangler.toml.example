@@ -226,10 +226,10 @@ binding = "BROWSER"
 # the log says the network broke when what broke was the plan.
 #
 # Set it to "paid" only once the Cloudflare account actually is. What it buys is
-# chat: 24 tool calls per answer instead of 8, and up to two further rounds when
-# a turn is still working at the end of them. A scheduled run is unaffected — a
-# tick runs a whole batch of them inside one invocation, which is a different
-# sum, and docs/routines.md does it.
+# 24 tool calls per chat answer instead of 8, and up to two further rounds when
+# a turn is still working at the end of them; and 24 per routine run instead of
+# 8, with no further rounds. A tick runs a whole batch of routines inside one
+# invocation, which is a different sum, and docs/routines.md does it.
 #
 # WORKER_PLAN = "paid"
 

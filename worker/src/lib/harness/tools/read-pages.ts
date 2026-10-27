@@ -241,7 +241,9 @@ export async function readPages(input: {
   const { ctx, slug, question } = input;
   const now = input.now ?? Date.now;
   const started = now();
-  const limit = input.cursorArg ? maxPages(ctx.env, { scheduled: Boolean(ctx.routineRunId) }) : 1;
+  const limit = input.cursorArg
+    ? maxPages(ctx.env, { scheduled: Boolean(ctx.routineRunId || ctx.continuation) })
+    : 1;
   const model = readerModel(ctx.env);
 
   const fetchPage = async (cursor: string | null): Promise<Page> => {

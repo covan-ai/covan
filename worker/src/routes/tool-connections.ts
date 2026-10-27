@@ -184,13 +184,24 @@ toolConnections.delete("/tool-connection-grants", async (c) => {
   }
   // Taking it away is never the riskier direction, so any writer who can edit
   // the agent may (0140).
-  const { error } = await c
+  const { data, error } = await c
     .get("db")
     .from("tool_connection_grants")
     .delete()
     .eq("agent_id", agentId)
-    .eq("tool_connection_id", connectionId);
+    .eq("tool_connection_id", connectionId)
+    .select("agent_id");
   if (error) return c.json({ error: "failed to remove that permission" }, 500);
+  // RLS refuses a delete by matching nothing, so an empty result is either no
+  // such permission or one this person may not take away. Saying "removed"
+  // to either would leave somebody believing the agent now asks when it does
+  // not.
+  if ((data ?? []).length === 0) {
+    return c.json(
+      { error: "no such permission, or you need edit access to the agent to remove it" },
+      403,
+    );
+  }
   return c.body(null, 204);
 });
 

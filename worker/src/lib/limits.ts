@@ -188,7 +188,41 @@ export type PlanLimits = {
    */
   subrequests: number;
   chat: ChatLimits;
+  routine: RoutineLimits;
   sync: SyncLimits;
+};
+
+/**
+ * What one routine run may spend, on this plan.
+ *
+ * Handed to `runAgentTurn` as it stands, so its fields are the loop's budget
+ * fields and an absent one means no ceiling — which is what Free has always
+ * had for tokens.
+ */
+export type RoutineLimits = {
+  /**
+   * How many tools one run may call. Free's eight is `SCHEDULED_MAX_STEPS`,
+   * and its argument is the cron tick's fifty subrequests shared by the batch
+   * (`lib/harness/budget.ts`, `routines/dispatcher.ts`).
+   *
+   * On Paid the subrequests stop binding and the eight was costing finished
+   * work: on 2026-10-26 an event routine asked to check a new meeting's
+   * guests against a file and take the busy ones off the invite spent all
+   * eight and was cut short, on a deployment where the same agent in a
+   * conversation had twenty-four. So Paid gives a run what a chat turn gets
+   * before its legs, and no legs: a leg is a trim and a notice for a turn
+   * somebody is watching, and nobody is watching this one.
+   */
+  maxSteps: number;
+  /**
+   * The runaway guard `ChatLimits.maxTurnTokens` describes, for a run.
+   *
+   * Absent on Free, as it always has been: eight steps were the bound, and a
+   * new ceiling there would be a new way for a routine that works today to
+   * stop. Present on Paid because three times the steps with no ceiling would
+   * make a runaway routine three times as expensive as it could be before.
+   */
+  maxTurnTokens?: number;
 };
 
 /** What one run of a connected source may do, on this plan. */
@@ -224,6 +258,7 @@ const FREE: PlanLimits = Object.freeze({
     maxTurnTokens: 150_000,
     trimAbovePromptTokens: 80_000,
   }),
+  routine: Object.freeze({ maxSteps: 8 }),
   sync: Object.freeze({ documentsPerRun: 5 }),
 });
 
@@ -243,6 +278,7 @@ const PAID: PlanLimits = Object.freeze({
     maxTurnTokens: 150_000,
     trimAbovePromptTokens: 80_000,
   }),
+  routine: Object.freeze({ maxSteps: 24, maxTurnTokens: 150_000 }),
   sync: Object.freeze({ documentsPerRun: 20 }),
 });
 

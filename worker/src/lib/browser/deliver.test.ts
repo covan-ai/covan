@@ -331,6 +331,15 @@ describe("a finished task", () => {
     expect(deliverFn).toHaveBeenCalledTimes(1);
   });
 
+  // The conversation carries on with the step by itself (0117, and from the
+  // cron since 0142), so the answer is not news yet; the turn that ends the
+  // chain sends the nudge instead.
+  it("does not nudge for a task that carries a step after it", async () => {
+    await deliverBrowserTask({ ...ROW, then_step: "post it to Slack" }, FINISHED, ENV, fakeDb());
+    expect(inserted).toHaveLength(1);
+    expect(deliverFn).not.toHaveBeenCalled();
+  });
+
   it("still writes the message when the person has no delivery channel", async () => {
     channelRow = null;
     await deliverBrowserTask(ROW, FINISHED, ENV, fakeDb());

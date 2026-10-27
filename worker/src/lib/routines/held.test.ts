@@ -238,6 +238,19 @@ describe("completeHeldRun", () => {
     });
   });
 
+  it("delivers a woken turn's reply as the report without composing (0142)", async () => {
+    const { db } = world();
+
+    expect(
+      await completeHeldRun(env, "run-1", { db }, { report: "the chain's last word" }),
+    ).toBe(true);
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(deliver).toHaveBeenCalledOnce();
+    const [, message] = deliver.mock.calls[0] as [unknown, { subject: string; body: string }];
+    expect(message).toEqual({ subject: "Morning prices", body: "the chain's last word" });
+  });
+
   it("sends an overdue run with what it has", async () => {
     const { db } = world({ tasks: [task({ status: "waiting", output: null })] });
 

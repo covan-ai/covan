@@ -127,23 +127,59 @@ export async function browserTaskNote(
       return null;
     }
     const rows = (Array.isArray(data) ? (data as TaskRow[]) : []).reverse();
-    if (rows.length === 0) return null;
+    const wakeUp = await wakeUpSet(db, sessionId);
+    if (rows.length === 0 && !wakeUp) return null;
     const lines = rows.map(
       (row, i) =>
         `${i + 1}. "${clip(String(row.task ?? ""), TASK_CHARS)}" — ${standing(row)}${afterwards(row)}`,
     );
     return [
-      "Browser tasks in this conversation in the last day, oldest first. This is Covan's own " +
-        "record, not something the person wrote:",
-      ...lines,
-      "When the person asks about these tasks, answer from this list and nothing else: do not " +
-        "say a task is running, waiting or done unless the list says so, and do not start one " +
-        "again while it is listed as running. What a task did is in its answer message: do not " +
-        "contradict it, and do not guess why a site stopped it. When a finished task says what " +
-        "you would do afterwards and that is not done yet in this conversation, do it now.",
+      ...(rows.length > 0
+        ? [
+            "Browser tasks in this conversation in the last day, oldest first. This is Covan's own " +
+              "record, not something the person wrote:",
+            ...lines,
+            "When the person asks about these tasks, answer from this list and nothing else: do not " +
+              "say a task is running, waiting or done unless the list says so, and do not start one " +
+              "again while it is listed as running. What a task did is in its answer message: do not " +
+              "contradict it, and do not guess why a site stopped it. When a finished task says what " +
+              "you would do afterwards and that is not done yet in this conversation, do it now.",
+          ]
+        : []),
+      ...(wakeUp ? [wakeUp] : []),
     ].join("\n");
   } catch {
     console.warn("could not read a conversation's browser tasks for its prompt");
+    return null;
+  }
+}
+
+/**
+ * The wake-up already set for this conversation (0142), as one sentence — so
+ * a watched turn asked "did you check?" does not set a second timer. The
+ * person's own rows only (0142 grants them), the soonest first. A read that
+ * fails says nothing, as the list above does.
+ */
+async function wakeUpSet(db: SupabaseClient, sessionId: string): Promise<string | null> {
+  try {
+    const { data, error } = await db
+      .from("continuations")
+      .select("note, wake_at")
+      .eq("session_id", sessionId)
+      .eq("status", "waiting")
+      .order("wake_at", { ascending: true })
+      .limit(1);
+    if (error || !Array.isArray(data) || data.length === 0) return null;
+    const row = data[0] as { note?: unknown; wake_at?: unknown };
+    if (typeof row.note !== "string" || typeof row.wake_at !== "string") return null;
+    const at = new Date(row.wake_at);
+    const hh = String(at.getUTCHours()).padStart(2, "0");
+    const mm = String(at.getUTCMinutes()).padStart(2, "0");
+    return (
+      `A wake-up is already set for ${hh}:${mm} UTC: "${clip(row.note, THEN_CHARS)}". Do not ` +
+      "set another unless the person asks for a different time."
+    );
+  } catch {
     return null;
   }
 }

@@ -199,6 +199,22 @@ export async function deliverBrowserTask(
  * whole rows — and read otherwise. A read that fails is null: the answer still
  * reaches the conversation, and the report is sent by the sweep.
  */
+/** The step after this task, read the way `routineRunOf` reads its column when a caller left it out. */
+async function thenStepOf(row: BrowserTaskRow, db: SupabaseClient): Promise<string | null> {
+  if (row.then_step !== undefined) return row.then_step ?? null;
+  try {
+    const { data, error } = await db
+      .from("browser_tasks")
+      .select("then_step")
+      .eq("id", row.id)
+      .maybeSingle();
+    if (error) return null;
+    return typeof data?.then_step === "string" && data.then_step ? data.then_step : null;
+  } catch {
+    return null;
+  }
+}
+
 async function routineRunOf(row: BrowserTaskRow, db: SupabaseClient): Promise<string | null> {
   if (row.routine_run_id !== undefined) return row.routine_run_id ?? null;
   try {
@@ -343,7 +359,10 @@ async function writeAnswer(
       .update({ updated_at: new Date().toISOString() })
       .eq("id", row.session_id);
 
-    if (!routineRunId) await notify(row, env, db, content);
+    // Not for a task with a step after it (0117, 0142): the conversation
+    // carries on with the answer by itself, so the answer is not news yet. The
+    // turn that ends the chain sends the nudge instead (`lib/continuations/run.ts`).
+    if (!routineRunId && !(await thenStepOf(row, db))) await notify(row, env, db, content);
   } catch (err) {
     // Called after the row reached a terminal status, so there is nothing to
     // retry and nothing to be gained by failing the tick.
@@ -690,11 +709,25 @@ async function notify(
   db: SupabaseClient,
   content: string,
 ): Promise<void> {
+  await nudge(env, db, row.user_id, { subject: "Your browser task is done", body: content }, row.id);
+}
+
+/**
+ * The nudge itself, for the woken turn that ends a chain as well (0142):
+ * `userId`'s oldest channel, `about` only for the log line.
+ */
+export async function nudge(
+  env: RoutineEnv,
+  db: SupabaseClient,
+  userId: string,
+  message: { subject: string; body: string },
+  about: string,
+): Promise<void> {
   try {
     const { data: first } = await db
       .from("delivery_channels")
       .select(CONFIRMABLE_COLUMNS)
-      .eq("user_id", row.user_id)
+      .eq("user_id", userId)
       .is("disabled_at", null)
       .order("created_at", { ascending: true })
       .limit(1)
@@ -702,13 +735,8 @@ async function notify(
     if (!first) return;
     const channel = await readyForDelivery(env, first as ConfirmableChannel);
 
-    await deliver(
-      channel,
-      { subject: "Your browser task is done", body: content },
-      deliveryDepsFrom(env),
-      { event: "agent.browser_task" },
-    );
+    await deliver(channel, message, deliveryDepsFrom(env), { event: "agent.browser_task" });
   } catch (err) {
-    console.error("could not notify about a finished browser task", row.id, err);
+    console.error("could not notify about a finished browser task", about, err);
   }
 }

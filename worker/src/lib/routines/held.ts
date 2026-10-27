@@ -197,7 +197,15 @@ export async function completeHeldRun(
   env: RoutineEnv,
   runId: string,
   overrides: Partial<HeldDeps> = {},
-  opts: { overdue?: boolean } = {},
+  opts: {
+    overdue?: boolean;
+    /**
+     * The report, already written: a woken turn's reply (0142). It read the
+     * whole conversation, the browser's answers in it, and was told its reply
+     * is the report — so it goes out verbatim, with no second compose.
+     */
+    report?: string;
+  } = {},
 ): Promise<boolean> {
   const deps = resolve(env, overrides);
   try {
@@ -207,7 +215,7 @@ export async function completeHeldRun(
 
     const run = await claim(deps, runId);
     if (!run) return false;
-    await finishHeld(env, deps, run, tasks);
+    await finishHeld(env, deps, run, tasks, opts.report);
     return true;
   } catch (err) {
     console.error("could not finish a routine run that waited on its browser", runId, err);
@@ -284,6 +292,7 @@ async function finishHeld(
   deps: HeldDeps,
   run: HeldRun,
   tasks: HeldTask[],
+  written?: string,
 ): Promise<void> {
   const { data: routineRow, error: routineError } = await deps.db
     .from("routines")
@@ -311,12 +320,15 @@ async function finishHeld(
 
   const draft = run.summary ?? "";
   const answers = answered(tasks);
-  const composed = await deps.compose(env, {
-    model,
-    instruction: routine.instruction,
-    draft,
-    answers,
-  });
+  const composed =
+    written !== undefined
+      ? { text: written, usage: null }
+      : await deps.compose(env, {
+          model,
+          instruction: routine.instruction,
+          draft,
+          answers,
+        });
   const report = composed.text;
   const spent = spends(completionSpend(model, composed.usage, "routine"));
   const tokens = (run.tokens ?? 0) + (composed.usage ? totalTokens(composed.usage) : 0);

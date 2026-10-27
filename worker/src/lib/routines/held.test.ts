@@ -31,6 +31,18 @@ vi.mock("../completion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../completion")>();
   return { ...actual, complete: (...a: unknown[]) => complete(...a) };
 });
+const { chainPending, cancelContinuations } = vi.hoisted(() => ({
+  chainPending: vi.fn(async (..._args: unknown[]): Promise<boolean> => false),
+  cancelContinuations: vi.fn(async (..._args: unknown[]): Promise<void> => {}),
+}));
+vi.mock("../continuations/rows", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../continuations/rows")>();
+  return {
+    ...actual,
+    chainPending: (...a: unknown[]) => chainPending(...a),
+    cancelContinuations: (...a: unknown[]) => cancelContinuations(...a),
+  };
+});
 
 import {
   answered,
@@ -164,6 +176,9 @@ beforeEach(() => {
     text: "the composed report",
     usage: { promptTokens: 10, completionTokens: 5 },
   });
+  chainPending.mockReset();
+  chainPending.mockResolvedValue(false);
+  cancelContinuations.mockClear();
 });
 
 describe("completeHeldRun", () => {
@@ -257,6 +272,34 @@ describe("completeHeldRun", () => {
     expect(await completeHeldRun(env, "run-1", { db }, { overdue: true })).toBe(true);
     expect(JSON.stringify(complete.mock.calls[0])).toContain("had not finished in time");
   });
+
+  // The chain (0142): a wake-up not yet run, or a step the cron has yet to
+  // claim, is work the report is waiting for as much as a browser task is.
+  it("waits while the run's chain is pending", async () => {
+    chainPending.mockResolvedValue(true);
+    const { db, calls } = world();
+
+    expect(await completeHeldRun(env, "run-1", { db })).toBe(false);
+    expect(chainPending).toHaveBeenCalledWith(db, "run-1", expect.any(Date));
+    expect(calls.some((c) => c.table === "routine_runs")).toBe(false);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("sends once the chain has ended", async () => {
+    chainPending.mockResolvedValue(false);
+    const { db } = world();
+
+    expect(await completeHeldRun(env, "run-1", { db })).toBe(true);
+    expect(deliver).toHaveBeenCalledOnce();
+  });
+
+  it("does not ask about the chain when the run is overdue", async () => {
+    chainPending.mockResolvedValue(true);
+    const { db } = world();
+
+    expect(await completeHeldRun(env, "run-1", { db }, { overdue: true })).toBe(true);
+    expect(deliver).toHaveBeenCalledOnce();
+  });
 });
 
 describe("answered", () => {
@@ -321,6 +364,11 @@ describe("sweepHeldRuns", () => {
     expect(read.filters).toContainEqual(["eq", ["status", "waiting"]]);
     expect(read.filters).toContainEqual(["lt", ["started_at", "2026-10-15T07:00:00.000Z"]]);
     expect(deliver).toHaveBeenCalledOnce();
+    // The chain is cut (0142): a run sent without it has no wake-up to run into.
+    expect(cancelContinuations).toHaveBeenCalledWith(db, "run-1", expect.any(Date));
+    expect(cancelContinuations.mock.invocationCallOrder[0]).toBeLessThan(
+      deliver.mock.invocationCallOrder[0],
+    );
   });
 });
 

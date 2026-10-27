@@ -3,15 +3,21 @@ import { scheduleError } from "@/components/routines/schedule-picker";
 import { PROPOSAL_FOR } from "./arrivals";
 import {
   ARRIVAL_TEMPLATES,
-  ROUTINE_TEMPLATES,
   arrivalTemplateById,
   fillTemplate,
-  templateById,
   unmetRequirements,
   requirementReason,
   GAP_REPORT_MIN_MEMBERS,
   type TemplateFacts,
 } from "./routine-templates";
+import { templateById } from "./use-cases";
+
+/**
+ * The two general templates, which moved to the use-case catalogue
+ * (`use-cases.ts`, whose own test pins them field by field). The
+ * requirement model they exercise is still this file's.
+ */
+const ROUTINE_TEMPLATES = ["first-week", "gap-report"].map((id) => templateById(id)!);
 
 /** A workspace where every requirement is satisfied. */
 const ready: TemplateFacts = {
@@ -22,7 +28,7 @@ const ready: TemplateFacts = {
 };
 
 describe("the templates themselves", () => {
-  it("ships the two the dialog can complete, by id", () => {
+  it("still opens the two the dialog has always completed, by id", () => {
     // `weekly-digest` was the third. It needed the URL field covan#241 took
     // out of the dialog on purpose, so it is gone rather than shown disabled.
     expect(ROUTINE_TEMPLATES.map((t) => t.id)).toEqual(["first-week", "gap-report"]);

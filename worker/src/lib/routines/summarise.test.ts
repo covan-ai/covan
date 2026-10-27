@@ -117,7 +117,7 @@ describe("summariseWithModel", () => {
 
   // A series like "Somebody's first week" tells the model which morning it is
   // on through this field rather than relying on memory or a second call —
-  // see `routine-templates.ts`'s `first-week` instruction, which picks a
+  // see `use-cases.ts`'s `first-week` instruction, which picks a
   // subject by the number this line gives it.
   it("tells the model which run of how many this is", async () => {
     const summarise = summariseWithModel(env);

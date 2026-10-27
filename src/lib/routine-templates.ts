@@ -2,7 +2,7 @@ import { msg } from "@/i18n";
 import type { CreatableSourceKind } from "./routines-api";
 
 /**
- * Routines to start from, for somebody who has never had one.
+ * The shape of a routine to start from, and the proposals a scan makes.
  *
  * The create dialog has always opened on an empty box: you describe what you
  * want, a model turns it into a definition, and you confirm it. That is a good
@@ -93,67 +93,10 @@ export type TemplateFacts = {
  */
 export const GAP_REPORT_MIN_MEMBERS = 3;
 
-// There was a third, `weekly-digest`: a feed, once a week. It needed the URL
-// field covan#241 took out of the dialog on purpose, so it could only ever be
-// shown as unavailable. An old `?template=weekly-digest` link opens step 1,
-// which is what any unknown id does.
-export const ROUTINE_TEMPLATES: RoutineTemplate[] = [
-  {
-    id: "first-week",
-    label: msg("Somebody's first week"),
-    blurb: msg("One note each morning for a week, from what the team has written down."),
-    draft: {
-      name: msg("First week"),
-      sourceKind: "none",
-      scheduleCron: "0 9 * * *",
-      channelKind: "email",
-      // The curriculum, and the whole reason this series varies. The engine
-      // tells the model which morning it is (0074 + executor's run position);
-      // these seven subjects are the six KNOWLEDGE_TEMPLATES plus a closing
-      // one, so a team that filled in the six files the product already
-      // suggests gets a week that walks through them in an order somebody
-      // chose. No memory, no second call, and no reliance on the model
-      // deciding to be different today.
-      instruction: `Each morning of somebody's first week, cover one subject from the team's own documents. The run tells you which morning this is; use it to pick:
-
-1. What the company does, who for, and what it deliberately does not do.
-2. How the team works — who owns what, which tools, and how work gets picked up.
-3. The product: what it does, where its limits are, and what people get wrong.
-4. The questions that come up every week, and their answers.
-5. The team's own vocabulary — the words that mean something specific here.
-6. Decisions already made, and the reasoning behind them.
-7. Anything important in the documents that none of the first six covered.
-
-Write it as a short note to one new person: what it is, why it matters here, and which document to read for the detail. Ground every claim in the documents and name the file it came from. If the documents say nothing about this morning's subject, say so plainly and point at the nearest thing they do cover — do not fill the gap from general knowledge.`,
-    },
-    requires: ["documents"],
-    endsAfterRuns: 7,
-  },
-  {
-    id: "gap-report",
-    label: msg("What nobody wrote down"),
-    blurb: msg("Weekly: the topics your team asked about that no document covered."),
-    draft: {
-      name: msg("Coverage gaps"),
-      sourceKind: "workspace",
-      scheduleCron: "0 9 * * 1",
-      channelKind: "email",
-      // Read by nothing. A `workspace` run renders its own report in code
-      // (coverage-render.ts) and makes exactly one model call, for the cluster
-      // labels — so there is no prompt for an instruction to go into. The field
-      // is `not null` on the table, so it says what the routine is instead of
-      // being blank.
-      instruction:
-        "Report the topics this workspace asked about that its own documents did not cover. Clustered, never named, and never anybody's question text.",
-    },
-    requires: ["admin", "gapReport", "enoughPeople"],
-    endsAfterRuns: null,
-  },
-];
-
-export function templateById(id: string): RoutineTemplate | undefined {
-  return ROUTINE_TEMPLATES.find((t) => t.id === id);
-}
+// The two general templates that used to live here (`first-week`,
+// `gap-report`) and `templateById` moved to `use-cases.ts`, where every
+// routine a person can start from is listed in one catalogue. What stays
+// here is the shape, the requirement model, and the scan's proposals.
 
 /**
  * What every proposal's instruction says about the mailbox, once.
@@ -163,14 +106,16 @@ export function templateById(id: string): RoutineTemplate | undefined {
  * `run_tool`); nothing here names an operation, because which one depends on
  * whether the person connected Gmail or Outlook.
  */
-const FROM_THE_MAILBOX =
+export const FROM_THE_MAILBOX =
   "Read it from my connected mailbox and calendar with the tools you have. Never send, reply to, archive or change anything there — this is a digest for me to read.";
 
 /**
  * The routines a scan of what arrived proposes (spec: "Proposals"), one per
- * kind that is worth one. Kept apart from `ROUTINE_TEMPLATES` on purpose:
- * each names its bucket through `{label}`, which only the report can fill
+ * kind that is worth one. Kept out of `USE_CASES` as they are: each names
+ * its bucket through `{label}`, which only the report can fill
  * (`fillTemplate`), so none of them may open from a bare `?template=` link.
+ * The catalogue's six inbox cards are these with the kind's plain name
+ * filled in.
  *
  * All scheduled, none event-triggered: a per-mail trigger is one run per mail,
  * and a mailbox that receives five hundred threads a month would spend an

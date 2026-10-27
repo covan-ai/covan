@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
+import { agentAccessFor } from "../agent-access";
 import { nudge } from "../browser/deliver";
 import { browserTaskNote } from "../browser/task-note";
 import type { CompletionMessage } from "../completion";
@@ -150,6 +151,23 @@ export async function runContinuationTurn(
       return failed(wake, "conversation is gone");
     }
 
+    // 1b. That the person is still a member, and may still use the agent —
+    // the executor's two checks (`lib/routines/executor.ts`), for its reason:
+    // removing somebody cuts their RLS access instantly, but this runs under
+    // the service role, and a wake-up can be twelve hours old.
+    const { data: membership, error: membershipError } = await db
+      .from("workspace_members")
+      .select("user_id")
+      .eq("workspace_id", wake.workspaceId)
+      .eq("user_id", wake.userId)
+      .maybeSingle();
+    if (membershipError) {
+      return failed(wake, `could not read the membership: ${membershipError.code}`);
+    }
+    if (!membership) return failed(wake, "the person is no longer a member of this workspace");
+    const access = await agentAccessFor(db, wake.agentId, wake.userId);
+    if (!access) return failed(wake, "the person can no longer use this agent");
+
     // 2. The agent.
     const { data: agentData, error: agentError } = await db
       .from("agents")
@@ -170,9 +188,13 @@ export async function runContinuationTurn(
     }
 
     // 4. Credits, before the model. A routine's report still goes out.
+    // A timer's own row is still `running` until the dispatcher settles it,
+    // so the held report is told not to wait on it (`chainPending`'s
+    // `except`); a step after the browser has no row of its own.
+    const except = wake.kind === "timer" ? { except: wake.id } : {};
     const verdict = await deps.entitlements.check(wake.workspaceId);
     if (!verdict.allowed) {
-      if (routine) await completeHeldRun(env, routine.runId, { db });
+      if (routine) await completeHeldRun(env, routine.runId, { db }, except);
       return failed(wake, "the workspace has no credits to wake with");
     }
 
@@ -348,7 +370,7 @@ export async function runContinuationTurn(
       .is("then_step", null);
 
     if (routine) {
-      await completeHeldRun(env, routine.runId, { db }, { report: content });
+      await completeHeldRun(env, routine.runId, { db }, { report: content, ...except });
     } else if (await chainEnded(db, wake.sessionId, since)) {
       await nudge(
         env,

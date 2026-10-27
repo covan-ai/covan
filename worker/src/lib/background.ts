@@ -65,7 +65,7 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
    * tab was there to run (0142). After the routines and before the sweeps,
    * for the takeover sweep's reason below: a busy deployment is where chains
    * happen. The same either/or, because a woken turn is a scheduled run's
-   * size — at most two a tick (`lib/continuations/dispatch.ts`). An idle tick
+   * size — one a tick (`lib/continuations/dispatch.ts` has the arithmetic). An idle tick
    * spends two subrequests here, the two claims. Its failure is logged and
    * the tick goes on.
    */

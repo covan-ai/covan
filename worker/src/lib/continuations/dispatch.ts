@@ -12,11 +12,22 @@ import { runContinuationTurn, type WakeUp } from "./run";
  * function that sets the claim in the statement that selects, run what it
  * handed back, settle every row, and let one failure not strand the others.
  *
- * **One batch for both kinds.** A woken turn is a scheduled run's size — up
- * to `SCHEDULED_MAX_STEPS` tool calls and a model pass per step — so a tick
- * runs at most `BATCH_SIZE` of them, timers first because somebody said when,
- * and the rest of the batch goes to steps after the browser. A busy chain
- * waits a tick, which for a conversation nobody is watching is not a latency
+ * **One batch for both kinds, and it is one turn.** `lib/routines/dispatcher.ts`
+ * argues its batch subrequest by subrequest against the fifty a Cloudflare
+ * Free invocation gets, so here is the same arithmetic. A woken turn spends
+ * up to `SCHEDULED_MAX_STEPS` (8) model passes, each tool call at least one
+ * subrequest more (8), and about sixteen fixed ones: the conversation, the
+ * membership, the agent access, the agent, the run and the routine, the
+ * credit check, the browser-approval read, the capabilities' reads, the
+ * history, the task note's two reads, the message, its steps, the
+ * conversation's bump, the spend, the then-step update, the chain-ended
+ * reads and the nudge. Thirty-two, plus the two claims: thirty-four. A second
+ * turn would not fit, which is why `BATCH_SIZE` is one and the loops below
+ * run what they are handed one at a time rather than in parallel — so a
+ * deployment that raises the batch on Workers Paid still spends one turn's
+ * subrequests at a time. Timers first because somebody said when; a step
+ * after the browser takes the tick when no timer is due. A busy chain waits
+ * a tick, which for a conversation nobody is watching is not a latency
  * anybody notices.
  *
  * **A step after the browser has no row of its own to settle.** The claim set
@@ -25,8 +36,8 @@ import { runContinuationTurn, type WakeUp } from "./run";
  * the woken turn logged. The timer's row carries its outcome.
  */
 
-/** How many woken turns one tick may run. Two scheduled runs' worth of subrequests. */
-export const BATCH_SIZE = 2;
+/** How many woken turns one tick may run. One: the header's arithmetic. */
+export const BATCH_SIZE = 1;
 
 export type DispatchDeps = {
   db: SupabaseClient;
@@ -64,52 +75,48 @@ export async function runDueContinuations(
   const { db, run } = resolve(env, overrides);
 
   const timers = await claimTimers(db);
-  await Promise.allSettled(
-    timers.map(async (row) => {
-      const wake: WakeUp = {
-        id: row.id,
-        kind: "timer",
-        workspaceId: row.workspace_id,
-        agentId: row.agent_id,
-        userId: row.user_id,
-        sessionId: row.session_id,
-        routineRunId: row.routine_run_id ?? null,
-        note: row.note,
-      };
-      let outcome: { status: "done" | "failed"; error?: string };
-      try {
-        const woken = await run(env, wake, { db });
-        outcome =
-          woken.status === "done" ? { status: "done" } : { status: "failed", error: woken.error };
-      } catch (err) {
-        console.error("a wake-up threw", row.id, err);
-        outcome = { status: "failed", error: err instanceof Error ? err.message : String(err) };
-      }
-      await settleContinuation(db, row.id, outcome);
-    }),
-  );
+  for (const row of timers) {
+    const wake: WakeUp = {
+      id: row.id,
+      kind: "timer",
+      workspaceId: row.workspace_id,
+      agentId: row.agent_id,
+      userId: row.user_id,
+      sessionId: row.session_id,
+      routineRunId: row.routine_run_id ?? null,
+      note: row.note,
+    };
+    let outcome: { status: "done" | "failed"; error?: string };
+    try {
+      const woken = await run(env, wake, { db });
+      outcome =
+        woken.status === "done" ? { status: "done" } : { status: "failed", error: woken.error };
+    } catch (err) {
+      console.error("a wake-up threw", row.id, err);
+      outcome = { status: "failed", error: err instanceof Error ? err.message : String(err) };
+    }
+    await settleContinuation(db, row.id, outcome);
+  }
 
   const room = BATCH_SIZE - timers.length;
   const steps = room > 0 ? await claimSteps(db, room) : [];
-  await Promise.allSettled(
-    steps.map(async (row) => {
-      const wake: WakeUp = {
-        id: `task:${row.id}`,
-        kind: "after_browser",
-        workspaceId: row.workspace_id,
-        agentId: row.agent_id,
-        userId: row.user_id,
-        sessionId: row.session_id,
-        routineRunId: row.routine_run_id ?? null,
-        note: row.then_step,
-      };
-      try {
-        await run(env, wake, { db });
-      } catch (err) {
-        console.error("a step after the browser threw", row.id, err);
-      }
-    }),
-  );
+  for (const row of steps) {
+    const wake: WakeUp = {
+      id: `task:${row.id}`,
+      kind: "after_browser",
+      workspaceId: row.workspace_id,
+      agentId: row.agent_id,
+      userId: row.user_id,
+      sessionId: row.session_id,
+      routineRunId: row.routine_run_id ?? null,
+      note: row.then_step,
+    };
+    try {
+      await run(env, wake, { db });
+    } catch (err) {
+      console.error("a step after the browser threw", row.id, err);
+    }
+  }
 
   return { claimed: timers.length + steps.length };
 }

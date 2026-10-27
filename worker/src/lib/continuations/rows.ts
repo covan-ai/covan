@@ -195,18 +195,25 @@ export async function scheduleContinuation(
  *
  * A read that fails answers false: a report that cannot ask goes out, which
  * is what the two-hour sweep would do anyway.
+ *
+ * `except`: the wake-up that is asking. A woken turn hands its reply over
+ * while its own row is still `running` — the dispatcher settles it only once
+ * the turn has returned — and a report that waited on the turn handing it
+ * over would wait for the two-hour sweep instead.
  */
 export async function chainPending(
   db: SupabaseClient,
   routineRunId: string,
   now: Date = new Date(),
+  opts: { except?: string } = {},
 ): Promise<boolean> {
-  const { data: open, error: openError } = await db
+  let openQuery = db
     .from("continuations")
     .select("id")
     .eq("routine_run_id", routineRunId)
-    .in("status", ["waiting", "running"])
-    .limit(1);
+    .in("status", ["waiting", "running"]);
+  if (opts.except) openQuery = openQuery.neq("id", opts.except);
+  const { data: open, error: openError } = await openQuery.limit(1);
   if (openError) {
     console.error("could not read a run's wake-ups", routineRunId, problem(openError));
     return false;

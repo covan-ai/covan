@@ -129,6 +129,8 @@ let bound: string | undefined;
 let tasks: Record<string, { created_at: string }> | Error;
 /** What was written back to `browser_tasks`: `delivered_at` (0117). */
 let marked: Array<Record<string, unknown>>;
+/** Whether another task of the conversation is still waiting, queued or running (0142). */
+let waitingInLine: boolean;
 
 function fakeDb(): SupabaseClient {
   return {
@@ -173,6 +175,14 @@ function fakeDb(): SupabaseClient {
             id = value;
             return read;
           },
+          // The line read (0142): whether another task of the conversation is
+          // still to come, which decides whether the step after this one can
+          // be claimed soon.
+          in: () => read,
+          limit: async () => ({
+            data: waitingInLine ? [{ id: "bt-waiting" }] : [],
+            error: null,
+          }),
           maybeSingle: async () =>
             tasks instanceof Error
               ? { data: null, error: { message: tasks.message } }
@@ -248,6 +258,7 @@ beforeEach(() => {
   said = null;
   bound = undefined;
   tasks = {};
+  waitingInLine = false;
   marked = [];
   complete.mockReset();
   complete.mockResolvedValue({
@@ -338,6 +349,16 @@ describe("a finished task", () => {
     await deliverBrowserTask({ ...ROW, then_step: "post it to Slack" }, FINISHED, ENV, fakeDb());
     expect(inserted).toHaveLength(1);
     expect(deliverFn).not.toHaveBeenCalled();
+  });
+
+  // A step behind a task still in the line — one held by a sign-in nobody
+  // has done, say — cannot be claimed until that task is answered, which may
+  // be never. Then the answer is news after all.
+  it("nudges for a task with a step after it while another task is still in the line", async () => {
+    waitingInLine = true;
+    await deliverBrowserTask({ ...ROW, then_step: "post it to Slack" }, FINISHED, ENV, fakeDb());
+    expect(inserted).toHaveLength(1);
+    expect(deliverFn).toHaveBeenCalledTimes(1);
   });
 
   it("still writes the message when the person has no delivery channel", async () => {

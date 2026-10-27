@@ -199,6 +199,27 @@ export async function deliverBrowserTask(
  * whole rows — and read otherwise. A read that fails is null: the answer still
  * reaches the conversation, and the report is sent by the sweep.
  */
+/**
+ * Whether the conversation will carry on with this answer by itself: the task
+ * has a step after it, and nothing else in the conversation's line stands
+ * between the step and its claim (the same `not exists` both claims make).
+ */
+async function chainCarriesOn(row: BrowserTaskRow, db: SupabaseClient): Promise<boolean> {
+  if (!(await thenStepOf(row, db))) return false;
+  try {
+    const { data, error } = await db
+      .from("browser_tasks")
+      .select("id")
+      .eq("session_id", row.session_id)
+      .in("status", ["waiting", "queued", "running"])
+      .limit(1);
+    if (error) return false;
+    return (data ?? []).length === 0;
+  } catch {
+    return false;
+  }
+}
+
 /** The step after this task, read the way `routineRunOf` reads its column when a caller left it out. */
 async function thenStepOf(row: BrowserTaskRow, db: SupabaseClient): Promise<string | null> {
   if (row.then_step !== undefined) return row.then_step ?? null;
@@ -362,7 +383,10 @@ async function writeAnswer(
     // Not for a task with a step after it (0117, 0142): the conversation
     // carries on with the answer by itself, so the answer is not news yet. The
     // turn that ends the chain sends the nudge instead (`lib/continuations/run.ts`).
-    if (!routineRunId && !(await thenStepOf(row, db))) await notify(row, env, db, content);
+    // Unless another task of the conversation is still to come — held by a
+    // sign-in nobody has done, say: the step cannot be claimed until that one
+    // is answered, which may be never, and then the answer is news after all.
+    if (!routineRunId && !(await chainCarriesOn(row, db))) await notify(row, env, db, content);
   } catch (err) {
     // Called after the row reached a terminal status, so there is nothing to
     // retry and nothing to be gained by failing the tick.

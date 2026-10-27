@@ -285,6 +285,18 @@ describe("completeHeldRun", () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
+  it("asks the chain question without the wake-up that is asking", async () => {
+    chainPending.mockResolvedValue(false);
+    const { db } = world();
+
+    expect(await completeHeldRun(env, "run-1", { db }, { report: "done", except: "cont-1" })).toBe(
+      true,
+    );
+    expect(chainPending).toHaveBeenCalledWith(db, "run-1", expect.any(Date), {
+      except: "cont-1",
+    });
+  });
+
   it("sends once the chain has ended", async () => {
     chainPending.mockResolvedValue(false);
     const { db } = world();

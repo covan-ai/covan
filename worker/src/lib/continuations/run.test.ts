@@ -25,6 +25,11 @@ vi.mock("../browser/task-note", () => ({
   browserTaskNote: (...args: unknown[]) => browserTaskNote(...args),
 }));
 
+const agentAccessFor = vi.fn(async (..._args: unknown[]): Promise<string | null> => "use");
+vi.mock("../agent-access", () => ({
+  agentAccessFor: (...args: unknown[]) => agentAccessFor(...args),
+}));
+
 const { CARRY_ON, NOTHING_SAID, runContinuationTurn } = await import("./run");
 type WakeUp = import("./run").WakeUp;
 
@@ -87,6 +92,7 @@ function seed(over: Partial<Record<string, Row[]>> = {}) {
         created_at: at(-19),
       },
     ],
+    workspace_members: [{ workspace_id: "ws-1", user_id: "user-1", role: "member" }],
     browser_tasks: [],
     continuations: [],
     routine_runs: [],
@@ -142,6 +148,8 @@ beforeEach(() => {
   nudge.mockClear();
   browserTaskNote.mockReset();
   browserTaskNote.mockResolvedValue(null);
+  agentAccessFor.mockReset();
+  agentAccessFor.mockResolvedValue("use");
 });
 
 describe("runContinuationTurn", () => {
@@ -252,6 +260,27 @@ describe("runContinuationTurn", () => {
       expect(db.tables.messages).toHaveLength(2);
       expect(turn).not.toHaveBeenCalled();
     }
+  });
+
+  // The executor's two checks (lib/routines/executor.ts), for its reason: the
+  // service role reads past the policies that cut a removed member off, and a
+  // wake-up can be twelve hours old.
+  it("does nothing for a person who is no longer in the workspace", async () => {
+    const db = seed({ workspace_members: [] });
+    const out = await run(db);
+    expect(out).toMatchObject({ status: "failed", error: expect.stringMatching(/member/) });
+    expect(turn).not.toHaveBeenCalled();
+    expect(db.tables.messages).toHaveLength(2);
+  });
+
+  it("does nothing for an agent the person can no longer use", async () => {
+    agentAccessFor.mockResolvedValue(null);
+    const db = seed();
+    const out = await run(db);
+    expect(out).toMatchObject({ status: "failed", error: expect.stringMatching(/agent/) });
+    expect(agentAccessFor).toHaveBeenCalledWith(expect.anything(), "agent-1", "user-1");
+    expect(turn).not.toHaveBeenCalled();
+    expect(db.tables.messages).toHaveLength(2);
   });
 
   it("fails before the model when the workspace has no credits", async () => {
@@ -405,11 +434,14 @@ describe("runContinuationTurn", () => {
       expect(ctx.knowledgeScope).toEqual({ viewer: "user-1" });
       expect(String(request.messages[0].content)).toContain("report");
       expect(capabilities).toHaveBeenCalledWith(expect.objectContaining({ browser: true }));
+      // `except`: the wake-up's own row is still `running` until the dispatcher
+      // settles it, and the held report must not wait on the turn that is
+      // handing it over.
       expect(completeHeldRun).toHaveBeenCalledWith(
         ENV,
         "run-1",
         expect.objectContaining({ db: expect.anything() }),
-        { report: "Not done yet; I'll look again at 14:50." },
+        { report: "Not done yet; I'll look again at 14:50.", except: "cont-1" },
       );
       expect(nudge).not.toHaveBeenCalled();
       const [, spends] = record.mock.calls[0];
@@ -429,7 +461,17 @@ describe("runContinuationTurn", () => {
       const db = routineSeed();
       const out = await run(db, ROUTINE_WAKE);
       expect(out.status).toBe("failed");
-      expect(completeHeldRun).toHaveBeenCalledWith(ENV, "run-1", expect.anything());
+      expect(completeHeldRun).toHaveBeenCalledWith(ENV, "run-1", expect.anything(), {
+        except: "cont-1",
+      });
+    });
+
+    it("names no row to leave out after a browser, whose wake-up has none", async () => {
+      const db = routineSeed();
+      await run(db, { ...ROUTINE_WAKE, id: "task:t-1", kind: "after_browser" });
+      expect(completeHeldRun).toHaveBeenCalledWith(ENV, "run-1", expect.anything(), {
+        report: "Not done yet; I'll look again at 14:50.",
+      });
     });
 
     it("offers no browser to a routine whose owner turned it off", async () => {

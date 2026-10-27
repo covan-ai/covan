@@ -87,16 +87,6 @@ export const continueLaterTool: AgentTool = {
     }
 
     const routine = ctx.routineBrowser;
-    if (ctx.routineRunId && !ctx.continuation && (routine?.started.length ?? 0) === 0) {
-      return {
-        kind: "error",
-        message:
-          "a routine's report is held only while a browser task of its own is running, so " +
-          "start the browser task first and then set the time to come back; otherwise finish " +
-          "the report now.",
-      };
-    }
-
     const sessionId = ctx.sessionId ?? (await routine?.conversation()) ?? null;
     if (!sessionId) {
       return {
@@ -104,6 +94,17 @@ export const continueLaterTool: AgentTool = {
         message:
           "this run has no conversation to come back to, so it cannot be woken later. A " +
           "routine can be woken only when its owner allows it the browser. Say so and finish.",
+      };
+    }
+    // After the conversation check: a routine not allowed the browser has no
+    // browser task to start, and must not be told to start one.
+    if (ctx.routineRunId && !ctx.continuation && (routine?.started.length ?? 0) === 0) {
+      return {
+        kind: "error",
+        message:
+          "a routine's report is held only while a browser task of its own is running, so " +
+          "start the browser task first and then set the time to come back; otherwise finish " +
+          "the report now.",
       };
     }
 

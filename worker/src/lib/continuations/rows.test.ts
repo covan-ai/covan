@@ -166,6 +166,20 @@ describe("chainPending", () => {
     expect(await chainPending(d, "run-1", NOW)).toBe(true);
   });
 
+  it("leaves out the wake-up that is asking", async () => {
+    const own = db({
+      continuations: [{ id: "c-1", routine_run_id: "run-1", status: "running" }],
+    });
+    expect(await chainPending(own, "run-1", NOW, { except: "c-1" })).toBe(false);
+    const another = db({
+      continuations: [
+        { id: "c-1", routine_run_id: "run-1", status: "running" },
+        { id: "c-2", routine_run_id: "run-1", status: "waiting" },
+      ],
+    });
+    expect(await chainPending(another, "run-1", NOW, { except: "c-1" })).toBe(true);
+  });
+
   it("is pending while a wake-up runs", async () => {
     const d = db({
       continuations: [{ id: "c-1", routine_run_id: "run-1", status: "running" }],

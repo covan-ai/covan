@@ -92,17 +92,17 @@ describe("runDueContinuations", () => {
     });
   });
 
-  it("fills the rest of the batch with steps after the browser", async () => {
-    const { db, claims } = world([TIMER], [STEP]);
+  it("gives the rest of the batch to steps after the browser", async () => {
+    const { db, claims } = world([], [STEP]);
 
     const out = await runDueContinuations(ENV, { db, run });
 
-    expect(out).toEqual({ claimed: 2 });
+    expect(out).toEqual({ claimed: 1 });
     expect(claims).toEqual([
       { fn: "timers", args: { p_limit: BATCH_SIZE } },
-      { fn: "steps", args: { p_limit: BATCH_SIZE - 1 } },
+      { fn: "steps", args: { p_limit: BATCH_SIZE } },
     ]);
-    expect(run.mock.calls[1][1]).toEqual({
+    expect(run.mock.calls[0][1]).toEqual({
       id: "task:t-1",
       kind: "after_browser",
       workspaceId: "ws-1",
@@ -113,14 +113,34 @@ describe("runDueContinuations", () => {
       note: "post it to Slack",
     });
     // The claim set `continued_at`; there is no continuation row to settle.
-    expect(settleContinuation).toHaveBeenCalledTimes(1);
+    expect(settleContinuation).not.toHaveBeenCalled();
   });
 
   it("asks for no steps when the timers filled the batch", async () => {
-    const { db, claims } = world([TIMER, { ...TIMER, id: "c-2" }], [STEP]);
+    const timers = Array.from({ length: BATCH_SIZE }, (_, i) => ({ ...TIMER, id: `c-${i}` }));
+    const { db, claims } = world(timers, [STEP]);
     await runDueContinuations(ENV, { db, run });
     expect(claims.map((c) => c.fn)).toEqual(["timers"]);
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(BATCH_SIZE);
+  });
+
+  it("is sized for Workers Free: one woken turn a tick", () => {
+    expect(BATCH_SIZE).toBe(1);
+  });
+
+  it("runs what it is handed one at a time, never two turns at once", async () => {
+    let inFlight = 0;
+    let most = 0;
+    run.mockImplementation(async () => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { status: "done" };
+    });
+    const { db } = world([TIMER, { ...TIMER, id: "c-2" }], [STEP]);
+    await runDueContinuations(ENV, { db, run });
+    expect(most).toBe(1);
   });
 
   it("runs each row it is handed exactly once", async () => {

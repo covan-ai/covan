@@ -215,6 +215,8 @@ export async function completeHeldRun(
      * is the report — so it goes out verbatim, with no second compose.
      */
     report?: string;
+    /** The wake-up handing the report over, whose own row is still `running` (see `chainPending`). */
+    except?: string;
   } = {},
 ): Promise<boolean> {
   const deps = resolve(env, overrides);
@@ -225,7 +227,10 @@ export async function completeHeldRun(
     // And while the run's chain is pending (0142): a wake-up not yet run, or a
     // step the cron has yet to claim, is work the report waits for as much as
     // a browser task is. Asked after the tasks, which are the common case.
-    if (!opts.overdue && (await chainPending(deps.db, runId, deps.now()))) return false;
+    const pending = opts.except
+      ? await chainPending(deps.db, runId, deps.now(), { except: opts.except })
+      : await chainPending(deps.db, runId, deps.now());
+    if (!opts.overdue && pending) return false;
 
     const run = await claim(deps, runId);
     if (!run) return false;

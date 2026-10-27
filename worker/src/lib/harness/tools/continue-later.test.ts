@@ -60,7 +60,10 @@ describe("continue_later", () => {
       { minutes: 15, note: "open the link" },
       ctx({ sessionId: undefined, routineRunId: "run-1" }),
     );
-    expect(out).toMatchObject({ kind: "error", message: expect.stringContaining("browser") });
+    expect(out).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("no conversation to come back to"),
+    });
     expect(scheduleContinuation).not.toHaveBeenCalled();
   });
 

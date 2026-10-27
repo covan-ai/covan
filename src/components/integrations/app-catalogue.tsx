@@ -270,7 +270,7 @@ export function AppCatalogue({
 
       <p className="m-0 text-meta leading-[1.5] text-muted-foreground">
         {t(
-          "Some of these you sign in to; most want a key you get from the application itself, typed on a page at Composio. Either way Covan never sees the password, the token or the key — they are held by Composio, and what is stored here is a reference. An agent asks before its first action on each.",
+          "Some of these you sign in to; most want a key you get from the application itself, typed on a page at Composio. Either way Covan never sees the password, the token or the key — they are held by Composio, and what is stored here is a reference. Agents read what you connect without asking, and ask before changing anything unless you tell them not to.",
         )}
       </p>
     </div>

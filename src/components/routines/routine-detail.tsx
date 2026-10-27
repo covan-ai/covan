@@ -19,6 +19,8 @@ import { RoutineWebhookCard } from "@/components/routines/routine-webhook-card";
 import { RoutineEventCard } from "@/components/routines/routine-event-card";
 import { RoutineOutputCard } from "@/components/routines/routine-output-card";
 import { RoutineBrowserCard } from "@/components/routines/routine-browser-card";
+import { RoutineChangesCard } from "@/components/routines/routine-changes-card";
+import type { AgentAccess } from "@/lib/agent-access";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -239,7 +241,14 @@ export function RoutineDetail({
   routine: Routine;
   runs: RoutineRun[];
   /** The routine's agent, for its chip. */
-  agent?: { id: string; name: string; avatar?: string | null };
+  agent?: {
+    id: string;
+    name: string;
+    avatar?: string | null;
+    /** For what it may change without asking; see `RoutineChangesCard`. */
+    myAccess?: AgentAccess;
+    connectionsOff?: string[];
+  };
   createdByName: string | null;
   /** When the run under way started, or null. */
   runningSince: number | null;
@@ -465,6 +474,7 @@ export function RoutineDetail({
           {isOwner && (
             <RoutineBrowserCard routine={routine} onSave={onSave ?? (() => {})} saving={busy} />
           )}
+          {isOwner && agent && <RoutineChangesCard agent={agent} />}
 
           <section className="mt-7">
             <SectionLabel>{t("Recent runs")}</SectionLabel>

@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { useToolConnections } from "@/hooks/use-connections";
+import { useConnectionGrants, useToolConnections } from "@/hooks/use-connections";
 import { api } from "@/lib/api-client";
 import {
   ACCESS_LABEL,
@@ -113,6 +113,10 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
     queryFn: api.modelEndpoints.list,
   });
   const tools = useToolConnections();
+  // The apps this agent may change things in without asking (0140).
+  const unasked = new Set(
+    (useConnectionGrants(agent.id).data?.grants ?? []).map((g) => g.connectionId),
+  );
 
   const [saved, setSaved] = useState<Draft>(() => draftOf(agent));
   const [draft, setDraft] = useState<Draft>(saved);
@@ -351,9 +355,13 @@ export function AgentConfigurationForm({ agent }: { agent: Agent }) {
                   name={c.label}
                   note={
                     c.transport === "composio"
-                      ? t("{{app}} · asks before its first action", {
-                          app: c.toolkitSlug ?? connectedApp,
-                        })
+                      ? unasked.has(c.id)
+                        ? t("{{app}} · changes things without asking", {
+                            app: c.toolkitSlug ?? connectedApp,
+                          })
+                        : t("{{app}} · reads freely, asks before changing", {
+                            app: c.toolkitSlug ?? connectedApp,
+                          })
                       : c.allowedMethods.some((m) => !["GET", "HEAD"].includes(m))
                         ? c.transport === "http"
                           ? t("HTTP API · can write")

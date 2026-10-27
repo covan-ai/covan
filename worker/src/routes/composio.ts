@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv, Bindings } from "../types";
 import { serviceClient } from "../lib/supabase";
 import { callerWorkspaceId, memberRole } from "../lib/workspace";
-import { mapToolConnection, mapToolConnectionGrant } from "../lib/dto";
+import { mapToolConnection } from "../lib/dto";
 import { verifyConnection } from "../lib/composio/verify";
 import { insertErrorStatus } from "../lib/routines/insert-error";
 import { revokeConnectedAccounts } from "../lib/composio/revoke";
@@ -102,13 +102,6 @@ const connectSchema = z.object({
   // No length cap here: `safeReturnPath` ignores a long one rather than
   // failing the whole connect.
   returnTo: z.string().optional(),
-});
-
-const grantSchema = z.object({
-  agentId: z.string().uuid(),
-  connectionId: z.string().uuid(),
-  slug: z.string().trim().min(1).max(200),
-  mode: z.enum(["ask", "always"]),
 });
 
 /** The columns a client may select. `connected_account_id` is not among them. */
@@ -684,109 +677,6 @@ function newCompletionNonce(): string {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 }
-
-/**
- * What one agent may do at one connected service.
- *
- * Every read and write below goes through the caller's own client, and that is
- * the whole access control: 0063's policies admit a member to read, a writer to
- * create an `ask` or to remove anything, and an admin alone to promote to
- * `always`. Nothing here re-asks that question, which is the rule this
- * repository holds itself to.
- */
-composio.get("/composio/grants", async (c) => {
-  const agentId = c.req.query("agentId");
-  let query = c
-    .get("db")
-    .from("tool_connection_grants")
-    .select("agent_id, tool_connection_id, slug, mode, granted_by, granted_at");
-  if (agentId) query = query.eq("agent_id", agentId);
-  const { data, error } = await query;
-  if (error) return c.json({ error: "failed to load grants" }, 500);
-  return c.json({ grants: (data ?? []).map(mapToolConnectionGrant) });
-});
-
-composio.put("/composio/grants", async (c) => {
-  const refusal = refuseIfKeyAuthenticated(
-    c,
-    "change what an agent may do in a connected application",
-  );
-  if (refusal) return c.json(refusal, 403);
-
-  const parsed = grantSchema.safeParse(await c.req.json().catch(() => ({})));
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-  const body = parsed.data;
-
-  const db = c.get("db");
-  const workspaceId = await callerWorkspaceId(c);
-  if (!workspaceId) return c.json({ error: "no workspace" }, 400);
-
-  // `workspace_id` is denormalised and constrained to agree with both parents
-  // (0063), so a value that does not match the agent's or the connection's is
-  // refused by the foreign keys rather than by anything here. Sent because the
-  // column is NOT NULL, not because it is trusted.
-  const { data, error } = await db
-    .from("tool_connection_grants")
-    .upsert(
-      {
-        agent_id: body.agentId,
-        tool_connection_id: body.connectionId,
-        workspace_id: workspaceId,
-        slug: body.slug,
-        mode: body.mode,
-      },
-      { onConflict: "agent_id,tool_connection_id,slug" },
-    )
-    .select("agent_id, tool_connection_id, slug, mode, granted_by, granted_at")
-    .single();
-
-  if (error || !data) {
-    // A writer who is not an admin trying to promote to `always` lands here:
-    // the insert policy's WITH CHECK refuses it, which PostgREST reports as a
-    // permission error. Said in the sentence a person needs rather than as a
-    // policy name.
-    return c.json(
-      {
-        error:
-          body.mode === "always"
-            ? "only an admin of this workspace can let an agent do this without asking"
-            : // The other policy refusal (0104): what an agent may do is part of
-              // the agent, and changing it needs edit access to that agent.
-              error?.code === "42501"
-              ? "you need edit access to this agent to change what it may do"
-              : "failed to save that permission",
-      },
-      insertErrorStatus(error),
-    );
-  }
-  return c.json(mapToolConnectionGrant(data));
-});
-
-composio.delete("/composio/grants", async (c) => {
-  const refusal = refuseIfKeyAuthenticated(
-    c,
-    "change what an agent may do in a connected application",
-  );
-  if (refusal) return c.json(refusal, 403);
-
-  const agentId = c.req.query("agentId");
-  const connectionId = c.req.query("connectionId");
-  const slug = c.req.query("slug");
-  if (!agentId || !connectionId || !slug) {
-    return c.json({ error: "agentId, connectionId and slug are required" }, 400);
-  }
-  // Revoking is a writer's, and it is deliberately not an admin's: taking a
-  // standing permission away can never be the unsafe direction (0063).
-  const { error } = await c
-    .get("db")
-    .from("tool_connection_grants")
-    .delete()
-    .eq("agent_id", agentId)
-    .eq("tool_connection_id", connectionId)
-    .eq("slug", slug);
-  if (error) return c.json({ error: "failed to remove that permission" }, 500);
-  return c.body(null, 204);
-});
 
 /**
  * One application's mark, fetched by us so the page does not fetch it itself.

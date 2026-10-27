@@ -325,11 +325,10 @@ export function mapToolConnection(
  * card renders the operations it has rows for and says "asks first" about
  * everything else — which is true without a row having to exist to say it.
  */
+/** This agent may change things in this connection without asking (0140). */
 export type ToolConnectionGrantDTO = {
   agentId: string;
   connectionId: string;
-  slug: string;
-  mode: "ask" | "always";
   grantedBy: string | null;
   grantedAt: number;
 };
@@ -338,8 +337,6 @@ export function mapToolConnectionGrant(row: Record<string, unknown>): ToolConnec
   return {
     agentId: String(row.agent_id ?? ""),
     connectionId: String(row.tool_connection_id ?? ""),
-    slug: String(row.slug ?? ""),
-    mode: row.mode === "always" ? "always" : "ask",
     grantedBy: typeof row.granted_by === "string" ? row.granted_by : null,
     grantedAt: toEpochMs(String(row.granted_at ?? "")),
   };

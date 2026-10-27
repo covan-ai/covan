@@ -13,7 +13,7 @@ import { TextPromptDialog } from "@/components/text-prompt-dialog";
 import { TopBarPortal } from "@/components/top-bar";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { useConnections, useToolConnections } from "@/hooks/use-connections";
+import { useConnectionGrants, useConnections, useToolConnections } from "@/hooks/use-connections";
 import { useRoutines } from "@/hooks/use-routines";
 import { api, type RevisitDocument } from "@/lib/api-client";
 import { canEditAgent } from "@/lib/agent-access";
@@ -52,6 +52,9 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
   });
   const connections = useConnections();
   const tools = useToolConnections();
+  const unasked = new Set(
+    (useConnectionGrants(agent.id).data?.grants ?? []).map((g) => g.connectionId),
+  );
   const routines = useRoutines();
   const [creating, setCreating] = useState(false);
   const [opened, setOpened] = useState<RevisitDocument | null>(null);
@@ -102,7 +105,13 @@ export function AgentKnowledge({ agent }: { agent: Agent }) {
         name: c.label,
         note:
           c.transport === "composio"
-            ? t("{{app}} · asks before its first action", { app: c.toolkitSlug ?? connectedApp })
+            ? unasked.has(c.id)
+              ? t("{{app}} · changes things without asking", {
+                  app: c.toolkitSlug ?? connectedApp,
+                })
+              : t("{{app}} · reads freely, asks before changing", {
+                  app: c.toolkitSlug ?? connectedApp,
+                })
             : c.transport === "http"
               ? t("an HTTP API")
               : t("a database"),

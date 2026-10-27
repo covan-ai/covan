@@ -72,6 +72,8 @@ function appWith(
     onSelect?: (columns?: string) => void;
     onDelete?: () => void;
     deleteAllowed?: boolean;
+    /** What the caller's own client answers for `tool_connection_grants`. */
+    grants?: NonNullable<FakeDbSpec["tables"]>[string];
   } = {},
 ) {
   const dbSpec: FakeDbSpec = {
@@ -106,6 +108,7 @@ function appWith(
           };
         },
       },
+      ...(spec.grants ? { tool_connection_grants: spec.grants } : {}),
     },
   };
   const { db } = fakeDb(dbSpec);
@@ -505,5 +508,140 @@ describe("DELETE /tool-connections/:id", () => {
     );
     expect(res.status).toBe(204);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * "Don't ask again for this app": one row per agent and connection (0140).
+ * Every read and write goes through the caller's own client, so the policies
+ * decide who may — these only check the route says what they decided.
+ */
+describe("/tool-connection-grants", () => {
+  const AGENT = "11111111-1111-4111-8111-111111111111";
+  const CONN = "22222222-2222-4222-8222-222222222222";
+  const SAVED = {
+    agent_id: AGENT,
+    tool_connection_id: CONN,
+    granted_by: USER.id,
+    granted_at: "2026-10-27T10:00:00Z",
+  };
+
+  async function send(app: Hono<AppEnv>, method: string, path: string, body?: unknown) {
+    const res = await app.request(
+      path,
+      {
+        method,
+        headers: { "Content-Type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      },
+      ENV as never,
+    );
+    return {
+      status: res.status,
+      body: (await res.json().catch(() => null)) as Record<string, unknown> | null,
+    };
+  }
+
+  beforeEach(() => serviceFrom.mockClear());
+
+  it("lets an agent change things in an app, through the caller's own client", async () => {
+    let values: Record<string, unknown> | null = null;
+    const app = appWith({
+      grants: {
+        insert: (ctx) => {
+          values = ctx.values as Record<string, unknown>;
+          return { data: SAVED, error: null };
+        },
+      },
+    });
+    const { status, body } = await send(app, "PUT", "/tool-connection-grants", {
+      agentId: AGENT,
+      connectionId: CONN,
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ agentId: AGENT, connectionId: CONN, grantedBy: USER.id });
+    expect(values).toEqual({ agent_id: AGENT, tool_connection_id: CONN, workspace_id: "ws-1" });
+    expect(serviceFrom).not.toHaveBeenCalled();
+  });
+
+  it("says who may grant when the policy refuses", async () => {
+    const app = appWith({
+      grants: {
+        insert: () => ({ data: null, error: { message: "denied", code: "42501" } }),
+      },
+    });
+    const { status, body } = await send(app, "PUT", "/tool-connection-grants", {
+      agentId: AGENT,
+      connectionId: CONN,
+    });
+    expect(status).toBe(403);
+    expect(String(body?.error)).toMatch(/only the person who connected it/);
+  });
+
+  it("answers a permission that is already there as saved", async () => {
+    const app = appWith({
+      grants: {
+        insert: () => ({ data: null, error: { message: "duplicate", code: "23505" } }),
+        select: () => ({ data: SAVED, error: null }),
+      },
+    });
+    const { status, body } = await send(app, "PUT", "/tool-connection-grants", {
+      agentId: AGENT,
+      connectionId: CONN,
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ agentId: AGENT, connectionId: CONN });
+  });
+
+  it("refuses a body without both ids", async () => {
+    const { status } = await send(appWith(), "PUT", "/tool-connection-grants", {
+      agentId: AGENT,
+    });
+    expect(status).toBe(400);
+  });
+
+  it("lists an agent's permissions", async () => {
+    const app = appWith({ grants: { select: () => ({ data: [SAVED], error: null }) } });
+    const { status, body } = await send(app, "GET", `/tool-connection-grants?agentId=${AGENT}`);
+    expect(status).toBe(200);
+    expect(body?.grants).toEqual([
+      { agentId: AGENT, connectionId: CONN, grantedBy: USER.id, grantedAt: expect.any(Number) },
+    ]);
+  });
+
+  it("takes a permission away", async () => {
+    let deleted = false;
+    const app = appWith({
+      grants: {
+        delete: () => {
+          deleted = true;
+          return { data: [{ agent_id: AGENT }], error: null };
+        },
+      },
+    });
+    const { status } = await send(
+      app,
+      "DELETE",
+      `/tool-connection-grants?agentId=${AGENT}&connectionId=${CONN}`,
+    );
+    expect(status).toBe(204);
+    expect(deleted).toBe(true);
+  });
+
+  it("says so when the policy matched nothing, rather than reporting it removed", async () => {
+    // RLS refuses a delete by matching no row: somebody without edit access to
+    // the agent, or a permission that is not there.
+    const app = appWith({ grants: { delete: () => ({ data: [], error: null }) } });
+    const { status } = await send(
+      app,
+      "DELETE",
+      `/tool-connection-grants?agentId=${AGENT}&connectionId=${CONN}`,
+    );
+    expect(status).toBe(403);
+  });
+
+  it("refuses a delete that does not name both", async () => {
+    const { status } = await send(appWith(), "DELETE", `/tool-connection-grants?agentId=${AGENT}`);
+    expect(status).toBe(400);
   });
 });

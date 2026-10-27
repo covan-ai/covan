@@ -645,48 +645,92 @@ describe("a composio connection", () => {
   });
 
   /**
-   * 0058's model, on 0063's table. The two departures are the third key column
-   * — free text, because a catalogue of fifteen hundred applications cannot be
-   * a foreign key — and what an absent row means, which is `ask` here and
-   * `never` there. Neither changes who may write what, and that is what these
-   * check.
+   * The second of 0140's three sentences: a row means this agent may change
+   * things in this connection without asking. Who may add one is the third:
+   * whoever connected it, or an admin for a shared one — and in both cases
+   * somebody who can edit the agent.
    */
   describe("tool_connection_grants", () => {
-    it("lets any writer say an operation should ask", async () => {
+    /** A shared connection, made by somebody other than the person granting. */
+    async function sharedApp(createdBy: string, label: string): Promise<string> {
+      const { data, error } = await serviceClient()
+        .from("tool_connections")
+        .insert({
+          workspace_id: owner.workspaceId,
+          label,
+          transport: "composio",
+          base_url: "https://backend.composio.dev",
+          auth_kind: "composio",
+          secret_ciphertext: null,
+          toolkit_slug: "linear",
+          connected_account_id: `ca_${label}`,
+          composio_user_id: `cu_${label}`,
+          status: "active",
+          scope: "workspace",
+          created_by: createdBy,
+        })
+        .select("id")
+        .single();
+      if (error) throw new Error(`seeding shared connection failed: ${error.message}`);
+      return data.id as string;
+    }
+
+    it("lets whoever connected a personal app let an agent change things there", async () => {
       const { error } = await owner.db.from("tool_connection_grants").insert({
         agent_id: seeded.agentId,
         tool_connection_id: appId,
         workspace_id: owner.workspaceId,
-        slug: "GMAIL_FETCH_EMAILS",
-        mode: "ask",
       });
       expect(error).toBeNull();
     });
 
-    it("refuses a member who is not an admin the standing permission", async () => {
-      // Removing the asking forever is a decision about the workspace, not
-      // about one piece of work. 0058 exempts a capability its catalogue says
-      // is harmless; there is no catalogue here, so every `always` needs an
-      // admin — stricter, in the safe direction.
+    it("refuses a colleague on a personal app", async () => {
       const { error } = await colleague.db.from("tool_connection_grants").insert({
         agent_id: seeded.agentId,
         tool_connection_id: appId,
         workspace_id: owner.workspaceId,
-        slug: "GMAIL_SEND_EMAIL",
-        mode: "always",
       });
       expect(error).not.toBeNull();
     });
 
+    it("refuses a non-admin member on a shared app", async () => {
+      const shared = await sharedApp(owner.id, "team-linear-a");
+      const { error } = await colleague.db.from("tool_connection_grants").insert({
+        agent_id: seeded.agentId,
+        tool_connection_id: shared,
+        workspace_id: owner.workspaceId,
+      });
+      expect(error).not.toBeNull();
+    });
+
+    it("allows an admin on a shared app somebody else connected", async () => {
+      const shared = await sharedApp(colleague.id, "team-linear-b");
+      const { error } = await owner.db.from("tool_connection_grants").insert({
+        agent_id: seeded.agentId,
+        tool_connection_id: shared,
+        workspace_id: owner.workspaceId,
+      });
+      expect(error).toBeNull();
+    });
+
+    it("refuses an update, there being nothing to update", async () => {
+      const { data, error } = await owner.db
+        .from("tool_connection_grants")
+        .update({ granted_by: colleague.id })
+        .eq("tool_connection_id", appId)
+        .select("agent_id");
+      // No update grant at all, so PostgREST refuses rather than matching nothing.
+      expect(error !== null || (data ?? []).length === 0).toBe(true);
+    });
+
     it("stamps who granted it rather than believing the client", async () => {
+      const shared = await sharedApp(colleague.id, "team-linear-c");
       const { data, error } = await owner.db
         .from("tool_connection_grants")
         .insert({
           agent_id: seeded.agentId,
-          tool_connection_id: appId,
+          tool_connection_id: shared,
           workspace_id: owner.workspaceId,
-          slug: "GMAIL_CREATE_DRAFT",
-          mode: "ask",
           // A colleague's id, on a row recording who handed an agent a
           // permission. The trigger overwrites it.
           granted_by: colleague.id,
@@ -702,33 +746,36 @@ describe("a composio connection", () => {
       // these rows at 3am is the service role, which bypasses RLS entirely. So
       // it has to be a constraint rather than a policy, and this is the service
       // role failing to write it: the agent belongs to the owner's workspace
-      // and the row claims the outsider's.
+      // and the row claims the outsider's. On a connection this agent has no
+      // row for yet, so the key cannot be what refuses it.
+      const fresh = await sharedApp(owner.id, "team-linear-d");
       const { error } = await serviceClient().from("tool_connection_grants").insert({
         agent_id: seeded.agentId,
-        tool_connection_id: appId,
+        tool_connection_id: fresh,
         workspace_id: outsider.workspaceId,
-        slug: "GMAIL_SEND_EMAIL",
-        mode: "always",
       });
       expect(error?.code).toBe("23503");
     });
 
     it("is invisible across a workspace boundary", async () => {
-      const { data } = await outsider.db.from("tool_connection_grants").select("slug");
+      const { data } = await outsider.db.from("tool_connection_grants").select("agent_id");
       expect(data).toEqual([]);
     });
 
-    it("lets an ordinary writer take a permission away", async () => {
-      // The asymmetry 0058 argues for: a writer who cannot raise a grant to
-      // `always` must still be able to lower one from it, or the only people
-      // who could remove a dangerous standing permission would be the people
-      // who could give it.
+    it("lets any writer who can edit the agent take a permission away", async () => {
+      // Stopping an agent from acting unasked is never the riskier direction,
+      // so it is not held to who connected the app.
       const { error } = await colleague.db
         .from("tool_connection_grants")
         .delete()
-        .eq("tool_connection_id", appId)
-        .eq("slug", "GMAIL_FETCH_EMAILS");
+        .eq("agent_id", seeded.agentId)
+        .eq("tool_connection_id", appId);
       expect(error).toBeNull();
+      const { data } = await serviceClient()
+        .from("tool_connection_grants")
+        .select("agent_id")
+        .eq("tool_connection_id", appId);
+      expect(data).toEqual([]);
     });
 
     it("goes when the connection does", async () => {
@@ -737,7 +784,7 @@ describe("a composio connection", () => {
 
       const { data } = await serviceClient()
         .from("tool_connection_grants")
-        .select("slug")
+        .select("agent_id")
         .eq("tool_connection_id", appId);
       expect(data).toEqual([]);
     });

@@ -85,7 +85,17 @@ alter table public.continuations enable row level security;
 drop policy if exists "continuations_read_own" on public.continuations;
 create policy "continuations_read_own"
   on public.continuations for select
+  to authenticated
   using (user_id = auth.uid() and public.is_workspace_member(workspace_id));
+
+-- A key's token reaches this table in no workspace (0087's shape, 0139's
+-- choice): a wake-up is the worker's own note to itself about a conversation,
+-- and nothing a key-driven request has a use for.
+drop policy if exists continuations_request_workspace on public.continuations;
+create policy continuations_request_workspace on public.continuations
+  as restrictive for all to authenticated
+  using ((select public.request_workspace()) is null)
+  with check ((select public.request_workspace()) is null);
 
 revoke all on public.continuations from anon, authenticated;
 grant select (id, session_id, note, wake_at, status, created_at, finished_at)

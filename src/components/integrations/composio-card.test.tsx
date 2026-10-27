@@ -19,7 +19,9 @@ const { connect, removeConnection, revokeGrant, updateConnection } = vi.hoisted(
   updateConnection: { mutate: vi.fn(), isPending: false },
 }));
 
-const AGENTS = [{ id: "agent-1", name: "Sales" }];
+const AGENTS: Array<{ id: string; name: string; myAccess: "use" | "edit" }> = [
+  { id: "agent-1", name: "Sales", myAccess: "edit" },
+];
 let grants: ToolConnectionGrant[] = [];
 
 let role = "admin";
@@ -91,10 +93,10 @@ beforeEach(() => {
   revokeGrant.mutate.mockClear();
 });
 
-function renderApps(connections: ToolConnection[]) {
+function renderApps(connections: ToolConnection[], agents = AGENTS) {
   return render(
     <ul>
-      <ConnectedApps connections={connections} agents={AGENTS} />
+      <ConnectedApps connections={connections} agents={agents} />
     </ul>,
   );
 }
@@ -248,6 +250,17 @@ describe("ConnectedApps", () => {
       { agentId: "agent-1", connectionId: "conn-1" },
       expect.anything(),
     );
+  });
+
+  it("does not offer to take back a permission on an agent this person cannot edit", async () => {
+    // 0140's delete policy needs edit access to the agent; a button that
+    // could only be refused would report a removal that did not happen.
+    grants = [STANDING];
+    renderApps([app()], [{ id: "agent-1", name: "Sales", myAccess: "use" as const }]);
+    await userEvent.click(screen.getByRole("button", { name: "Manage" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Sales")).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Ask first" })).not.toBeInTheDocument();
   });
 
   // 0098: personal unless shared, and only the person who connected it can

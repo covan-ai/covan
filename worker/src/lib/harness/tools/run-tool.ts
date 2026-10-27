@@ -593,12 +593,12 @@ export const runToolTool: AgentTool = {
       // because `agent-run.ts` only appends its "stopped short of…" note on
       // `paused.reason === "confirmation"` — so said here it reaches the
       // report, and said there it would end the run.
-      if (ctx.routineRunId) {
+      if (ctx.routineRunId || ctx.continuation) {
         return {
           kind: "error",
           message:
-            `${slug} changes something in ${connection.label} and nobody is watching a ` +
-            "scheduled run. Report that you could not do it. Somebody can set this " +
+            `${slug} changes something in ${connection.label} and nobody is watching ` +
+            "this run. Report that you could not do it. Somebody can set this " +
             "operation to always-allow on the Integrations page if it should happen " +
             "unattended.",
         };
@@ -613,7 +613,7 @@ export const runToolTool: AgentTool = {
             ? {
                 question,
                 pages: cursorArgument(schema)
-                  ? maxPages(ctx.env, { scheduled: Boolean(ctx.routineRunId) })
+                  ? maxPages(ctx.env, { scheduled: Boolean(ctx.routineRunId || ctx.continuation) })
                   : 1,
               }
             : null,

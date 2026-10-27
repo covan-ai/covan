@@ -15,6 +15,7 @@ import { dispatchWebhooks } from "./webhooks/dispatcher";
 import { sendNeedsYouReminders } from "./reports/needs-you";
 import { runWeeklySummaries } from "./reports/weekly-summary";
 import { sweepArrivalScans } from "./arrivals/scan";
+import { runDueContinuations } from "./continuations/dispatch";
 
 /**
  * One scheduled tick, for both Workers that have one.
@@ -58,6 +59,21 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
 
   const routines = await runDueRoutines(env);
   if (routines.claimed > 0) return;
+
+  /**
+   * A wake-up the agent set for itself, or the step after a browser that no
+   * tab was there to run (0142). After the routines and before the sweeps,
+   * for the takeover sweep's reason below: a busy deployment is where chains
+   * happen. The same either/or, because a woken turn is a scheduled run's
+   * size — one a tick (`lib/continuations/dispatch.ts` has the arithmetic). An idle tick
+   * spends two subrequests here, the two claims. Its failure is logged and
+   * the tick goes on.
+   */
+  const continued = await runDueContinuations(env).catch((err) => {
+    console.error("continuations: the stage failed", err);
+    return { claimed: 0 };
+  });
+  if (continued.claimed > 0) return;
 
   /**
    * Abandoned takeovers first, and the order is the whole point.

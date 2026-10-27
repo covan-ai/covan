@@ -496,8 +496,9 @@ export const browseTool: AgentTool = {
         message: "say what to do in one sentence — which site, and what to get or do there",
       };
     }
-    // A routine reports what it found and has no conversation to carry on in.
-    const thenStep = ctx.routineBrowser ? null : thenOf(input.then);
+    // A routine's step too, since 0142: its conversation is carried on from
+    // the cron, and the report waits for the chain (`lib/routines/held.ts`).
+    const thenStep = thenOf(input.then);
     const named = siteOf(input.site);
     if (named === INVALID_SITE) {
       // Before the card and before the meter (ruling R13's order): a refusal
@@ -570,9 +571,17 @@ export const browseTool: AgentTool = {
      *   their own and into somebody else's, in the session they keep using.
      *   Their own saved login still applies.
      */
+    // - **A woken turn carries the jar and never a saved login (0142).** The
+    //   card that approved this conversation's first task showed the jar;
+    //   no card can show a password typed with nobody watching. So it gets
+    //   the listed-line rule: `site` is ignored and the task's text names
+    //   nothing. A login wall ends the chain with the answer saying so.
+    const woken = Boolean(ctx.continuation) && !routine;
     let site = jarless
       ? (named ?? routine.site)
-      : (named ?? (ctx.confirmedAsListed ? null : await siteFromTask(ctx, task)));
+      : woken
+        ? null
+        : (named ?? (ctx.confirmedAsListed ? null : await siteFromTask(ctx, task)));
     if (site && (await sharedLoginOverOwnJar(ctx, profile, site))) site = null;
 
     /**
@@ -591,7 +600,20 @@ export const browseTool: AgentTool = {
      * than provisioned here, because a proposal somebody declines must leave
      * nothing behind — a profile at the provider least of all.
      */
-    if (ctx.confirmed !== true && !routine) {
+    /**
+     * A woken turn (0142) has nobody to show a card to. Where a browser was
+     * approved in this conversation before, that approval carries; where none
+     * ever was, this is an honest refusal rather than a card nobody answers.
+     */
+    if (ctx.continuation && !ctx.continuation.browserApproved && !routine) {
+      return {
+        kind: "error",
+        message:
+          "nobody is watching this conversation and no browser was ever approved in it, so a " +
+          "browser cannot be opened now. Say so plainly and finish.",
+      };
+    }
+    if (ctx.confirmed !== true && !routine && !ctx.continuation?.browserApproved) {
       const cost = await creditNote(ctx);
       /**
        * Which sites this browser is signed into, on the card.

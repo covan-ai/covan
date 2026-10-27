@@ -28,7 +28,6 @@ const routine: Routine = {
   endsAfterRuns: null,
   runsDone: 0,
   browserAccess: "off",
-  browserSite: null,
   browserConversationId: null,
   status: "active",
   pausedReason: null,
@@ -59,19 +58,7 @@ describe("RoutineBrowserCard", () => {
     expect(onSave).toHaveBeenCalledWith({ browserAccess: "all" });
   });
 
-  it("says what `all` carries", () => {
-    render(
-      <RoutineBrowserCard
-        routine={{ ...routine, browserAccess: "all" }}
-        onSave={() => {}}
-        saving={false}
-      />,
-    );
-    expect(screen.getByText(/carries what yours does in a conversation/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("The site it may sign in to")).not.toBeInTheDocument();
-  });
-
-  it("asks for the site before saving the one-site choice", async () => {
+  it("turns off", async () => {
     const onSave = vi.fn();
     const user = userEvent.setup();
     render(
@@ -82,29 +69,19 @@ describe("RoutineBrowserCard", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText("What the browser may use"));
-    await user.click(await screen.findByRole("option", { name: "One site's saved login only" }));
-    expect(onSave).not.toHaveBeenCalled();
-
-    await user.type(screen.getByLabelText("The site it may sign in to"), "linkedin.com");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(onSave).toHaveBeenCalledWith({ browserAccess: "site", browserSite: "linkedin.com" });
+    await user.click(screen.getByLabelText("Allow the browser on scheduled runs"));
+    expect(onSave).toHaveBeenCalledWith({ browserAccess: "off" });
   });
 
-  it("names the one site, and links the conversation the browser works beside", () => {
+  it("says what it carries, and links the conversation the browser works beside", () => {
     render(
       <RoutineBrowserCard
-        routine={{
-          ...routine,
-          browserAccess: "site",
-          browserSite: "linkedin.com",
-          browserConversationId: "conv-1",
-        }}
+        routine={{ ...routine, browserAccess: "all", browserConversationId: "conv-1" }}
         onSave={() => {}}
         saving={false}
       />,
     );
-    expect(screen.getByText(/starts with none of your sign-ins/)).toHaveTextContent("linkedin.com");
+    expect(screen.getByText(/carries what yours does in a conversation/)).toBeInTheDocument();
     expect(screen.getByText("this routine's conversation")).toBeInTheDocument();
   });
 });

@@ -415,7 +415,6 @@ describe("runContinuationTurn", () => {
           {
             id: "r-1",
             browser_access: "all",
-            browser_site: null,
             timezone: "Europe/Istanbul",
             instruction: "Make the weekly video and post it.",
           },
@@ -429,7 +428,7 @@ describe("runContinuationTurn", () => {
       expect(out.status).toBe("done");
       const { ctx, request } = turn.mock.calls[0][0];
       expect(ctx.routineRunId).toBe("run-1");
-      expect(ctx.routineBrowser).toMatchObject({ access: "all", site: null, started: [] });
+      expect(ctx.routineBrowser).toMatchObject({ started: [] });
       expect(await ctx.routineBrowser?.conversation()).toBe("sess-1");
       expect(ctx.knowledgeScope).toEqual({ viewer: "user-1" });
       expect(String(request.messages[0].content)).toContain("report");
@@ -481,7 +480,6 @@ describe("runContinuationTurn", () => {
           {
             id: "r-1",
             browser_access: "off",
-            browser_site: null,
             timezone: "UTC",
             instruction: "x",
           },

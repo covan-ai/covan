@@ -8,8 +8,8 @@ import { connectErrorMessage } from "@/lib/connections-api";
 import { docsUrl } from "@/lib/docs";
 import { takePendingGrant } from "@/lib/sensitive-url";
 import {
-  toolConnectionsKey,
   useConnectComposio,
+  useFinishPendingComposioGrant,
   useToolConnections,
 } from "@/hooks/use-connections";
 import { AppLogo } from "@/components/integrations/app-logo";
@@ -52,32 +52,11 @@ export function ConnectCards({
   onConnected?: (toolkit: ScanToolkit) => void;
 }) {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
   const { data } = useToolConnections();
   const connect = useConnectComposio();
-  // The latest callback, for an effect that runs once: a grant is finished at
-  // most once, whatever the parent re-renders with in the meantime.
-  const reported = useRef(onConnected);
-  useEffect(() => {
-    reported.current = onConnected;
+  useFinishPendingComposioGrant((toolkit) => {
+    if (isScanToolkit(toolkit)) onConnected?.(toolkit);
   });
-
-  useEffect(() => {
-    const pending = takePendingGrant();
-    if (!pending || pending.kind !== "composio") return;
-    void (async () => {
-      try {
-        const done = await api.composio.complete(pending.nonce);
-        if (done.status === "active" && isScanToolkit(pending.toolkit)) {
-          reported.current?.(pending.toolkit);
-        }
-      } catch (e) {
-        toast.error(connectErrorMessage(e instanceof ApiError ? e.message : "save_failed", t));
-      } finally {
-        await queryClient.invalidateQueries({ queryKey: toolConnectionsKey });
-      }
-    })();
-  }, [queryClient, t]);
 
   const connected = new Set(
     (data?.connections ?? [])

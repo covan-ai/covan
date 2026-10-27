@@ -19,6 +19,8 @@ vi.mock("@tanstack/react-query", () => ({
 
 const setChannels = vi.fn();
 const test = vi.fn();
+const setGrant = vi.fn();
+const patchRoutine = vi.fn();
 vi.mock("@/lib/api-client", () => ({
   api: {
     me: vi.fn(),
@@ -27,13 +29,20 @@ vi.mock("@/lib/api-client", () => ({
       setChannels: (...a: unknown[]) => setChannels(...a),
       test: (...a: unknown[]) => test(...a),
       draft: vi.fn(),
+      update: (...a: unknown[]) => patchRoutine(...a),
     },
+    toolConnections: { setGrant: (...a: unknown[]) => setGrant(...a) },
   },
+  assetSrc: (path: string) => path,
   ApiError: class ApiError extends Error {
     status = 400;
   },
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const toastError = vi.fn();
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: (...a: unknown[]) => toastError(...a) },
+}));
+vi.mock("@/lib/analytics", () => ({ trackStep: vi.fn(), flushEvents: vi.fn() }));
 
 let channels: unknown[] = [];
 const create = vi.fn();
@@ -44,12 +53,27 @@ vi.mock("@/hooks/use-routines", () => ({
   useUpdateRoutine: () => ({ mutateAsync: update, isPending: false }),
   useEventCatalog: () => ({ data: [] }),
 }));
+let toolConnections: unknown[] = [];
+const connectApp = vi.fn();
 vi.mock("@/hooks/use-connections", () => ({
   useConnections: () => ({ data: { connections: [] } }),
+  useToolConnections: () => ({ data: { connections: toolConnections, tools: [] } }),
+  useConnectComposio: () => ({ mutate: connectApp, isPending: false }),
+  useFinishPendingComposioGrant: () => undefined,
 }));
 vi.mock("@/lib/agents-store", () => ({
   useAgentsStore: () => ({
-    agents: [{ id: "a1", name: "Support", avatar: "headset", model: "gpt-4.1", bundleIds: ["b1"] }],
+    agents: [
+      {
+        id: "a1",
+        name: "Support",
+        avatar: "headset",
+        model: "gpt-4.1",
+        bundleIds: ["b1"],
+        myAccess: "edit",
+        webSearch: false,
+      },
+    ],
     bundles: [{ id: "b1", name: "Policies" }],
   }),
 }));
@@ -67,7 +91,10 @@ const email = (id: string, label: string) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   channels = [email("c1", "mina@acme.test"), email("c2", "can@acme.test")];
+  toolConnections = [];
+  sessionStorage.clear();
   queries.me = {
+    members: [{ id: "u1", role: "member" }],
     user: { id: "u1", email: "mina@acme.test" },
     workspace: { timezone: "Europe/Istanbul" },
     models: ["gpt-4.1"],
@@ -82,6 +109,8 @@ beforeEach(() => {
   };
   create.mockResolvedValue({ id: "r-new" });
   update.mockResolvedValue({});
+  setGrant.mockResolvedValue({});
+  patchRoutine.mockResolvedValue({});
   setChannels.mockResolvedValue({ channelIds: [] });
 });
 
@@ -232,5 +261,173 @@ describe("an existing routine", () => {
     render(<RoutineEditor routine={routine} cancelTo="/routines/r1" onSaved={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Run a test" }));
     expect(test).toHaveBeenCalledWith("r1");
+  });
+});
+
+/** What a use case needs before its first run (B3). */
+describe("a routine started from a use case", () => {
+  const gmail = (over: Record<string, unknown> = {}) => ({
+    id: "conn-gmail",
+    label: "Gmail",
+    transport: "composio",
+    toolkitSlug: "gmail",
+    status: "active",
+    scope: "owner",
+    mine: true,
+    ...over,
+  });
+
+  it("shows what it needs, with Connect for an app that is missing", () => {
+    render(
+      <RoutineEditor
+        initialAgentId="a1"
+        templateId="reply-drafts"
+        cancelTo="/routines"
+        onSaved={() => {}}
+      />,
+    );
+    expect(screen.getByText("Needs")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect Gmail" })).toBeInTheDocument();
+  });
+
+  it("parks the form before connecting, and comes back to this page", async () => {
+    render(
+      <RoutineEditor
+        initialAgentId="a1"
+        templateId="reply-drafts"
+        cancelTo="/routines"
+        onSaved={() => {}}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Connect Gmail" }));
+    expect(connectApp).toHaveBeenCalledWith(
+      { toolkit: "gmail", returnTo: "/routines/new?template=reply-drafts&agent=a1" },
+      expect.anything(),
+    );
+    const parked = JSON.parse(sessionStorage.getItem("covan.routine-draft") ?? "{}");
+    expect(parked).toMatchObject({ path: "/routines/new", templateId: "reply-drafts" });
+    expect(parked.draft.agentId).toBe("a1");
+  });
+
+  it("reads a parked form back once, with a switch the person turned off", () => {
+    toolConnections = [gmail()];
+    sessionStorage.setItem(
+      "covan.routine-draft",
+      JSON.stringify({
+        path: "/routines/new",
+        templateId: "reply-drafts",
+        at: Date.now(),
+        draft: {
+          agentId: "a1",
+          name: "My drafts",
+          runs: "schedule",
+          connectionId: "",
+          cron: "0 7 * * 1-5",
+          timezone: "UTC",
+          instruction:
+            "Draft replies only. Never send, reply, delete or change anything else there.",
+          fileTo: null,
+          emailIds: null,
+          inbox: true,
+          model: null,
+          effort: null,
+          allowOff: ["conn-gmail"],
+          browserOn: true,
+        },
+      }),
+    );
+    render(
+      <RoutineEditor
+        initialAgentId="a1"
+        templateId="reply-drafts"
+        cancelTo="/routines"
+        onSaved={() => {}}
+      />,
+    );
+    expect(screen.getByLabelText("Name")).toHaveValue("My drafts");
+    expect(
+      screen.getByRole("switch", { name: "Let Support change things in Gmail without asking" }),
+    ).not.toBeChecked();
+    expect(sessionStorage.getItem("covan.routine-draft")).toBeNull();
+  });
+
+  it("creates the routine, then lets the agent change things in the app", async () => {
+    toolConnections = [gmail()];
+    const onSaved = vi.fn();
+    render(
+      <RoutineEditor
+        initialAgentId="a1"
+        templateId="reply-drafts"
+        cancelTo="/routines"
+        onSaved={onSaved}
+      />,
+    );
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save routine" }));
+    expect(create).toHaveBeenCalled();
+    expect(setGrant).toHaveBeenCalledWith({ agentId: "a1", connectionId: "conn-gmail" });
+    expect(create.mock.invocationCallOrder[0]).toBeLessThan(setGrant.mock.invocationCallOrder[0]);
+    expect(onSaved).toHaveBeenCalledWith("r-new");
+  });
+
+  it("keeps the routine when the permission fails, and names the app", async () => {
+    toolConnections = [gmail()];
+    setGrant.mockRejectedValue(new Error("denied"));
+    const onSaved = vi.fn();
+    render(
+      <RoutineEditor
+        initialAgentId="a1"
+        templateId="reply-drafts"
+        cancelTo="/routines"
+        onSaved={onSaved}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Save routine" }));
+    expect(onSaved).toHaveBeenCalledWith("r-new");
+    expect(toastError).toHaveBeenCalledWith(expect.stringContaining("Gmail"));
+  });
+
+  it("offers no switch on somebody else's app, and says who can allow it", () => {
+    toolConnections = [gmail({ mine: false, scope: "workspace" })];
+    render(
+      <RoutineEditor
+        initialAgentId="a1"
+        templateId="reply-drafts"
+        cancelTo="/routines"
+        onSaved={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("switch", { name: /without asking/ })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Only the person who connected Gmail, or an admin, can allow this."),
+    ).toBeInTheDocument();
+  });
+
+  it("turns the browser on after creating, for a use case that needs it", async () => {
+    render(
+      <RoutineEditor
+        initialAgentId="a1"
+        templateId="competitor-watch"
+        cancelTo="/routines"
+        onSaved={() => {}}
+      />,
+    );
+    expect(screen.getByRole("switch", { name: "Let it use a browser" })).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Save routine" }));
+    expect(patchRoutine).toHaveBeenCalledWith("r-new", { browserAccess: "all" });
+  });
+
+  it("chooses the calendar event a booking card waits for", () => {
+    render(
+      <RoutineEditor
+        initialAgentId="a1"
+        templateId="new-booking"
+        cancelTo="/routines"
+        onSaved={() => {}}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Runs" })).toHaveTextContent(
+      "When an app event happens",
+    );
   });
 });

@@ -1,4 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { UseCaseCard } from "@/components/use-cases/use-case-card";
+import { cardState } from "@/components/use-cases/use-case-facts";
+import { WELCOME_CARDS, findUseCase } from "@/lib/use-cases";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -508,6 +511,26 @@ function ConnectScreen({
   const { t } = useTranslation();
   const { data } = useToolConnections();
   const [starting, setStarting] = useState(false);
+  // The three cards above the rows: what connecting buys, shown first.
+  // Not clickable here — the step is about connecting, and the cards are on
+  // the use-cases page once it is done (B4).
+  const connectedApps = new Set(
+    (data?.connections ?? [])
+      .filter((c) => c.transport === "composio" && c.status === "active")
+      .map((c) => c.toolkitSlug ?? ""),
+  );
+  const facts = {
+    agentDocumentCount: 0,
+    isAdmin: false,
+    gapReportEnabled: false,
+    memberCount: 1,
+    connected: connectedApps,
+    sources: new Set<"notion" | "drive">(),
+    agent: null,
+  };
+  const welcomeCards = WELCOME_CARDS.map((id) => findUseCase(id)).filter(
+    (u): u is NonNullable<typeof u> => u !== undefined,
+  );
   const anyConnected = (data?.connections ?? []).some(
     (c) =>
       c.mine &&
@@ -520,9 +543,7 @@ function ConnectScreen({
       progress={progress}
       stepKey="connect"
       title={t("Where does your work arrive?")}
-      subtitle={t(
-        "Connect your mailbox or your calendar, and Covan shows what came in over the last thirty days and which of it a routine could take off your hands.",
-      )}
+      subtitle={t("Connect where work arrives, and Covan can do this for you.")}
       skip={{ label: t("I'll do this later"), onClick: () => onNext("skipped") }}
       primary={{
         label: lookup(t, CTA.continue),
@@ -535,7 +556,23 @@ function ConnectScreen({
       }}
       below={t("Only you see what a scan finds, not your team and not an admin.")}
     >
-      <ConnectCards returnTo={returnTo} onConnected={() => void onStart()} />
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-3">
+          {welcomeCards.map((u) => (
+            <UseCaseCard
+              key={u.id}
+              useCase={u}
+              state={cardState(u, facts, t)}
+              connected={connectedApps}
+              interactive={false}
+            />
+          ))}
+        </div>
+        <ConnectCards returnTo={returnTo} onConnected={() => void onStart()} />
+        <p className="m-0 text-meta text-muted-foreground">
+          {t("Nothing to connect? Pick a routine that needs nothing after setup.")}
+        </p>
+      </div>
     </WelcomeLayout>
   );
 }

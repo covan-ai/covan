@@ -10,6 +10,7 @@ import {
   type Spend,
 } from "../entitlements";
 import { embeddingModel } from "../embeddings";
+import { cancelContinuations, chainPending } from "../continuations/rows";
 import { resolveModel } from "../models";
 import { serviceClient } from "../supabase";
 import {
@@ -40,7 +41,14 @@ import { EVENT_DELIVERED } from "./webhook";
  *  - `deliverBrowserTask`, after it writes a task's answer into the routine's
  *    conversation — which every settle goes through, the open tab's and the
  *    cron's alike;
- *  - the sweep below, for a run whose tasks never answered at all.
+ *  - the sweep below, for a run whose tasks never answered at all;
+ *  - a woken turn of the run (0142, `lib/continuations/run.ts`), which hands
+ *    its reply over as the report: it read the whole conversation, the
+ *    browser's answers in it, and was told its reply is the report.
+ *
+ * And a fourth thing holds it back: the run's chain (0142) — a wake-up not
+ * yet run, or a step after a browser the cron has yet to claim — which
+ * `chainPending` answers, and the sweep cuts.
  *
  * So the finish begins with a claim: a conditional update of
  * `held_claimed_at`, and only the caller that gets the row back sends. It is
@@ -54,9 +62,11 @@ import { EVENT_DELIVERED } from "./webhook";
  * The poller gives up on a task after `MAX_POLLS` five-minute ticks, so a task
  * that started is answered — with a failure if nothing else — in well under an
  * hour. What can wait longer is a task in line behind a sign-in the person has
- * not done (0080's login hold), or a line the sweep closed. Two hours is long
- * past the first and short enough that a daily report still arrives the same
- * morning.
+ * not done (0080's login hold), a line the sweep closed, or a chain (0142): a
+ * wake-up the run set for itself, and the step after each browser answer,
+ * which end inside this window by construction (`lib/continuations/rows.ts`
+ * refuses a wake-up past it). Two hours is long past the first and short
+ * enough that a daily report still arrives the same morning.
  */
 export const HELD_MAX_MS = 2 * 60 * 60 * 1000;
 
@@ -197,17 +207,34 @@ export async function completeHeldRun(
   env: RoutineEnv,
   runId: string,
   overrides: Partial<HeldDeps> = {},
-  opts: { overdue?: boolean } = {},
+  opts: {
+    overdue?: boolean;
+    /**
+     * The report, already written: a woken turn's reply (0142). It read the
+     * whole conversation, the browser's answers in it, and was told its reply
+     * is the report — so it goes out verbatim, with no second compose.
+     */
+    report?: string;
+    /** The wake-up handing the report over, whose own row is still `running` (see `chainPending`). */
+    except?: string;
+  } = {},
 ): Promise<boolean> {
   const deps = resolve(env, overrides);
   try {
     const tasks = await tasksOf(deps.db, runId);
     if (tasks === null) return false;
     if (!opts.overdue && tasks.some((t) => UNANSWERED.includes(t.status))) return false;
+    // And while the run's chain is pending (0142): a wake-up not yet run, or a
+    // step the cron has yet to claim, is work the report waits for as much as
+    // a browser task is. Asked after the tasks, which are the common case.
+    const pending = opts.except
+      ? await chainPending(deps.db, runId, deps.now(), { except: opts.except })
+      : await chainPending(deps.db, runId, deps.now());
+    if (!opts.overdue && pending) return false;
 
     const run = await claim(deps, runId);
     if (!run) return false;
-    await finishHeld(env, deps, run, tasks);
+    await finishHeld(env, deps, run, tasks, opts.report);
     return true;
   } catch (err) {
     console.error("could not finish a routine run that waited on its browser", runId, err);
@@ -239,6 +266,11 @@ export async function sweepHeldRuns(
   }
   let finished = 0;
   for (const row of (data ?? []) as Array<{ id: string }>) {
+    // The chain is cut first (0142): a run sent without it has no wake-up to
+    // wake into, and a woken turn after the send would write into a run that
+    // is no longer waiting — which `lib/continuations/run.ts` refuses, but
+    // only after the claim spent its tick.
+    await cancelContinuations(deps.db, String(row.id), deps.now());
     if (await completeHeldRun(env, String(row.id), overrides, { overdue: true })) finished += 1;
   }
   return { finished };
@@ -284,6 +316,7 @@ async function finishHeld(
   deps: HeldDeps,
   run: HeldRun,
   tasks: HeldTask[],
+  written?: string,
 ): Promise<void> {
   const { data: routineRow, error: routineError } = await deps.db
     .from("routines")
@@ -311,12 +344,15 @@ async function finishHeld(
 
   const draft = run.summary ?? "";
   const answers = answered(tasks);
-  const composed = await deps.compose(env, {
-    model,
-    instruction: routine.instruction,
-    draft,
-    answers,
-  });
+  const composed =
+    written !== undefined
+      ? { text: written, usage: null }
+      : await deps.compose(env, {
+          model,
+          instruction: routine.instruction,
+          draft,
+          answers,
+        });
   const report = composed.text;
   const spent = spends(completionSpend(model, composed.usage, "routine"));
   const tokens = (run.tokens ?? 0) + (composed.usage ? totalTokens(composed.usage) : 0);

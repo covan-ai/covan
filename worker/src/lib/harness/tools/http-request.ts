@@ -199,14 +199,14 @@ export const httpRequestTool: AgentTool = {
      * is the honest default.
      */
     if (writes && ctx.confirmed !== true && !(await mayChangeWithoutAsking(ctx, connection.id))) {
-      if (ctx.routineRunId) {
+      if (ctx.routineRunId || ctx.continuation) {
         return {
           kind: "error",
           message:
-            `${method} on ${connection.label} changes something and nobody is watching a ` +
-            "scheduled run. Report that you could not do it. The routine's owner can let " +
+            `${method} on ${connection.label} changes something and nobody is watching ` +
+            "this run. Report that you could not do it. The routine's owner can let " +
             `this agent change things in ${connection.label} without asking, on the ` +
-            "routine's page.",
+            "routine's page, or say so the next time it asks in a conversation.",
         };
       }
       return {

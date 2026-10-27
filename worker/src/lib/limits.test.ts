@@ -3,8 +3,10 @@ import { planLimits, workerPlan } from "./limits";
 import {
   MAX_STEPS,
   MAX_TOOL_OUTPUT_CHARS,
+  SCHEDULED_MAX_STEPS,
   TRIM_ABOVE_PROMPT_TOKENS,
   chatBudget,
+  routineBudget,
 } from "./harness/budget";
 
 /**
@@ -61,6 +63,12 @@ describe("what a deployment is allowed to spend", () => {
     it("still says fifty subrequests, which is what every Free number was derived from", () => {
       expect(planLimits({}).subrequests).toBe(50);
     });
+
+    it("budgets a routine run exactly what it always had, and nothing more", () => {
+      // No token ceiling either: adding one would be a new way for a Free
+      // routine that works today to stop, and nothing about Free asked for it.
+      expect(routineBudget({})).toEqual({ maxSteps: SCHEDULED_MAX_STEPS });
+    });
   });
 
   describe("Paid spends the headroom it paid for", () => {
@@ -87,6 +95,22 @@ describe("what a deployment is allowed to spend", () => {
       // subrequest cap does, so the ordering matters more than the number.
       const chat = chatBudget(paid);
       expect(chat.maxSteps + chat.extraLegs * chat.legSteps).toBe(40);
+    });
+
+    /**
+     * A routine was eight steps on every plan, and on 2026-10-26 an event
+     * routine asked to check a new meeting's guests against a file and take
+     * the busy ones off the invite spent all eight and was cut short. Chat on
+     * the same deployment had twenty-four.
+     */
+    it("budgets a routine run what a chat turn gets before its legs", () => {
+      expect(routineBudget(paid).maxSteps).toBe(chatBudget(paid).maxSteps);
+    });
+
+    it("stops a routine run at the token size a chat turn stops at", () => {
+      // Three times the steps with no token ceiling would make a runaway
+      // routine three times as expensive as it could be before.
+      expect(routineBudget(paid).maxTurnTokens).toBe(chatBudget(paid).maxTurnTokens);
     });
   });
 
@@ -148,5 +172,6 @@ describe("what a deployment is allowed to spend", () => {
     const limits = planLimits({ WORKER_PLAN: "paid" });
     expect(Object.isFrozen(limits)).toBe(true);
     expect(Object.isFrozen(limits.chat)).toBe(true);
+    expect(Object.isFrozen(limits.routine)).toBe(true);
   });
 });

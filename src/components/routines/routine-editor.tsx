@@ -130,6 +130,7 @@ export function RoutineEditor({
   routine,
   initialAgentId,
   templateId,
+  focusSentence = false,
   cancelTo,
   onSaved,
 }: {
@@ -139,6 +140,8 @@ export function RoutineEditor({
   initialAgentId?: string;
   /** A template to start from, from `?template=`. */
   templateId?: string;
+  /** Put the cursor in "Start from a sentence", from `?focus=sentence`. */
+  focusSentence?: boolean;
   /** Where Cancel goes. */
   cancelTo: string;
   onSaved: (id: string) => void;
@@ -420,6 +423,9 @@ export function RoutineEditor({
               <div className="flex max-w-[560px] gap-2">
                 <Input
                   id="routine-prose"
+                  // Only when the address asks: the link that sends it is
+                  // "Describe it in a sentence", whose whole point is this box.
+                  autoFocus={focusSentence}
                   value={prose}
                   placeholder={t("Every Monday at 9, summarise last week's tickets for the team.")}
                   onChange={(e) => setProse(e.target.value)}

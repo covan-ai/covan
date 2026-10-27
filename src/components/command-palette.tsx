@@ -5,6 +5,7 @@ import {
   BookOpen,
   Folder,
   Inbox,
+  LayoutGrid,
   MessageSquare,
   SquarePen,
   Plus,
@@ -45,6 +46,8 @@ const PAGES = [
   { to: "/inbox", label: msg("Inbox"), icon: Inbox },
   { to: "/knowledge", label: msg("Knowledge"), icon: Folder },
   { to: "/routines", label: msg("Routines"), icon: Repeat },
+  // Not in the sidebar (DESIGN.md §6 is settled); reached from Routines and here.
+  { to: "/routines/use-cases", label: msg("Use cases"), icon: LayoutGrid },
   { to: "/settings/general", label: msg("Settings"), icon: SlidersVertical },
   { to: "/threads", label: msg("Threads"), icon: MessageSquare },
   { to: "/team", label: msg("Team"), icon: Users },

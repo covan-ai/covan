@@ -191,6 +191,9 @@ export function GettingStarted({ className }: { className?: string }) {
         void navigate({ to: "/agents/$agentId/routines", params: { agentId: targetAgentId } });
         return;
       }
+      case "use-cases":
+        if (pathname !== "/routines/use-cases") void navigate({ to: "/routines/use-cases" });
+        return;
     }
   };
 

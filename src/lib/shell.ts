@@ -9,7 +9,22 @@ export type ShellApi = {
   drawerOpen: boolean;
   openDrawer: () => void;
   closeDrawer: () => void;
-  openCreateAgent: () => void;
+  /** "New agent", empty or filled in from a use case. */
+  openCreateAgent: (initial?: CreateAgentInitial) => void;
+};
+
+/**
+ * What "New agent" opens filled with when an agent card on the use-cases
+ * page asked for it. Everything stays editable; `trackAs` is the onboarding
+ * step a create is counted under (`use-case:<id>`).
+ */
+export type CreateAgentInitial = {
+  name: string;
+  avatar: string | null;
+  persona: string;
+  webSearch?: boolean;
+  mode?: "normal" | "brainstorm";
+  trackAs?: string;
 };
 
 const NOOP: ShellApi = {

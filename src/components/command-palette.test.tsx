@@ -62,6 +62,12 @@ describe("the ⌘K palette", () => {
     expect(screen.getByText("Invite a member")).toBeInTheDocument();
   });
 
+  it("goes to the use cases as a page", () => {
+    open();
+    fireEvent.click(screen.getByText("Use cases"));
+    expect(navigate).toHaveBeenCalledWith({ to: "/routines/use-cases" });
+  });
+
   it("opens the running thread of a working agent, and starts one for an idle agent", async () => {
     open();
     fireEvent.click(screen.getByText("Research"));

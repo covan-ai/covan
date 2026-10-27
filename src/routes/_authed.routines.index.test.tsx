@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
 
-/** Routines with none yet: what one is, and where to find one worth having (0139). */
+/** Routines with none yet: what one is, and where to find one worth having (0139, use cases). */
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: { component: () => React.ReactElement }) => options,
   Navigate: () => null,
@@ -14,7 +14,7 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("@/lib/api-client", () => ({ api: { routines: { list: vi.fn(async () => []) } } }));
 
 describe("the routines page with none yet", () => {
-  it("points at what arrives in the person's inbox", async () => {
+  it("leads with the use cases, then what arrives in the person's inbox", async () => {
     const { Route } = await import("./_authed.routines.index");
     const Component = (Route as unknown as { component: () => React.ReactElement }).component;
     render(
@@ -22,7 +22,10 @@ describe("the routines page with none yet", () => {
         <Component />
       </QueryClientProvider>,
     );
-    const link = await screen.findByRole("link", { name: "See what arrives in your inbox" });
-    expect(link.getAttribute("href")).toBe("/arrivals");
+    const useCases = await screen.findByRole("link", { name: "Browse use cases" });
+    expect(useCases.getAttribute("href")).toBe("/routines/use-cases");
+    const arrivals = screen.getByRole("link", { name: "See what arrives in your inbox" });
+    expect(arrivals.getAttribute("href")).toBe("/arrivals");
+    expect(screen.getAllByRole("link")).toEqual([useCases, arrivals]);
   });
 });

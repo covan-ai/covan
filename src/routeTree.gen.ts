@@ -36,6 +36,7 @@ import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedAgentsAgentIdRouteImport } from './routes/_authed.agents.$agentId'
 import { Route as AuthedRoutinesIndexRouteImport } from './routes/_authed.routines.index'
 import { Route as AuthedRoutinesNewRouteImport } from './routes/_authed.routines.new'
+import { Route as AuthedRoutinesUseCasesRouteImport } from './routes/_authed.routines.use-cases'
 import { Route as AuthedSettingsIndexRouteImport } from './routes/_authed.settings.index'
 import { Route as AuthedSettingsAccountRouteImport } from './routes/_authed.settings.account'
 import { Route as AuthedSettingsApiKeysRouteImport } from './routes/_authed.settings.api-keys'
@@ -194,6 +195,11 @@ const AuthedRoutinesIndexRoute = AuthedRoutinesIndexRouteImport.update({
 const AuthedRoutinesNewRoute = AuthedRoutinesNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => AuthedRoutinesRoute,
+} as any)
+const AuthedRoutinesUseCasesRoute = AuthedRoutinesUseCasesRouteImport.update({
+  id: '/use-cases',
+  path: '/use-cases',
   getParentRoute: () => AuthedRoutinesRoute,
 } as any)
 const AuthedSettingsIndexRoute = AuthedSettingsIndexRouteImport.update({
@@ -360,6 +366,7 @@ export interface FileRoutesByFullPath {
   '/auth/callback': typeof AuthCallbackRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/routines/new': typeof AuthedRoutinesNewRoute
+  '/routines/use-cases': typeof AuthedRoutinesUseCasesRoute
   '/settings/account': typeof AuthedSettingsAccountRoute
   '/settings/api-keys': typeof AuthedSettingsApiKeysRoute
   '/settings/coverage': typeof AuthedSettingsCoverageRoute
@@ -410,6 +417,7 @@ export interface FileRoutesByTo {
   '/welcome': typeof AuthedWelcomeRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/routines/new': typeof AuthedRoutinesNewRoute
+  '/routines/use-cases': typeof AuthedRoutinesUseCasesRoute
   '/settings/account': typeof AuthedSettingsAccountRoute
   '/settings/api-keys': typeof AuthedSettingsApiKeysRoute
   '/settings/coverage': typeof AuthedSettingsCoverageRoute
@@ -465,6 +473,7 @@ export interface FileRoutesById {
   '/auth/callback': typeof AuthCallbackRoute
   '/_authed/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
   '/_authed/routines/new': typeof AuthedRoutinesNewRoute
+  '/_authed/routines/use-cases': typeof AuthedRoutinesUseCasesRoute
   '/_authed/settings/account': typeof AuthedSettingsAccountRoute
   '/_authed/settings/api-keys': typeof AuthedSettingsApiKeysRoute
   '/_authed/settings/coverage': typeof AuthedSettingsCoverageRoute
@@ -520,6 +529,7 @@ export interface FileRouteTypes {
     | '/auth/callback'
     | '/agents/$agentId'
     | '/routines/new'
+    | '/routines/use-cases'
     | '/settings/account'
     | '/settings/api-keys'
     | '/settings/coverage'
@@ -570,6 +580,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/auth/callback'
     | '/routines/new'
+    | '/routines/use-cases'
     | '/settings/account'
     | '/settings/api-keys'
     | '/settings/coverage'
@@ -624,6 +635,7 @@ export interface FileRouteTypes {
     | '/auth/callback'
     | '/_authed/agents/$agentId'
     | '/_authed/routines/new'
+    | '/_authed/routines/use-cases'
     | '/_authed/settings/account'
     | '/_authed/settings/api-keys'
     | '/_authed/settings/coverage'
@@ -860,6 +872,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedRoutinesNewRouteImport
       parentRoute: typeof AuthedRoutinesRoute
     }
+    '/_authed/routines/use-cases': {
+      id: '/_authed/routines/use-cases'
+      path: '/use-cases'
+      fullPath: '/routines/use-cases'
+      preLoaderRoute: typeof AuthedRoutinesUseCasesRouteImport
+      parentRoute: typeof AuthedRoutinesRoute
+    }
     '/_authed/settings/': {
       id: '/_authed/settings/'
       path: '/'
@@ -1040,6 +1059,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthedRoutinesRouteChildren {
   AuthedRoutinesNewRoute: typeof AuthedRoutinesNewRoute
+  AuthedRoutinesUseCasesRoute: typeof AuthedRoutinesUseCasesRoute
   AuthedRoutinesIndexRoute: typeof AuthedRoutinesIndexRoute
   AuthedRoutinesRoutineIdEditRoute: typeof AuthedRoutinesRoutineIdEditRoute
   AuthedRoutinesRoutineIdIndexRoute: typeof AuthedRoutinesRoutineIdIndexRoute
@@ -1047,6 +1067,7 @@ interface AuthedRoutinesRouteChildren {
 
 const AuthedRoutinesRouteChildren: AuthedRoutinesRouteChildren = {
   AuthedRoutinesNewRoute: AuthedRoutinesNewRoute,
+  AuthedRoutinesUseCasesRoute: AuthedRoutinesUseCasesRoute,
   AuthedRoutinesIndexRoute: AuthedRoutinesIndexRoute,
   AuthedRoutinesRoutineIdEditRoute: AuthedRoutinesRoutineIdEditRoute,
   AuthedRoutinesRoutineIdIndexRoute: AuthedRoutinesRoutineIdIndexRoute,

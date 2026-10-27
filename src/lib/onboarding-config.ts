@@ -42,10 +42,11 @@ export type CoachTargetId =
   | "integrations-catalogue"
   | "invite-member"
   | "new-routine"
-  | "share-agent";
+  | "share-agent"
+  | "use-case-card";
 
 /** The page a coach target lives on, so "Try" can go there first. */
-export type CoachRoute = "chat" | "integrations" | "members" | "routines";
+export type CoachRoute = "chat" | "integrations" | "members" | "routines" | "use-cases";
 
 /** `title` and `hint` are English keys: `lookup(t, target.title)` where they are drawn. */
 export type CoachTarget = { id: CoachTargetId; title: string; hint: string; route: CoachRoute };
@@ -305,11 +306,13 @@ export const SETUP: SetupStepConfig[] = [
     key: "routine",
     label: (_ctx, t = englishT) => t("Schedule a routine"),
     hint: (_ctx, t = englishT) => t("Something that runs on its own and reports back."),
+    // The use cases rather than the empty editor: somebody at this step has
+    // not yet decided what a routine of theirs would do.
     coach: () => ({
-      id: "new-routine",
-      title: msg("New routine"),
-      hint: msg("Say what to do and how often. The result arrives by email or Slack."),
-      route: "routines",
+      id: "use-case-card",
+      title: msg("Pick a routine"),
+      hint: msg("Each card is a routine ready to set up. Nothing runs until you create it."),
+      route: "use-cases",
     }),
   },
 ];

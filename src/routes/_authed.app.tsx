@@ -234,7 +234,7 @@ function Welcome({
                 {t("Support, Research, Finance, or anything you name.")}
               </div>
             </div>
-            <Button onClick={shell.openCreateAgent}>{t("Create agent")}</Button>
+            <Button onClick={() => shell.openCreateAgent()}>{t("Create agent")}</Button>
           </div>
           <FirstSteps memberCount={memberCount} />
         </>

@@ -147,6 +147,13 @@ describe("the arrivals page", () => {
     expect(h.create.mock.calls[0][0].agentId).toBe("a9");
   });
 
+  it("lands a skip on the use cases rather than the empty routines list", async () => {
+    h.latest.mockResolvedValue(doneScan(2));
+    await renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Not now" }));
+    expect(navigate).toHaveBeenCalledWith({ to: "/routines/use-cases" });
+  });
+
   it("offers the mailbox and calendar when nothing is connected to read", async () => {
     h.start.mockRejectedValue(new h.ApiError(409, "no_source"));
     await renderPage();

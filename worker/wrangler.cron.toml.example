@@ -173,13 +173,12 @@ crons = ["*/5 * * * *"]
 # `fetch` stops working, and the OpenAI SDK calls that `Connection error.`, so
 # the log says the network broke when what broke was the plan.
 #
-# What it buys today is CHAT: 24 tool calls per answer instead of 8, and up to
-# two further rounds when a turn is still working at the end of them. This
-# Worker runs no chat, so setting it here changes nothing yet — it is here so
-# the two configurations say the same thing, and so that whenever the scheduled
-# side does start reading it, this file is not the one that was forgotten. A
-# scheduled run keeps its eight either way: a tick runs a whole batch of them
-# inside one invocation, which is a different sum. See docs/routines.md.
+# What it buys here is 24 tool calls per routine run instead of 8, with the
+# token ceiling a chat turn has (chat itself gets the same 24 plus two further
+# rounds, on the API Worker). Set it on both Workers or neither: a routine run
+# started by an event runs on the API Worker, one started by the clock runs
+# here, and the two would otherwise get different budgets. A tick runs a whole
+# batch of routines inside one invocation, and docs/routines.md does that sum.
 #
 # WORKER_PLAN = "paid"
 

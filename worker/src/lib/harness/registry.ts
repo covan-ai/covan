@@ -14,6 +14,7 @@ import { sendEmailTool } from "./tools/send-email";
 import { scheduleJobTool } from "./tools/schedule-job";
 import { watchEventTool } from "./tools/watch-event";
 import { runRoutineTool } from "./tools/run-routine";
+import { continueLaterTool } from "./tools/continue-later";
 import { findToolTool } from "./tools/find-tool";
 import { runToolTool } from "./tools/run-tool";
 import { writeDocumentTool } from "./tools/write-document";
@@ -110,6 +111,16 @@ export type ToolContext = {
   sessionId?: string;
   /** The routine run this turn belongs to, when nobody is. */
   routineRunId?: string;
+  /**
+   * The wake-up this turn is (0142), when nobody is watching a conversation:
+   * a timer the agent set, or the step after a browser task, run from the
+   * cron. Read wherever `routineRunId` means "nobody is watching" today.
+   * `browserApproved` says a browser was approved in this conversation before
+   * (a card said yes), so `browse` runs without one. Only
+   * `lib/continuations/run.ts` sets it, from the row it claimed — never from
+   * anything the model wrote.
+   */
+  continuation?: { id: string; browserApproved: boolean };
   /**
    * Whether the chat session is shared with the workspace. Set by the route
    * from `chat_sessions.visibility`, never from anything the model wrote.
@@ -443,6 +454,7 @@ export const TOOLS: AgentTool[] = [
   scheduleJobTool,
   watchEventTool,
   runRoutineTool,
+  continueLaterTool,
   writeDocumentTool,
   editDocumentTool,
   askPersonTool,

@@ -123,4 +123,30 @@ describe("run_routine", () => {
       kind: "error",
     });
   });
+
+  // A woken conversation turn (0142) has nobody to approve starting a
+  // routine, and the browser's earlier approval does not cover it: an error,
+  // never a card nobody answers. A routine's own woken turn runs, as any
+  // scheduled run does — routines handing work on is what the tool is for there.
+  it("refuses in a woken conversation turn, and runs in a routine's woken turn (0142)", async () => {
+    const woken = await runRoutineTool.run(
+      ARGS,
+      ctx([routine()], { continuation: { id: "cont-1", browserApproved: true } }),
+    );
+    expect(woken).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("nobody is watching"),
+    });
+    expect(runPokedRoutine).not.toHaveBeenCalled();
+
+    const routines = await runRoutineTool.run(
+      ARGS,
+      ctx([routine()], {
+        routineRunId: "run-1",
+        continuation: { id: "cont-1", browserApproved: true },
+      }),
+    );
+    expect(routines.kind).toBe("ok");
+    expect(runPokedRoutine).toHaveBeenCalledTimes(1);
+  });
 });

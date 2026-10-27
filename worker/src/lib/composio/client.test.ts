@@ -792,8 +792,11 @@ describe("read and write", () => {
     expect(await toolWith([])).toBeNull();
   });
 
-  it("believes the narrow claim when an operation carries both", async () => {
-    expect(await toolWith(["readOnlyHint", "updateHint"])).toBe(false);
+  it("calls an operation that carries both a read and a writing hint unknown, not a read", async () => {
+    // A read now runs with nobody asked, on a schedule too, so two hints that
+    // disagree must not add up to "only reads".
+    expect(await toolWith(["readOnlyHint", "updateHint"])).toBeNull();
+    expect(await toolWith(["readOnlyHint", "destructiveHint"])).toBeNull();
   });
 });
 

@@ -40,8 +40,9 @@ import {
  *      with `GMAIL_SEND_EMAIL` is refused here, locally, before anything leaves
  *      the building — not by Composio's 400, which would have been a request
  *      made on somebody's behalf.
- *   3. **A person said yes.** Once per connection per turn, or in advance
- *      through a `tool_connection_grants` row set to `always` (0063).
+ *   3. **A change has a yes.** A read never asks. A change needs a person's yes
+ *      (which covers that operation on that connection for the rest of the
+ *      reply) or a standing permission; see guard 3 below.
  *   4. **Credits are checked before the network**, because this is one of the
  *      things in Covan that spends the operator's money outside the model
  *      bill, decided by the model mid-turn. See `lib/harness/spend.ts`.
@@ -524,6 +525,16 @@ export const runToolTool: AgentTool = {
     if (!operation && ctx.confirmed !== true) {
       const found = await getTool(ctx.env, slug, { signal: ctx.signal });
       if (found.kind === "ok") {
+        // The catalogue's own toolkit, now that it is known: the spelling the
+        // toolkit guard above fell back to is a convention, not a promise.
+        if (found.tool.toolkit && found.tool.toolkit !== expected) {
+          return {
+            kind: "error",
+            message:
+              `${slug} is not an operation of ${connection.toolkit_slug ?? "this connection"}. ` +
+              "Use find_tool with that toolkit to find the right operation.",
+          };
+        }
         operation = found.tool;
         ctx.offeredOperations?.set(slug, found.tool);
         const wrong = schemaRefusal(slug, callArgs, operation.inputSchema);
@@ -582,12 +593,12 @@ export const runToolTool: AgentTool = {
       // because `agent-run.ts` only appends its "stopped short of…" note on
       // `paused.reason === "confirmation"` — so said here it reaches the
       // report, and said there it would end the run.
-      if (ctx.routineRunId) {
+      if (ctx.routineRunId || ctx.continuation) {
         return {
           kind: "error",
           message:
-            `${slug} changes something in ${connection.label} and nobody is watching a ` +
-            "scheduled run. Report that you could not do it. Somebody can set this " +
+            `${slug} changes something in ${connection.label} and nobody is watching ` +
+            "this run. Report that you could not do it. Somebody can set this " +
             "operation to always-allow on the Integrations page if it should happen " +
             "unattended.",
         };
@@ -602,7 +613,7 @@ export const runToolTool: AgentTool = {
             ? {
                 question,
                 pages: cursorArgument(schema)
-                  ? maxPages(ctx.env, { scheduled: Boolean(ctx.routineRunId) })
+                  ? maxPages(ctx.env, { scheduled: Boolean(ctx.routineRunId || ctx.continuation) })
                   : 1,
               }
             : null,

@@ -266,6 +266,64 @@ describe("Google Calendar", () => {
     expect(canceled?.eventId).toBe("gcal-canceled:e3");
     expect(canceled?.text).toContain("Canceled:");
   });
+
+  /**
+   * The delivery carries a title, two times and an organizer — not who was
+   * invited, and not the id. A routine asked to act on the guest list had to
+   * spend its steps finding the event again before it could start.
+   */
+  it("asks for a new event by its id and names who is invited", async () => {
+    const fetch = vi.fn(async () =>
+      JSON.stringify({
+        data: {
+          summary: "Weekly sync",
+          start: { dateTime: "2026-11-03T10:00:00+03:00" },
+          end: { dateTime: "2026-11-03T11:00:00+03:00" },
+          location: "Room 4",
+          description: "Agenda: the pilot.",
+          attendees: [
+            { email: "ada@acme.test", displayName: "Ada", responseStatus: "accepted" },
+            { email: "linus@acme.test", responseStatus: "needsAction" },
+          ],
+        },
+        successful: true,
+      }),
+    );
+    const out = await spec("gcal.event_created").describe(
+      {
+        event_id: "e4",
+        summary: "Weekly sync",
+        start_time: "2026-11-03T10:00:00+03:00",
+        calendar_id: "team@group.calendar.google.com",
+      },
+      fetch,
+    );
+    expect(fetch).toHaveBeenCalledWith("GOOGLECALENDAR_EVENTS_GET", {
+      event_id: "e4",
+      calendar_id: "team@group.calendar.google.com",
+    });
+    expect(out?.eventId).toBe("gcal-created:e4");
+    expect(out?.text).toContain("Event id: e4");
+    expect(out?.text).toContain("Calendar: team@group.calendar.google.com");
+    expect(out?.text).toContain("Where: Room 4");
+    expect(out?.text).toContain("Attendees: Ada <ada@acme.test> (accepted), linus@acme.test");
+    expect(out?.text).toContain("Agenda: the pilot.");
+  });
+
+  it("still runs on what the delivery said when the lookup fails", async () => {
+    const out = await spec("gcal.event_created").describe(
+      {
+        event_id: "e5",
+        summary: "Intro",
+        start_time: "2026-11-04T15:00:00+03:00",
+        attendees: [{ email: "ada@acme.test" }],
+      },
+      noFetch,
+    );
+    expect(out?.text).toContain("Event: Intro");
+    expect(out?.text).toContain("Event id: e5");
+    expect(out?.text).toContain("Attendees: ada@acme.test");
+  });
 });
 
 describe("helpers", () => {

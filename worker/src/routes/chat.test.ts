@@ -2325,11 +2325,12 @@ describe("a reply that used a tool", () => {
       (t: { function: { name: string } }) => t.function.name,
     );
     // No connected service and no delivery channel, so only the tools that
-    // need neither: the knowledge tools, asking the person, keeping a note,
-    // and the guide.
+    // need neither: the knowledge tools, coming back later, asking the
+    // person, keeping a note, and the guide.
     expect(offered).toEqual([
       "search_documents",
       "list_documents",
+      "continue_later",
       "ask_person",
       "remember",
       "covan_guide",

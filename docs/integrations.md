@@ -492,16 +492,14 @@ workspace's — every member's turns can use it — and **Stop sharing** takes i
 back. Only the person who connected it can do either; an admin can remove a
 shared service, and cannot see a personal one at all (migration `0098`).
 
-Two rules hold whoever is asking:
+Whose a service is also decides who may say **"don't ask again"** for it —
+let an agent change things there without asking (see _The asking_ under
+Connected apps): the person who connected it, for a personal service; an
+admin, for a shared one. In both cases they need edit access to the agent.
 
 - **A viewer changes nothing through a service.** Reads work; an operation that
   is not known to be a read, or an HTTP method other than `GET` and `HEAD`, is
   refused — even if the viewer approves its card.
-- **Writing through somebody else's shared service asks first.** An HTTP
-  `POST`, `PUT`, `PATCH` or `DELETE` through a service a colleague shared shows
-  a card before it is sent, and a scheduled run, which has nobody to ask, does
-  not send it. Through your own service the methods you allowed apply as they
-  are.
 
 Services made before `0098`: connected apps became personal to whoever
 connected them; HTTP APIs and databases stayed shared.
@@ -710,43 +708,41 @@ OpenAI-only install) read each page for that question, and hands the agent only
 what answered it, with the ids to open in full. Each page asks for fifty items,
 or the operation's maximum if that is lower, whatever size the agent asked for.
 Only for an operation the
-service marks as read-only, since paging repeats the call. The approval card
-says how many pages it may read; on Workers Paid that is fifteen, on Free three
-in a conversation and one in a scheduled run, and it stops early to finish in
+service marks as read-only, since paging repeats the call — and so it never
+asks. On Workers Paid it reads up to fifteen pages, on Free three in a
+conversation and one in a scheduled run, and it stops early to finish in
 time. Each page is a connected-app call and a small-model call on the credit
 ledger, listed as "Reading connected-app results".
 
-**The asking.** The first time an agent acts on a connected app in a
-conversation, you are shown what it proposes to do — the operation and every
-argument, including the body of the message — and it does not happen unless you
-say yes. That yes covers **that app for the rest of the turn**: checking three
-threads and replying is one approval, not four. A different app asks again, and
-so does the next conversation. On a scheduled run there is nobody to ask, so the
-run records what it could not do and finishes.
+**The asking.** Three rules, said the same way on the approval card, on the
+Integrations page, on a routine's page and here:
 
-**With one exception, and it is the important one.** An operation that changes
-data at the service is never covered by an earlier yes — it asks for itself,
-every time, however many approvals the conversation has already collected.
-Reading three threads and replying still costs one click; emptying a calendar
-does not become free because somebody approved a calendar read a minute ago.
-An operation the service does not describe either way counts as one that
-changes data: only an operation marked as read-only rides on an earlier yes.
+1. **An app you connected, agents read through.** They never ask to read, in a
+   conversation or on a schedule. A read is an operation the service's
+   catalogue marks as read-only; one it marks as a change, or does not mark
+   either way, is a change. Sending mail is a change.
+2. **Changing something asks, unless you said "don't ask again" for that app.**
+   You are shown what the agent proposes — the operation and every argument,
+   including the body of the message — and it does not happen unless you say
+   yes. That yes covers **that operation, on that app, for the rest of the
+   reply**: sending three replies is one approval; a different operation asks
+   again. On a scheduled run a change happens only when "don't ask again" is on
+   for that agent and app; otherwise the run records what it could not do and
+   finishes.
+3. **The person who connected an app decides for it; an admin decides for a
+   shared one.** A viewer never changes anything.
 
-Only **your** yes carries over. A call let through by an always-allow is
-consent to that one operation, not somebody watching the conversation, so it
-does not approve the app for the calls after it — in a scheduled run least of
-all.
-
-**Always-allow** is per agent, per app, per operation, and an admin sets it.
-That is the one thing that removes the asking, and it is deliberately narrow:
-"this agent may file Linear issues without asking" is a decision somebody makes
-once about one operation, not a switch over a whole account.
-
-An admin sets it from the approval card itself — a third, quiet option beside
-_Approve_ and _Not now_ — because that is the moment somebody knows what they
-are agreeing to. Everything already granted is listed under the app on the
-Integrations page, and **any writer can take one back**, not only an admin:
-removing a permission is never the unsafe direction.
+**"Don't ask again"** is one switch per agent and app — "this agent may change
+things in Linear without asking" — and it reaches conversations and scheduled
+runs alike. It is offered as a third, quiet option on the approval card, only
+to somebody allowed to give it, because that is the moment somebody knows what
+they are agreeing to; and on a routine's page, as **What it may change without
+asking**, one switch per app the routine's agent can reach. Every agent that
+has it is listed under the app on the Integrations page, and **any writer who
+can edit the agent can take it back**: removing a permission is never the
+unsafe direction. HTTP services follow the same rules: `GET` and `HEAD` never
+ask, every other allowed method does, and the methods you allowed stay the
+ceiling.
 
 **What Covan stores, and what it does not.** Not the token. The OAuth grant
 lives at Composio; what this database holds is an opaque reference to it,
@@ -1366,7 +1362,8 @@ are on the card too.
   the browser reads is ever executed. If that trade is not one you want, leave
   `BROWSER_USE_API_KEY` unset and the tool does not exist.
 - **It cannot choose a method you did not allow**, and it is told not to try
-  another one.
+  another one. Within what you allowed, anything but `GET` and `HEAD` asks
+  first unless you said "don't ask again" for that agent and service.
 - **It cannot send mail to an address** — through `send_email`, which takes one
   of _your_ delivery channels, so the worst an instruction hidden in fetched
   data can achieve there is a message to your own inbox. **A connected mail app
@@ -1385,16 +1382,21 @@ follow them. That was true before any of this — a hostile RSS feed could
 already mislead a digest — and what has changed is the blast radius, so it is
 worth saying what bounds it now: an origin you chose, methods you allowed,
 read-only by default, delivery only to your own channels, and a person's yes in
-front of anything that changes the world. On a scheduled run there is nobody to
-ask, so anything needing approval is recorded and does not happen.
+front of anything that changes the world. Agents read freely; changes ask. On a
+scheduled run there is nobody to ask, so a change happens only in an app where
+somebody said "don't ask again" for that agent, and anything else needing
+approval is recorded and does not happen. That switch is the one place where
+text an agent read could lead to a change nobody looked at, which is why it is
+per agent and per app, given only by whoever connected the app (or an admin for
+a shared one), and listed where anybody can take it back.
 
 A browser widens that radius more than anything else here, because a web page
 can contain text addressed to the agent reading it, and this is not a solved
 problem anywhere in the industry. It is worth saying plainly rather than
 reassuringly. What bounds it is structural and not clever: a task is scoped by
 one sentence a person wrote and approved, whatever comes back is treated as
-data and never executed, and `browse` is not offered to a scheduled run at all
-— there is nobody there to approve one and nowhere for the answer to arrive.
+data and never executed, and `browse` runs on a schedule only when the
+routine's owner switched the browser on for that routine.
 
 The sign-in story makes this sharper rather than softer, and it is worth being
 blunt about which way. Before it, a prompt-injected task had little to steal; a

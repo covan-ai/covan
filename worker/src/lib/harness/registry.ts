@@ -71,14 +71,9 @@ export type ToolEnv = RoutineEnv & RetrievalConfig;
 /** What a routine run lets `browse` do, and where its answers go. See `ToolContext.routineBrowser`. */
 export type RoutineBrowser = {
   /**
-   * `'all'` carries what a conversation's browser would — the owner's jar and
-   * the saved login for a site the task names. `'site'` carries no jar and
-   * only `site`'s saved login.
-   */
-  access: "all" | "site";
-  /** With `'site'`, the one host whose saved login a run may carry. */
-  site: string | null;
-  /**
+   * A routine's browser carries what a conversation's would — the owner's jar
+   * and the saved login for a site the task names (0141: on or off).
+   *
    * The routine's conversation, opened the first time it is asked for. Null
    * when it could not be opened, and then nothing is started.
    */
@@ -179,14 +174,6 @@ export type ToolContext = {
    * most of all. Set by `routes/chat.ts` only.
    */
   confirmedAsListed?: boolean;
-  /**
-   * Connections a person has already approved an action on, in this turn.
-   *
-   * Computed by `lib/harness/loop.ts` from the steps it can already see. Read
-   * only by `http_request` now, which loses it when HTTP services take the
-   * same rules as connected applications; `run_tool` reads `approvedSlugs`.
-   */
-  approvedConnections?: string[];
   /**
    * The operations a person has said yes to in this reply, each as
    * `connectionId:slug`.

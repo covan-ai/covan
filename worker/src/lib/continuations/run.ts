@@ -124,7 +124,8 @@ type AgentRow = {
 
 type RoutineSide = {
   runId: string;
-  browser: Omit<RoutineBrowser, "started" | "conversation"> | null;
+  /** The routine's browser switch (0141): on carries what a conversation's would. */
+  browserOn: boolean;
   timezone: string | null;
 };
 
@@ -200,7 +201,7 @@ export async function runContinuationTurn(
 
     // 5. Whether a browser was ever approved in this conversation, by this person.
     const browserApproved = routine ? false : await browserApprovedIn(db, wake);
-    const browserOn = routine ? routine.browser !== null : browserApproved;
+    const browserOn = routine ? routine.browserOn : browserApproved;
 
     // 6. The tools, as a scheduled run gets them.
     const toolEnv = env as ToolEnv;
@@ -265,8 +266,8 @@ export async function runContinuationTurn(
           routine ? "routine" : "reply",
         ),
       );
-    const routineBrowser: RoutineBrowser | undefined = routine?.browser
-      ? { ...routine.browser, conversation: async () => wake.sessionId, started: [] }
+    const routineBrowser: RoutineBrowser | undefined = routine?.browserOn
+      ? { conversation: async () => wake.sessionId, started: [] }
       : undefined;
     const ctx: ToolContext = {
       db,
@@ -408,7 +409,7 @@ async function routineSide(
 
   const { data: routine, error: routineError } = await db
     .from("routines")
-    .select("browser_access, browser_site, timezone")
+    .select("browser_access, timezone")
     .eq("id", String(run.routine_id))
     .maybeSingle();
   if (routineError) {
@@ -416,11 +417,8 @@ async function routineSide(
   }
   if (!routine) return { kind: "error", message: "routine is gone" };
 
-  const access = text(routine.browser_access);
-  const site = text(routine.browser_site);
-  const browser: RoutineSide["browser"] =
-    access === "all" ? { access, site: null } : access === "site" && site ? { access, site } : null;
-  return { kind: "ok", value: { runId, browser, timezone: text(routine.timezone) } };
+  const browserOn = text(routine.browser_access) === "all";
+  return { kind: "ok", value: { runId, browserOn, timezone: text(routine.timezone) } };
 }
 
 /** A browser task of this person's in this conversation: a card said yes here once. */

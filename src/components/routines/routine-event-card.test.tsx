@@ -63,7 +63,6 @@ const routine = (event: RoutineEvent | null): Routine => ({
   endsAfterRuns: null,
   runsDone: 0,
   browserAccess: "off",
-  browserSite: null,
   browserConversationId: null,
   status: "active",
   pausedReason: null,

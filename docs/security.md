@@ -136,55 +136,44 @@ the morning with nobody signed in, the verb is not select, insert, update or
 delete, and the object is not a row in this database at all. RLS is structurally
 unable to be asked it, so answering it elsewhere cannot contradict anything.
 
-Covan has the schema for that answer and, deliberately, nothing yet that uses
-it. Three tables: a catalogue of what this build can do at each provider, a
-table of grants keyed on **(agent, connection, capability)**, and a log of every
-attempt including the refused ones.
+Covan answers it with three rules and one table (`tool_connection_grants`,
+migration 0140):
 
-The rule is one sentence: **no row means no.** There is no `never` to store —
-the absence of a grant is what `never` is, and a check constraint keeps it from
-becoming a second, storable way of saying the same thing. Two representations of
-"no" can disagree; one cannot. A grant says either `ask`, which produces a
-pending approval and stops, or `always`, which means the approval was given in
-advance.
+1. **An app you connected, agents read through.** They never ask to read, in a
+   conversation or on a schedule. A read is an operation the catalogue marks
+   read-only, or `GET`/`HEAD` on an HTTP service; anything marked as a change,
+   or not marked either way, is a change.
+2. **Changing something asks, unless somebody said "don't ask again" for that
+   app.** A row in the table means this agent may change things in this
+   connection without asking; no row means it asks, and on a schedule the
+   change does not happen. A yes on a card covers that operation on that
+   connection for the rest of the reply, and nothing else.
+3. **The person who connected an app decides for it; an admin decides for a
+   shared one.** That is the table's insert policy, not a check in the API, and
+   it also requires edit access to the agent. Any writer who can edit the agent
+   may delete a row: removing a permission is never the unsafe direction. A
+   viewer changes nothing, whatever they answer on a card.
 
-So the grants table being empty is not a feature waiting to be switched on. It
-is an exact description of what Covan does with a connected _source_: agents
-read, and that is the whole list. The catalogue ships empty too, which is
-stronger — with nothing in it a grant cannot be created at all, because there is
-nothing for it to point at. A capability becomes grantable in the same change
-that ships the code performing it, never before.
+The table is per agent and per connection, not per operation. A switch per
+operation across fifteen hundred applications was a model nobody could hold in
+their head, and it had no answer for the routine that needed it most — one
+running at three in the morning with nobody to ask. What keeps one switch
+narrow is the instruction it serves: a routine that drafts replies is told to
+draft and to change nothing else, and its report says what it did.
+
+The connection itself is the first boundary. It does not exist until somebody
+searched for the app and either signed in at it or fetched a key for it, and it
+is personal to them unless they share it (0098).
 
 ### The one place an agent does act, and what it costs
-
-A **connected app** — Gmail, Linear, HubSpot, about 1500 of them — is the
-exception, and it has its own grants table rather than borrowing the one above.
-The reason is the catalogue rule: no migration can enumerate fifteen hundred
-applications' operations, so a grant there names an operation with nothing to
-point at, which is precisely the thing the table above will not do.
-
-Everything else is carried across unchanged: the key is **(agent, connection,
-operation)**, the modes are `ask` and `always`, and only an admin may promote
-one to `always`. What is deliberately different is the default. Where an absent
-grant on a source means **never**, an absent grant on a connected app means
-**ask** — because that connection does not exist until somebody searched for the
-app and either signed in at it or went and fetched a key for it, and the absence
-of a further grant on something somebody went to that trouble for should surface
-a question rather than a dead end.
-
-The asking is scoped to **one app for the rest of one turn**. That is a
-deliberate trade and worth stating: a confirmation per call would mean four
-clicks to answer "check my last three threads and reply to Ana", which trains
-people to approve without reading — and an approval flow nobody reads is worse
-than a coarser one they do. A different app asks again, and so does the next
-conversation.
 
 **What this widens.** `send_email` guarantees that the worst an injected
 instruction achieves is a message you receive yourself, because the model names
 one of your channels and never an address. A connected mailbox ends that
 property: naming the recipient is what the operation is for. The approval is
 what stands in its place — you are shown the address and the body before
-anything is sent — and on an unattended run nothing happens at all.
+anything is sent — and on an unattended run nothing happens unless somebody
+said "don't ask again" for that agent and app.
 
 **What is stored.** Not the credential, of either kind. An application is
 connected either by signing in at it — which produces an OAuth grant — or by
@@ -486,28 +475,20 @@ and otherwise stops the idle ones and forgets their sessions, so no later task
 carries the forgotten cookies.
 
 Every human action in this is still an ordinary policy, because every one of
-them is a person changing a row: members see grants, anyone who can write may
-create one at `ask` or take one away, and only an admin may promote **any**
-grant to `always`, destructive or not. A standing permission ends the asking for
-good, and that is a decision about the workspace rather than about one piece of
-work whatever the operation does — "this agent may read our mail without asking"
-is the workspace's call as surely as "this agent may send it". Whether an
-operation is destructive decides something else: how far one approval reaches,
-since a destructive call is covered only by an approval of that very operation,
-never by the app's turn-long one. It does not decide who may say *always*.
-(A connected *source*'s grants are the one place the two meet: 0058 asks its
-catalogue which capabilities are harmless and lets a writer stand those up. A
-connected app has no catalogue to ask, so 0063 exempts nothing.) Lowering or
-revoking a grant needs no admin, because taking a permission away is never the
-unsafe direction.
+them is a person changing a row. Somebody who can use an agent sees its
+standing permissions. Somebody who can edit it may add one — "this agent may
+change things in this app without asking" — only for an app they connected
+themselves, or, if they are an admin, for a shared one; and any writer who can
+edit it may take one away, because that is never the unsafe direction
+(0140). There is nothing to update: a row exists or it does not.
 
 The one thing without a policy in front of it is the process that reads these
-rows at 3am, which has no caller to have a policy about. It goes through a
-single `security definer` function whose EXECUTE grant is the boundary, the same
-arrangement the sync scheduler uses. And because that function runs as the
-service role — which bypasses row level security entirely — the guarantee that a
-grant cannot join an agent in one workspace to a connection in another is a
-foreign key rather than a predicate. A policy is no boundary at all against a
+rows at 3am, which has no caller to have a policy about. It reads with the
+service role, which is granted `select` and nothing else on the table — a
+standing permission is a person's decision, and nothing unattended creates one.
+And because the service role bypasses row level security entirely, the
+guarantee that a row cannot join an agent in one workspace to a connection in
+another is a foreign key rather than a predicate. A policy is no boundary at all against a
 caller that does not consult policies.
 
 ## What a conversation is

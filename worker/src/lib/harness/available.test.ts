@@ -63,6 +63,7 @@ describe("capabilitiesFor", () => {
     expect(tools.map((t) => t.name)).toEqual([
       "search_documents",
       "list_documents",
+      "continue_later",
       "ask_person",
       "remember",
       "covan_guide",
@@ -82,6 +83,7 @@ describe("capabilitiesFor", () => {
       "search_documents",
       "list_documents",
       "find_tool",
+      "continue_later",
       "ask_person",
       "remember",
       "covan_guide",
@@ -95,6 +97,7 @@ describe("capabilitiesFor", () => {
       "list_documents",
       "describe_connection",
       "query_database",
+      "continue_later",
       "ask_person",
       "remember",
       "covan_guide",
@@ -146,6 +149,7 @@ describe("capabilitiesFor", () => {
     expect(tools.map((t) => t.name)).toEqual([
       "search_documents",
       "list_documents",
+      "continue_later",
       "ask_person",
       "remember",
       "covan_guide",
@@ -257,6 +261,7 @@ describe("capabilitiesFor", () => {
     expect(tools.map((t) => t.name)).toEqual([
       "search_documents",
       "list_documents",
+      "continue_later",
       "ask_person",
       "remember",
       "covan_guide",

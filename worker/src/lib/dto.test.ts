@@ -410,22 +410,20 @@ describe("mapRoutine", () => {
   it("reads a row from before 0100 as a routine with no browser", () => {
     const dto = mapRoutine(row);
     expect(dto.browserAccess).toBe("off");
-    expect(dto.browserSite).toBeNull();
     expect(dto.browserConversationId).toBeNull();
   });
 
   it("carries the browser setting and its conversation", () => {
     const dto = mapRoutine({
       ...row,
-      browser_access: "site",
-      browser_site: "linkedin.com",
+      browser_access: "all",
       browser_conversation_id: "conv-1",
     });
-    expect(dto).toMatchObject({
-      browserAccess: "site",
-      browserSite: "linkedin.com",
-      browserConversationId: "conv-1",
-    });
+    expect(dto).toMatchObject({ browserAccess: "all", browserConversationId: "conv-1" });
+  });
+
+  it("reads a leftover `site`, which 0141 retired, as off", () => {
+    expect(mapRoutine({ ...row, browser_access: "site" }).browserAccess).toBe("off");
   });
 });
 

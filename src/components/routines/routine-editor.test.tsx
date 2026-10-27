@@ -211,7 +211,6 @@ const routine = {
   endsAfterRuns: null,
   runsDone: 0,
   browserAccess: "off",
-  browserSite: null,
   browserConversationId: null,
   status: "active",
   pausedReason: null,

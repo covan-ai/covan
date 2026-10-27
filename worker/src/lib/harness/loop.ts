@@ -49,7 +49,7 @@ export type AgentStep = {
   tool: string;
   /**
    * Who let a `run_tool` call through, when it succeeded. Recorded so that
-   * `approvedConnectionsFrom` can count a person's yes and nothing else.
+   * `approvedSlugsFrom` can count a person's yes and nothing else.
    * Absent on every other tool, and on steps that crossed a pause before it
    * existed — which then count as nobody's yes, the safe reading.
    */
@@ -697,44 +697,11 @@ function labelFor(tool: string, args: unknown): string {
 }
 
 /**
- * The connections a person has already approved something on, this turn.
- *
- * Derived rather than stored, which is what keeps this out of the schema and
- * out of `routes/chat.ts`: a resumed turn already arrives with `stepsSoFar`,
- * and a step already records the tool, the parsed arguments and how it ended.
- *
- * **A person's yes, and nothing else.** A `run_tool` step reaches `ok` with
- * one of three approvals behind it — a person's yes on a card, a standing
- * `always` grant, or a connection already in this set — and `step.approval`
- * says which. Any `ok` used to count, so a single
- * always-allowed read unlocked the whole connection for the rest of the turn,
- * including in a scheduled run that nobody was watching. A grant is consent to
- * one operation; it is not somebody looking at this turn, and only that may
- * stand in for them on the next call.
- *
- * `failed` deliberately does not count, and the cost is known: a call somebody
- * approved that then errored at the far end makes the model ask once more. That
- * is forced rather than chosen — a step that failed before reaching the gate
- * and one that failed after passing it look identical from here, and reading
- * the first as an approval would let a refused call unlock the very connection
- * it was refused on.
- */
-export function approvedConnectionsFrom(steps: AgentStep[]): string[] {
-  const out = new Set<string>();
-  for (const step of steps) {
-    if (step.tool !== "run_tool" || step.status !== "ok" || step.approval !== "person") continue;
-    const id = (step.request as { connectionId?: unknown } | null)?.connectionId;
-    if (typeof id === "string" && id) out.add(id);
-  }
-  return [...out];
-}
-
-/**
  * The operations a person has said yes to in this reply, as
  * `connectionId:slug`.
  *
- * Read off the steps the same way as `approvedConnectionsFrom`: a `run_tool`
- * call that succeeded on a person's yes. A read (`approval: "read"`) and a
+ * Derived from the steps rather than stored: a resumed turn already arrives
+ * with `stepsSoFar`. A `run_tool` call that succeeded on a person's yes. A read (`approval: "read"`) and a
  * standing grant are nobody's yes, and a step from before the approval was
  * recorded counts as nobody's either. See `ToolContext.approvedSlugs`.
  */
@@ -838,12 +805,10 @@ export async function runToolCall(
       : await runWithTimeout(
           tool,
           args,
-          // Recomputed per call rather than once per turn: a call that
-          // lands mid-batch unlocks its connection for the next one, which
-          // is the whole point of scoping the approval to a connection.
+          // Recomputed per call rather than once per turn: a yes that lands
+          // mid-batch covers the same operation for the next call.
           {
             ...o.ctx,
-            approvedConnections: approvedConnectionsFrom(o.steps),
             approvedSlugs: approvedSlugsFrom(o.steps),
           },
           o.toolTimeoutMs,

@@ -2069,15 +2069,14 @@ describe("a run that waits on its browser", () => {
     await runRoutine(
       routine({
         cursor: { seen: ["a"] } as never,
-        browser_access: "site",
-        browser_site: "linkedin.com",
+        browser_access: "all",
       }),
       { ...(makeDeps(db) as Record<string, unknown>), runWithTools } as never,
     );
 
     expect(seen).toMatchObject({
       routineRunId: expect.stringMatching(/^[0-9a-f-]{36}$/),
-      browser: { access: "site", site: "linkedin.com", conversation: expect.any(Function) },
+      browser: { conversation: expect.any(Function) },
     });
   });
 

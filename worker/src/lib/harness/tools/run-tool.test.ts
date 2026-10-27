@@ -83,6 +83,8 @@ function ctxWith(
     approvedSlugs?: string[];
     confirmed?: boolean;
     routineRunId?: string;
+    /** A woken turn (0142): nobody is watching a conversation. */
+    continuation?: { id: string; browserApproved: boolean };
     /** The caller's role in the workspace; a member unless a test says. */
     role?: "admin" | "member" | "viewer" | null;
     offeredSlugs?: Set<string>;
@@ -142,6 +144,7 @@ function ctxWith(
     ...(over.approvedSlugs ? { approvedSlugs: over.approvedSlugs } : {}),
     ...(over.confirmed ? { confirmed: true } : {}),
     ...(over.routineRunId ? { routineRunId: over.routineRunId } : {}),
+    ...(over.continuation ? { continuation: over.continuation } : {}),
   };
 }
 
@@ -488,6 +491,16 @@ describe("run_tool", () => {
     // finish and say what it could not do — and `agent-run.ts` only appends its
     // own "stopped short of…" note on a pause, so the reason has to be in here.
     const out = await runToolTool.run(CALL, ctxWith({ routineRunId: "run-1" }));
+    expect(out.kind).toBe("error");
+    expect(out.kind === "error" && out.message).toContain("nobody is watching");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("errors instead of pausing in a woken turn (0142)", async () => {
+    const out = await runToolTool.run(
+      CALL,
+      ctxWith({ continuation: { id: "cont-1", browserApproved: true } }),
+    );
     expect(out.kind).toBe("error");
     expect(out.kind === "error" && out.message).toContain("nobody is watching");
     expect(fetchMock).not.toHaveBeenCalled();

@@ -338,6 +338,43 @@ work, or take it over and sign in when a site asks. A sign-in you make there
 during a take-over is picked up by the retry, and the retry is what the report
 waits for.
 
+### Coming back later
+
+Some jobs are mostly waiting: a video that takes ten minutes to render, an
+export that a site builds in the background. A browser that sits on the page
+until it is done is billed for every one of those minutes. So the agent can
+put the job down instead, with the `continue_later` tool: it ends its turn
+with a note to itself and a number of minutes (five to 720), and the cron
+wakes it that many minutes later — within one tick, which is five — in the
+same conversation, with the note, with its tools, and with nobody watching.
+A woken turn can look again, answer a question a page is asking, post what it
+found, or set another wake-up if it is still not time.
+
+A routine's wake-up runs in the routine's own conversation, with the held
+run's id, so a browser task it starts attaches to the same report. Three rules
+follow from that:
+
+- **It can set a wake-up only while the report is held**, which means after it
+  has started a browser task of its own. A run that has nothing to wait for is
+  sent when its turn ends.
+- **The chain ends inside the report's two hours.** A wake-up that would land
+  later than ten minutes before that is refused, and the tool says how many
+  minutes are left.
+- **The report waits for the chain** the way it waits for a browser task, and
+  goes out once the chain has ended: when a woken turn starts no task and sets
+  no wake-up, its reply is the report, sent as written. The two-hour sweep
+  still sends with what it has, and cancels any wake-up still set.
+
+What a woken turn may do is what a scheduled run may do. The browser runs
+without a card — the switch above is the approval — but carries no saved login
+on a wake-up, since no card showed one being typed. A connected app's change
+goes through on a standing permission, as on any run nobody is watching, and
+otherwise the reply says what it could not do.
+
+The same tool works in a conversation. There the browser runs in a woken turn
+only if a browser was approved in that conversation before, and a conversation
+can be woken at most 24 times in a day.
+
 ### It may not fit on Cloudflare Free
 
 This is a real limit and worth checking before you rely on it. A tick on

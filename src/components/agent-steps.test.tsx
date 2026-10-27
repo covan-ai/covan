@@ -370,7 +370,9 @@ describe("the confirmation card", () => {
    */
   it("offers no standing permission unless the caller says there is one", () => {
     render(<ConfirmCard pending={pending} busy={false} onAnswer={() => {}} />);
-    expect(screen.queryByRole("button", { name: "Always allow this" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Don't ask again for Gmail" }),
+    ).not.toBeInTheDocument();
   });
 
   it("puts the standing permission last, and reports it to the caller", async () => {
@@ -380,7 +382,7 @@ describe("the confirmation card", () => {
         pending={pending}
         busy={false}
         onAnswer={() => {}}
-        standing={{ label: "Always allow this", onChoose }}
+        standing={{ label: "Don't ask again for Gmail", onChoose, app: "Gmail" }}
       />,
     );
     // Accessible names rather than `textContent`: the primary variant renders
@@ -392,29 +394,29 @@ describe("the confirmation card", () => {
     // and "never ask me again" where the eye lands first is how people end up
     // with permissions they do not remember giving.
     expect(buttons[0]).toHaveAccessibleName("Approve");
-    expect(buttons[2]).toHaveAccessibleName("Always allow this");
+    expect(buttons[2]).toHaveAccessibleName("Don't ask again for Gmail");
 
-    await userEvent.click(screen.getByRole("button", { name: "Always allow this" }));
+    await userEvent.click(screen.getByRole("button", { name: "Don't ask again for Gmail" }));
     expect(onChoose).toHaveBeenCalledTimes(1);
   });
 
-  it("says a yes does not cover anything that changes data, because it does not", async () => {
-    // `run-tool.ts` stopped letting a connection's approval cover a destructive
-    // operation in #202, and this sentence was left behind claiming it still
-    // did — telling somebody they had granted more than they had, on the card
-    // where they were deciding. The words are asserted rather than the shape
-    // because the words are the whole feature.
+  it("says a yes covers this operation, and what the third option lets the agent do", async () => {
+    // The words are asserted rather than the shape because the words are the
+    // whole feature: they are read at the moment somebody is deciding.
     render(
       <ConfirmCard
+        agentName="Support"
         pending={pending}
         busy={false}
         onAnswer={() => {}}
-        standing={{ label: "Always allow this", onChoose: () => {} }}
+        standing={{ label: "Don't ask again for Gmail", onChoose: () => {}, app: "Gmail" }}
       />,
     );
-    const note = screen.getByText(/Approving covers this service/);
-    expect(note).toHaveTextContent("except for anything that changes data there");
-    expect(note).toHaveTextContent("asks again each time");
+    const note = screen.getByText(/Approving covers this operation/);
+    expect(note).toHaveTextContent("for the rest of this reply");
+    expect(note).toHaveTextContent(
+      "lets Support change things in Gmail without asking, in a conversation and on a schedule",
+    );
   });
 
   it("still draws something when a tool proposed nothing structured", () => {

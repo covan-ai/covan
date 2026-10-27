@@ -4,7 +4,7 @@ import type { AppEnv } from "../types";
 import { serviceClient } from "../lib/supabase";
 import { callerWorkspaceId, memberRole } from "../lib/workspace";
 import { encryptSecret } from "../lib/secret-box";
-import { mapToolConnection } from "../lib/dto";
+import { mapToolConnection, mapToolConnectionGrant } from "../lib/dto";
 import { toolAvailability } from "../lib/harness/registry";
 import { assertFetchableUrl, ownHostsFrom } from "../lib/routines/url-guard";
 import { insertErrorStatus } from "../lib/routines/insert-error";
@@ -97,6 +97,102 @@ async function mayWrite(
   // has no policies at all.
   return Boolean(role) && role !== "viewer";
 }
+
+const grantSchema = z.object({
+  agentId: z.string().uuid(),
+  connectionId: z.string().uuid(),
+});
+
+const GRANT_COLUMNS = "agent_id, tool_connection_id, granted_by, granted_at";
+
+/**
+ * "Don't ask again for this app": whether an agent may change things in a
+ * connection without asking (0140). One row per agent and connection.
+ *
+ * Every read and write goes through the caller's own client, and that is the
+ * whole access control: the policies let somebody who can edit the agent add
+ * one when they made the connection, or are an admin and it is shared, and let
+ * any writer who can edit the agent take one away. Nothing here re-asks that.
+ */
+toolConnections.get("/tool-connection-grants", async (c) => {
+  const agentId = c.req.query("agentId");
+  let query = c.get("db").from("tool_connection_grants").select(GRANT_COLUMNS);
+  if (agentId) query = query.eq("agent_id", agentId);
+  const { data, error } = await query;
+  if (error) return c.json({ error: "failed to load permissions" }, 500);
+  return c.json({ grants: (data ?? []).map(mapToolConnectionGrant) });
+});
+
+toolConnections.put("/tool-connection-grants", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "change what an agent may do in a connected app");
+  if (refusal) return c.json(refusal, 403);
+
+  const parsed = grantSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const body = parsed.data;
+
+  const db = c.get("db");
+  const workspaceId = await callerWorkspaceId(c);
+  if (!workspaceId) return c.json({ error: "no workspace" }, 400);
+
+  // `workspace_id` is denormalised and constrained to agree with both parents
+  // (0063), so a value that does not match is refused by the foreign keys.
+  // Sent because the column is NOT NULL, not because it is trusted.
+  const { data, error } = await db
+    .from("tool_connection_grants")
+    .insert({
+      agent_id: body.agentId,
+      tool_connection_id: body.connectionId,
+      workspace_id: workspaceId,
+    })
+    .select(GRANT_COLUMNS)
+    .single();
+
+  if (error?.code === "23505") {
+    // Already said. Answered as saved, so a second click is not an error.
+    const { data: existing } = await db
+      .from("tool_connection_grants")
+      .select(GRANT_COLUMNS)
+      .eq("agent_id", body.agentId)
+      .eq("tool_connection_id", body.connectionId)
+      .maybeSingle();
+    if (existing) return c.json(mapToolConnectionGrant(existing));
+  }
+  if (error || !data) {
+    return c.json(
+      {
+        error:
+          error?.code === "42501"
+            ? "only the person who connected it, or an admin for a shared one, can let an " +
+              "agent change things there without asking — and they need edit access to the agent"
+            : "failed to save that permission",
+      },
+      error?.code === "42501" ? 403 : insertErrorStatus(error),
+    );
+  }
+  return c.json(mapToolConnectionGrant(data));
+});
+
+toolConnections.delete("/tool-connection-grants", async (c) => {
+  const refusal = refuseIfKeyAuthenticated(c, "change what an agent may do in a connected app");
+  if (refusal) return c.json(refusal, 403);
+
+  const agentId = c.req.query("agentId");
+  const connectionId = c.req.query("connectionId");
+  if (!agentId || !connectionId) {
+    return c.json({ error: "agentId and connectionId are required" }, 400);
+  }
+  // Taking it away is never the riskier direction, so any writer who can edit
+  // the agent may (0140).
+  const { error } = await c
+    .get("db")
+    .from("tool_connection_grants")
+    .delete()
+    .eq("agent_id", agentId)
+    .eq("tool_connection_id", connectionId);
+  if (error) return c.json({ error: "failed to remove that permission" }, 500);
+  return c.body(null, 204);
+});
 
 toolConnections.get("/tool-connections", async (c) => {
   const db = c.get("db");

@@ -1493,6 +1493,16 @@ export const api = {
    */
   toolConnections: {
     list: (): Promise<ToolConnectionsResponse> => request("GET", "/tool-connections"),
+    /** Which agents may change things in which connections without asking (0140). */
+    grants: (agentId?: string): Promise<{ grants: ToolConnectionGrant[] }> =>
+      request("GET", `/tool-connection-grants${agentId ? `?agentId=${agentId}` : ""}`),
+    setGrant: (input: { agentId: string; connectionId: string }): Promise<ToolConnectionGrant> =>
+      request("PUT", "/tool-connection-grants", input),
+    removeGrant: (input: { agentId: string; connectionId: string }): Promise<void> =>
+      request(
+        "DELETE",
+        `/tool-connection-grants?agentId=${input.agentId}&connectionId=${input.connectionId}`,
+      ),
     create: (input: {
       label: string;
       transport: "http" | "sql";
@@ -1584,20 +1594,6 @@ export const api = {
      */
     complete: (nonce: string): Promise<{ status: string }> =>
       request("POST", "/composio/complete", { nonce }),
-    grants: (agentId?: string): Promise<{ grants: ToolConnectionGrant[] }> =>
-      request("GET", `/composio/grants${agentId ? `?agentId=${agentId}` : ""}`),
-    setGrant: (input: {
-      agentId: string;
-      connectionId: string;
-      slug: string;
-      mode: "ask" | "always";
-    }): Promise<ToolConnectionGrant> => request("PUT", "/composio/grants", input),
-    removeGrant: (input: { agentId: string; connectionId: string; slug: string }): Promise<void> =>
-      request(
-        "DELETE",
-        `/composio/grants?agentId=${input.agentId}&connectionId=${input.connectionId}` +
-          `&slug=${encodeURIComponent(input.slug)}`,
-      ),
   },
   /**
    * The other road to a database: a Supabase account, and the projects it

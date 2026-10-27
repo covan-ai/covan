@@ -90,26 +90,6 @@ function appWith(spec: { role?: string; row?: Record<string, unknown> | null } =
       tool_connections: {
         select: () => ({ data: spec.row === undefined ? ROW : spec.row, error: null }),
       },
-      tool_connection_grants: {
-        select: () => ({ data: [], error: null }),
-        // An upsert lands on the insert handler, which is what PostgREST makes
-        // of one — see `fakeDb`.
-        insert: (ctx) => {
-          const values = ctx.values as Record<string, unknown>;
-          return {
-            data: {
-              agent_id: values.agent_id,
-              tool_connection_id: values.tool_connection_id,
-              slug: values.slug,
-              mode: values.mode,
-              granted_by: USER.id,
-              granted_at: "2026-09-24T10:00:00Z",
-            },
-            error: null,
-          };
-        },
-        delete: () => ({ data: null, error: null }),
-      },
     },
   };
   const { db } = fakeDb(dbSpec);
@@ -818,28 +798,6 @@ describe("GET /composio/categories", () => {
     const { status, body } = await call(appWith(), "GET", "/composio/categories");
     expect(status).toBe(200);
     expect(body.categories).toEqual([{ id: "productivity", name: "Productivity" }]);
-  });
-});
-
-describe("grants", () => {
-  it("goes through the caller's own client, so the policies decide", async () => {
-    const { status, body } = await call(appWith({ role: "member" }), "PUT", "/composio/grants", {
-      agentId: "11111111-1111-4111-8111-111111111111",
-      connectionId: "22222222-2222-4222-8222-222222222222",
-      slug: "GMAIL_SEND_EMAIL",
-      mode: "ask",
-    });
-    expect(status).toBe(200);
-    expect(body.mode).toBe("ask");
-    // Nothing on this path touches the service role: 0063's WITH CHECK is what
-    // refuses an `always` from somebody who is not an admin, and re-asking that
-    // question here would be a second permission system.
-    expect(serviceFrom).not.toHaveBeenCalled();
-  });
-
-  it("refuses a delete that does not name the whole key", async () => {
-    const { status } = await call(appWith(), "DELETE", "/composio/grants?agentId=a");
-    expect(status).toBe(400);
   });
 });
 

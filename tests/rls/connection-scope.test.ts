@@ -96,8 +96,6 @@ describe("a connected service", () => {
       agent_id: seeded.agentId,
       tool_connection_id: gmail,
       workspace_id: admin.workspaceId,
-      slug: "GMAIL_SEND_EMAIL",
-      mode: "always",
     });
     expect(error).not.toBeNull();
   });

@@ -239,7 +239,7 @@ function IntegrationsPage() {
       <SectionTitle
         title={t("Integrations")}
         lede={t(
-          "What the agents can read and where they can write. Each one is turned on per agent in its Configuration.",
+          "Agents read what you connect without asking, and ask before changing anything unless you said not to for that app. Each one is turned on per agent in its Configuration.",
         )}
         action={
           <div className="flex items-center gap-2">
@@ -289,7 +289,7 @@ function IntegrationsPage() {
           ) : null}
           <ConnectedApps connections={apps} agents={agents} />
           {services.map((connection) => (
-            <ToolConnectionRow key={connection.id} connection={connection} />
+            <ToolConnectionRow key={connection.id} connection={connection} agents={agents} />
           ))}
         </ul>
       )}

@@ -24,7 +24,6 @@ const routine: Routine = {
   endsAfterRuns: null,
   runsDone: 0,
   browserAccess: "off" as const,
-  browserSite: null,
   browserConversationId: null,
   status: "active",
   pausedReason: null,

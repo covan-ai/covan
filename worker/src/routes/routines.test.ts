@@ -1032,12 +1032,11 @@ describe("PATCH /routines/:id on a finished series", () => {
 });
 
 /**
- * The browser setting (0100): the owner's one approval for every run, and the
- * one host a `site` run may sign in to — normalised the way a saved login's
- * host is, and required before `site` can be chosen.
+ * The browser setting (0100, 0141): the owner's one approval for every run,
+ * on or off.
  */
 describe("PATCH /routines/:id, the browser", () => {
-  function patchWith(current: { browser_site: string | null }) {
+  function patchWith(current: Record<string, unknown>) {
     const updates: Array<Record<string, unknown>> = [];
     const request = appWith({
       tables: {
@@ -1068,7 +1067,7 @@ describe("PATCH /routines/:id, the browser", () => {
   }
 
   it("turns it on as in a conversation", async () => {
-    const { request, updates } = patchWith({ browser_site: null });
+    const { request, updates } = patchWith({});
 
     const { status, body } = await request("PATCH", "/routines/routine-1", {
       browserAccess: "all",
@@ -1079,50 +1078,24 @@ describe("PATCH /routines/:id, the browser", () => {
     expect(body.browserAccess).toBe("all");
   });
 
-  it("stores the one site as a bare host", async () => {
-    const { request, updates } = patchWith({ browser_site: null });
+  it("refuses `site`, which no longer exists", async () => {
+    const { request, updates } = patchWith({});
 
     const { status } = await request("PATCH", "/routines/routine-1", {
-      browserAccess: "site",
-      browserSite: "https://www.LinkedIn.com/login",
-    });
-
-    expect(status).toBe(200);
-    expect(updates[0]).toMatchObject({ browser_access: "site", browser_site: "linkedin.com" });
-  });
-
-  it("refuses `site` with no site, here or on the row", async () => {
-    const { request, updates } = patchWith({ browser_site: null });
-
-    const { status, body } = await request("PATCH", "/routines/routine-1", {
       browserAccess: "site",
     });
 
     expect(status).toBe(400);
-    expect(body.error).toMatch(/one site/);
     expect(updates).toHaveLength(0);
   });
 
-  it("accepts `site` alone when the row already names one", async () => {
-    const { request, updates } = patchWith({ browser_site: "linkedin.com" });
+  it("turns it off", async () => {
+    const { request, updates } = patchWith({});
 
-    const { status } = await request("PATCH", "/routines/routine-1", { browserAccess: "site" });
+    const { status } = await request("PATCH", "/routines/routine-1", { browserAccess: "off" });
 
     expect(status).toBe(200);
-    expect(updates[0]).toMatchObject({ browser_access: "site" });
-    expect(updates[0]).not.toHaveProperty("browser_site");
-  });
-
-  it("refuses a site that is not a host", async () => {
-    const { request, updates } = patchWith({ browser_site: null });
-
-    const { status } = await request("PATCH", "/routines/routine-1", {
-      browserAccess: "site",
-      browserSite: "intranet",
-    });
-
-    expect(status).toBe(400);
-    expect(updates).toHaveLength(0);
+    expect(updates[0]).toMatchObject({ browser_access: "off" });
   });
 });
 

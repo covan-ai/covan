@@ -1,8 +1,4 @@
-import {
-  MAX_WAIT_MINUTES,
-  MIN_WAIT_MINUTES,
-  scheduleContinuation,
-} from "../../continuations/rows";
+import { MAX_WAIT_MINUTES, MIN_WAIT_MINUTES, scheduleContinuation } from "../../continuations/rows";
 import type { AgentTool, ToolContext, ToolEnv, ToolResult } from "../registry";
 
 /**

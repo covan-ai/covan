@@ -116,18 +116,15 @@ describe("continue_later", () => {
 
   it("writes the row from the turn's own ids and the model's two values", async () => {
     await continueLaterTool.run({ minutes: 15, note: "  open the link  " }, ctx());
-    expect(scheduleContinuation).toHaveBeenCalledWith(
-      expect.anything(),
-      {
-        workspaceId: "w1",
-        agentId: "a1",
-        userId: "u1",
-        sessionId: "s1",
-        routineRunId: null,
-        minutes: 15,
-        note: "open the link",
-      },
-    );
+    expect(scheduleContinuation).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: "w1",
+      agentId: "a1",
+      userId: "u1",
+      sessionId: "s1",
+      routineRunId: null,
+      minutes: 15,
+      note: "open the link",
+    });
   });
 
   it("tells the model the turn ends and when it wakes", async () => {

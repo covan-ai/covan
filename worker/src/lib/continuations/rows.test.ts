@@ -157,8 +157,7 @@ describe("scheduleContinuation", () => {
 });
 
 describe("chainPending", () => {
-  const db = (seed: Partial<Record<string, Row[]>>) =>
-    store(seed).db as unknown as SupabaseClient;
+  const db = (seed: Partial<Record<string, Row[]>>) => store(seed).db as unknown as SupabaseClient;
 
   it("is pending while a wake-up waits", async () => {
     const d = db({
@@ -195,7 +194,11 @@ describe("chainPending", () => {
     };
     expect(await chainPending(db({ browser_tasks: [task] }), "run-1", NOW)).toBe(true);
     expect(
-      await chainPending(db({ browser_tasks: [{ ...task, delivered_at: at(-180) }] }), "run-1", NOW),
+      await chainPending(
+        db({ browser_tasks: [{ ...task, delivered_at: at(-180) }] }),
+        "run-1",
+        NOW,
+      ),
     ).toBe(false);
     expect(
       await chainPending(db({ browser_tasks: [{ ...task, continued_at: at(-1) }] }), "run-1", NOW),
@@ -225,7 +228,12 @@ describe("cancelContinuations and settleContinuation", () => {
     });
     await cancelContinuations(d.db as unknown as SupabaseClient, "run-1", NOW);
     const byId = Object.fromEntries(d.tables.continuations.map((r) => [r.id, r.status]));
-    expect(byId).toEqual({ "c-1": "cancelled", "c-2": "cancelled", "c-3": "done", "c-4": "waiting" });
+    expect(byId).toEqual({
+      "c-1": "cancelled",
+      "c-2": "cancelled",
+      "c-3": "done",
+      "c-4": "waiting",
+    });
     expect(d.tables.continuations[0]).toMatchObject({ finished_at: NOW.toISOString() });
   });
 

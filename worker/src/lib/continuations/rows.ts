@@ -78,8 +78,7 @@ function problem(error: { code?: string; message?: string } | null): {
 }
 
 export type Scheduled =
-  | { kind: "ok"; id: string; wakeAt: Date }
-  | { kind: "refused"; message: string };
+  { kind: "ok"; id: string; wakeAt: Date } | { kind: "refused"; message: string };
 
 /**
  * Write the wake-up, or say why not.

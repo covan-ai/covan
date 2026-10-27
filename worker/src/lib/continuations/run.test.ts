@@ -157,7 +157,9 @@ describe("runContinuationTurn", () => {
     // The conversation came with it, oldest first, after the system prefix.
     const roles = opts.request.messages.map((m) => m.role);
     expect(roles[0]).toBe("system");
-    expect(opts.request.messages[1]).toMatchObject({ content: "make a video and post it to Slack" });
+    expect(opts.request.messages[1]).toMatchObject({
+      content: "make a video and post it to Slack",
+    });
     expect(String(opts.request.messages[0].content)).toContain("marketing team's agent");
     expect(String(opts.request.messages[0].content)).toContain("Nobody is watching");
 
@@ -197,7 +199,13 @@ describe("runContinuationTurn", () => {
   it("tells browse a browser was approved here before", async () => {
     const db = seed({
       browser_tasks: [
-        { id: "t-0", session_id: "sess-1", user_id: "user-1", status: "finished", created_at: at(-15) },
+        {
+          id: "t-0",
+          session_id: "sess-1",
+          user_id: "user-1",
+          status: "finished",
+          created_at: at(-15),
+        },
       ],
     });
     await run(db);
@@ -208,18 +216,24 @@ describe("runContinuationTurn", () => {
   it("reads only this person's tasks as the approval", async () => {
     const db = seed({
       browser_tasks: [
-        { id: "t-0", session_id: "sess-1", user_id: "user-2", status: "finished", created_at: at(-15) },
+        {
+          id: "t-0",
+          session_id: "sess-1",
+          user_id: "user-2",
+          status: "finished",
+          created_at: at(-15),
+        },
       ],
     });
     await run(db);
-    expect(turn.mock.calls[0][0].ctx.continuation).toEqual({ id: "cont-1", browserApproved: false });
+    expect(turn.mock.calls[0][0].ctx.continuation).toEqual({
+      id: "cont-1",
+      browserApproved: false,
+    });
   });
 
   it("a wake-up for a conversation that is gone fails without a message", async () => {
-    for (const session of [
-      { deleted_at: at(-5) },
-      { user_id: "user-2" },
-    ]) {
+    for (const session of [{ deleted_at: at(-5) }, { user_id: "user-2" }]) {
       const db = seed({
         chat_sessions: [
           {
@@ -299,16 +313,20 @@ describe("runContinuationTurn", () => {
 
   it("does not nudge while the chain goes on", async () => {
     const waiting = seed({
-      continuations: [
-        { id: "c-next", session_id: "sess-1", status: "waiting", created_at: at(0) },
-      ],
+      continuations: [{ id: "c-next", session_id: "sess-1", status: "waiting", created_at: at(0) }],
     });
     await run(waiting);
     expect(nudge).not.toHaveBeenCalled();
 
     const browsing = seed({
       browser_tasks: [
-        { id: "t-new", session_id: "sess-1", user_id: "user-1", status: "queued", created_at: at(0) },
+        {
+          id: "t-new",
+          session_id: "sess-1",
+          user_id: "user-1",
+          status: "queued",
+          created_at: at(0),
+        },
       ],
     });
     await run(browsing);
@@ -344,9 +362,18 @@ describe("runContinuationTurn", () => {
     const [workspaceId, spends, ref] = record.mock.calls[0];
     expect(workspaceId).toBe("ws-1");
     expect(spends).toEqual([
-      expect.objectContaining({ kind: "completion", promptTokens: 120, completionTokens: 30, purpose: "reply" }),
+      expect.objectContaining({
+        kind: "completion",
+        promptTokens: 120,
+        completionTokens: 30,
+        purpose: "reply",
+      }),
     ]);
-    expect(ref).toMatchObject({ userId: "user-1", sessionId: "sess-1", messageId: db.tables.messages.at(-1)?.id });
+    expect(ref).toMatchObject({
+      userId: "user-1",
+      sessionId: "sess-1",
+      messageId: db.tables.messages.at(-1)?.id,
+    });
   });
 
   describe("a routine's wake-up", () => {
@@ -408,7 +435,15 @@ describe("runContinuationTurn", () => {
     it("offers no browser to a routine whose owner turned it off", async () => {
       const db = seed({
         routine_runs: [{ id: "run-1", routine_id: "r-1", status: "waiting", started_at: at(-30) }],
-        routines: [{ id: "r-1", browser_access: "off", browser_site: null, timezone: "UTC", instruction: "x" }],
+        routines: [
+          {
+            id: "r-1",
+            browser_access: "off",
+            browser_site: null,
+            timezone: "UTC",
+            instruction: "x",
+          },
+        ],
       });
       await run(db, ROUTINE_WAKE);
       expect(capabilities).toHaveBeenCalledWith(expect.objectContaining({ browser: false }));

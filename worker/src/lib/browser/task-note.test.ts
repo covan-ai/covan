@@ -144,7 +144,12 @@ describe("browserTaskNote", () => {
   it("names the wake-up already set, so a watched turn does not set a second (0142)", async () => {
     const { db } = dbWith(
       [{ task: "submit the prompt", status: "finished" }],
-      [{ note: "open the link and see whether the video is done", wake_at: "2026-10-11T16:15:00.000Z" }],
+      [
+        {
+          note: "open the link and see whether the video is done",
+          wake_at: "2026-10-11T16:15:00.000Z",
+        },
+      ],
     );
     const note = String(await browserTaskNote(db, "sess-1", NOW));
     expect(note).toContain(

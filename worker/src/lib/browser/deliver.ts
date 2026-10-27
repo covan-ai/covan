@@ -709,7 +709,13 @@ async function notify(
   db: SupabaseClient,
   content: string,
 ): Promise<void> {
-  await nudge(env, db, row.user_id, { subject: "Your browser task is done", body: content }, row.id);
+  await nudge(
+    env,
+    db,
+    row.user_id,
+    { subject: "Your browser task is done", body: content },
+    row.id,
+  );
 }
 
 /**

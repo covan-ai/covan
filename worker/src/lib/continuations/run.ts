@@ -3,12 +3,7 @@ import type { RoutineEnv } from "../../types";
 import { nudge } from "../browser/deliver";
 import { browserTaskNote } from "../browser/task-note";
 import type { CompletionMessage } from "../completion";
-import {
-  completionSpend,
-  entitlementsFor,
-  spends,
-  type Entitlements,
-} from "../entitlements";
+import { completionSpend, entitlementsFor, spends, type Entitlements } from "../entitlements";
 import { capabilitiesFor } from "../harness/available";
 import { SCHEDULED_MAX_STEPS } from "../harness/budget";
 import { runAgentTurn, type PassUsage } from "../harness/loop";
@@ -218,7 +213,9 @@ export async function runContinuationTurn(
           .join("\n\n"),
       },
       ...history,
-      ...(taskNote ? [{ role: "system" as const, content: taskNote, volatile: true as const }] : []),
+      ...(taskNote
+        ? [{ role: "system" as const, content: taskNote, volatile: true as const }]
+        : []),
       {
         role: "user",
         content:
@@ -353,7 +350,13 @@ export async function runContinuationTurn(
     if (routine) {
       await completeHeldRun(env, routine.runId, { db }, { report: content });
     } else if (await chainEnded(db, wake.sessionId, since)) {
-      await nudge(env, db, wake.userId, { subject: "Your agent came back to this", body: content }, wake.id);
+      await nudge(
+        env,
+        db,
+        wake.userId,
+        { subject: "Your agent came back to this", body: content },
+        wake.id,
+      );
     }
     return { status: "done", text: content };
   } catch (err) {
@@ -378,7 +381,8 @@ async function routineSide(
     .maybeSingle();
   if (runError) return { kind: "error", message: `could not read the run: ${runError.code}` };
   if (!run) return { kind: "error", message: "routine run is gone" };
-  if (run.status !== "waiting") return { kind: "error", message: "routine run is no longer waiting" };
+  if (run.status !== "waiting")
+    return { kind: "error", message: "routine run is no longer waiting" };
 
   const { data: routine, error: routineError } = await db
     .from("routines")

@@ -256,9 +256,9 @@ describe("completeHeldRun", () => {
   it("delivers a woken turn's reply as the report without composing (0142)", async () => {
     const { db } = world();
 
-    expect(
-      await completeHeldRun(env, "run-1", { db }, { report: "the chain's last word" }),
-    ).toBe(true);
+    expect(await completeHeldRun(env, "run-1", { db }, { report: "the chain's last word" })).toBe(
+      true,
+    );
 
     expect(complete).not.toHaveBeenCalled();
     expect(deliver).toHaveBeenCalledOnce();

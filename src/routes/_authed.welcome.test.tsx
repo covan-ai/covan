@@ -292,6 +292,18 @@ describe("the first run", () => {
       expect(screen.getByText("Google Calendar")).toBeInTheDocument();
     });
 
+    it("shows three routines connecting buys, with nothing to press on them", async () => {
+      search = AFTER;
+      h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));
+      await renderWelcome();
+
+      expect(await screen.findByText("Daily brief")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Set up/ })).not.toBeInTheDocument();
+      expect(
+        screen.getByText("Nothing to connect? Pick a routine that needs nothing after setup."),
+      ).toBeInTheDocument();
+    });
+
     it("can be left for later, keeping the agent and its thread", async () => {
       search = AFTER;
       h.me.mockResolvedValue(meWith({ ...EMPTY, completed: true, agentId: "a9" }));

@@ -2240,6 +2240,8 @@
   "That link is incomplete": "Bu bağlantı eksik",
   "That link no longer works": "Bu bağlantı artık çalışmıyor",
   "That needed a sign-in": "Bunun için giriş gerekiyordu",
+  "That request expired. Ask the agent again.": "Bu isteğin süresi doldu. Ajandan yeniden isteyin.",
+  "That request was already answered.": "Bu istek zaten cevaplandı.",
   "That run failed — see the run history for why": "Çalıştırma başarısız oldu — nedenini çalıştırma geçmişinde görebilirsiniz",
   "That schedule can't be read. Try 0 9 * * * for every day at 09:00.": "Bu zamanlama okunamıyor. Her gün saat 09:00 için 0 9 * * * deneyin.",
   "That sent back an address Covan won't open.": "Dönen adres, Covan uygulamasının açmayacağı bir adres.",

@@ -2246,6 +2246,8 @@
   "That link is incomplete": "That link is incomplete",
   "That link no longer works": "That link no longer works",
   "That needed a sign-in": "That needed a sign-in",
+  "That request expired. Ask the agent again.": "That request expired. Ask the agent again.",
+  "That request was already answered.": "That request was already answered.",
   "That run failed — see the run history for why": "That run failed — see the run history for why",
   "That schedule can't be read. Try 0 9 * * * for every day at 09:00.": "That schedule can't be read. Try 0 9 * * * for every day at 09:00.",
   "That sent back an address Covan won't open.": "That sent back an address Covan won't open.",

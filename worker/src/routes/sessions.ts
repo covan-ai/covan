@@ -713,6 +713,56 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
   });
 });
 
+/** A conversation id, checked before it reaches a query. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * GET /sessions/:id/pending-approval — the question this conversation is
+ * waiting on the caller to answer, or null.
+ *
+ * The approval card used to exist only as the `confirm` event of the stream
+ * that parked the turn, held in the tab's memory: a reload, a second tab or
+ * the reminder email's link opened the conversation with the turn parked and
+ * no card to answer it with. This is the same card read back from the row.
+ *
+ * Through the caller's own client and the columns 0060 grants, so the
+ * conversation's own read policy decides whether there is anything to see,
+ * and `messages`/`tool_call` — the prompt itself — are never asked for.
+ * Narrowed to the caller's own question: `POST /chat/confirm/:id` accepts the
+ * answer from nobody else, and a card whose buttons answer 403 is a control
+ * that exists to produce an error.
+ */
+sessions.get("/sessions/:id/pending-approval", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID.test(id)) return c.json({ error: "no such conversation" }, 404);
+  const { data, error } = await c
+    .get("db")
+    .from("paused_turns")
+    .select("id, tool, summary, proposal, expires_at")
+    .eq("session_id", id)
+    .eq("user_id", c.get("user").id)
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) {
+    console.error("could not read the conversation's pending approval", error.code);
+    return c.json({ error: "failed to load the pending approval" }, 500);
+  }
+  const row = (data ?? [])[0] as Record<string, unknown> | undefined;
+  return c.json({
+    pending: row
+      ? {
+          id: String(row.id),
+          tool: String(row.tool ?? ""),
+          summary: String(row.summary ?? ""),
+          proposal: row.proposal ?? null,
+          expiresAt: toEpochMs(row.expires_at as string),
+        }
+      : null,
+  });
+});
+
 /**
  * POST /sessions/:id/browser-tasks/continue — claim the step after the
  * browser (0117), once.
@@ -724,8 +774,6 @@ sessions.get("/sessions/:id/browser-tasks", async (c) => {
  * narrows to the caller by `auth.uid()`, so this route has nothing to check
  * that the claim does not.
  */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 sessions.post("/sessions/:id/browser-tasks/continue", async (c) => {
   const id = c.req.param("id");
   if (!UUID.test(id)) return c.json({ error: "no such conversation" }, 404);

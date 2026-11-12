@@ -1190,12 +1190,27 @@ export const api = {
      * this ask is the one that delivered an answer.
      *
      * A table read rather than an SSE event, and that is the point: the
-     * approval card is driven only by a `confirm` event into in-memory state
-     * and does not survive a reload, while the browser panel has to. It is
-     * also the live endpoint — each call asks the provider how the run is
+     * browser panel has to survive a reload, as the approval card now does
+     * through `pendingApproval`. It is also the live endpoint — each call asks the provider how the run is
      * going — so the panel polls it every three seconds while something is
      * happening and not at all otherwise.
      */
+    /**
+     * The question a parked turn in this conversation is waiting on the
+     * caller to answer, or null: the approval card read back from the row,
+     * for a screen that was not open when the stream asked.
+     */
+    pendingApproval: (
+      id: string,
+    ): Promise<{
+      pending: {
+        id: string;
+        tool: string;
+        summary: string;
+        proposal: unknown;
+        expiresAt: number;
+      } | null;
+    }> => request("GET", `/sessions/${id}/pending-approval`),
     browserTasks: (id: string): Promise<ConversationBrowser> =>
       request("GET", `/sessions/${id}/browser-tasks`),
     /**

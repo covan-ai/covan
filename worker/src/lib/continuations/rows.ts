@@ -220,6 +220,22 @@ export async function chainPending(
   }
   if ((open ?? []).length > 0) return true;
 
+  // A request of the run's waiting on a person (0143), or answered and not
+  // yet settled by the cron: the report is what that answer finishes, a yes
+  // by carrying on and a no by saying what was not done.
+  const { data: asking, error: askingError } = await db
+    .from("paused_turns")
+    .select("id")
+    .eq("routine_run_id", routineRunId)
+    .in("status", ["pending", "approved", "declined"])
+    .is("resumed_at", null)
+    .limit(1);
+  if (askingError) {
+    console.error("could not read a run's requests", routineRunId, problem(askingError));
+    return false;
+  }
+  if ((asking ?? []).length > 0) return true;
+
   const { data: tasks, error: taskError } = await db
     .from("browser_tasks")
     .select("then_step, continued_at, delivered_at")

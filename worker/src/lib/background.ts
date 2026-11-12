@@ -16,6 +16,7 @@ import { sendNeedsYouReminders } from "./reports/needs-you";
 import { runWeeklySummaries } from "./reports/weekly-summary";
 import { sweepArrivalScans } from "./arrivals/scan";
 import { runDueContinuations } from "./continuations/dispatch";
+import { settleApprovals } from "./approvals/dispatch";
 
 /**
  * One scheduled tick, for both Workers that have one.
@@ -74,6 +75,20 @@ export async function runScheduledWork(env: RoutineEnv): Promise<void> {
     return { claimed: 0 };
   });
   if (continued.claimed > 0) return;
+
+  /**
+   * A request nobody was watching when it was made, answered since — on the
+   * app's page or by replying to the email — and carried on with here, the
+   * one place a yes turns into the action (0143). Beside the wake-ups because
+   * it is one: a scheduled run's turn, picked up again. The same either/or,
+   * and its idle tick costs its two claims. Its failure is logged and the
+   * tick goes on.
+   */
+  const approvals = await settleApprovals(env).catch((err) => {
+    console.error("approvals: the stage failed", err);
+    return { settled: 0 };
+  });
+  if (approvals.settled > 0) return;
 
   /**
    * Abandoned takeovers first, and the order is the whole point.

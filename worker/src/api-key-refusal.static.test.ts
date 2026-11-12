@@ -72,6 +72,8 @@ const HANDLERS_BEYOND_THE_KEY: Record<string, string> = {
   "routes/memory.ts DELETE /memory/:id":
     "removes a note for good, with no thirty-day undo, so a leaked key could wipe what a team taught its agents past any revocation",
   // -- keys and the account
+  "routes/approvals.ts POST /approvals/:id/answer":
+    "a yes sets off what an agent asked to do, on the owner's standing, after the key that said it is revoked; a yes is a person's",
   "routes/api-keys.ts POST /api-keys":
     "mints a key, and a key that writes successors cannot be revoked: the moment one leaks it makes more",
   "routes/api-keys.ts DELETE /api-keys/:id":
@@ -359,6 +361,8 @@ const OPEN_TO_A_KEY = new Set([
   // A read, and an empty one for a key: 0087's restrictive policy keeps a
   // key's token out of `paused_turns` in every workspace.
   "routes/sessions.ts GET /sessions/:id/pending-approval",
+  // The same read, of one request: empty for a key, for the same reason.
+  "routes/approvals.ts GET /approvals/:id",
   // 0117. Marks a step claimed and starts nothing: the turn after it is an
   // ordinary chat request, which a key may already make.
   "routes/sessions.ts POST /sessions/:id/browser-tasks/continue",

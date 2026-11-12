@@ -13,7 +13,7 @@ import { writeSteps } from "../lib/harness/turn";
 import { priorOfferings, priorSearches } from "../lib/harness/offerings";
 import type { MessageOutcome, TurnUsage } from "../lib/harness/usage";
 import type { AgentTool, ToolContext, ToolEnv } from "../lib/harness/registry";
-import type { ComposioTool } from "../lib/composio/client";
+import { approvedOperation } from "../lib/harness/resume";
 import type { KnowledgeScope, RetrievedSource } from "../lib/retrieval";
 import { isRuntimeLimit, type RuntimeLimitFlag } from "../lib/runtime-limit";
 import type { ModelProvider } from "../lib/models";
@@ -58,29 +58,6 @@ import { completionSpend, spends, type Entitlements } from "../lib/entitlements"
  */
 export const CUT_SHORT =
   "This turn stopped before it could answer. What it had already done is below.";
-
-/**
- * The catalogue row carried in an approved `run_tool` proposal, as the map
- * `ToolContext.offeredOperations` is.
- *
- * Read defensively because the column is `jsonb` and because the shape is only
- * ever as good as the turn that wrote it: a row with no slug has no key, and
- * one with no toolkit cannot answer the check it exists for. Either way the
- * answer is an empty map rather than a half-filled entry — an operation
- * assembled out of guesses would have the approved call checked against
- * fiction, which is worse than checking it against nothing.
- */
-function approvedOperation(proposal: unknown): Map<string, ComposioTool> {
-  const empty = new Map<string, ComposioTool>();
-  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return empty;
-  const row = proposal as Record<string, unknown>;
-  if (row.kind !== "run_tool") return empty;
-  const operation = row.operation;
-  if (!operation || typeof operation !== "object" || Array.isArray(operation)) return empty;
-  const candidate = operation as Record<string, unknown>;
-  if (typeof candidate.slug !== "string" || typeof candidate.toolkit !== "string") return empty;
-  return new Map([[candidate.slug, candidate as unknown as ComposioTool]]);
-}
 
 /**
  * What a tool is told about who is asking, built once so neither route can

@@ -222,6 +222,14 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "lib/continuations/dispatch.ts",
     "the wake-up engine's tick (0142): the cron has no caller, so it claims with claim_due_continuations and claim_browser_continuations_unwatched, both service_role only, and writes each wake-up's outcome on the row it claimed. It reads nothing else; the turn itself is lib/continuations/run.ts, under its own entry",
   ],
+  [
+    "lib/approvals/dispatch.ts",
+    "the tick that acts on answered requests (0143): the cron has no caller, so it claims with claim_answered_approvals and expire_unattended_approvals, both service_role only, each handing a row out once. It writes nothing itself; what is done with each row is lib/approvals/resume.ts, under its own entry",
+  ],
+  [
+    "lib/approvals/resume.ts",
+    "carrying on after somebody answered a request nobody was watching (0143): the tick has no caller and no JWT, so it runs as lib/continuations/run.ts does — the owner as the caller, every id from the one paused_turns row the claim handed it, whose ids an authenticated turn wrote. Who may answer was decided in Postgres by answer_approval before the row was claimable; this asks again that the conversation is still the owner's and not deleted, the owner is still a member and may use the agent, the routine is still on and its run still waiting, and the workspace has credits, before any tool runs. It writes the rest of the one reply that asked, its steps, the run's draft and the spend on that workspace",
+  ],
 ]);
 
 /**

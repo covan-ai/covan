@@ -11,11 +11,13 @@ const {
   sweepEventSubscriptions,
   sweepArrivalScans,
   runDueContinuations,
+  settleApprovals,
 } = vi.hoisted(() => ({
   runDueRoutines: vi.fn(),
   runDueConnections: vi.fn(),
   pollDueBrowserTasks: vi.fn(),
   runDueContinuations: vi.fn(async () => ({ claimed: 0 })),
+  settleApprovals: vi.fn(async () => ({ settled: 0 })),
   sweepAbandonedTakeovers: vi.fn(),
   sweepConversationBrowsers: vi.fn(),
   startQueuedBrowserTasks: vi.fn(async () => ({ expired: 0, started: 0 })),
@@ -32,6 +34,7 @@ vi.mock("./routines/held", () => ({ sweepHeldRuns }));
 vi.mock("./routines/events/lifecycle", () => ({ sweepEventSubscriptions }));
 vi.mock("./arrivals/scan", () => ({ sweepArrivalScans }));
 vi.mock("./continuations/dispatch", () => ({ runDueContinuations }));
+vi.mock("./approvals/dispatch", () => ({ settleApprovals }));
 
 import { runScheduledWork } from "./background";
 
@@ -68,6 +71,8 @@ describe("runScheduledWork", () => {
     sweepConversationBrowsers.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
     runDueContinuations.mockReset();
     runDueContinuations.mockResolvedValue({ claimed: 0 });
+    settleApprovals.mockReset();
+    settleApprovals.mockResolvedValue({ settled: 0 });
   });
 
   /**
@@ -104,6 +109,42 @@ describe("runScheduledWork", () => {
   it("goes on to the sweeps when the wake-up stage fails", async () => {
     runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
     runDueContinuations.mockRejectedValue(new Error("claim failed"));
+
+    await runScheduledWork(withStore);
+
+    expect(sweepAbandonedTakeovers).toHaveBeenCalled();
+  });
+
+  /**
+   * An answered request (0143) is carried on with right after the wake-ups,
+   * under the same rule: it is a scheduled run's turn, picked up again.
+   */
+  it("carries on with answered requests after the wake-ups, and nothing after", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    settleApprovals.mockResolvedValue({ settled: 1 });
+
+    await runScheduledWork(withStore);
+
+    expect(settleApprovals).toHaveBeenCalledWith(withStore);
+    expect(runDueContinuations.mock.invocationCallOrder[0]).toBeLessThan(
+      settleApprovals.mock.invocationCallOrder[0],
+    );
+    expect(sweepAbandonedTakeovers).not.toHaveBeenCalled();
+    expect(runDueConnections).not.toHaveBeenCalled();
+  });
+
+  it("does not reach the requests on a tick that woke a continuation", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    runDueContinuations.mockResolvedValue({ claimed: 1 });
+
+    await runScheduledWork(withStore);
+
+    expect(settleApprovals).not.toHaveBeenCalled();
+  });
+
+  it("goes on to the sweeps when the requests stage fails", async () => {
+    runDueRoutines.mockResolvedValue({ claimed: 0, ok: 0, failed: 0 });
+    settleApprovals.mockRejectedValue(new Error("claim failed"));
 
     await runScheduledWork(withStore);
 

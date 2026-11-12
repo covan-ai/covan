@@ -92,11 +92,16 @@ describe("mightConnectToolkit", () => {
         toolkit({ connectKind: null, authSchemes: ["OAUTH2"], managedAuth: false }),
       ),
     ).toBe(false);
+  });
+
+  it("is optimistic about a provider that registers its own OAuth client", () => {
+    // Every MCP application. The tile used to say "Not available yet" over a
+    // card that can now offer Connect.
     expect(
       mightConnectToolkit(
         toolkit({ connectKind: null, authSchemes: ["DCR_OAUTH"], managedAuth: false }),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("never contradicts an answer it has", () => {
@@ -107,6 +112,7 @@ describe("mightConnectToolkit", () => {
       "managed_oauth",
       "no_auth",
       "user_credential",
+      "dcr_oauth",
       "needs_setup",
       null,
     ];

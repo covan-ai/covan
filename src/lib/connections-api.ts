@@ -148,7 +148,8 @@ export type ComposioToolkit = {
  * What connecting an application requires. The worker derives it; see
  * `worker/src/lib/composio/client.ts` for how.
  */
-export type ComposioConnectKind = "no_auth" | "managed_oauth" | "user_credential" | "needs_setup";
+export type ComposioConnectKind =
+  "no_auth" | "managed_oauth" | "user_credential" | "dcr_oauth" | "needs_setup";
 
 /**
  * The credential schemes a tile may optimistically offer.
@@ -192,7 +193,10 @@ export function mightConnectToolkit(toolkit: ComposioToolkit): boolean {
   return (
     canConnectToolkit(toolkit) ||
     // A scheme id like "api_key", not a word. i18n-ignore
-    toolkit.authSchemes.some((scheme) => SELF_SUPPLIED.has(scheme.toUpperCase()))
+    toolkit.authSchemes.some((scheme) => SELF_SUPPLIED.has(scheme.toUpperCase())) ||
+    // Every MCP application: the provider registers its own OAuth client, so
+    // there is a consent screen and nothing to set up first. i18n-ignore
+    toolkit.authSchemes.some((scheme) => scheme.toUpperCase() === "DCR_OAUTH")
   );
 }
 

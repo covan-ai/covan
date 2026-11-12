@@ -587,6 +587,63 @@ describe("createLink", () => {
     expect(out).toMatchObject({ kind: "ok", redirectUrl: "https://consent.test/x" });
   });
 
+  it("asks for a self-registering OAuth config, in the shape the live API took", async () => {
+    // 201 on 2026-11-12 for exactly this body, and the link made against it
+    // came back with a page.
+    const { impl, calls } = sequenced([
+      [/auth_configs\?/, { items: [] }],
+      [
+        /auth_configs$/,
+        { auth_config: { id: "ac_dcr", auth_scheme: "DCR_OAUTH", is_composio_managed: false } },
+      ],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    const out = await createLink(
+      ENV,
+      { toolkit: "granola_mcp", userId: "cu_1", plan: { kind: "dcr_oauth" } },
+      { fetchImpl: impl as never },
+    );
+
+    expect(calls[1].body).toEqual({
+      toolkit: { slug: "GRANOLA_MCP" },
+      auth_config: {
+        type: "use_custom_auth",
+        authScheme: "DCR_OAUTH",
+        credentials: {},
+        name: "covan:DCR_OAUTH",
+      },
+    });
+    expect(out).toMatchObject({ kind: "ok", redirectUrl: "https://consent.test/x" });
+  });
+
+  it("reuses the self-registering config it made last time", async () => {
+    const { impl, calls } = sequenced([
+      [
+        /auth_configs\?/,
+        {
+          items: [
+            {
+              id: "ac_dcr",
+              toolkit: { slug: "granola_mcp" },
+              auth_scheme: "DCR_OAUTH",
+              is_composio_managed: false,
+            },
+          ],
+        },
+      ],
+      [/connected_accounts\/link/, LINKED],
+    ]);
+    const out = await createLink(
+      ENV,
+      { toolkit: "granola_mcp", userId: "cu_1", plan: { kind: "dcr_oauth" } },
+      { fetchImpl: impl as never },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].body).toMatchObject({ auth_config_id: "ac_dcr" });
+    expect(out.kind).toBe("ok");
+  });
+
   it("will not hand a credential request somebody's OAuth config", async () => {
     // Linear legitimately has both. Matching on the slug alone would send a
     // person after an API key to a consent screen, or hand the next managed
@@ -1043,16 +1100,46 @@ describe("connectKind", () => {
     expect(toolkit.connectKind).toBe("needs_setup");
   });
 
-  it("refuses a mode that requires nothing of anybody, which is every MCP toolkit", async () => {
-    // The ninety-five `DCR_OAUTH` toolkits require nothing at either stage.
-    // Classified on "needs nothing from an operator" alone, every one of them
-    // would be sent to a hosted page with no field on it.
+  it("says a consent screen for a provider that registers its own client, which is every MCP toolkit", async () => {
+    // The ninety-five `DCR_OAUTH` toolkits require nothing at either stage,
+    // and that is not a hosted page with no field on it: the provider hands
+    // out an OAuth client on request, so the link goes to its own consent
+    // screen. Probed 2026-11-12 against `granola_mcp`.
     const toolkit = await detail({
-      slug: "AHREFS_MCP",
-      name: "Ahrefs MCP",
-      auth_config_details: [mode("DCR_OAUTH", [], undefined)],
+      slug: "GRANOLA_MCP",
+      name: "Granola MCP",
+      composio_managed_auth_schemes: [],
+      auth_config_details: [mode("DCR_OAUTH", [], [])],
     });
-    expect(toolkit.connectKind).toBe("needs_setup");
+    expect(toolkit.connectKind).toBe("dcr_oauth");
+    expect(toolkit.credentialScheme).toBe("");
+  });
+
+  it("refuses a self-registering mode that still wants something of an operator", async () => {
+    // The rule is which side of the setup line a required field falls on, as
+    // it is for an API key — and a row that does not say is not a row that
+    // says nothing is required.
+    const asked = await detail({
+      slug: "X_MCP",
+      name: "X MCP",
+      auth_config_details: [mode("DCR_OAUTH", ["client_id"], [])],
+    });
+    expect(asked.connectKind).toBe("needs_setup");
+    const silent = await detail({
+      slug: "Y_MCP",
+      name: "Y MCP",
+      auth_config_details: [mode("DCR_OAUTH", undefined, undefined)],
+    });
+    expect(silent.connectKind).toBe("needs_setup");
+  });
+
+  it("still prefers a key the user supplies over self-registration, so nothing that connects today moves", async () => {
+    const toolkit = await detail({
+      slug: "Z_MCP",
+      name: "Z MCP",
+      auth_config_details: [mode("DCR_OAUTH", [], []), mode("API_KEY", [], ["generic_api_key"])],
+    });
+    expect(toolkit.connectKind).toBe("user_credential");
   });
 
   it("refuses an API key whose key belongs to whoever set Covan up", async () => {
@@ -1252,8 +1339,8 @@ describe("authConfigPlanFor", () => {
     const open = toolkit({ connectKind: "no_auth", managedAuth: true });
     expect(authConfigPlanFor(open)).toBeNull();
     expect(connectsWithoutAccount(open)).toBe(true);
-    // And the other three kinds are not that question's business.
-    for (const kind of ["managed_oauth", "user_credential", "needs_setup"] as const) {
+    // And the other four kinds are not that question's business.
+    for (const kind of ["managed_oauth", "user_credential", "dcr_oauth", "needs_setup"] as const) {
       expect(connectsWithoutAccount(toolkit({ connectKind: kind })), kind).toBe(false);
     }
     expect(
@@ -1262,6 +1349,7 @@ describe("authConfigPlanFor", () => {
     expect(
       authConfigPlanFor(toolkit({ connectKind: "user_credential", credentialScheme: "BASIC" })),
     ).toEqual({ kind: "user_credential", scheme: "BASIC" });
+    expect(authConfigPlanFor(toolkit({ connectKind: "dcr_oauth" }))).toEqual({ kind: "dcr_oauth" });
   });
 
   it("has no plan for an application somebody must set up first", () => {

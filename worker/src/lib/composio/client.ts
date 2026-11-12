@@ -172,8 +172,15 @@ export type ComposioTool = {
  *
  * `needs_setup` is the only one that is a job rather than a flow: somebody has
  * to put something into Composio's dashboard before anybody can connect.
+ *
+ * `dcr_oauth` is the fifth, and the one every MCP toolkit publishes: the
+ * provider registers an OAuth client on request (RFC 7591), so there is a
+ * consent screen and no client for Composio or an operator to have registered
+ * first. To the person connecting it is `managed_oauth`; it is its own member
+ * because the config behind it is not.
  */
-export type ComposioConnectKind = "no_auth" | "managed_oauth" | "user_credential" | "needs_setup";
+export type ComposioConnectKind =
+  "no_auth" | "managed_oauth" | "user_credential" | "dcr_oauth" | "needs_setup";
 
 /**
  * Which kind of auth config a connect attempt needs at Composio.
@@ -193,7 +200,7 @@ export type ComposioConnectKind = "no_auth" | "managed_oauth" | "user_credential
  * `createLink` for one.
  */
 export type AuthConfigPlan =
-  { kind: "managed_oauth" } | { kind: "user_credential"; scheme: string };
+  { kind: "managed_oauth" } | { kind: "user_credential"; scheme: string } | { kind: "dcr_oauth" };
 
 /** One application, as the catalogue lists it. */
 export type ComposioToolkit = {
@@ -236,7 +243,7 @@ export type ComposioToolkit = {
    *
    * Null means *this row cannot say*, which is the honest answer for a
    * catalogue list row: it can prove no-sign-in and managed OAuth and is
-   * silent about the rest. A detail row is always one of the four. The
+   * silent about the rest. A detail row is always one of the five. The
    * nullability is what keeps the field truthful on both paths instead of
    * quietly empty on one.
    */
@@ -867,14 +874,36 @@ function requiredCount(mode: Record<string, unknown>, stage: string): number | n
  *
  * The second half is load-bearing and easy to leave out. Without it every one
  * of the ninety-five `DCR_OAUTH` toolkits qualifies, because they require
- * nothing at either stage, and each would be sent to a hosted page with no
- * field on it. With it, they fall through to `needs_setup` on their own
- * merits. The same clause is what keeps `lever` and `brex` out, whose API-key
- * modes do require a field of their operator.
+ * nothing at either stage, and each would be offered as a credential nobody
+ * has. With it, they are left for `registersItself` to answer. The same clause
+ * is what keeps `lever` and `brex` out, whose API-key modes do require a field
+ * of their operator.
  */
 function userSupplies(mode: Record<string, unknown>): boolean {
   const initiation = requiredCount(mode, INITIATION);
   return requiredCount(mode, CREATION) === 0 && initiation !== null && initiation >= 1;
+}
+
+/** Composio's name for OAuth against a client the provider registers on request. */
+const DCR_OAUTH = "DCR_OAUTH";
+
+/**
+ * Whether this mode is OAuth with nothing for an operator to register first.
+ *
+ * Every MCP toolkit publishes one. They used to land on `needs_setup`, on the
+ * reasoning that a mode requiring nothing of anybody is a hosted page with no
+ * field on it — and it is not: Composio registers a client with the provider
+ * when the person arrives, and the link is the provider's own consent screen.
+ * Probed 2026-11-12 against `granola_mcp`: a config with empty credentials is
+ * a 201, and a link against it comes back with a page.
+ *
+ * By name and by fields, both. The name because "requires nothing" alone is
+ * also true of `NO_AUTH`; the fields because a `DCR_OAUTH` mode that did ask
+ * an operator for something would be `needs_setup` on its own merits, exactly
+ * as `lever`'s API key is.
+ */
+function registersItself(mode: Record<string, unknown>): boolean {
+  return text(mode.mode).toUpperCase() === DCR_OAUTH && requiredCount(mode, CREATION) === 0;
 }
 
 /** The mode a credential connect would use, or null when there is none. */
@@ -921,8 +950,9 @@ function allowedHintUrl(raw: string): string {
  *
  * Then, and only for a row that published its modes, the data-driven question:
  * is there a mode that asks nothing of an operator and something of the user?
- * Everything else is `needs_setup`, which is now said to a hundred and
- * fifty-nine applications rather than to fourteen hundred.
+ * Failing that, one that registers its own OAuth client — asked last, so that
+ * no application that connected before it existed is classified differently.
+ * Everything else is `needs_setup`.
  */
 function connectKindOf(
   row: Record<string, unknown>,
@@ -962,7 +992,9 @@ function connectKindOf(
   if (modes === null) return { kind: null, ...none };
 
   const credential = credentialModeOf(modes);
-  if (!credential) return { kind: "needs_setup", ...none };
+  if (!credential) {
+    return { kind: modes.some(registersItself) ? "dcr_oauth" : "needs_setup", ...none };
+  }
   return {
     kind: "user_credential",
     scheme: text(credential.mode).toUpperCase(),
@@ -1038,6 +1070,8 @@ export function authConfigPlanFor(toolkit: ComposioToolkit): AuthConfigPlan | nu
       return toolkit.credentialScheme
         ? { kind: "user_credential", scheme: toolkit.credentialScheme }
         : null;
+    case "dcr_oauth":
+      return { kind: "dcr_oauth" };
     default:
       return null;
   }
@@ -1302,6 +1336,14 @@ function reusableConfig(row: Record<string, unknown>, slug: string, plan: AuthCo
         (text(row.auth_scheme).toUpperCase() === plan.scheme.toUpperCase() ||
           text(row.name) === configName(plan.scheme))
       );
+    // The credential rule, for the same reason: a managed request must never
+    // be handed this config, nor this request a managed one.
+    case "dcr_oauth":
+      return (
+        custom !== false &&
+        (text(row.auth_scheme).toUpperCase() === DCR_OAUTH ||
+          text(row.name) === configName(DCR_OAUTH))
+      );
   }
 }
 
@@ -1343,6 +1385,15 @@ function createBodyFor(plan: AuthConfigPlan): Record<string, unknown> {
         credentials: {},
         name: configName(plan.scheme),
       };
+    // The credential shape with nothing to type: empty credentials here mean
+    // the client is registered with the provider when somebody connects.
+    case "dcr_oauth":
+      return {
+        type: "use_custom_auth",
+        authScheme: DCR_OAUTH,
+        credentials: {},
+        name: configName(DCR_OAUTH),
+      };
   }
 }
 
@@ -1364,6 +1415,13 @@ function echoMismatch(echo: Record<string, unknown>, plan: AuthConfigPlan): stri
     const scheme = text(echo.auth_scheme);
     if (scheme && scheme.toUpperCase() !== plan.scheme.toUpperCase()) {
       return `a ${scheme} config where ${plan.scheme} was asked for`;
+    }
+  }
+  if (plan.kind === "dcr_oauth") {
+    if (managed === true) return "a Composio-managed config rather than a self-registering one";
+    const scheme = text(echo.auth_scheme);
+    if (scheme && scheme.toUpperCase() !== DCR_OAUTH) {
+      return `a ${scheme} config where ${DCR_OAUTH} was asked for`;
     }
   }
   return "";
@@ -1456,9 +1514,11 @@ async function authConfigFor(
         plan.kind === "user_credential"
           ? `Composio would not set up a credential-based sign-in for ${slug}. ` +
             `(${made.message})`
-          : `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
-            `application for it in Composio's dashboard before it can be connected here. ` +
-            `(${made.message})`,
+          : plan.kind === "dcr_oauth"
+            ? `Composio would not set up a sign-in for ${slug}. (${made.message})`
+            : `Composio has no ready-made sign-in for ${slug}. Somebody needs to add an OAuth ` +
+              `application for it in Composio's dashboard before it can be connected here. ` +
+              `(${made.message})`,
     };
   }
 

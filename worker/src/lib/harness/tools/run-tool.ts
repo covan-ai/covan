@@ -566,23 +566,11 @@ export const runToolTool: AgentTool = {
           : null;
 
     if (approval === null) {
-      // Nobody is watching a scheduled run, so an unanswerable question is
-      // worse than an honest failure: `needs_confirmation` would return
-      // `paused` from `runAgentTurn` and abandon the rest of the run
-      // (`loop.ts`). The reason goes in the error string rather than the pause,
-      // because `agent-run.ts` only appends its "stopped short of…" note on
-      // `paused.reason === "confirmation"` — so said here it reaches the
-      // report, and said there it would end the run.
-      if (ctx.routineRunId || ctx.continuation) {
-        return {
-          kind: "error",
-          message:
-            `${slug} changes something in ${connection.label} and nobody is watching ` +
-            "this run. Report that you could not do it. The routine's owner can let " +
-            `this agent change things in ${connection.label} without asking, on the ` +
-            "routine's page, or say so the next time it asks in a conversation.",
-        };
-      }
+      // Asked the same way whether or not anybody is watching. On a schedule,
+      // an event or a wake-up the turn parks on this question for a day and
+      // its owner is asked (0143, `lib/approvals/park.ts`); the run carries on
+      // from here once somebody answers. Where it cannot park — a test run, a
+      // sixth question — the run's report says what it stopped short of.
       return {
         kind: "needs_confirmation",
         summary: confirmationSummary(

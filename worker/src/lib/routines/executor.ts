@@ -35,6 +35,9 @@ import {
 import type { RoutineBrowser } from "../harness/registry";
 import { openRoutineConversation } from "./held";
 import { openRunThread } from "./run-thread";
+import { heldUntil, parkAndAsk, stoppedShortNote } from "../approvals/park";
+import type { AgentStep, PausedTurn } from "../harness/loop";
+import { writeSteps } from "../harness/turn";
 export { RUN_THREADS_KEPT } from "./run-thread";
 import { agentAccessFor } from "../agent-access";
 
@@ -273,6 +276,12 @@ export type AgentRunResult = {
    * `lib/routines/held.ts` once they have answered.
    */
   heldFor?: string[];
+  /**
+   * The question the turn stopped on (0143): a change that needs a person's
+   * yes. The run parks on it and its owner is asked; `text` is the report so
+   * far. Absent when the turn asked nothing.
+   */
+  asking?: { paused: PausedTurn; steps: AgentStep[] };
 } & ModelCall;
 
 /**
@@ -1231,7 +1240,57 @@ export async function runRoutine(
     // overflow note included. A digest that was missing thirty entries is still
     // missing them a year later, and a filed copy that quietly dropped the
     // sentence saying so would be the more complete-looking of the two.
-    const body = withOverflowNote(summary.text, overflow);
+    let body = withOverflowNote(summary.text, overflow);
+
+    /**
+     * The turn stopped on a change that needs a person's yes (0143). The run
+     * is written down as `waiting` first — the request names it — and then
+     * parked in the routine's conversation, where its owner, or an admin, can
+     * answer it for a day; the cron carries on from there. Everything else is
+     * a waiting run's: the cursor advances, the claims stay claimed, the
+     * spend is charged.
+     *
+     * A test run is not parked (nobody would carry it on), and a run that
+     * cannot be — its conversation would not open, or it had asked five times
+     * — says what it stopped short of in the report, as every run did before.
+     */
+    const asking = ("asking" in summary ? summary.asking : undefined) as AgentRunResult["asking"];
+    if (asking && !isTest(deps)) {
+      await finish(routine, deps, startedAt, origin, {
+        runId,
+        status: "waiting",
+        waitingFor: "approval",
+        heldUntil: heldUntil(deps.now()).toISOString(),
+        itemsNew: items.length,
+        itemsOverflow: overflow,
+        modelCall: { model: summary.model, modelOutcome: summary.modelOutcome },
+        tokens: summary.tokens,
+        spend: [...summary.spend, ...takeRetrievalSpend()],
+        cursor: nextCursor,
+        summary: body,
+      });
+      delivered = true;
+      if (await parkRun(routine, deps, runId, summary.model, body, asking)) {
+        return { status: "waiting", itemsNew: items.length };
+      }
+      // Could not ask: the report goes out with what it has and says why,
+      // once anything else it waits on (a browser task) has answered.
+      const report = `${body}${stoppedShortNote(asking.paused.summary)}`;
+      const { error: draftError } = await deps.db
+        .from("routine_runs")
+        .update({ summary: report, waiting_for: null, held_until: null })
+        .eq("id", runId)
+        .eq("status", "waiting");
+      if (draftError) console.error("routine: could not write a run's report", draftError.code);
+      await deps.completeHeld?.(runId);
+      return { status: "waiting", itemsNew: items.length };
+    }
+    // A test run, which nobody would carry on: the report and its thread say
+    // what it stopped short of, as every run did before.
+    const reported = asking
+      ? `${summary.text}${stoppedShortNote(asking.paused.summary)}`
+      : summary.text;
+    if (asking) body = `${body}${stoppedShortNote(asking.paused.summary)}`;
 
     /**
      * The turn started browser work that has not answered yet (0100). The
@@ -1330,7 +1389,7 @@ export async function runRoutine(
         ),
       ],
       cursor: nextCursor,
-      summary: summary.text,
+      summary: reported,
     });
     return { status: "ok", itemsNew: items.length, summary: body };
   } catch (err) {
@@ -1383,6 +1442,94 @@ export async function runRoutine(
 
     return { status: "failed", itemsNew: 0 };
   }
+}
+
+/**
+ * Park a run's question in the routine's own conversation and ask its owner
+ * (0143). The reply it hangs off is written there first — the report so far,
+ * and the steps it took — so the thread reads as the run's own account of
+ * what it did and what it is waiting on. False when it could not be parked,
+ * and then the reply says what it stopped short of instead.
+ */
+async function parkRun(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  runId: string,
+  model: string,
+  report: string,
+  asking: { paused: PausedTurn; steps: AgentStep[] },
+): Promise<boolean> {
+  try {
+    return await parkRunOnce(routine, deps, runId, model, report, asking);
+  } catch (err) {
+    // The run row is already `waiting`; the caller finishes it with the note.
+    console.error("routine: could not park a run's question", runId, err);
+    return false;
+  }
+}
+
+async function parkRunOnce(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  runId: string,
+  model: string,
+  report: string,
+  asking: { paused: PausedTurn; steps: AgentStep[] },
+): Promise<boolean> {
+  const sessionId = await openRoutineConversation(deps.db, routine);
+  if (!sessionId) return false;
+  const { data: reply, error } = await deps.db
+    .from("messages")
+    .insert({
+      session_id: sessionId,
+      role: "assistant",
+      sender_id: null,
+      content: report.trim() || `“${routine.name}” stopped to ask before going on.`,
+      model,
+      outcome: "paused",
+    })
+    .select("id")
+    .single();
+  if (error || !reply) {
+    console.error("routine: could not write the reply a request hangs off", error?.code);
+    return false;
+  }
+  const messageId = String(reply.id);
+  await writeSteps(deps.db, messageId, asking.steps);
+  await deps.db
+    .from("chat_sessions")
+    .update({ updated_at: deps.now().toISOString() })
+    .eq("id", sessionId);
+
+  const parked = await parkAndAsk(
+    deps.env,
+    deps.db,
+    deps.mail === undefined ? mailerFrom(deps.env) : deps.mail,
+    {
+      origin: "routine",
+      workspaceId: routine.workspace_id,
+      agentId: routine.agent_id,
+      userId: routine.user_id,
+      sessionId,
+      messageId,
+      routineRunId: runId,
+      model,
+      paused: asking.paused,
+      steps: asking.steps,
+      now: deps.now(),
+      routineName: routine.name,
+    },
+  );
+  if (parked.kind === "parked") return true;
+  console.warn("routine: a run's question could not be parked", runId, parked.why);
+  await deps.db
+    .from("messages")
+    .update({
+      content: `${report}${stoppedShortNote(asking.paused.summary)}`.trim(),
+      outcome: "cut_short",
+    })
+    .eq("id", messageId);
+  return false;
 }
 
 /**
@@ -1542,6 +1689,12 @@ export type RunOutcome = {
   /** Pause the routine with this reason, independently of the failure count. */
   pause?: string;
   /**
+   * What a `waiting` run waits for, when it is not its browser (0143), and the
+   * last moment the two-hour sweep should leave it alone.
+   */
+  waitingFor?: "approval";
+  heldUntil?: string;
+  /**
    * The model call this run made, when it made one.
    *
    * Absent on every branch that never reached a model — a feed that had not
@@ -1651,6 +1804,8 @@ async function finish(
       triggered_by: origin.triggeredBy,
       trigger_label: origin.label,
       session_id: sessionId,
+      ...(outcome.waitingFor ? { waiting_for: outcome.waitingFor } : {}),
+      ...(outcome.heldUntil ? { held_until: outcome.heldUntil } : {}),
     })
     // The id is what the ledger files this run's charge against.
     .select("id");

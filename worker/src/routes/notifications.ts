@@ -16,9 +16,12 @@ const DEFAULTS = {
   needsMeAway: true,
   routineFailed: true,
   weeklySummary: false,
+  // 0144: what an agent asks while nobody is watching, the moment it asks.
+  approvalRequests: true,
 };
 
-const COLUMNS = "routine_paused, quota_exhausted, needs_me_away, routine_failed, weekly_summary";
+const COLUMNS =
+  "routine_paused, quota_exhausted, needs_me_away, routine_failed, weekly_summary, approval_requests";
 
 function shape(row: Record<string, unknown>) {
   return {
@@ -27,6 +30,7 @@ function shape(row: Record<string, unknown>) {
     needsMeAway: row.needs_me_away as boolean,
     routineFailed: row.routine_failed as boolean,
     weeklySummary: row.weekly_summary as boolean,
+    approvalRequests: row.approval_requests as boolean,
   };
 }
 
@@ -37,6 +41,7 @@ const updateSchema = z
     needsMeAway: z.boolean().optional(),
     routineFailed: z.boolean().optional(),
     weeklySummary: z.boolean().optional(),
+    approvalRequests: z.boolean().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
@@ -84,6 +89,9 @@ notifications.patch("/notification-preferences", async (c) => {
   if (parsed.data.needsMeAway !== undefined) row.needs_me_away = parsed.data.needsMeAway;
   if (parsed.data.routineFailed !== undefined) row.routine_failed = parsed.data.routineFailed;
   if (parsed.data.weeklySummary !== undefined) row.weekly_summary = parsed.data.weeklySummary;
+  if (parsed.data.approvalRequests !== undefined) {
+    row.approval_requests = parsed.data.approvalRequests;
+  }
 
   const { data, error } = await db
     .from("notification_preferences")

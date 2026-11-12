@@ -222,13 +222,15 @@ any writer can take back.
 | What it watches    | an RSS feed, a web page by content hash, a bundle a connection syncs, or nothing                                 | —                                                       |
 | Where it lands     | email, a Slack webhook, or a signed webhook of yours                                                             | `RESEND_API_KEY` for email                              |
 | What it keeps      | each result optionally filed into a bundle, with a retention you set                                             | —                                                       |
-| What it may not do | anything needing approval: it records what it wanted and says so in the message                                  | —                                                       |
+| What it asks first | anything needing approval: the run waits a day for its owner's (or an admin's) yes, in the app or by email      | `RESEND_API_KEY` for the email                          |
 
-A run has nobody to ask. So a scheduled routine gets the same tools and the same
-step ceiling as a chat, and an action that would have shown somebody a card is
-reported as wanted and not done rather than taken quietly. It can also decline
-to send at all, which is what separates a useful digest from a daily email
-nobody opens.
+A run asks the way a chat does. A scheduled routine gets the same tools and the
+same step ceiling as a chat, and an action that would have shown somebody a card
+parks the run instead: its owner is emailed, can answer from the link, the Inbox
+or the routine's own conversation (and so can a workspace admin), and the run
+carries on within a few minutes of the yes. Nobody answering in 24 hours means
+it was not done, and the report says so. It can also decline to send at all,
+which is what separates a useful digest from a daily email nobody opens.
 
 ### Work as a team
 

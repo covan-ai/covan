@@ -1679,8 +1679,40 @@ function ChatTab() {
 
   const answerConfirmation = async (approve: boolean) => {
     if (!active || busy || !pendingConfirm) return;
-    const { id } = pendingConfirm;
+    const { id, origin } = pendingConfirm;
+    if (origin && origin !== "chat") {
+      await answerUnattended(active.id, id, approve);
+      return;
+    }
     await streamReply(active.id, { confirm: { id, approve } });
+  };
+
+  /**
+   * A question asked while nobody was watching (0143): the answer is written
+   * here and the cron carries on with it on its next tick, so there is no
+   * stream to open — the card goes, and a line says what happens next.
+   */
+  const answerUnattended = async (sessionId: string, id: string, approve: boolean) => {
+    try {
+      await api.approvals.answer(id, approve);
+      toast.success(
+        approve
+          ? t("Approved. The agent carries on within a few minutes.")
+          : t("Declined. The agent won't do it."),
+      );
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : 0;
+      if (status === 410) toast.message(t("That request expired. Ask the agent again."));
+      else if (status === 404 || status === 409)
+        toast.message(t("That request was already answered."));
+      else {
+        toast.error(t("Couldn't answer that. Try again."));
+        return;
+      }
+    }
+    setPendingConfirm(null);
+    invalidateMessages(sessionId);
+    void queryClient.invalidateQueries({ queryKey: ["inbox"] });
   };
 
   /**
@@ -1859,6 +1891,7 @@ function ChatTab() {
                 tool: pending.tool,
                 summary: pending.summary,
                 proposal: pending.proposal,
+                ...(pending.origin ? { origin: pending.origin } : {}),
               },
         );
       })

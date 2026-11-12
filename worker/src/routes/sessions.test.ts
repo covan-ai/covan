@@ -756,6 +756,8 @@ describe("GET /sessions/:id/pending-approval", () => {
     expect(await res.json()).toEqual({
       pending: {
         id: "pause-1",
+        // A row written before 0143 has no origin and is a conversation's.
+        origin: "chat",
         tool: "run_tool",
         summary: "Send the reply to ada@acme.test",
         proposal: { to: "ada@acme.test" },

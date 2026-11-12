@@ -113,18 +113,11 @@ export const runRoutineTool: AgentTool = {
     }
 
     const payload = input.payload.slice(0, MAX_PAYLOAD_CHARS);
-    // A woken conversation turn (0142) has nobody to approve this, and the
-    // approval that let it browse does not reach to starting a routine: an
-    // error, never a card nobody answers. A routine's own woken turn carries
-    // `routineRunId` and runs below, as any scheduled run does.
-    if (ctx.continuation && !ctx.routineRunId && ctx.confirmed !== true) {
-      return {
-        kind: "error",
-        message:
-          `starting the routine "${routine.name}" needs a person to approve it and nobody is ` +
-          "watching this run. Report that you could not do it.",
-      };
-    }
+    // A conversation asks; so does a woken conversation turn (0142), which
+    // parks on the question and asks its owner (0143) — the approval that let
+    // it browse does not reach to starting a routine. A routine's own run,
+    // woken or not, carries `routineRunId` and runs below, as any scheduled
+    // run does.
     if (!ctx.routineRunId && ctx.confirmed !== true) {
       return {
         kind: "needs_confirmation",

@@ -30,6 +30,11 @@ const listQuery = z.object({
 export type InboxNeedsYou = {
   kind: "approval" | "question" | "login" | "routine_failed";
   pausedTurnId?: string;
+  /**
+   * Where an approval was asked (0143): a conversation's is answered in it, a
+   * routine's or a woken turn's from the row itself. Absent for the rest.
+   */
+  origin?: "chat" | "routine" | "wake";
   summary: string;
   replies?: string[];
   since: number;
@@ -206,6 +211,35 @@ export async function touchPresence(
   if (error) console.error("touch_presence failed", error);
 }
 
+/**
+ * Where each approval on the page was asked, read through the caller's own
+ * client, so a row can offer its buttons where they answer it (0143). One
+ * read for the page, and only when it has an approval on it; a failure leaves
+ * every row opening its thread, which is what they did before.
+ */
+async function withOrigins(db: AppEnv["Variables"]["db"], items: InboxItemDTO[]): Promise<void> {
+  const ids = items.flatMap((item) =>
+    item.needsYou?.kind === "approval" && item.needsYou.pausedTurnId
+      ? [item.needsYou.pausedTurnId]
+      : [],
+  );
+  if (ids.length === 0) return;
+  const { data, error } = await db.from("paused_turns").select("id, origin").in("id", ids);
+  if (error) {
+    console.error("could not read where the inbox's approvals were asked", error.code);
+    return;
+  }
+  const origins = new Map(
+    ((data ?? []) as Array<{ id: string; origin: string }>).map((row) => [row.id, row.origin]),
+  );
+  for (const item of items) {
+    const origin = item.needsYou?.pausedTurnId ? origins.get(item.needsYou.pausedTurnId) : null;
+    if (item.needsYou && (origin === "chat" || origin === "routine" || origin === "wake")) {
+      item.needsYou.origin = origin;
+    }
+  }
+}
+
 // GET /inbox
 inbox.get("/inbox", async (c) => {
   const parsed = listQuery.safeParse(c.req.query());
@@ -236,8 +270,10 @@ inbox.get("/inbox", async (c) => {
 
   const all = (rows.data ?? []) as Row[];
   const userId = c.get("user").id;
+  const items = all.slice(0, limit).map((r) => mapInboxRow(r, userId));
+  await withOrigins(db, items);
   return c.json({
-    items: all.slice(0, limit).map((r) => mapInboxRow(r, userId)),
+    items,
     counts: { unread: counts.unread, needsYou: counts.needsYou, running: counts.running },
     perAgentUnread: Object.fromEntries(
       Object.entries(counts.byAgent).map(([id, n]) => [id, n.unread]),

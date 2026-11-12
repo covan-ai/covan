@@ -1323,6 +1323,8 @@ export type RoutineRunDTO = {
   id: string;
   /** `waiting`: the report is written and held for a browser task's answer (0100). */
   status: "ok" | "skipped" | "failed" | "waiting";
+  /** What a waiting run waits for: its browser, or a person's yes (0143). Null otherwise. */
+  waitingFor: "browser" | "approval" | null;
   itemsNew: number;
   /**
    * New entries this run saw and did not deliver, dropped by the per-run cap.
@@ -1405,6 +1407,7 @@ export function mapRoutineRun(row: {
   trigger_label?: string | null;
   session_id?: string | null;
   delivery_note?: string | null;
+  waiting_for?: string | null;
   started_at: string;
 }): RoutineRunDTO {
   return {
@@ -1413,6 +1416,9 @@ export function mapRoutineRun(row: {
       row.status === "ok" || row.status === "failed" || row.status === "waiting"
         ? row.status
         : "skipped",
+    // Null, which every waiting row was before 0143, is the browser.
+    waitingFor:
+      row.status === "waiting" ? (row.waiting_for === "approval" ? "approval" : "browser") : null,
     itemsNew: row.items_new ?? 0,
     itemsOverflow: row.items_overflow ?? 0,
     nothingRelevant: row.status === "skipped" && row.error === NOTHING_RELEVANT_REASON,

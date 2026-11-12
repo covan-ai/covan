@@ -738,7 +738,7 @@ sessions.get("/sessions/:id/pending-approval", async (c) => {
   const { data, error } = await c
     .get("db")
     .from("paused_turns")
-    .select("id, tool, summary, proposal, expires_at")
+    .select("id, origin, tool, summary, proposal, expires_at")
     .eq("session_id", id)
     .eq("user_id", c.get("user").id)
     .eq("status", "pending")
@@ -754,6 +754,10 @@ sessions.get("/sessions/:id/pending-approval", async (c) => {
     pending: row
       ? {
           id: String(row.id),
+          // Which button answers it: a conversation's question streams the
+          // rest of the turn (`/chat/confirm`), one nobody was watching is
+          // answered and carried on by the cron (`/approvals`, 0143).
+          origin: row.origin === "routine" || row.origin === "wake" ? row.origin : "chat",
           tool: String(row.tool ?? ""),
           summary: String(row.summary ?? ""),
           proposal: row.proposal ?? null,

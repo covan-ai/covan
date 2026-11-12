@@ -94,6 +94,49 @@ describe("GET /inbox", () => {
     const { app } = appWith({});
     expect((await app.request("/inbox?filter=everything")).status).toBe(400);
   });
+
+  // A routine's request is answered from its row; a conversation's in its
+  // conversation (0143). The row says which.
+  it("says where each approval on the page was asked", async () => {
+    const seen: string[][] = [];
+    const { app } = appWith({
+      rpc: {
+        inbox_rows: () => ({
+          data: [
+            row({ needs_kind: "approval", needs_paused_turn_id: "p-routine" }),
+            row({ session_id: "s2", needs_kind: "approval", needs_paused_turn_id: "p-chat" }),
+            row({ session_id: "s3" }),
+          ],
+          error: null,
+        }),
+        inbox_counts: () => ({ data: [], error: null }),
+      },
+      tables: {
+        paused_turns: {
+          select: (ctx) => {
+            seen.push(ctx.filters.flatMap((f) => (f.kind === "in" ? (f.value as string[]) : [])));
+            return {
+              data: [
+                { id: "p-routine", origin: "routine" },
+                { id: "p-chat", origin: "chat" },
+              ],
+              error: null,
+            };
+          },
+        },
+      },
+    });
+
+    const body = (await (await app.request("/inbox")).json()) as {
+      items: Array<{ needsYou: { origin?: string } | null }>;
+    };
+    expect(body.items.map((item) => item.needsYou?.origin ?? null)).toEqual([
+      "routine",
+      "chat",
+      null,
+    ]);
+    expect(seen).toEqual([["p-routine", "p-chat"]]);
+  });
 });
 
 describe("the line under a title", () => {

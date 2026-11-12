@@ -219,7 +219,13 @@ function NotificationToggles() {
   });
   const [saving, setSaving] = useState<string | null>(null);
 
-  type Key = "needsMeAway" | "routineFailed" | "weeklySummary" | "routinePaused" | "quotaExhausted";
+  type Key =
+    | "approvalRequests"
+    | "needsMeAway"
+    | "routineFailed"
+    | "weeklySummary"
+    | "routinePaused"
+    | "quotaExhausted";
   const set = async (key: Key, value: boolean) => {
     setSaving(key);
     try {
@@ -234,9 +240,16 @@ function NotificationToggles() {
     }
   };
 
-  // A16's three first; then the two about a routine's own health, which
+  // A request first, because a routine waits on it; then A16's three; then
+  // the two about a routine's own health, which
   // were here before and still are.
   const rows: Array<{ key: Key; label: string; fallback: boolean }> = [
+    // 0144: what an agent asks while nobody is watching, the moment it asks.
+    {
+      key: "approvalRequests",
+      label: t("An agent asks for my go-ahead while nobody is watching"),
+      fallback: true,
+    },
     {
       key: "needsMeAway",
       label: t("An agent needs me and I have been away for an hour"),
@@ -258,7 +271,7 @@ function NotificationToggles() {
         {rows.map((row) => (
           <label key={row.key} className="flex items-center gap-3 text-sm">
             <Switch
-              checked={prefs ? prefs[row.key] : row.fallback}
+              checked={prefs ? (prefs[row.key] ?? row.fallback) : row.fallback}
               onCheckedChange={(v) => void set(row.key, v)}
               disabled={!prefs || saving === row.key}
               aria-label={row.label}

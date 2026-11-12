@@ -25,11 +25,12 @@ import type { AgentRunInput, AgentRunResult } from "./executor";
  * The cost is a real dependency: a change to the loop changes what happens at
  * 3am. That is accepted and is the point.
  *
- * **Nobody is watching.** So a tool that returns `needs_confirmation` does not
- * wait — `runAgentTurn` returns paused, the run finishes with what it has, and
- * the record says the agent wanted to do something. That is 0058's own
- * argument: a tick has nowhere to wait, and a claim goes stale in thirty
- * minutes.
+ * **Nobody is watching.** So a tool that returns `needs_confirmation` cannot
+ * be answered in this tick — `runAgentTurn` returns paused, and the run hands
+ * the question back as `asking`. The executor parks it for a day and asks the
+ * routine's owner (0143, `lib/approvals/park.ts`); the cron carries on once
+ * somebody answers. A tick still has nowhere to wait, which is why the
+ * waiting is a row rather than this function.
  */
 
 /**
@@ -92,9 +93,11 @@ export function runRoutineWithTools(
         role: "system",
         content: [
           input.persona,
-          "You are running a scheduled routine for this team. Nobody is watching this run, " +
-            "so anything that needs a person's approval will not happen — do the work you " +
-            "can do and report what you could not.",
+          "You are running a scheduled routine for this team. Nobody is watching this run. " +
+            "When a change needs a person's approval, ask for it the way you would in a " +
+            "conversation: the routine's owner is asked, and this run waits for their answer " +
+            "and carries on once they give it. So do everything that needs no approval first, " +
+            "and ask last.",
           REPLY_IS_THE_REPORT,
           // This path is the reason #192 happened. It has tools, so it writes
           // into other people's calendars and trackers, and it is the one
@@ -280,14 +283,15 @@ export function runRoutineWithTools(
       declined = read.declined;
     }
 
-    // What the agent wanted to do and could not, said out loud rather than
-    // dropped. A run that quietly does three quarters of the job is the worst
-    // of the three outcomes — worse than failing, because nothing says so.
-    if (turn.paused?.reason === "confirmation" && !declined) {
-      text =
-        `${text}\n\n---\n\n_This run stopped short of "${turn.paused.summary ?? "an action"}" ` +
-        `because it needs somebody to approve it, and a scheduled run has nobody to ask._`;
-    }
+    // What the agent is asking, handed to the executor to park (0143). The
+    // text is the report so far; where the run cannot be parked the executor
+    // adds `stoppedShortNote`, so the question is said out loud either way —
+    // a run that quietly does three quarters of the job is the worst of the
+    // outcomes, because nothing says so.
+    const asking =
+      turn.paused?.reason === "confirmation" && turn.paused.call
+        ? { paused: turn.paused, steps: turn.steps }
+        : undefined;
 
     return {
       text,
@@ -295,13 +299,13 @@ export function runRoutineWithTools(
       spend,
       declined,
       ...(heldFor.length > 0 ? { heldFor } : {}),
+      ...(asking ? { asking } : {}),
       // What the row will say about the call, through the same `replyOutcome`
       // the chat path uses rather than a second mapping. `parked: false` is a
-      // constant here and the reason is the whole character of this surface: a
-      // pause is a question waiting for a person, and a tick has nobody to ask,
-      // so a run that stopped to ask is `cut_short` — never `paused`, which
-      // would be a row claiming forever to be waiting on somebody who was never
-      // asked.
+      // constant here because this function cannot know whether the executor
+      // will manage to park the question (`asking`), and `paused` on a row
+      // nobody was asked about would claim forever to be waiting on somebody.
+      // A run that did park says so in its own status, `waiting`.
       //
       // `said` is read off `turn.text` rather than the `text` above, which by
       // this point may carry the appended note about what the run stopped short

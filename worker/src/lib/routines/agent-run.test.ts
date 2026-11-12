@@ -30,6 +30,7 @@ vi.mock("../completion", async (importOriginal) => {
 });
 
 const { runRoutineWithTools } = await import("./agent-run");
+const { stoppedShortNote } = await import("../approvals/park");
 
 const env = { OPENAI_API_KEY: "sk" } as RoutineEnv;
 const db = {} as SupabaseClient;
@@ -305,18 +306,32 @@ describe("runRoutineWithTools", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it("says out loud what it stopped short of, because nobody was there to ask", async () => {
+  /**
+   * The question goes back to the executor to park and ask the owner (0143),
+   * rather than into the report as a line about what it could not do. The
+   * line is still there to add where it cannot park (`stoppedShortNote`).
+   */
+  it("hands the question back to be asked, with the report so far", async () => {
+    const call = { id: "call_1", name: "send_email", arguments: "{}" };
     runAgentTurn.mockResolvedValue({
       text: "Forty orders.",
       usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
-      steps: [],
+      steps: [{ index: 0, tool: "send_email", request: {}, status: "pending", durationMs: 1 }],
       finishReason: "stop",
-      paused: { reason: "confirmation", messages: [], summary: "Email the team?" },
+      paused: { reason: "confirmation", messages: [], call, summary: "Email the team?" },
     });
     const out = await runRoutineWithTools(env, db)(input, env);
-    expect(out?.text).toContain("Forty orders.");
-    expect(out?.text).toContain("Email the team?");
-    expect(out?.text).toContain("nobody to ask");
+    expect(out?.text).toBe("Forty orders.");
+    expect(out?.asking?.paused).toMatchObject({ call, summary: "Email the team?" });
+    expect(out?.asking?.steps).toHaveLength(1);
+    expect(stoppedShortNote("Email the team?")).toContain("Email the team?");
+  });
+
+  it("tells the model that asking makes the run wait for an answer", async () => {
+    await runRoutineWithTools(env, db)(input, env);
+    const system = String(runAgentTurn.mock.calls[0][0].request.messages[0].content);
+    expect(system).toContain("this run waits for their answer");
+    expect(system).not.toContain("will not happen");
   });
 
   /**

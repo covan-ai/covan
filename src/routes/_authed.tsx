@@ -8,6 +8,7 @@ import { api } from "@/lib/api-client";
 import { onboardingRedirect } from "@/lib/onboarding-gate";
 import { hasPendingGrant } from "@/lib/sensitive-url";
 import { stashedInviteLink } from "@/lib/invite-stash";
+import { stashReturn, takeReturn } from "@/lib/return-stash";
 import { CoachMarkLayer } from "@/components/coach-mark";
 import { AppShell } from "@/components/app-shell";
 import { shellFor } from "@/lib/shell-context";
@@ -57,6 +58,7 @@ function AuthedLayout() {
       // the network is not — see readSession for what that costs when ignored.
       if (answer.kind === "none") {
         setSession(null);
+        stashReturn(window.location.pathname);
         navigate({ to: "/sign-in" });
         return;
       }
@@ -150,6 +152,15 @@ function AuthedLayout() {
     if (session && !redirect && pathname !== "/settings/integrations" && hasPendingGrant()) {
       void navigate({ to: "/settings/integrations", replace: true });
     }
+  }, [session, redirect, pathname, navigate]);
+
+  // The request an email linked to, opened while signed out (`return-stash.ts`):
+  // signed in now, they are taken back to it rather than left on Home. After
+  // the invitation and the connect flow above, which come first.
+  useEffect(() => {
+    if (!session || redirect || stashedInviteLink() || hasPendingGrant()) return;
+    const back = takeReturn();
+    if (back && back !== pathname) void navigate({ to: back, replace: true });
   }, [session, redirect, pathname, navigate]);
 
   if (!session && unreachable) {

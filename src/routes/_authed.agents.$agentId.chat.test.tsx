@@ -103,6 +103,7 @@ const takeoverOpen = vi.fn();
 const tuneSession = vi.fn();
 const turnStatus = vi.fn();
 const pendingApproval = vi.fn();
+const answerApproval = vi.fn();
 const stopTurn = vi.fn();
 const documentJobs = vi.fn();
 const stopDocument = vi.fn();
@@ -137,6 +138,7 @@ vi.mock("@/lib/api-client", () => ({
       documentJobs,
     },
     documentJobs: { get: vi.fn(), stop: stopDocument, retry: vi.fn() },
+    approvals: { get: vi.fn(), answer: answerApproval },
     browser: { live: browserLive, takeOver: vi.fn(), handBack: vi.fn(), stop: vi.fn() },
     takeovers: { takeOver: vi.fn(), open: takeoverOpen, current: takeoverCurrent, close: vi.fn() },
     messages: {
@@ -1655,6 +1657,38 @@ describe("a reply that stopped to ask", () => {
     await waitFor(() => {
       expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/confirm/paused-1");
     });
+  });
+
+  /**
+   * A routine's request in its own conversation (0143): the answer is
+   * written and the cron carries on, so nothing streams here.
+   */
+  it("answers a request nobody was watching without opening a stream", async () => {
+    pendingApproval.mockResolvedValue({
+      pending: {
+        id: "paused-9",
+        origin: "routine",
+        tool: "http_request",
+        summary: "POST to Box office?",
+        proposal: null,
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+    answerApproval.mockResolvedValue({ status: "approved" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderChat();
+    await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(answerApproval).toHaveBeenCalledWith("paused-9", true));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Approved. The agent carries on within a few minutes.",
+    );
   });
 
   it("takes the card away when the question was answered somewhere else", async () => {

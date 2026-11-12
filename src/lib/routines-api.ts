@@ -131,6 +131,11 @@ export type RoutineRun = {
    * means the report is written and held until a browser task answers.
    */
   status: "ok" | "skipped" | "failed" | "waiting";
+  /**
+   * What a waiting run waits for: a browser task's answer, or somebody's yes
+   * to what it asked (0143). Absent from an older worker, which is the browser.
+   */
+  waitingFor?: "browser" | "approval" | null;
   itemsNew: number;
   /**
    * New entries this run saw and did not deliver, dropped by the per-run cap of

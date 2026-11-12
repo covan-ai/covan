@@ -87,6 +87,90 @@ export function routineFailedEmail(args: {
   };
 }
 
+/**
+ * The arguments of a request, as a few short lines a person can read in a
+ * mail client: what the card's rows show, flattened. `kind` and the catalogue
+ * row `run_tool` carries for itself are left out, as the card leaves them out.
+ */
+export function proposalLines(proposal: unknown, max = 6): string[] {
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return [];
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(proposal as Record<string, unknown>)) {
+    if (key === "kind" || key === "operation" || key === "does") continue;
+    if (value === null || value === undefined || value === "") continue;
+    let shown: string;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      shown = String(value);
+    } else if (typeof value === "object" && !Array.isArray(value) && "label" in value) {
+      shown = String((value as { label: unknown }).label);
+    } else {
+      shown = JSON.stringify(value);
+    }
+    shown = shown.replace(/\s+/g, " ").trim();
+    lines.push(`${key}: ${shown.length > 200 ? `${shown.slice(0, 200)}…` : shown}`);
+    if (lines.length >= max) break;
+  }
+  return lines;
+}
+
+/**
+ * An agent asked for a go-ahead while nobody was watching (0144). Sent the
+ * moment it asks, to the person it runs as, because the request waits a day
+ * and the routine does nothing until somebody answers.
+ *
+ * The link opens the request's own page, which is where the buttons are:
+ * opening the link changes nothing, and answering needs a signed-in session.
+ */
+export function approvalRequestEmail(args: {
+  email: string;
+  agentName: string;
+  workspaceName: string;
+  /** The routine whose run asked, or null for a conversation the agent came back to. */
+  routineName: string | null;
+  summary: string;
+  proposal: unknown;
+  expiresAt: Date;
+  url: string;
+}) {
+  const where = args.routineName
+    ? `running your routine “${args.routineName}”`
+    : "coming back to a conversation of yours";
+  const what = `${args.agentName}, ${where}, wants your go-ahead before it does this:`;
+  const summary = args.summary.trim() || "an action that changes something";
+  const details = proposalLines(args.proposal);
+  const until = `${args.expiresAt.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  const wait = `Nothing happens until you answer. If nobody answers by ${until}, it is not done.`;
+  const footnote = `You get this because an agent of yours asked while nobody was watching. Turn it off in ${PREFERENCES}.`;
+  return {
+    to: args.email,
+    subject: `${args.agentName} is waiting for your go-ahead in ${args.workspaceName}`,
+    text: [
+      what,
+      "",
+      summary,
+      ...(details.length > 0 ? ["", ...details] : []),
+      "",
+      wait,
+      "",
+      `Approve or decline: ${args.url}`,
+      "",
+      footnote,
+    ].join("\n"),
+    html: emailShell({
+      preheader: summary,
+      heading: `${args.agentName} is waiting for your go-ahead`,
+      bodyHtml: paragraphs(
+        escapeHtml(what),
+        `<strong>${escapeHtml(summary)}</strong>`,
+        ...(details.length > 0 ? [details.map(escapeHtml).join("<br>")] : []),
+        escapeHtml(wait),
+      ),
+      action: { label: "Approve or decline", url: args.url },
+      footnote,
+    }),
+  };
+}
+
 export type WeeklyPersonal = {
   threads: number;
   needsYou: number;

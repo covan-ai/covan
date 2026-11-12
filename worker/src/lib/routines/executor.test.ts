@@ -23,6 +23,26 @@ vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
 }));
 
+// A run that stops to ask (0143): the park itself is `lib/approvals/park.ts`'s
+// own test, and the conversation it parks in is `held.ts`'s. Here only what
+// the executor does around them.
+const { parkAndAsk, openRoutineConversation } = vi.hoisted(() => ({
+  parkAndAsk: vi.fn(async (..._args: unknown[]): Promise<unknown> => ({
+    kind: "parked",
+    id: "pause-1",
+    expiresAt: new Date("2026-08-15T10:07:00Z"),
+  })),
+  openRoutineConversation: vi.fn(async (..._args: unknown[]): Promise<string | null> => "conv-1"),
+}));
+vi.mock("../approvals/park", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../approvals/park")>()),
+  parkAndAsk: (...args: unknown[]) => parkAndAsk(...args),
+}));
+vi.mock("./held", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./held")>()),
+  openRoutineConversation: (...args: unknown[]) => openRoutineConversation(...args),
+}));
+
 /**
  * A completion a producer reports, marked by its prompt count so each test can
  * tell which spend reached the ledger. The executor never prices anything; it
@@ -2144,6 +2164,176 @@ describe("a run that waits on its browser", () => {
     );
 
     expect(updates.find((u) => u.table === "routines")?.values).not.toHaveProperty("runs_done");
+  });
+});
+
+describe("a run that stops to ask (0143)", () => {
+  const asking = {
+    paused: {
+      reason: "confirmation" as const,
+      messages: [],
+      call: { id: "call_1", name: "http_request", arguments: "{}" },
+      summary: "POST to Box office?",
+      proposal: { method: "POST" },
+    },
+    steps: [
+      {
+        index: 0,
+        tool: "http_request",
+        request: {},
+        resultExcerpt: "POST to Box office?",
+        status: "pending" as const,
+        durationMs: 1,
+      },
+    ],
+  };
+  const stopping = () =>
+    vi.fn(async () => ({
+      text: "A mail asked to close seat 14.",
+      tokens: 300,
+      spend: [S(30)],
+      declined: false,
+      asking,
+      model: "gpt-4.1",
+      modelOutcome: "cut_short",
+    }));
+
+  /**
+   * `makeDb`, with a reply the request can hang off, a conditional update on
+   * the run, and the run's thread written.
+   */
+  function withReplies() {
+    const made = makeDb();
+    const from = made.db.from;
+    made.db.from = (table: string) => {
+      if (table === "routine_runs") {
+        return {
+          ...from(table),
+          update: (values: any) => {
+            made.updates.push({ table, values });
+            const chain: any = { eq: () => chain, then: (ok: any) => ok({ error: null }) };
+            return chain;
+          },
+        };
+      }
+      if (table === "chat_sessions") {
+        return {
+          ...from(table),
+          insert: (values: any) => {
+            made.inserts.push({ table, values });
+            return {
+              select: () => ({ single: async () => ({ data: { id: "thread-1" }, error: null }) }),
+            };
+          },
+        };
+      }
+      if (table !== "messages") return from(table);
+      return {
+        insert: (values: any) => {
+          made.inserts.push({ table, values });
+          return {
+            select: () => ({ single: async () => ({ data: { id: "msg-1" }, error: null }) }),
+          };
+        },
+        update: (values: any) => ({
+          eq: async () => {
+            made.updates.push({ table, values });
+            return { error: null };
+          },
+        }),
+      };
+    };
+    return made;
+  }
+
+  beforeEach(() => {
+    parkAndAsk.mockClear();
+    parkAndAsk.mockResolvedValue({
+      kind: "parked",
+      id: "pause-1",
+      expiresAt: new Date("2026-08-15T10:07:00Z"),
+    });
+    openRoutineConversation.mockClear();
+    openRoutineConversation.mockResolvedValue("conv-1");
+  });
+
+  it("writes the run as waiting on a person first, then parks the question and asks", async () => {
+    const { db, inserts } = withReplies();
+    const completeHeld = vi.fn(async () => true);
+
+    const out = await runRoutine(routine({ source_kind: "none", source_config: {} }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools: stopping(),
+      completeHeld,
+    } as never);
+
+    expect(out.status).toBe("waiting");
+    expect(deliverCalls).toHaveLength(0);
+    const run = inserts.find((i) => i.table === "routine_runs")?.values;
+    expect(run).toMatchObject({
+      status: "waiting",
+      waiting_for: "approval",
+      summary: "A mail asked to close seat 14.",
+    });
+    // Left to the request's day, not the browser's two hours.
+    expect(Date.parse(run.held_until)).toBeGreaterThan(Date.parse("2026-08-15T10:00:00Z"));
+
+    // The reply the request hangs off, in the routine's own conversation.
+    const reply = inserts.find((i) => i.table === "messages")?.values;
+    expect(reply).toMatchObject({
+      session_id: "conv-1",
+      role: "assistant",
+      content: "A mail asked to close seat 14.",
+      outcome: "paused",
+    });
+    const [, , , parked] = parkAndAsk.mock.calls[0] as [unknown, unknown, unknown, any];
+    expect(parked).toMatchObject({
+      origin: "routine",
+      routineRunId: run.id,
+      sessionId: "conv-1",
+      messageId: "msg-1",
+      userId: "u1",
+      routineName: "r/saas",
+      paused: asking.paused,
+    });
+    // Nothing is sent until somebody answers.
+    expect(completeHeld).not.toHaveBeenCalled();
+    expect(recorded[0]).toEqual({ workspaceId: "w1", spend: [S(30)] });
+  });
+
+  it("says what it stopped short of when the question could not be parked", async () => {
+    parkAndAsk.mockResolvedValue({ kind: "not_parked", why: "it had already asked 5 times" });
+    const { db, updates } = withReplies();
+    const completeHeld = vi.fn(async () => true);
+
+    const out = await runRoutine(routine({ source_kind: "none", source_config: {} }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools: stopping(),
+      completeHeld,
+    } as never);
+
+    expect(out.status).toBe("waiting");
+    const draft = updates.find((u) => u.table === "routine_runs")?.values;
+    expect(draft).toMatchObject({ waiting_for: null, held_until: null });
+    expect(draft.summary).toContain('stopped short of "POST to Box office?"');
+    expect(completeHeld).toHaveBeenCalledOnce();
+  });
+
+  it("does not park a test run, and says so in its thread", async () => {
+    const { db, inserts } = withReplies();
+
+    const out = await runRoutine(routine({ source_kind: "none", source_config: {} }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools: stopping(),
+      trigger: "test",
+    } as never);
+
+    expect(out.status).toBe("ok");
+    expect(parkAndAsk).not.toHaveBeenCalled();
+    const thread = inserts.find(
+      (i) => i.table === "messages" && String(i.values.content).includes("stopped short"),
+    );
+    expect(thread).toBeDefined();
   });
 });
 

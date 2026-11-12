@@ -22,7 +22,8 @@ import { maxTokensFor, reasoningEffortFor, temperatureFor } from "../prompt";
 import { knowledgeScopeOf } from "../routines/executor";
 import { completeHeldRun } from "../routines/held";
 import { serviceClient } from "../supabase";
-import { parkUnattended } from "./park";
+import { mailerFrom, type Mailer } from "../reports/mailer";
+import { parkAndAsk } from "./park";
 
 /**
  * Carrying on after somebody answered a request nobody was watching (0143).
@@ -64,6 +65,8 @@ export type ResumeDeps = {
   answer: typeof answerPausedCall;
   completeHeld: typeof completeHeldRun;
   nudge: typeof nudge;
+  /** The deployment's mail, for a second question's email; null sends none. */
+  mail: Mailer | null;
 };
 
 function resolve(env: RoutineEnv, overrides: Partial<ResumeDeps>): ResumeDeps {
@@ -76,6 +79,7 @@ function resolve(env: RoutineEnv, overrides: Partial<ResumeDeps>): ResumeDeps {
     answer: overrides.answer ?? answerPausedCall,
     completeHeld: overrides.completeHeld ?? completeHeldRun,
     nudge: overrides.nudge ?? nudge,
+    mail: overrides.mail === undefined ? mailerFrom(env) : overrides.mail,
   };
 }
 
@@ -128,6 +132,7 @@ type RunSide = {
     user_id: string;
     visibility: string | null;
     browser_access: string | null;
+    name: string;
     timezone: string | null;
   };
 };
@@ -243,7 +248,8 @@ export async function resumeApproved(
   // before the model runs, as the conversation's route does.
   if (answered.asked) {
     await writeSteps(db, messageId, answered.steps);
-    const again = await parkUnattended(db, {
+    const again = await parkAndAsk(env, db, deps.mail, {
+      routineName: run?.routine.name ?? null,
       origin: pause.origin === "wake" ? "wake" : "routine",
       workspaceId: pause.workspaceId,
       agentId: pause.agentId,
@@ -319,7 +325,8 @@ export async function resumeApproved(
   let note: string | null = null;
   let parkedAgain = false;
   if (turn.paused?.reason === "confirmation") {
-    const again = await parkUnattended(db, {
+    const again = await parkAndAsk(env, db, deps.mail, {
+      routineName: run?.routine.name ?? null,
       origin: pause.origin === "wake" ? "wake" : "routine",
       workspaceId: pause.workspaceId,
       agentId: pause.agentId,
@@ -486,7 +493,7 @@ async function runSide(
   if (runRow.status !== "waiting") return { kind: "refused", why: "its run has already finished" };
   const { data: routine, error: routineError } = await db
     .from("routines")
-    .select("id, user_id, visibility, browser_access, timezone, status, deleted_at")
+    .select("id, name, user_id, visibility, browser_access, timezone, status, deleted_at")
     .eq("id", String(runRow.routine_id))
     .maybeSingle();
   if (routineError) return { kind: "failed", error: `routine: ${routineError.code}` };
@@ -501,6 +508,7 @@ async function runSide(
         user_id: String(routine.user_id),
         visibility: (routine.visibility as string | null) ?? null,
         browser_access: (routine.browser_access as string | null) ?? null,
+        name: String(routine.name ?? ""),
         timezone: (routine.timezone as string | null) ?? null,
       },
     },

@@ -92,13 +92,21 @@ export type AgentStep = {
    * `ToolContext.offeredSlugs` may not be, since `run_tool` refuses what is not
    * in it. See `0066_what_the_catalogue_already_offered.sql`.
    *
-   * What this step *added* to the set, rather than everything it printed: a
-   * repeated search whose candidates were all offered earlier in the turn adds
-   * nothing and records nothing, which is true and is itself the waste this
-   * work exists to remove. The union down a conversation is the set `run_tool`
-   * checks against, which is the only thing that has to be exact.
+   * Everything a search showed, in the order it ranked it — `ToolResult.offered`
+   * — and not only what it added to the set. It used to be the addition alone,
+   * which was enough for `run_tool`: the union down a conversation is the same
+   * either way. It was not enough for `priorSearches`, which recalls a repeated
+   * search from this field. A search whose best candidates an earlier, different
+   * search had already offered recorded only its one new slug, and the next turn
+   * was told that slug was what the search had found.
    *
-   * Undefined on every step that added none, which is every other tool.
+   * A tool that reports nothing falls back to what the call added, so the set
+   * `run_tool` checks against stays exact whoever wrote into it. An answer
+   * served from the turn's memo or from the record reports nothing and adds
+   * nothing, and so records nothing.
+   *
+   * Undefined on every step that showed and added none, which is every other
+   * tool.
    */
   offered?: string[];
   /**
@@ -851,10 +859,12 @@ export async function runToolCall(
     // `MAX_STEP_EXCERPT_CHARS`, which is only what the transcript keeps.
     // This is the number every remaining pass of the turn pays to re-send.
     resultChars: content.length,
-    // Only when this call actually widened what the model may run, so the
-    // column stays null for the tools that never offer anything. See
-    // `AgentStep.offered`.
-    ...(addedSlugs(allowedBefore, o.ctx.offeredSlugs) ?? {}),
+    // What the search says it showed, or failing that what the call added to
+    // what the model may run — so the column stays null for the tools that
+    // never offer anything. See `AgentStep.offered`.
+    ...(result.kind === "ok" && result.offered && result.offered.length > 0
+      ? { offered: result.offered }
+      : (addedSlugs(allowedBefore, o.ctx.offeredSlugs) ?? {})),
     ...(result.kind === "ok" && result.approval ? { approval: result.approval } : {}),
     status,
     durationMs,

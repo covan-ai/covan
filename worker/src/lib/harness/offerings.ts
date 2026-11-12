@@ -111,9 +111,8 @@ export async function priorOfferings(db: SupabaseClient, sessionId: string): Pro
  *
  * WHY NO NEW COLUMN. Both halves are already on disk: `request` is the
  * arguments the step was called with, which is what `searchMemoKey` keys on,
- * and `offered` (0066) is the slugs it put in front of the model, complete
- * rather than trimmed. So this is a read, not a schema change, and the 500 MB
- * ceiling does not move.
+ * and `offered` (0066) is the slugs it put in front of the model. So this is a
+ * read, not a schema change, and the 500 MB ceiling does not move.
  *
  * WHY SLUGS AND NOT THE ANSWER. The rendered answer is not recoverable:
  * `result_excerpt` is capped at `MAX_STEP_EXCERPT_CHARS` and 45 of 61 stored
@@ -123,16 +122,37 @@ export async function priorOfferings(db: SupabaseClient, sessionId: string): Pro
  * seeding and left this. The recall therefore rebuilds a short answer around
  * the slugs rather than pretending to recover the long one.
  *
- * ONE SEARCH, ONE KEY, UNIONED OLDEST FIRST. A repeat records `offered = NULL`
- * — it added nothing — so the slugs of a key live on its FIRST row, and
- * keying off the newest row alone would name nothing. The union across rows is
- * what makes that case work, and taking them oldest first is what keeps the
- * order the search ranked them in, which is the order the model picks from.
+ * ONLY A ROW THAT CAN BE SHOWN TO BE WHOLE. `offered` holds everything a search
+ * showed, but it has not always: until `ToolResult.offered` it held only what
+ * the step ADDED to the allowed set. A search whose best candidates an earlier,
+ * different search had already offered therefore recorded its leftovers. Seen
+ * in production: a search showed four operations, three of them offered minutes
+ * before by a search in other words, and recorded the fourth — its worst match.
+ * A turn later the recall named that one as what the search had found, the
+ * model ran it, and three calendar events were created on the wrong day.
  *
- * A key whose union is empty is dropped rather than remembered as "found
- * nothing": a fruitless search is the useful kind of repeat — `find-tool.ts`
- * says so where it declines to memoise one — and the shortened retry depends
- * on being allowed to run again.
+ * Nothing on a row says which kind it is, so two things are taken as proof:
+ *
+ *   - nothing had been offered before it. There was nothing to leave out, so
+ *     the addition and the whole are the same list;
+ *   - it names a slug an earlier row already offered. The old record never
+ *     did — that is exactly what it left out — so this row was written whole.
+ *
+ * Any other row is passed over. That costs a conversation one search it might
+ * not have needed, and the search made instead records the whole answer, which
+ * names what the passed-over row did and so is recalled from then on.
+ *
+ * ONE SEARCH, ONE KEY, THE NEWEST WHOLE ROW. Each such row is a complete
+ * answer in the order the search ranked it, which is the order the model picks
+ * from — so a later one replaces an earlier one rather than being appended to
+ * it. A repeat answered from the turn's memo or from here records
+ * `offered = NULL` and replaces nothing, so the answer of a key stays the last
+ * search that was really made.
+ *
+ * A key with no such row is dropped rather than remembered as "found nothing":
+ * a fruitless search is the useful kind of repeat — `find-tool.ts` says so
+ * where it declines to memoise one — and the shortened retry depends on being
+ * allowed to run again.
  *
  * Empty on any failure, on `priorOfferings`' reasoning: this is an
  * optimisation, and a database that will not answer should cost a search, not a
@@ -166,10 +186,17 @@ export async function priorSearches(
     }
 
     // Reversed: newest-first is what makes the ceiling above keep the most
-    // recent searches, and oldest-first is what makes the union below keep the
-    // ranked order of the row that actually did the offering.
+    // recent searches, and oldest-first is what lets each row be judged against
+    // what the conversation had been offered before it.
+    const before = new Set<string>();
     for (const row of [...(data ?? [])].reverse()) {
       const step = row as { request?: unknown; offered?: string[] | null };
+      const offered = step.offered ?? [];
+      // Whether this row can be shown to hold all the search showed. Decided
+      // before the row is counted among what came before.
+      const whole = before.size === 0 || offered.some((slug) => before.has(slug));
+      for (const slug of offered) before.add(slug);
+      if (offered.length === 0 || !whole) continue;
       const request = (
         step.request && typeof step.request === "object" ? step.request : {}
       ) as Record<string, unknown>;
@@ -178,12 +205,7 @@ export async function priorSearches(
       // recall. Skipped rather than keyed on the empty string, which would
       // collide every unkeyable row into one entry.
       if (typeof request.query !== "string" || !request.query.trim()) continue;
-      const key = searchMemoKey({ ...request, query: request.query });
-      const slugs = searches.get(key) ?? [];
-      for (const slug of step.offered ?? []) {
-        if (!slugs.includes(slug)) slugs.push(slug);
-      }
-      if (slugs.length > 0) searches.set(key, slugs);
+      searches.set(searchMemoKey({ ...request, query: request.query }), [...new Set(offered)]);
     }
     return searches;
   } catch (err) {

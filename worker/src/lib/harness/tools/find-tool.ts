@@ -675,9 +675,10 @@ export const findToolTool: AgentTool = {
      * that earlier answer, still in the transcript this turn was built from,
      * and `detail`, which is a different question and really asks it.
      *
-     * Narrowed to what is still allowed. `offered` records what a step put in
-     * front of the model, and `run_tool` withdraws a slug the moment Composio
-     * 404s it — so the live set decides, and a recall with nothing left in it
+     * Narrowed to what is still allowed. `offered` records what a search put in
+     * front of the model — `priorSearches` keeps only the rows that can be shown
+     * to hold all of it — and `run_tool` withdraws a slug the moment Composio
+     * 404s it. So the live set decides, and a recall with nothing left in it
      * falls through to a search worth making again.
      *
      * Where the connection id comes from is unchanged and deliberately not
@@ -1002,7 +1003,11 @@ export const findToolTool: AgentTool = {
         ctx.offeredSlugs?.add(t.slug);
         remember(ctx, t);
       }
-      return { kind: "ok", content: detailed };
+      return {
+        kind: "ok",
+        content: detailed,
+        offered: [full.tool.slug, ...others.map((t) => t.slug)],
+      };
     }
 
     const shortlist = ranked.slice(0, MAX_RESULTS);
@@ -1029,6 +1034,9 @@ export const findToolTool: AgentTool = {
     // nothing should be free to try again with different words — that is the
     // useful kind of repeat, and the retry above already depends on it.
     ctx.searchMemo?.set(memoKey, answer);
-    return { kind: "ok", content: answer };
+    // The whole shortlist, including what an earlier search had already
+    // offered: this is what a later turn recalls the search from, and a recall
+    // built from the additions alone names the leftovers. See `priorSearches`.
+    return { kind: "ok", content: answer, offered: shortlist.map((tool) => tool.slug) };
   },
 };

@@ -944,6 +944,50 @@ describe("what run_tool is allowed to check against", () => {
 });
 
 /**
+ * What a search says it showed, as distinct from what it added.
+ *
+ * The step record is what a later turn recalls a repeated search from, and it
+ * used to hold only the slugs a search newly allowed. A search whose best
+ * candidates an earlier, different search had already offered was therefore
+ * remembered as its leftovers. So the tool reports the whole of what it put in
+ * front of the model, in the order it ranked it.
+ */
+describe("what a search reports having shown", () => {
+  it("names every operation in the answer, including ones already allowed", async () => {
+    const ctx = ctxWith([GMAIL_CONNECTION], new Set(["GMAIL_SEND_EMAIL"]));
+    fetchMock.mockResolvedValue(catalogue([GMAIL_SEND]));
+
+    const out = await findToolTool.run({ query: "send email" }, ctx);
+
+    expect(out.kind === "ok" && out.offered).toEqual(["GMAIL_SEND_EMAIL"]);
+  });
+
+  it("names the described operation and its alternatives when asked for detail", async () => {
+    const ctx = ctxWith([GMAIL_CONNECTION], new Set(["GMAIL_SEND_EMAIL"]));
+    fetchMock
+      .mockResolvedValueOnce(catalogue([SEND_WITH_PROPERTIES]))
+      .mockResolvedValueOnce(new Response(JSON.stringify(SEND_WITH_PROPERTIES), { status: 200 }));
+
+    const out = await findToolTool.run({ query: "send email", detail: true }, ctx);
+
+    expect(out.kind === "ok" && out.offered).toEqual(["GMAIL_SEND_EMAIL"]);
+  });
+
+  it("reports nothing for an answer recalled from the record", async () => {
+    // A recall is not a search: it showed nothing the record does not already
+    // hold, and writing it down again would make the record describe itself.
+    const ctx = ctxWith([GMAIL_CONNECTION], new Set(["GMAIL_SEND_EMAIL"]));
+    ctx.priorSearches = new Map([
+      [searchMemoKey({ query: "send email" }) as string, ["GMAIL_SEND_EMAIL"]],
+    ]);
+
+    const out = await findToolTool.run({ query: "send email" }, ctx);
+
+    expect(out.kind === "ok" && out.offered).toBeUndefined();
+  });
+});
+
+/**
  * How much of the catalogue the ranking gets to see.
  *
  * `relevance` was measured correct and unreachable. On 2026-09-28 a turn asked for

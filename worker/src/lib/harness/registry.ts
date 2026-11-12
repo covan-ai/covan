@@ -329,7 +329,22 @@ export type ToolContext = {
 export type RunApproval = "person" | "grant" | "read";
 
 export type ToolResult =
-  | { kind: "ok"; content: string; approval?: RunApproval }
+  | {
+      kind: "ok";
+      content: string;
+      approval?: RunApproval;
+      /**
+       * Every operation slug this answer put in front of the model, in the
+       * order it ranked them. Only `find_tool` sets it, and only for a search it
+       * really made.
+       *
+       * Whole, not only what was new to `ToolContext.offeredSlugs`: the step
+       * record keeps this, and a later turn recalls a repeated search from it.
+       * See `AgentStep.offered` for the search that was remembered as its
+       * leftovers when only the addition was kept.
+       */
+      offered?: string[];
+    }
   | { kind: "error"; message: string }
   /**
    * The tool has worked out what it would do and wants a person to say yes

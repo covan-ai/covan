@@ -101,22 +101,101 @@ describe("priorSearches", () => {
     ]);
   });
 
-  it("keeps the ranked order the search answered in", async () => {
+  it("answers from the most recent time the search was really made", async () => {
     // Newest first out of the database, so a conversation past the ceiling
     // keeps its most recent searches — but the slugs of one search must come
     // back in the order it offered them, because the model takes the first.
+    // A search made twice is answered from the second: each row holds the whole
+    // of what it showed, so the later one is the catalogue's current answer.
     const { db } = dbWith({
       rows: [
-        step({ query: "send email" }, ["GMAIL_SEND_SOMETHING_ELSE"]),
+        step({ query: "send email" }, ["GMAIL_SEND_EMAIL", "GMAIL_SEND_SOMETHING_ELSE"]),
         step({ query: "send email" }, ["GMAIL_SEND_EMAIL", "GMAIL_REPLY_TO_THREAD"]),
       ],
     });
     const searches = await priorSearches(db, "sess-1");
     expect(searches.get(searchMemoKey({ query: "send email" }) as string)).toEqual([
       "GMAIL_SEND_EMAIL",
-      "GMAIL_REPLY_TO_THREAD",
       "GMAIL_SEND_SOMETHING_ELSE",
     ]);
+  });
+
+  /**
+   * A search whose best candidates an earlier, different search had already
+   * offered.
+   *
+   * `offered` used to hold only what a step ADDED to the allowed set. Seen in
+   * production: one search for an app's operations offered five; a second, in
+   * other words, showed four — three of them among those five — and so recorded
+   * the one that was new, which was its worst match. A turn later the recall
+   * named that one alone as "the ones you may run", the model ran it, and three
+   * calendar events landed on the wrong day.
+   */
+  it("does not recall a search from a record that may be only its leftovers", async () => {
+    const { db } = dbWith({
+      rows: [
+        step({ query: "create event", toolkit: "calendar" }, ["CALENDAR_QUICK_ADD"]),
+        step({ query: "create calendar", toolkit: "calendar" }, [
+          "CALENDAR_CREATE_CALENDAR",
+          "CALENDAR_CREATE_EVENT",
+        ]),
+      ],
+    });
+    const searches = await priorSearches(db, "sess-1");
+    // Nothing in the row says whether it is whole, so the search is made again
+    // rather than answered with what may be a remainder.
+    expect(
+      searches.has(searchMemoKey({ query: "create event", toolkit: "calendar" }) as string),
+    ).toBe(false);
+    // The conversation's first offering had nothing before it to leave out.
+    expect(
+      searches.get(searchMemoKey({ query: "create calendar", toolkit: "calendar" }) as string),
+    ).toEqual(["CALENDAR_CREATE_CALENDAR", "CALENDAR_CREATE_EVENT"]);
+  });
+
+  it("recalls a search that showed what an earlier one had, whole and in its own order", async () => {
+    // What a step records now: everything it showed. Naming a slug an earlier
+    // row already offered is what tells this row apart from a remainder.
+    const { db } = dbWith({
+      rows: [
+        step({ query: "create event", toolkit: "calendar" }, [
+          "CALENDAR_CREATE_EVENT",
+          "CALENDAR_CREATE_CALENDAR",
+          "CALENDAR_QUICK_ADD",
+        ]),
+        step({ query: "create calendar", toolkit: "calendar" }, [
+          "CALENDAR_CREATE_CALENDAR",
+          "CALENDAR_CREATE_EVENT",
+        ]),
+      ],
+    });
+    const searches = await priorSearches(db, "sess-1");
+    expect(
+      searches.get(searchMemoKey({ query: "create event", toolkit: "calendar" }) as string),
+    ).toEqual(["CALENDAR_CREATE_EVENT", "CALENDAR_CREATE_CALENDAR", "CALENDAR_QUICK_ADD"]);
+  });
+
+  it("lets the search made again replace the leftovers it was made instead of", async () => {
+    // The conversation that already holds a remainder: the next ask searches
+    // for real, records the whole answer, and that is what a later turn gets —
+    // not the remainder with the rest appended behind it.
+    const { db } = dbWith({
+      rows: [
+        step({ query: "create event", toolkit: "calendar" }, [
+          "CALENDAR_CREATE_EVENT",
+          "CALENDAR_QUICK_ADD",
+        ]),
+        step({ query: "create event", toolkit: "calendar" }, ["CALENDAR_QUICK_ADD"]),
+        step({ query: "create calendar", toolkit: "calendar" }, [
+          "CALENDAR_CREATE_CALENDAR",
+          "CALENDAR_CREATE_EVENT",
+        ]),
+      ],
+    });
+    const searches = await priorSearches(db, "sess-1");
+    expect(
+      searches.get(searchMemoKey({ query: "create event", toolkit: "calendar" }) as string),
+    ).toEqual(["CALENDAR_CREATE_EVENT", "CALENDAR_QUICK_ADD"]);
   });
 
   it("does not lose the first answer to a repeat that offered nothing new", async () => {

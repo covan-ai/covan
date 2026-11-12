@@ -1460,6 +1460,29 @@ describe("the budget", () => {
     expect(turn.steps[0].offered).toEqual(["GITHUB_LIST_PULL_REQUESTS"]);
   });
 
+  it("records everything a search says it showed, not only what was new", async () => {
+    // A later turn recalls a repeated search from this field. Recording only
+    // the addition made a search whose best candidates were already allowed
+    // look like it had found its leftovers and nothing else.
+    scripted([pass("", [{ id: "c", name: "find", arguments: "{}" }]), pass("ok")]);
+    const turn = await runAgentTurn({
+      ...base,
+      ctx: { offeredSlugs: new Set<string>(["ALREADY_KNOWN"]) } as ToolContext,
+      tools: [
+        tool("find", async (_args, c) => {
+          c.offeredSlugs?.add("GITHUB_LIST_PULL_REQUESTS");
+          return {
+            kind: "ok",
+            content: "found two",
+            offered: ["ALREADY_KNOWN", "GITHUB_LIST_PULL_REQUESTS"],
+          };
+        }),
+      ],
+    });
+
+    expect(turn.steps[0].offered).toEqual(["ALREADY_KNOWN", "GITHUB_LIST_PULL_REQUESTS"]);
+  });
+
   it("leaves the offerings unset for a tool that offers nothing", async () => {
     // Null rather than `[]` all the way down: the union of this field is what
     // `run_tool` refuses against, and "added none" must not read as "searched

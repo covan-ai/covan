@@ -590,7 +590,8 @@ describe("mapConnection", () => {
  * when the oldest comes back.
  */
 describe("mapToolConnection unavailable", () => {
-  const NOW = Date.parse("2026-10-09T12:00:00Z");
+  // After `UNAVAILABLE_LEARNT_SINCE`, so a ten-day-old entry is one still believed.
+  const NOW = Date.parse("2026-12-01T12:00:00Z");
   const DAY = 24 * 60 * 60 * 1000;
   const row = (unavailable_tools?: unknown) => ({
     id: "tc1",

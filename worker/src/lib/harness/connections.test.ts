@@ -3,6 +3,7 @@ import {
   connectionsManifest,
   loadConnection,
   MANIFEST_MAX_LINES,
+  UNAVAILABLE_LEARNT_SINCE,
   unavailableTools,
   type ToolConnection,
 } from "./connections";
@@ -149,12 +150,9 @@ describe("connectionsManifest", () => {
 /**
  * What a connection has learnt it cannot do.
  *
- * The largest failure class in the harness lives behind this function, so its
- * edges are worth pinning: Composio's catalogue is the union of what every
- * account of an application could have, a connected account holds a subset, and
- * no documented parameter asks which. The subset is therefore learnt from 404s
- * and kept on the row — and a reader that is wrong in either direction is
- * expensive. Too eager, and it hides an operation that works; too shy, and the
+ * No documented parameter asks the catalogue what a connected account can run,
+ * so what it cannot is learnt from 404s and kept on the row — and a reader that
+ * is wrong in either direction is expensive. Too eager, and it hides an operation that works; too shy, and the
  * 404 is bought again.
  */
 describe("unavailableTools", () => {
@@ -176,6 +174,18 @@ describe("unavailableTools", () => {
     // nothing in the product saying why.
     const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
     expect(unavailableTools(withBag({ GMAIL_SEND_EMAIL: old })).size).toBe(0);
+  });
+
+  it("forgets an entry learnt before execution ran the catalogue's version", () => {
+    // Until then a search read the latest toolkit version and execution ran the
+    // pinned base one, so a 404 said the base version lacked the operation, not
+    // that this account did. Recent enough to be inside the thirty days, and
+    // still not evidence.
+    const before = new Date(Date.parse(UNAVAILABLE_LEARNT_SINCE) - 60_000).toISOString();
+    const after = new Date(Date.parse(UNAVAILABLE_LEARNT_SINCE) + 60_000).toISOString();
+    expect([
+      ...unavailableTools(withBag({ GMAIL_SEND_EMAIL: before, GMAIL_LIST_LABELS: after })),
+    ]).toEqual(["GMAIL_LIST_LABELS"]);
   });
 
   it("keeps an entry whose date it cannot read", () => {

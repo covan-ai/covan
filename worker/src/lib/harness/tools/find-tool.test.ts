@@ -303,12 +303,9 @@ describe("find_tool", () => {
   });
 
   it("does not offer an operation this connection has already proven it cannot run", async () => {
-    // The largest failure class in the harness, and the one nothing could see:
-    // Composio's catalogue is the union of what every account of an app COULD
-    // have, a connected account has a subset, and `/api/v3.1/tools` takes no
-    // parameter that names an account. So the catalogue offers operations
-    // execution cannot run — twenty of the thirty run_tool failures ever
-    // recorded. Learnt from the 404 and kept on the connection.
+    // `/api/v3.1/tools` takes no parameter that names an account, so the
+    // catalogue can offer an operation execution then refuses. Learnt from the
+    // 404 and kept on the connection.
     // A fresh Response per call, because this test now also proves the other
     // half: a dead row does not count as an answer, so the connected-app re-ask
     // fires for exactly the workspace whose account is missing operations.

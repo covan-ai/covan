@@ -619,6 +619,19 @@ describe("run_tool", () => {
     expect(runToolTool.description).toMatch(/trimmed/i);
     expect(runToolTool.description).toMatch(/narrow/i);
   });
+
+  /**
+   * Same reason. Asked to put meeting notes into a calendar, a model gave
+   * events whose notes said the time was still to be fixed a 10:00, a 19:00
+   * and a 20:00 start — a schema that requires a start time reads, to a model,
+   * like an instruction to pick one. Reword freely; keep that an unstated time
+   * is not filled in.
+   */
+  it("tells the model not to choose a time the person never gave", () => {
+    const schema = runToolTool.input as { properties: { arguments: { description: string } } };
+    expect(schema.properties.arguments.description).toMatch(/never (pick|choose)/i);
+    expect(schema.properties.arguments.description).toMatch(/all-day/i);
+  });
 });
 
 /**

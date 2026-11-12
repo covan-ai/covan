@@ -196,18 +196,18 @@ export async function cacheConnectionSummary(
  * Remember that this connection cannot run an operation, so the next search
  * stops offering it.
  *
- * Composio's execute endpoint is the only thing that knows which subset of a
- * toolkit's catalogue a connected account actually has: it answers
- * `404 Tool_ToolNotFound` for a slug that is in the catalogue and not on the
- * account. `find_tool` cannot ask in advance — `/api/v3.1/tools` has no
- * parameter that names a connected account — so the fact is learnt here, the
- * one place that finds it out, and read back by `unavailableTools` in
+ * Composio's execute endpoint is the only thing that says what a call can
+ * actually run: it answers `404 Tool_ToolNotFound` for a slug it cannot.
+ * `find_tool` cannot ask in advance — `/api/v3.1/tools` has no parameter that
+ * names a connected account — so the fact is learnt here, the one place that
+ * finds it out, and read back by `unavailableTools` in
  * `lib/harness/connections.ts`.
  *
- * It is worth writing down because it was measured: twenty of the thirty
- * `run_tool` failures ever recorded are this, more than every other cause
- * combined, and the same slug was bought three times in one conversation on
- * 2026-09-28 because the withdrawal only lasted the turn.
+ * It is worth writing down because the same slug was bought three times in one
+ * conversation on 2026-09-28 when the withdrawal only lasted the turn. Most of
+ * the 404s recorded before `UNAVAILABLE_LEARNT_SINCE` were the catalogue and
+ * execution answering from different toolkit versions, which that constant
+ * stops believing.
  *
  * Service role, for exactly `cacheConnectionSummary`'s reason above: 0059 lets
  * only the connection's creator or a workspace admin update the row, which is

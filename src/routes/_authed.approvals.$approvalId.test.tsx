@@ -104,6 +104,21 @@ describe("a request nobody was watching", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
   });
 
+  it("says who answered, which may be an admin rather than the owner", async () => {
+    h.get.mockResolvedValue({
+      approval: {
+        ...REQUEST,
+        status: "approved",
+        canAnswer: false,
+        resumedAt: Date.now(),
+        resolvedBy: { id: "admin-1", name: "Grace" },
+      },
+    });
+    await renderPage();
+    expect(await screen.findByText("Grace answered")).toBeInTheDocument();
+    expect(screen.getByText("Approved, and the agent carried on.")).toBeInTheDocument();
+  });
+
   it("offers no buttons to somebody who may only read it", async () => {
     h.get.mockResolvedValue({
       approval: { ...REQUEST, mine: false, canAnswer: false, sessionId: null },

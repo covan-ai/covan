@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "@/i18n";
 import { useLocale } from "@/i18n/provider";
-import { ApiError, api, type InboxItem } from "@/lib/api-client";
+import { ApiError, api, type DelegatedApproval, type InboxItem } from "@/lib/api-client";
 import { AgentMark } from "@/components/agent-mark";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
@@ -104,6 +104,53 @@ export function InboxRow({
         </span>
       </Link>
       {request ? <AnswerButtons requestId={request} /> : null}
+    </div>
+  );
+}
+
+/**
+ * Somebody else's routine asking, in an admin's Inbox (0146): whose routine
+ * and which, what it wants, and the same two buttons. The title opens the
+ * request's page, never the routine's conversation, which is its owner's.
+ */
+export function DelegatedRow({
+  request,
+  agent,
+}: {
+  request: DelegatedApproval;
+  agent: { name: string; avatar: string | null } | undefined;
+}) {
+  const { t } = useTranslation();
+  const agentName = agent?.name ?? request.agentName ?? t("An agent");
+  return (
+    <div className="flex items-center gap-3 border-b border-hairline px-3 hover:bg-surface-muted max-lg:px-0">
+      <Link
+        to="/approvals/$approvalId"
+        params={{ approvalId: request.id }}
+        className="flex min-w-0 flex-1 items-center gap-3.5 py-3"
+      >
+        <span className="relative shrink-0">
+          <AgentMark agent={{ name: agentName, avatar: agent?.avatar ?? null }} size={40} />
+          <span className="absolute -right-[3px] -bottom-[3px] grid size-3 place-items-center rounded-full bg-background">
+            <StatusDot state="waiting" className="size-2" />
+          </span>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-semibold">
+            {request.ownerName
+              ? t("For {{owner}}'s routine “{{routine}}”", {
+                  owner: request.ownerName,
+                  routine: request.routineName,
+                })
+              : t("For the routine “{{routine}}”", { routine: request.routineName })}
+          </span>
+          <span className="mt-0.5 block truncate text-sm text-foreground">
+            <span className="text-muted-foreground">{agentName}:</span>{" "}
+            {request.summary || t("The agent wants to do something.")}
+          </span>
+        </span>
+      </Link>
+      <AnswerButtons requestId={request.id} />
     </div>
   );
 }

@@ -365,6 +365,73 @@ describe("the cron's functions", () => {
   });
 });
 
+/**
+ * What puts a routine's request in front of an admin (0146): the list, with
+ * whose routine and which, and the count beside the Inbox.
+ */
+describe("delegated_approvals", () => {
+  let delegatedId: string;
+  beforeAll(async () => {
+    delegatedId = await seedPause("delegated");
+  });
+
+  const list = async (who: TestUser) => {
+    const { data, error } = await who.db.rpc("delegated_approvals", {
+      p_workspace_id: admin.workspaceId,
+    });
+    expect(error, who.email).toBeNull();
+    return (data ?? []) as Array<Record<string, unknown>>;
+  };
+
+  it("shows an admin somebody else's routine request, with the names around it", async () => {
+    const rows = await list(admin);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: delegatedId,
+          owner_id: owner.id,
+          routine_name: "Seat requests",
+          summary: "POST to Box office (delegated)?",
+        }),
+      ]),
+    );
+    // Nothing of the conversation, the prompt or the call.
+    for (const row of rows) {
+      expect(row).not.toHaveProperty("messages");
+      expect(row).not.toHaveProperty("tool_call");
+      expect(row).not.toHaveProperty("session_id");
+    }
+    // Answered, expired and conversation questions are not listed.
+    const ids = rows.map((row) => row.id);
+    for (const name of ["routine", "expired", "chat", "wake"]) {
+      expect(ids, name).not.toContain(pauses[name]);
+    }
+  });
+
+  it("is empty for the owner, a plain member, a viewer and another workspace's admin", async () => {
+    for (const who of [owner, member, viewer, outsider]) {
+      expect(await list(who), who.email).toEqual([]);
+    }
+  });
+
+  it("counts towards an admin's Needs you", async () => {
+    const { data, error } = await admin.db.rpc("inbox_counts", {
+      p_workspace_id: admin.workspaceId,
+    });
+    expect(error).toBeNull();
+    const forAgent = (data as Array<{ agent_id: string; needs_you: number }>).find(
+      (row) => row.agent_id === seeded.agentId,
+    );
+    expect(forAgent?.needs_you).toBeGreaterThanOrEqual(1);
+
+    const plain = await member.db.rpc("inbox_counts", { p_workspace_id: admin.workspaceId });
+    const theirs = (plain.data as Array<{ agent_id: string; needs_you: number }>).find(
+      (row) => row.agent_id === seeded.agentId,
+    );
+    expect(theirs?.needs_you ?? 0).toBe(0);
+  });
+});
+
 describe("routine_runs", () => {
   it("say what a waiting run waits for", async () => {
     const { data } = await service()

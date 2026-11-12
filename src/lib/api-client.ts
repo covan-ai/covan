@@ -305,9 +305,28 @@ export type HomeOverview = {
 
 export type InboxPage = {
   items: InboxItem[];
+  /**
+   * Other people's routine requests the caller may answer as an admin
+   * (0146). Empty for everybody else, and absent from an older worker.
+   */
+  delegated?: DelegatedApproval[];
   counts: { unread: number; needsYou: number; running: number };
   perAgentUnread: Record<string, number>;
   hasMore: boolean;
+};
+
+/** A request of somebody else's routine, as an admin's Inbox lists it. */
+export type DelegatedApproval = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  ownerName: string | null;
+  routineName: string;
+  tool: string;
+  summary: string;
+  proposal: unknown;
+  createdAt: number;
+  expiresAt: number;
 };
 
 export type InboxCounts = {

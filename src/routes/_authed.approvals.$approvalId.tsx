@@ -95,6 +95,13 @@ function Approval() {
               ) : null}
 
               <p className="m-0 text-meta text-muted-foreground">{whereItStands(request, t)}</p>
+              {/* An admin may answer a routine's request (0143): say who did. */}
+              {request.resolvedBy &&
+              (request.status === "approved" || request.status === "declined") ? (
+                <p className="m-0 text-meta text-muted-foreground">
+                  {answeredBy(request.resolvedBy.name, t)}
+                </p>
+              ) : null}
               {late ? (
                 <p className="m-0 text-meta text-muted-foreground">
                   {t("Somebody answered this first, or it ran out of time.")}
@@ -146,6 +153,11 @@ function heading(request: ApprovalRequest, t: T): string {
   }
   if (request.origin === "routine") return t("{{agent}} is asking, running a routine", { agent });
   return t("{{name}} is asking you", { name: agent });
+}
+
+function answeredBy(name: string | null, t: T): string {
+  const who = name ?? t("Somebody");
+  return t("{{name}} answered", { name: who });
 }
 
 function whereItStands(request: ApprovalRequest, t: T): string {

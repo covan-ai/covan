@@ -23,7 +23,7 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), message: vi.fn() },
 }));
 
-import { InboxRow } from "./inbox-row";
+import { DelegatedRow, InboxRow } from "./inbox-row";
 
 const item = (origin: "chat" | "routine" | "wake"): InboxItem =>
   ({
@@ -76,6 +76,32 @@ describe("an approval in the Inbox", () => {
   it("sends a conversation's question to its conversation, with no buttons here", () => {
     renderRow("chat");
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
+  it("shows an admin whose routine is asking, and answers it from the row", async () => {
+    h.answer.mockResolvedValue({ status: "declined" });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <DelegatedRow
+          request={{
+            id: "pause-2",
+            agentId: "agent-1",
+            agentName: "Box office agent",
+            ownerName: "Ada",
+            routineName: "Seat requests",
+            tool: "http_request",
+            summary: "POST to Box office?",
+            proposal: null,
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 86_400_000,
+          }}
+          agent={undefined}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("For Ada's routine “Seat requests”")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Not now" }));
+    await waitFor(() => expect(h.answer).toHaveBeenCalledWith("pause-2", false));
   });
 
   // The buttons sit beside the link, never inside it: a button in a link is

@@ -211,6 +211,51 @@ export async function touchPresence(
   if (error) console.error("touch_presence failed", error);
 }
 
+/** A request of somebody else's routine that the caller may answer as an admin (0146). */
+export type DelegatedApprovalDTO = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  ownerName: string | null;
+  routineName: string;
+  tool: string;
+  summary: string;
+  proposal: unknown;
+  createdAt: number;
+  expiresAt: number;
+};
+
+/**
+ * Other people's routine requests this caller may answer, for an admin, and
+ * an empty list for everybody else — `delegated_approvals` decides, not this.
+ * A failure is an empty list: the Inbox still shows the caller's own.
+ */
+async function readDelegated(
+  db: AppEnv["Variables"]["db"],
+  workspaceId: string,
+  agentId: string | undefined,
+): Promise<DelegatedApprovalDTO[]> {
+  const { data, error } = await db.rpc("delegated_approvals", { p_workspace_id: workspaceId });
+  if (error) {
+    console.error("delegated_approvals failed", error.code);
+    return [];
+  }
+  return ((data ?? []) as Array<Record<string, unknown>>)
+    .filter((row) => !agentId || row.agent_id === agentId)
+    .map((row) => ({
+      id: String(row.id),
+      agentId: String(row.agent_id),
+      agentName: String(row.agent_name ?? ""),
+      ownerName: typeof row.owner_name === "string" ? row.owner_name : null,
+      routineName: String(row.routine_name ?? ""),
+      tool: String(row.tool ?? ""),
+      summary: String(row.summary ?? ""),
+      proposal: row.proposal ?? null,
+      createdAt: toEpochMs(String(row.created_at)),
+      expiresAt: toEpochMs(String(row.expires_at)),
+    }));
+}
+
 /**
  * Where each approval on the page was asked, read through the caller's own
  * client, so a row can offer its buttons where they answer it (0143). One
@@ -251,10 +296,11 @@ inbox.get("/inbox", async (c) => {
   const db = c.get("db");
   deferred(c, touchPresence(db, workspaceId));
   const limit = parsed.data.limit ?? 50;
-  const [rows, counts] = await Promise.all([
+  const filter = parsed.data.filter ?? "all";
+  const [rows, counts, delegated] = await Promise.all([
     db.rpc("inbox_rows", {
       p_workspace_id: workspaceId,
-      p_filter: parsed.data.filter ?? "all",
+      p_filter: filter,
       p_agent_id: parsed.data.agent ?? null,
       p_before: parsed.data.before ? new Date(parsed.data.before).toISOString() : null,
       // One more than asked, to say whether there is a next page.
@@ -262,6 +308,10 @@ inbox.get("/inbox", async (c) => {
       p_session_ids: null,
     }),
     readCounts(db, workspaceId),
+    // Only on the first page of the two lists a request belongs on.
+    (filter === "all" || filter === "needs_you") && !parsed.data.before
+      ? readDelegated(db, workspaceId, parsed.data.agent)
+      : Promise.resolve([] as DelegatedApprovalDTO[]),
   ]);
   if (rows.error || !counts) {
     if (rows.error) console.error("inbox_rows failed", rows.error);
@@ -274,6 +324,7 @@ inbox.get("/inbox", async (c) => {
   await withOrigins(db, items);
   return c.json({
     items,
+    delegated,
     counts: { unread: counts.unread, needsYou: counts.needsYou, running: counts.running },
     perAgentUnread: Object.fromEntries(
       Object.entries(counts.byAgent).map(([id, n]) => [id, n.unread]),

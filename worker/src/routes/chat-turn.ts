@@ -128,6 +128,15 @@ export async function buildToolContext(input: {
    * about the operation it is about to run.
    */
   approvedProposal?: unknown;
+  /**
+   * The steps the half that asked already took, as `paused_turns` stored them.
+   *
+   * Only the resume path passes them, and only for what their searches
+   * offered. A reply's steps reach `message_steps` when it ends, so the read
+   * below holds every earlier turn and none of this one — and the second call
+   * of an operation this turn's own search found was refused.
+   */
+  carriedSteps?: AgentStep[];
   /** Where `search_documents` adds what it found. See `ToolContext`. */
   foundSources?: RetrievedSource[];
   /** Whose knowledge a search may read. See `ToolContext`. */
@@ -143,6 +152,9 @@ export async function buildToolContext(input: {
     priorOfferings(input.db, input.sessionId),
     priorSearches(input.db, input.sessionId),
   ]);
+  for (const step of input.carriedSteps ?? []) {
+    for (const slug of step.offered ?? []) offeredSlugs.add(slug);
+  }
   return {
     db: input.db,
     env: input.env,

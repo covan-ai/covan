@@ -2100,6 +2100,23 @@ describe("a run that waits on its browser", () => {
     });
   });
 
+  it("tells the tool path a routine set to ask every time asks (0145)", async () => {
+    fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
+    const { db } = makeDb();
+    let seen: Record<string, unknown> | null = null;
+    const runWithTools = vi.fn(async (input: Record<string, unknown>) => {
+      seen = input;
+      return { text: "done", tokens: 1, declined: false };
+    });
+
+    await runRoutine(routine({ cursor: { seen: ["a"] } as never, browser_access: "ask" }), {
+      ...(makeDeps(db) as Record<string, unknown>),
+      runWithTools,
+    } as never);
+
+    expect(seen).toMatchObject({ browser: { conversation: expect.any(Function), ask: true } });
+  });
+
   it("offers no browser to a routine that did not allow it", async () => {
     fetchImpl = vi.fn(async () => new Response(ATOM(["a"]), { status: 200 }));
     const { db } = makeDb();

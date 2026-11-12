@@ -1201,10 +1201,11 @@ export type RoutineDTO = {
   /** How many it has delivered. */
   runsDone: number;
   /**
-   * Whether a scheduled run may use the browser (0100, 0141): `off`, or `all`,
+   * Whether a scheduled run may use the browser (0100, 0141, 0145): `off`; `ask`,
+   * which shows the card a conversation would and waits for a yes; or `all`,
    * carrying what a conversation's browser would.
    */
-  browserAccess: "off" | "all";
+  browserAccess: "off" | "ask" | "all";
   /** The conversation this routine's browser reports into, once a run has opened one. */
   browserConversationId: string | null;
   status: "active" | "paused" | "completed";
@@ -1298,7 +1299,8 @@ export function mapRoutine(row: {
     endsAfterRuns: row.ends_after_runs ?? null,
     runsDone: row.runs_done ?? 0,
     // `off` for a row read before 0100, which is what every routine was.
-    browserAccess: row.browser_access === "all" ? "all" : "off",
+    browserAccess:
+      row.browser_access === "all" || row.browser_access === "ask" ? row.browser_access : "off",
     browserConversationId: row.browser_conversation_id ?? null,
     status:
       row.status === "paused" ? "paused" : row.status === "completed" ? "completed" : "active",

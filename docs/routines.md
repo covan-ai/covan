@@ -336,12 +336,16 @@ whatever is connected, because the browser is a tool it has.
 A page that only renders with JavaScript, a number on a site with no API, a
 dashboard behind a sign-in: these are what `browse` is for in a conversation,
 and a routine can use it too — **once its owner allows it**. The routine's page
-has a **Use a browser** card, off by default.
+has a **Use a browser** card with three settings, off by default.
 
-It is off by default because in a conversation every browser task is shown to
-you on a card before it starts, and a scheduled run has nobody to show one to.
-Turning the switch on is that approval, given once, for every run. Only the
-routine's owner can give it.
+In a conversation every browser task is shown to you on a card before it
+starts. **Ask every time** keeps that card on a schedule: the run stops before
+its first browser task, you are emailed the task, the logins it would use and
+what it may cost, and the run waits up to a day for your yes (or an admin's)
+before anything at the browser provider starts. **Allowed** is that approval
+given once, for every run, and no card is shown. Only the routine's owner can
+change the setting. For a routine that acts inside a signed-in account —
+closing a seat, changing a price — ask every time is the one to choose.
 
 A run's browser carries what yours does in a conversation: the sites you
 signed into in the browser panel, and any login you saved, by chat's rules.

@@ -141,7 +141,7 @@ export type RoutineRow = {
    * Whether a run may use the browser, and what it carries (0100). Optional
    * for `output_bundle_id`'s reason; absent reads as `'off'`.
    */
-  browser_access?: "off" | "all" | null;
+  browser_access?: "off" | "ask" | "all" | null;
   /** The owner's conversation this routine's browser runs beside, once one is open. */
   browser_conversation_id?: string | null;
   /**
@@ -1543,8 +1543,12 @@ function browserFor(
   deps: ExecutorDeps,
 ): Omit<RoutineBrowser, "started"> | undefined {
   if (isTest(deps)) return undefined;
-  if (routine.browser_access !== "all") return undefined;
-  return { conversation: () => openRoutineConversation(deps.db, routine) };
+  if (routine.browser_access !== "all" && routine.browser_access !== "ask") return undefined;
+  return {
+    conversation: () => openRoutineConversation(deps.db, routine),
+    // Ask every time (0145): the first task parks the run on its card.
+    ...(routine.browser_access === "ask" ? { ask: true } : {}),
+  };
 }
 
 /**

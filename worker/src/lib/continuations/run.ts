@@ -137,6 +137,8 @@ type RoutineSide = {
   runId: string;
   /** The routine's browser switch (0141): on carries what a conversation's would. */
   browserOn: boolean;
+  /** On and set to ask every time (0145): the first task parks the run on its card. */
+  browserAsks: boolean;
   timezone: string | null;
   /** For the request's email: which routine is asking. */
   name: string | null;
@@ -214,7 +216,9 @@ export async function runContinuationTurn(
 
     // 5. Whether a browser was ever approved in this conversation, by this person.
     const browserApproved = routine ? false : await browserApprovedIn(db, wake);
-    const browserOn = routine ? routine.browserOn : browserApproved;
+    // A conversation that never approved a browser is offered one too: the
+    // first task parks the turn on its card and asks the owner (0143).
+    const browserOn = routine ? routine.browserOn : true;
 
     // 6. The tools, as a scheduled run gets them.
     const toolEnv = env as ToolEnv;
@@ -280,7 +284,11 @@ export async function runContinuationTurn(
         ),
       );
     const routineBrowser: RoutineBrowser | undefined = routine?.browserOn
-      ? { conversation: async () => wake.sessionId, started: [] }
+      ? {
+          conversation: async () => wake.sessionId,
+          started: [],
+          ...(routine.browserAsks ? { ask: true } : {}),
+        }
       : undefined;
     const ctx: ToolContext = {
       db,
@@ -464,10 +472,17 @@ async function routineSide(
   }
   if (!routine) return { kind: "error", message: "routine is gone" };
 
-  const browserOn = text(routine.browser_access) === "all";
+  const access = text(routine.browser_access);
+  const browserOn = access === "all" || access === "ask";
   return {
     kind: "ok",
-    value: { runId, browserOn, timezone: text(routine.timezone), name: text(routine.name) },
+    value: {
+      runId,
+      browserOn,
+      browserAsks: access === "ask",
+      timezone: text(routine.timezone),
+      name: text(routine.name),
+    },
   };
 }
 

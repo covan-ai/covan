@@ -1078,6 +1078,18 @@ describe("PATCH /routines/:id, the browser", () => {
     expect(body.browserAccess).toBe("all");
   });
 
+  it("sets it to ask every time (0145)", async () => {
+    const { request, updates } = patchWith({});
+
+    const { status, body } = await request("PATCH", "/routines/routine-1", {
+      browserAccess: "ask",
+    });
+
+    expect(status).toBe(200);
+    expect(updates[0]).toMatchObject({ browser_access: "ask" });
+    expect(body.browserAccess).toBe("ask");
+  });
+
   it("refuses `site`, which no longer exists", async () => {
     const { request, updates } = patchWith({});
 

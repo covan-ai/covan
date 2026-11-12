@@ -56,10 +56,11 @@ export type Routine = {
   /** How many it has delivered. */
   runsDone: number;
   /**
-   * Whether a scheduled run may use the browser: `off`, or `all`, carrying
+   * Whether a scheduled run may use the browser: `off`; `ask`, which shows the
+   * card a conversation would and waits for a yes (0145); or `all`, carrying
    * what the owner's browser does in a conversation.
    */
-  browserAccess: "off" | "all";
+  browserAccess: "off" | "ask" | "all";
   /** The conversation this routine's browser works beside, once a run opened one. */
   browserConversationId: string | null;
   status: "active" | "paused" | "completed";
@@ -384,7 +385,7 @@ export type UpdateRoutineInput = Partial<{
    */
   outputBundleId: string | null;
   outputRetention: number;
-  browserAccess: "off" | "all";
+  browserAccess: "off" | "ask" | "all";
   deliverInbox: boolean;
   /** Null hands the choice back to the agent. */
   model: string | null;

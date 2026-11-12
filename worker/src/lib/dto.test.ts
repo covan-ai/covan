@@ -422,6 +422,10 @@ describe("mapRoutine", () => {
     expect(dto).toMatchObject({ browserAccess: "all", browserConversationId: "conv-1" });
   });
 
+  it("carries ask every time (0145)", () => {
+    expect(mapRoutine({ ...row, browser_access: "ask" }).browserAccess).toBe("ask");
+  });
+
   it("reads a leftover `site`, which 0141 retired, as off", () => {
     expect(mapRoutine({ ...row, browser_access: "site" }).browserAccess).toBe("off");
   });

@@ -79,6 +79,12 @@ export type RoutineBrowser = {
    */
   conversation: () => Promise<string | null>;
   /**
+   * The routine's browser is set to ask every time (0145): `browse` shows the
+   * card a conversation would, and the run parks on it for its owner (0143).
+   * Absent is 0141's `all`, where the switch itself is the approval.
+   */
+  ask?: boolean;
+  /**
    * The browser tasks this run started or put in line, appended by `browse`.
    * The engine holds the report while any of them is unanswered.
    */

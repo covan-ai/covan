@@ -2203,6 +2203,26 @@ describe("a routine's run, allowed the browser", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * Ask every time (0145): the routine's run shows the card a conversation
+   * would, the run parks on it, and the yes is what starts the browser.
+   */
+  it("shows the card on a routine set to ask, and starts nothing until a yes", async () => {
+    const asks = routineCtx();
+    asks.routineBrowser.ask = true;
+    const asked = await browseTool.run({ task: TASK }, asks);
+    expect(asked.kind).toBe("needs_confirmation");
+    expect((asked as { proposal: { task: string } }).proposal.task).toBe(TASK);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(asks.routineBrowser.started).toEqual([]);
+
+    const approved = routineCtx();
+    approved.routineBrowser.ask = true;
+    const ran = await browseTool.run({ task: TASK }, { ...approved, confirmed: true });
+    expect(ran.kind).toBe("ok");
+    expect(approved.routineBrowser.started).toHaveLength(1);
+  });
+
   it("still refuses a scheduled run whose routine did not allow it", async () => {
     const result = await browseTool.run(
       { task: TASK },
@@ -2224,10 +2244,12 @@ describe("a woken turn, with nobody watching", () => {
   const woken = (browserApproved: boolean, over: Partial<ToolContext> = {}) =>
     ctxWith({ continuation: { id: "cont-1", browserApproved }, ...over });
 
-  it("a continuation without a prior browser is refused the browser", async () => {
+  // It asks, and the turn parks on the card for its owner (0143), where it
+  // used to be refused: nothing at the provider until somebody says yes.
+  it("a continuation without a prior browser asks for one", async () => {
     const result = await browseTool.run({ task: TASK }, woken(false));
-    expect(result.kind).toBe("error");
-    expect((result as { message: string }).message).toMatch(/nobody is watching/);
+    expect(result.kind).toBe("needs_confirmation");
+    expect((result as { proposal: { task: string } }).proposal.task).toBe(TASK);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(ensureBrowserSession).not.toHaveBeenCalled();
   });

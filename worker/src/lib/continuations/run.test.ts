@@ -200,7 +200,9 @@ describe("runContinuationTurn", () => {
     expect(ctx.routineRunId).toBeUndefined();
     expect(ctx.routineBrowser).toBeUndefined();
     expect(capabilities).toHaveBeenCalledWith(
-      expect.objectContaining({ surface: "schedule", browser: false, agentId: "agent-1" }),
+      // Offered even where no browser was approved before: its first task
+      // parks the turn on the card for the owner (0143).
+      expect.objectContaining({ surface: "schedule", browser: true, agentId: "agent-1" }),
     );
   });
 

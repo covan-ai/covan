@@ -45,7 +45,7 @@ const routine: Routine = {
 describe("RoutineBrowserCard", () => {
   it("is off until the owner turns it on, and says what that means", () => {
     render(<RoutineBrowserCard routine={routine} onSave={() => {}} saving={false} />);
-    expect(screen.getByLabelText("Allow the browser on scheduled runs")).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "Off" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText(/Runs cannot use the browser/)).toBeInTheDocument();
   });
 
@@ -54,8 +54,29 @@ describe("RoutineBrowserCard", () => {
     const user = userEvent.setup();
     render(<RoutineBrowserCard routine={routine} onSave={onSave} saving={false} />);
 
-    await user.click(screen.getByLabelText("Allow the browser on scheduled runs"));
+    await user.click(screen.getByRole("radio", { name: "Allowed" }));
     expect(onSave).toHaveBeenCalledWith({ browserAccess: "all" });
+  });
+
+  // 0145: the run shows the card a conversation would and waits for a yes.
+  it("asks every time, and says the run waits for the answer", async () => {
+    const onSave = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <RoutineBrowserCard routine={routine} onSave={onSave} saving={false} />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: "Ask every time" }));
+    expect(onSave).toHaveBeenCalledWith({ browserAccess: "ask" });
+
+    rerender(
+      <RoutineBrowserCard
+        routine={{ ...routine, browserAccess: "ask" }}
+        onSave={onSave}
+        saving={false}
+      />,
+    );
+    expect(screen.getByText(/you are asked, by email and in the Inbox/)).toBeInTheDocument();
   });
 
   it("turns off", async () => {
@@ -69,7 +90,7 @@ describe("RoutineBrowserCard", () => {
       />,
     );
 
-    await user.click(screen.getByLabelText("Allow the browser on scheduled runs"));
+    await user.click(screen.getByRole("radio", { name: "Off" }));
     expect(onSave).toHaveBeenCalledWith({ browserAccess: "off" });
   });
 

@@ -574,10 +574,11 @@ const updateSchema = z
     outputBundleId: z.string().uuid().nullable().optional(),
     outputRetention: z.number().int().min(1).max(520).optional(),
     /**
-     * Whether a scheduled run may use the browser (0100, 0141): on, carrying
+     * Whether a scheduled run may use the browser (0100, 0141, 0145): on and
+     * asking every time, on, carrying
      * what a conversation's browser would, or off.
      */
-    browserAccess: z.enum(["off", "all"]).optional(),
+    browserAccess: z.enum(["off", "ask", "all"]).optional(),
     ...runChoices,
   })
   .refine((v) => Object.keys(v).length > 0, { message: "no fields to update" });

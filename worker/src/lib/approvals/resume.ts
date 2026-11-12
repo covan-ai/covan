@@ -195,9 +195,17 @@ export async function resumeApproved(
 
   // 2. The approved call, then the rest of its batch.
   const toolEnv = env as ToolEnv;
+  // The routine's browser, as its run had it: on, or on and asking every time
+  // (0145) — in which case the approved call, if it is the browser, runs on
+  // this yes and a later task asks again.
+  const browserAccess = run?.routine.browser_access;
   const routineBrowser: RoutineBrowser | undefined =
-    run?.routine.browser_access === "all"
-      ? { conversation: async () => pause.sessionId, started: [] }
+    browserAccess === "all" || browserAccess === "ask"
+      ? {
+          conversation: async () => pause.sessionId,
+          started: [],
+          ...(browserAccess === "ask" ? { ask: true } : {}),
+        }
       : undefined;
   const ctx: ToolContext = {
     db,

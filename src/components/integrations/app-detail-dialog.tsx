@@ -268,7 +268,9 @@ function authLabel(t: TFunction, toolkit: ComposioToolkit): string {
   switch (toolkit.connectKind) {
     case "no_auth":
       return t("No sign-in needed");
+    // Whose OAuth client it is makes no difference to the person signing in.
     case "managed_oauth":
+    case "dcr_oauth":
       return t("Sign in at {{app}}", { app });
     case "user_credential": {
       switch (

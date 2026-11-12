@@ -356,6 +356,9 @@ const OPEN_TO_A_KEY = new Set([
   "routes/sessions.ts DELETE /sessions/:id",
   "routes/sessions.ts GET /sessions/:id/messages",
   "routes/sessions.ts GET /sessions/:id/browser-tasks",
+  // A read, and an empty one for a key: 0087's restrictive policy keeps a
+  // key's token out of `paused_turns` in every workspace.
+  "routes/sessions.ts GET /sessions/:id/pending-approval",
   // 0117. Marks a step claimed and starts nothing: the turn after it is an
   // ordinary chat request, which a key may already make.
   "routes/sessions.ts POST /sessions/:id/browser-tasks/continue",

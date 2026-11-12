@@ -352,6 +352,18 @@ const UNAVAILABLE_TRUSTED_DAYS = 30;
 const UNAVAILABLE_TRUSTED_MS = UNAVAILABLE_TRUSTED_DAYS * 24 * 60 * 60 * 1000;
 
 /**
+ * The oldest "does not have that operation" fact worth believing.
+ *
+ * Before this, searching read a toolkit's `latest` version and execution ran
+ * its pinned base version (`lib/composio/client.ts`, WHY TWO API VERSIONS), so
+ * a 404 recorded then said the base version lacked the operation — not that
+ * the account did. Those entries are ignored rather than rewritten, the same
+ * way expired ones are; the thirty days retire this constant on their own.
+ */
+export const UNAVAILABLE_LEARNT_SINCE = "2026-11-12T22:45:00Z";
+const UNAVAILABLE_LEARNT_SINCE_MS = Date.parse(UNAVAILABLE_LEARNT_SINCE);
+
+/**
  * The entries of a connection's `unavailable_tools` bag that are still
  * trusted, with when each was recorded (NaN for a date nobody can read).
  *
@@ -361,7 +373,7 @@ const UNAVAILABLE_TRUSTED_MS = UNAVAILABLE_TRUSTED_DAYS * 24 * 60 * 60 * 1000;
 function trustedUnavailable(config: Record<string, unknown>, now: number): Array<[string, number]> {
   const raw = config.unavailable_tools;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
-  const cutoff = now - UNAVAILABLE_TRUSTED_MS;
+  const cutoff = Math.max(now - UNAVAILABLE_TRUSTED_MS, UNAVAILABLE_LEARNT_SINCE_MS);
   const live: Array<[string, number]> = [];
   for (const [slug, at] of Object.entries(raw as Record<string, unknown>)) {
     const seen = typeof at === "string" ? Date.parse(at) : NaN;
@@ -400,19 +412,19 @@ export function hiddenOperations(
 /**
  * The operations this connection has already proven it cannot run.
  *
- * WHY THIS EXISTS. `find_tool` searches Composio's whole catalogue, and the
- * catalogue is the union of what every account of an application *could* have.
- * A connected account has a subset, and the only thing that knows which subset
- * is Composio's execute endpoint — it answers `404 Tool_ToolNotFound` for a
- * slug that is in the catalogue and not on the account. There is no documented
+ * WHY THIS EXISTS. `find_tool` searches Composio's whole catalogue, and only
+ * Composio's execute endpoint says what a given call can actually run — it
+ * answers `404 Tool_ToolNotFound` for a slug it cannot. There is no documented
  * way to ask in advance: `/api/v3.1/tools` takes `toolkit_slug`, `tool_slugs`,
  * `auth_config_ids`, `tags`, `scopes` and `search`, and nothing that names a
  * connected account.
  *
  * So the answer is learnt rather than looked up, and this is where it is kept.
- * Twenty of the thirty `run_tool` failures ever recorded are this one thing,
- * which makes it the single largest failure class in the harness — larger than
- * every other cause combined.
+ * It was once the largest failure class in the harness, and most of that turned
+ * out to be the version split `UNAVAILABLE_LEARNT_SINCE` describes rather than
+ * anything about an account: the catalogue offered `latest`'s operations and
+ * execution ran a base version without them. What is left after that is
+ * smaller, and this still keeps it from being paid for twice.
  *
  * Read off `config`, which `listConnections` already selects, so filtering a
  * search costs no query at all.

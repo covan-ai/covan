@@ -307,12 +307,32 @@ describe("executeTool", () => {
       { fetchImpl: fetchImpl as never },
     );
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/api/v3/tools/execute/GMAIL_SEND_EMAIL");
+    expect(url).toContain("/api/v3.1/tools/execute/GMAIL_SEND_EMAIL");
     expect(JSON.parse(String(init.body))).toEqual({
       connected_account_id: "ca_1",
       user_id: "cu_1",
       arguments: { subject: "hi" },
     });
+  });
+
+  it("runs the toolkit version the catalogue described, not the pinned base one", async () => {
+    // `/api/v3/tools/execute` runs base version `00000000_00` when the body
+    // names none; `/api/v3.1` runs `latest`, the version the search and schema
+    // reads already answer from. With the two apart the model was handed one
+    // version's schema and slugs and judged by another's: a field typed
+    // boolean in one and string in the other, an end time one ignored, and
+    // `Tool_ToolNotFound` for operations the search had just offered.
+    const search = fetchReturning({ items: [] });
+    await searchTools(ENV, { search: "x" }, { fetchImpl: search as never });
+    const execute = fetchReturning({ successful: true });
+    await executeTool(
+      ENV,
+      { slug: "GMAIL_SEND_EMAIL", userId: "cu_1", arguments: {} },
+      { fetchImpl: execute as never },
+    );
+    const prefix = (url: unknown) => new URL(String(url)).pathname.split("/tools")[0];
+    expect(prefix(execute.mock.calls[0][0])).toBe(prefix(search.mock.calls[0][0]));
+    expect(JSON.parse(String(execute.mock.calls[0][1]?.body))).not.toHaveProperty("version");
   });
 
   it("leaves the account out entirely when the application needs none", async () => {

@@ -26,8 +26,12 @@ import { httpsUrl } from "../https-url";
  * and what we use is four JSON endpoints. `fetchImpl` is injectable so the
  * tests do not stub a global.
  *
- * WHY TWO API VERSIONS. The catalogue moved to `/api/v3.1` and execution did
- * not. Both are constants in this one file so the day that split closes is one
+ * WHY TWO API VERSIONS. The tool endpoints moved to `/api/v3.1` and the rest
+ * did not. The tool half must move together: v3.1 answers from a toolkit's
+ * `latest` version and v3's execute runs the pinned base version
+ * `00000000_00`, so a search on one and a call on the other hands the model a
+ * schema and a list of slugs the call is then judged against something else
+ * for. Both are constants in this one file so the day the rest moves is one
  * edit rather than a search.
  *
  * FAILURES ARE RETURNED, NOT THROWN, for the reason `lib/supabase-management.ts`
@@ -38,10 +42,10 @@ import { httpsUrl } from "../https-url";
 /** Where the hosted API lives. Overridable per deployment, never per row. */
 export const COMPOSIO_BASE = "https://backend.composio.dev";
 
-/** The catalogue half. Tools and toolkits moved here; execution did not. */
+/** Tools and toolkits: searching, describing and executing them. */
 const CATALOGUE_API = "/api/v3.1";
 
-/** Execution, connected accounts, and the consent flow. */
+/** Connected accounts, auth configs, triggers and the consent flow. */
 const CORE_API = "/api/v3";
 
 /** Long enough for a cold catalogue read, short enough to fail a form politely. */
@@ -1230,7 +1234,9 @@ export async function executeTool(
 ): Promise<ComposioResult<{ body: string }>> {
   const res = await request(
     env,
-    `${CORE_API}/tools/execute/${encodeURIComponent(call.slug)}`,
+    // The catalogue's version, not the pinned base one — see WHY TWO API
+    // VERSIONS. No `version` in the body: v3.1 already means `latest`.
+    `${CATALOGUE_API}/tools/execute/${encodeURIComponent(call.slug)}`,
     {
       method: "POST",
       body: {

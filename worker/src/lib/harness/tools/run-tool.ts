@@ -316,7 +316,10 @@ export const runToolTool: AgentTool = {
         description:
           "The operation's arguments, as its schema describes them. Set whatever limits it " +
           "offers — time range, maximum results, list of fields — as small as the question " +
-          "allows.",
+          "allows. Put in only what the person or their material actually says: never pick a " +
+          "time, date or recipient yourself to fill a field. A date with no time goes in as " +
+          "an all-day entry if the operation has one; otherwise leave the field out if it is " +
+          "optional, or ask the person.",
         additionalProperties: true,
       },
       question: {

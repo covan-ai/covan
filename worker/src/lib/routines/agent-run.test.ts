@@ -457,4 +457,27 @@ describe("a run allowed the browser", () => {
       /allows it to use the browser/,
     );
   });
+
+  // On covan.app a run allowed the browser wrote "I am opening the page…" and
+  // never called `browse`: three runs, no task, and once a time it made up.
+  it("tells the model that only a browse call opens a page", async () => {
+    capabilitiesFor.mockResolvedValue({ tools: [BROWSE], manifest: "" });
+    runAgentTurn.mockResolvedValue({
+      text: "Draft.",
+      usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 0 },
+      steps: [],
+      finishReason: "stop",
+    });
+
+    await runRoutineWithTools(env, db)({ ...input, browser }, env);
+    await runRoutineWithTools(env, db)({ ...input, browser: { ...browser, ask: true } }, env);
+
+    const [all, ask] = runAgentTurn.mock.calls.map(
+      (call) => call[0].request.messages[0].content as string,
+    );
+    expect(all).toMatch(/call the `browse` tool/);
+    expect(all).toMatch(/does not open it/);
+    expect(all).not.toMatch(/approve/);
+    expect(ask).toMatch(/approve each browser task/);
+  });
 });

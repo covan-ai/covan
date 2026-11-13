@@ -106,10 +106,21 @@ export function runRoutineWithTools(
           // `routines.timezone` is the schedule's own zone, so "every Monday at
           // 22:00" means the same thing to the cron and to the model.
           whenAndWhere(new Date(), input.timezone),
+          // "Start the tasks" alone was read as "say that you started them":
+          // on covan.app runs allowed the browser wrote "I am opening the
+          // page…" and called nothing, so the report waited on no task and
+          // once carried a time the model made up. Saying it is not doing it.
           routineBrowser
-            ? "This routine's owner allows it to use the browser. A browser task's answer is " +
-              "written into this report when it arrives, so start the tasks the instruction " +
-              "needs and write the rest of the report around them."
+            ? "This routine's owner allows it to use the browser. For each thing the " +
+              "instruction needs from a web page, call the `browse` tool — writing that you are " +
+              "opening a page does not open it, and only a `browse` call does. Never write a " +
+              "page's contents you have not been given. A browser task's answer is written " +
+              "into this report when it arrives, so once you have called `browse`, write the " +
+              "rest of the report around it." +
+              (routineBrowser.ask
+                ? " The owner has to approve each browser task before it starts; call " +
+                  "`browse` anyway, and this run waits for their answer."
+                : "")
             : null,
           manifest,
         ]

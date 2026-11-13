@@ -14,6 +14,28 @@ import { replyOutcome, sumOverPasses } from "../harness/usage";
 import type { AgentRunInput, AgentRunResult } from "./executor";
 
 /**
+ * `browse` as a routine run meets it.
+ *
+ * The tool's own description is written for a conversation: the answer comes
+ * back "as a new message", the browser opens "beside the conversation", and
+ * the model is told to "say that you have started it". A run has no
+ * conversation, and its reply has to be the result. Handed both, gpt-4.1 on
+ * covan.app did the saying and called nothing — every run allowed the
+ * browser, from 2026-10-24 to 2026-11-13, reported "I am opening the page…",
+ * and some went on to state what the page said.
+ */
+const ROUTINE_BROWSE_DESCRIPTION =
+  "Do something on a web page: read a page that needs JavaScript, pull a number out of a " +
+  "site with no API, follow a few links. You give ONE instruction in plain language and a " +
+  "real browser carries it out. In this run its answer does not come back to you: it is " +
+  "written into this run's report when the browser finishes, a few minutes after your reply. " +
+  "So you do not know what a page says unless this tool fetched it — call it for each thing " +
+  "the instruction needs from a web page, then write the rest of the report and leave the " +
+  "page's answer to it. When the task has to sign in to a site, put that site's host in " +
+  "`site`. When the instruction wants something done with the answer once it arrives, put " +
+  "that next step in `then`. Use http_request instead when the thing you want has an API.";
+
+/**
  * A scheduled run that can use the same tools a chat turn can.
  *
  * The alternative was a second execution path, and it is worth saying why it
@@ -84,6 +106,11 @@ export function runRoutineWithTools(
       input.browser && tools.some((t) => t.name === "browse")
         ? { ...input.browser, started: [] }
         : undefined;
+    const offered = routineBrowser
+      ? tools.map((t) =>
+          t.name === "browse" ? { ...t, description: ROUTINE_BROWSE_DESCRIPTION } : t,
+        )
+      : tools;
 
     const model = resolveModel(input.model, runEnv);
     const body = routineMaterial(input);
@@ -195,7 +222,7 @@ export function runRoutineWithTools(
         // model's reasoning is output tokens spent on a paragraph with no
         // reader. See `showThinking` in `lib/completion.ts`.
       },
-      tools,
+      tools: offered,
       // The one place the two surfaces are allowed to differ, and it is a
       // number rather than a capability: a scheduled run gets the smaller step
       // budget. `lib/harness/budget.ts` argues it — the cron Worker counts

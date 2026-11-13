@@ -30,6 +30,11 @@ const listQuery = z.object({
 export type InboxNeedsYou = {
   kind: "approval" | "question" | "login" | "routine_failed";
   pausedTurnId?: string;
+  /**
+   * Where an approval was asked (0143): a conversation's is answered in it, a
+   * routine's or a woken turn's from the row itself. Absent for the rest.
+   */
+  origin?: "chat" | "routine" | "wake";
   summary: string;
   replies?: string[];
   since: number;
@@ -206,6 +211,80 @@ export async function touchPresence(
   if (error) console.error("touch_presence failed", error);
 }
 
+/** A request of somebody else's routine that the caller may answer as an admin (0146). */
+export type DelegatedApprovalDTO = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  ownerName: string | null;
+  routineName: string;
+  tool: string;
+  summary: string;
+  proposal: unknown;
+  createdAt: number;
+  expiresAt: number;
+};
+
+/**
+ * Other people's routine requests this caller may answer, for an admin, and
+ * an empty list for everybody else — `delegated_approvals` decides, not this.
+ * A failure is an empty list: the Inbox still shows the caller's own.
+ */
+async function readDelegated(
+  db: AppEnv["Variables"]["db"],
+  workspaceId: string,
+  agentId: string | undefined,
+): Promise<DelegatedApprovalDTO[]> {
+  const { data, error } = await db.rpc("delegated_approvals", { p_workspace_id: workspaceId });
+  if (error) {
+    console.error("delegated_approvals failed", error.code);
+    return [];
+  }
+  return ((data ?? []) as Array<Record<string, unknown>>)
+    .filter((row) => !agentId || row.agent_id === agentId)
+    .map((row) => ({
+      id: String(row.id),
+      agentId: String(row.agent_id),
+      agentName: String(row.agent_name ?? ""),
+      ownerName: typeof row.owner_name === "string" ? row.owner_name : null,
+      routineName: String(row.routine_name ?? ""),
+      tool: String(row.tool ?? ""),
+      summary: String(row.summary ?? ""),
+      proposal: row.proposal ?? null,
+      createdAt: toEpochMs(String(row.created_at)),
+      expiresAt: toEpochMs(String(row.expires_at)),
+    }));
+}
+
+/**
+ * Where each approval on the page was asked, read through the caller's own
+ * client, so a row can offer its buttons where they answer it (0143). One
+ * read for the page, and only when it has an approval on it; a failure leaves
+ * every row opening its thread, which is what they did before.
+ */
+async function withOrigins(db: AppEnv["Variables"]["db"], items: InboxItemDTO[]): Promise<void> {
+  const ids = items.flatMap((item) =>
+    item.needsYou?.kind === "approval" && item.needsYou.pausedTurnId
+      ? [item.needsYou.pausedTurnId]
+      : [],
+  );
+  if (ids.length === 0) return;
+  const { data, error } = await db.from("paused_turns").select("id, origin").in("id", ids);
+  if (error) {
+    console.error("could not read where the inbox's approvals were asked", error.code);
+    return;
+  }
+  const origins = new Map(
+    ((data ?? []) as Array<{ id: string; origin: string }>).map((row) => [row.id, row.origin]),
+  );
+  for (const item of items) {
+    const origin = item.needsYou?.pausedTurnId ? origins.get(item.needsYou.pausedTurnId) : null;
+    if (item.needsYou && (origin === "chat" || origin === "routine" || origin === "wake")) {
+      item.needsYou.origin = origin;
+    }
+  }
+}
+
 // GET /inbox
 inbox.get("/inbox", async (c) => {
   const parsed = listQuery.safeParse(c.req.query());
@@ -217,10 +296,11 @@ inbox.get("/inbox", async (c) => {
   const db = c.get("db");
   deferred(c, touchPresence(db, workspaceId));
   const limit = parsed.data.limit ?? 50;
-  const [rows, counts] = await Promise.all([
+  const filter = parsed.data.filter ?? "all";
+  const [rows, counts, delegated] = await Promise.all([
     db.rpc("inbox_rows", {
       p_workspace_id: workspaceId,
-      p_filter: parsed.data.filter ?? "all",
+      p_filter: filter,
       p_agent_id: parsed.data.agent ?? null,
       p_before: parsed.data.before ? new Date(parsed.data.before).toISOString() : null,
       // One more than asked, to say whether there is a next page.
@@ -228,6 +308,10 @@ inbox.get("/inbox", async (c) => {
       p_session_ids: null,
     }),
     readCounts(db, workspaceId),
+    // Only on the first page of the two lists a request belongs on.
+    (filter === "all" || filter === "needs_you") && !parsed.data.before
+      ? readDelegated(db, workspaceId, parsed.data.agent)
+      : Promise.resolve([] as DelegatedApprovalDTO[]),
   ]);
   if (rows.error || !counts) {
     if (rows.error) console.error("inbox_rows failed", rows.error);
@@ -236,8 +320,11 @@ inbox.get("/inbox", async (c) => {
 
   const all = (rows.data ?? []) as Row[];
   const userId = c.get("user").id;
+  const items = all.slice(0, limit).map((r) => mapInboxRow(r, userId));
+  await withOrigins(db, items);
   return c.json({
-    items: all.slice(0, limit).map((r) => mapInboxRow(r, userId)),
+    items,
+    delegated,
     counts: { unread: counts.unread, needsYou: counts.needsYou, running: counts.running },
     perAgentUnread: Object.fromEntries(
       Object.entries(counts.byAgent).map(([id, n]) => [id, n.unread]),

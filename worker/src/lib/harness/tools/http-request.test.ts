@@ -198,12 +198,11 @@ describe("http_request", () => {
       expect((await httpRequestTool.run(post, ctxWith(SHARED, { grant: true }))).kind).toBe("ok");
     });
 
-    it("writes on a scheduled run only with that permission", async () => {
-      const refused = await httpRequestTool.run(post, ctxWith(WRITABLE, { routineRunId: "run-1" }));
-      expect(refused).toMatchObject({
-        kind: "error",
-        message: expect.stringMatching(/routine's page/),
-      });
+    // On a schedule the run parks on the question and its owner is asked
+    // (0143); with the permission it goes, as in a conversation.
+    it("asks on a scheduled run too, unless it has that permission", async () => {
+      const asked = await httpRequestTool.run(post, ctxWith(WRITABLE, { routineRunId: "run-1" }));
+      expect(asked.kind).toBe("needs_confirmation");
       expect(fetchMock).not.toHaveBeenCalled();
 
       const allowed = await httpRequestTool.run(

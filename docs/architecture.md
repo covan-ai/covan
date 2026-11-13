@@ -536,11 +536,25 @@ the owner as the caller, the conversation read fresh, the wake-up as the last
 user turn, and one assistant message written back. `ToolContext.continuation`
 is the "nobody is watching" marker beside `routineRunId`: `browse` runs without
 a card only where a browser was approved in that conversation before, and never
-with a saved login; `run_tool` goes through on a standing permission or says
-so. A routine's wake-up carries the held run's id, so its tasks attach to the
+with a saved login; `run_tool` goes through on a standing permission or parks
+the turn on its question (below). A routine's wake-up carries the held run's id, so its tasks attach to the
 report, the report waits while the chain is pending (`chainPending`), and the
 chain's last reply is the report. Bounds: five to 720 minutes, 24 wake-ups per
 conversation per day, and a routine's chain inside the report's two hours.
+
+**A question nobody was watching for (0143)** parks rather than fails. A
+routine's run, or a woken turn, that stops on a change needing a yes writes its
+reply so far, then a `paused_turns` row with `origin` `routine` or `wake`, the
+run's id and a day to live (`lib/approvals/park.ts`), and emails the owner; the
+run stays `waiting` with `waiting_for = 'approval'` and a `held_until` past the
+request's day, so the two-hour sweep leaves it alone. `answer_approval` writes
+the answer — the owner, or an admin for a routine's — from the app or, later,
+an emailed reply. One cron stage after the wake-ups (`lib/approvals/dispatch.ts`)
+claims an answered row once (`resume_attempted_at`), asks every check again,
+runs the approved call through `answerPausedCall` (shared with
+`POST /chat/confirm/:id`) and the rest of the turn as a scheduled run, writes it
+onto the same reply, and sends the report. A no, an expiry or a resume that
+never came back ends the run with a line and no model call; nothing is retried.
 
 So connecting HubSpot is a row. Connecting a second Postgres is a row plus a
 function installed on it. The `composio` transport is the same shape with the

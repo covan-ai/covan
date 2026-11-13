@@ -87,11 +87,12 @@ const AUTHENTICATED_WRITES: Record<string, string> = {
   // 0094 onwards: each table the columns the API writes with a caller's client.
   "messages INSERT": "content,role,sender_id,session_id",
   "messages UPDATE": "content",
-  // 0128: the three "Email me when" switches.
+  // 0128: the three "Email me when" switches. 0144: a fourth, for what an
+  // agent asks while nobody is watching. 0147: whether a reply to it answers.
   "notification_preferences INSERT":
-    "needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
+    "approval_requests,approve_by_reply,needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
   "notification_preferences UPDATE":
-    "needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
+    "approval_requests,approve_by_reply,needs_me_away,quota_exhausted,quota_warned_for,routine_failed,routine_paused,updated_at,user_id,weekly_summary",
   "profiles UPDATE": "active_workspace_id,avatar_url,bio,locale,name,timezone",
   // 0123: whether runs land in the Inbox, and the model and thinking they run on.
   // 0130: the channels a routine delivers to after its primary.

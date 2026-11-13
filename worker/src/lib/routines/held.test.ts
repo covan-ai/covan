@@ -89,6 +89,7 @@ function fakeDb(respond: (call: Call) => Answer) {
         "limit",
         "lt",
         "in",
+        "range",
         "update",
         "insert",
         "delete",
@@ -163,6 +164,10 @@ function world(over: { tasks?: HeldTask[]; claimed?: boolean } = {}) {
     if (call.table === "delivery_channels") {
       return { data: { id: "chan-1", kind: "slack_webhook", disabled_at: null }, error: null };
     }
+    if (call.table === "chat_sessions" && call.op === "insert") {
+      return { data: { id: "thread-1" }, error: null };
+    }
+    if (call.table === "chat_sessions") return { data: [], error: null };
     return { data: null, error: null };
   });
 }
@@ -224,6 +229,60 @@ describe("completeHeldRun", () => {
     });
     expect(written?.filters).toContainEqual(["eq", ["status", "waiting"]]);
     expect(record).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * A run that delivered in its own tick has a thread in the Inbox (0123); a
+   * held one delivered later and had none, so a routine that used the browser
+   * left nothing there.
+   */
+  it("puts the delivered report in the Inbox as the run's thread", async () => {
+    const { db, calls } = world();
+
+    await completeHeldRun(env, "run-1", { db });
+
+    const opened = calls.find((c) => c.table === "chat_sessions" && c.op === "insert");
+    expect(opened?.payload).toMatchObject({
+      kind: "routine",
+      routine_id: "routine-1",
+      user_id: "user-1",
+      title: "Morning prices",
+    });
+    const reply = calls.find((c) => c.table === "messages" && c.op === "insert");
+    expect(reply?.payload).toMatchObject({
+      session_id: "thread-1",
+      role: "assistant",
+      content: "the composed report",
+    });
+    const written = calls.find(
+      (c) =>
+        c.table === "routine_runs" &&
+        c.op === "update" &&
+        !("held_claimed_at" in (c.payload as object)),
+    );
+    expect(written?.payload).toMatchObject({ session_id: "thread-1", waiting_for: null });
+  });
+
+  it("writes no thread for a routine that does not deliver to the Inbox", async () => {
+    const { db: base, calls } = world();
+    const db = {
+      from(table: string) {
+        const builder = base.from(table) as unknown as Record<string, unknown>;
+        if (table !== "routines") return builder;
+        // The routine row, with the Inbox switched off.
+        const maybeSingle = builder.maybeSingle as () => Promise<Answer>;
+        builder.maybeSingle = async () => {
+          const answer = await maybeSingle();
+          return { ...answer, data: { ...ROUTINE, deliver_inbox: false } };
+        };
+        return builder;
+      },
+    } as unknown as SupabaseClient;
+
+    await completeHeldRun(env, "run-1", { db });
+
+    expect(calls.some((c) => c.table === "chat_sessions")).toBe(false);
+    expect(deliver).toHaveBeenCalledOnce();
   });
 
   it("sends nothing when another settle already claimed the run", async () => {
@@ -375,6 +434,12 @@ describe("sweepHeldRuns", () => {
     const read = calls[0];
     expect(read.filters).toContainEqual(["eq", ["status", "waiting"]]);
     expect(read.filters).toContainEqual(["lt", ["started_at", "2026-10-15T07:00:00.000Z"]]);
+    // Not a run held on purpose past the two hours: one waiting on a person
+    // is finished by its request's expiry (0143).
+    expect(read.filters).toContainEqual([
+      "or",
+      ['held_until.is.null,held_until.lt."2026-10-15T09:00:00.000Z"'],
+    ]);
     expect(deliver).toHaveBeenCalledOnce();
     // The chain is cut (0142): a run sent without it has no wake-up to run into.
     expect(cancelContinuations).toHaveBeenCalledWith(db, "run-1", expect.any(Date));

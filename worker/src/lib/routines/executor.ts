@@ -34,6 +34,11 @@ import {
 } from "./address-confirmation";
 import type { RoutineBrowser } from "../harness/registry";
 import { openRoutineConversation } from "./held";
+import { openRunThread } from "./run-thread";
+import { heldUntil, parkAndAsk, stoppedShortNote } from "../approvals/park";
+import type { AgentStep, PausedTurn } from "../harness/loop";
+import { writeSteps } from "../harness/turn";
+export { RUN_THREADS_KEPT } from "./run-thread";
 import { agentAccessFor } from "../agent-access";
 
 export const MAX_FAILURES = 5;
@@ -136,7 +141,7 @@ export type RoutineRow = {
    * Whether a run may use the browser, and what it carries (0100). Optional
    * for `output_bundle_id`'s reason; absent reads as `'off'`.
    */
-  browser_access?: "off" | "all" | null;
+  browser_access?: "off" | "ask" | "all" | null;
   /** The owner's conversation this routine's browser runs beside, once one is open. */
   browser_conversation_id?: string | null;
   /**
@@ -271,6 +276,12 @@ export type AgentRunResult = {
    * `lib/routines/held.ts` once they have answered.
    */
   heldFor?: string[];
+  /**
+   * The question the turn stopped on (0143): a change that needs a person's
+   * yes. The run parks on it and its owner is asked; `text` is the report so
+   * far. Absent when the turn asked nothing.
+   */
+  asking?: { paused: PausedTurn; steps: AgentStep[] };
 } & ModelCall;
 
 /**
@@ -1229,7 +1240,57 @@ export async function runRoutine(
     // overflow note included. A digest that was missing thirty entries is still
     // missing them a year later, and a filed copy that quietly dropped the
     // sentence saying so would be the more complete-looking of the two.
-    const body = withOverflowNote(summary.text, overflow);
+    let body = withOverflowNote(summary.text, overflow);
+
+    /**
+     * The turn stopped on a change that needs a person's yes (0143). The run
+     * is written down as `waiting` first — the request names it — and then
+     * parked in the routine's conversation, where its owner, or an admin, can
+     * answer it for a day; the cron carries on from there. Everything else is
+     * a waiting run's: the cursor advances, the claims stay claimed, the
+     * spend is charged.
+     *
+     * A test run is not parked (nobody would carry it on), and a run that
+     * cannot be — its conversation would not open, or it had asked five times
+     * — says what it stopped short of in the report, as every run did before.
+     */
+    const asking = ("asking" in summary ? summary.asking : undefined) as AgentRunResult["asking"];
+    if (asking && !isTest(deps)) {
+      await finish(routine, deps, startedAt, origin, {
+        runId,
+        status: "waiting",
+        waitingFor: "approval",
+        heldUntil: heldUntil(deps.now()).toISOString(),
+        itemsNew: items.length,
+        itemsOverflow: overflow,
+        modelCall: { model: summary.model, modelOutcome: summary.modelOutcome },
+        tokens: summary.tokens,
+        spend: [...summary.spend, ...takeRetrievalSpend()],
+        cursor: nextCursor,
+        summary: body,
+      });
+      delivered = true;
+      if (await parkRun(routine, deps, runId, summary.model, body, asking)) {
+        return { status: "waiting", itemsNew: items.length };
+      }
+      // Could not ask: the report goes out with what it has and says why,
+      // once anything else it waits on (a browser task) has answered.
+      const report = `${body}${stoppedShortNote(asking.paused.summary)}`;
+      const { error: draftError } = await deps.db
+        .from("routine_runs")
+        .update({ summary: report, waiting_for: null, held_until: null })
+        .eq("id", runId)
+        .eq("status", "waiting");
+      if (draftError) console.error("routine: could not write a run's report", draftError.code);
+      await deps.completeHeld?.(runId);
+      return { status: "waiting", itemsNew: items.length };
+    }
+    // A test run, which nobody would carry on: the report and its thread say
+    // what it stopped short of, as every run did before.
+    const reported = asking
+      ? `${summary.text}${stoppedShortNote(asking.paused.summary)}`
+      : summary.text;
+    if (asking) body = `${body}${stoppedShortNote(asking.paused.summary)}`;
 
     /**
      * The turn started browser work that has not answered yet (0100). The
@@ -1328,7 +1389,7 @@ export async function runRoutine(
         ),
       ],
       cursor: nextCursor,
-      summary: summary.text,
+      summary: reported,
     });
     return { status: "ok", itemsNew: items.length, summary: body };
   } catch (err) {
@@ -1384,6 +1445,94 @@ export async function runRoutine(
 }
 
 /**
+ * Park a run's question in the routine's own conversation and ask its owner
+ * (0143). The reply it hangs off is written there first — the report so far,
+ * and the steps it took — so the thread reads as the run's own account of
+ * what it did and what it is waiting on. False when it could not be parked,
+ * and then the reply says what it stopped short of instead.
+ */
+async function parkRun(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  runId: string,
+  model: string,
+  report: string,
+  asking: { paused: PausedTurn; steps: AgentStep[] },
+): Promise<boolean> {
+  try {
+    return await parkRunOnce(routine, deps, runId, model, report, asking);
+  } catch (err) {
+    // The run row is already `waiting`; the caller finishes it with the note.
+    console.error("routine: could not park a run's question", runId, err);
+    return false;
+  }
+}
+
+async function parkRunOnce(
+  routine: RoutineRow,
+  deps: ExecutorDeps,
+  runId: string,
+  model: string,
+  report: string,
+  asking: { paused: PausedTurn; steps: AgentStep[] },
+): Promise<boolean> {
+  const sessionId = await openRoutineConversation(deps.db, routine);
+  if (!sessionId) return false;
+  const { data: reply, error } = await deps.db
+    .from("messages")
+    .insert({
+      session_id: sessionId,
+      role: "assistant",
+      sender_id: null,
+      content: report.trim() || `“${routine.name}” stopped to ask before going on.`,
+      model,
+      outcome: "paused",
+    })
+    .select("id")
+    .single();
+  if (error || !reply) {
+    console.error("routine: could not write the reply a request hangs off", error?.code);
+    return false;
+  }
+  const messageId = String(reply.id);
+  await writeSteps(deps.db, messageId, asking.steps);
+  await deps.db
+    .from("chat_sessions")
+    .update({ updated_at: deps.now().toISOString() })
+    .eq("id", sessionId);
+
+  const parked = await parkAndAsk(
+    deps.env,
+    deps.db,
+    deps.mail === undefined ? mailerFrom(deps.env) : deps.mail,
+    {
+      origin: "routine",
+      workspaceId: routine.workspace_id,
+      agentId: routine.agent_id,
+      userId: routine.user_id,
+      sessionId,
+      messageId,
+      routineRunId: runId,
+      model,
+      paused: asking.paused,
+      steps: asking.steps,
+      now: deps.now(),
+      routineName: routine.name,
+    },
+  );
+  if (parked.kind === "parked") return true;
+  console.warn("routine: a run's question could not be parked", runId, parked.why);
+  await deps.db
+    .from("messages")
+    .update({
+      content: `${report}${stoppedShortNote(asking.paused.summary)}`.trim(),
+      outcome: "cut_short",
+    })
+    .eq("id", messageId);
+  return false;
+}
+
+/**
  * What `browse` may do on this run, or nothing — the routine's `browser_access`
  * (0100), read off the row and never from the model. The conversation is
  * opened only when a task first needs it, so a run that allows the browser and
@@ -1394,8 +1543,12 @@ function browserFor(
   deps: ExecutorDeps,
 ): Omit<RoutineBrowser, "started"> | undefined {
   if (isTest(deps)) return undefined;
-  if (routine.browser_access !== "all") return undefined;
-  return { conversation: () => openRoutineConversation(deps.db, routine) };
+  if (routine.browser_access !== "all" && routine.browser_access !== "ask") return undefined;
+  return {
+    conversation: () => openRoutineConversation(deps.db, routine),
+    // Ask every time (0145): the first task parks the run on its card.
+    ...(routine.browser_access === "ask" ? { ask: true } : {}),
+  };
 }
 
 /**
@@ -1540,6 +1693,12 @@ export type RunOutcome = {
   /** Pause the routine with this reason, independently of the failure count. */
   pause?: string;
   /**
+   * What a `waiting` run waits for, when it is not its browser (0143), and the
+   * last moment the two-hour sweep should leave it alone.
+   */
+  waitingFor?: "approval";
+  heldUntil?: string;
+  /**
    * The model call this run made, when it made one.
    *
    * Absent on every branch that never reached a model — a feed that had not
@@ -1649,6 +1808,8 @@ async function finish(
       triggered_by: origin.triggeredBy,
       trigger_label: origin.label,
       session_id: sessionId,
+      ...(outcome.waitingFor ? { waiting_for: outcome.waitingFor } : {}),
+      ...(outcome.heldUntil ? { held_until: outcome.heldUntil } : {}),
     })
     // The id is what the ledger files this run's charge against.
     .select("id");
@@ -1789,9 +1950,6 @@ async function announceFailure(
   }
 }
 
-/** How many run threads a routine keeps; older ones nobody replied in go. */
-export const RUN_THREADS_KEPT = 20;
-
 /**
  * One run as a thread in the Inbox (0123, reversing 0070 per routine).
  *
@@ -1799,11 +1957,8 @@ export const RUN_THREADS_KEPT = 20;
  * which is what puts it in the owner's Needs you. A skipped run delivered
  * nothing and leaves nothing. The reply carries the model and the tokens the
  * run spent, so the usage figures read from replies (0124) see routine work
- * too.
- *
- * Best-effort: the run is already done and delivered, and a thread that
- * cannot be written must not fail it. Old run threads are pruned to the
- * newest `RUN_THREADS_KEPT`, never one somebody has replied in.
+ * too. The writing itself is `run-thread.ts`, which a held run's report
+ * shares (`held.ts`).
  */
 export async function writeRunThread(
   routine: RoutineRow,
@@ -1826,47 +1981,16 @@ export async function writeRunThread(
           : undefined;
   if (!content) return null;
 
-  try {
-    const { data: session, error: sessionError } = await deps.db
-      .from("chat_sessions")
-      .insert({
-        agent_id: routine.agent_id,
-        user_id: routine.user_id,
-        workspace_id: routine.workspace_id,
-        kind: "routine",
-        routine_id: routine.id,
-        visibility: !test && routine.visibility === "shared" ? "shared" : "private",
-        title: test ? `${routine.name} · test` : routine.name,
-      })
-      .select("id")
-      .single();
-    if (sessionError || !session) {
-      console.error("routine: could not open the run's thread", sessionError);
-      return null;
-    }
-    const sessionId = session.id as string;
-
-    const tokens = completionTokensOf(outcome);
-    const { error: messageError } = await deps.db.from("messages").insert({
-      session_id: sessionId,
-      role: "assistant",
-      content,
-      sender_id: null,
-      created_at: finishedAt.toISOString(),
-      model: outcome.modelCall?.model ?? tokens.model ?? null,
-      prompt_tokens: tokens.promptTokens,
-      completion_tokens: tokens.completionTokens,
-      cached_tokens: tokens.cachedTokens,
-      outcome: "answered",
-    });
-    if (messageError) console.error("routine: could not write the run's reply", messageError);
-
-    await pruneRunThreads(deps.db, routine.id);
-    return sessionId;
-  } catch (err) {
-    console.error("routine: could not write the run's thread", err);
-    return null;
-  }
+  const tokens = completionTokensOf(outcome);
+  return openRunThread(deps.db, routine, {
+    content,
+    finishedAt,
+    test,
+    model: outcome.modelCall?.model ?? tokens.model ?? null,
+    promptTokens: tokens.promptTokens,
+    completionTokens: tokens.completionTokens,
+    cachedTokens: tokens.cachedTokens,
+  });
 }
 
 /** The completion tokens a run spent, summed, for the reply that shows it. */
@@ -1893,29 +2017,6 @@ function completionTokensOf(outcome: RunOutcome): {
   return any
     ? { model, promptTokens: prompt, completionTokens: completion, cachedTokens: cached }
     : { model: null, promptTokens: null, completionTokens: null, cachedTokens: null };
-}
-
-async function pruneRunThreads(db: SupabaseClient, routineId: string): Promise<void> {
-  const { data, error } = await db
-    .from("chat_sessions")
-    .select("id")
-    .eq("routine_id", routineId)
-    .eq("kind", "routine")
-    .order("created_at", { ascending: false })
-    .range(RUN_THREADS_KEPT, RUN_THREADS_KEPT + 49);
-  if (error || !data || data.length === 0) return;
-  const old = data.map((r) => r.id as string);
-  // Kept: any thread somebody wrote in, which is a conversation now.
-  const { data: replied } = await db
-    .from("messages")
-    .select("session_id")
-    .in("session_id", old)
-    .eq("role", "user");
-  const keep = new Set((replied ?? []).map((r) => r.session_id as string));
-  const gone = old.filter((id) => !keep.has(id));
-  if (gone.length === 0) return;
-  const { error: deleteError } = await db.from("chat_sessions").delete().in("id", gone);
-  if (deleteError) console.error("routine: could not prune old run threads", deleteError);
 }
 
 /**

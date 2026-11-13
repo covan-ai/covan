@@ -5,7 +5,7 @@ import { TopBar } from "@/components/top-bar";
 import { PageBody } from "@/components/page";
 import { Pills } from "@/components/pills";
 import { EmptyPage } from "@/components/empty-page";
-import { InboxRow } from "@/components/inbox-row";
+import { DelegatedRow, InboxRow } from "@/components/inbox-row";
 import { NewThreadButton } from "@/components/new-thread-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -141,9 +141,22 @@ function InboxPage() {
           )}
         </div>
 
+        {/* Other people's routines asking, which an admin may answer (0146):
+          first, because a run waits on each of them. */}
+        {data?.delegated && data.delegated.length > 0 ? (
+          <section aria-label={t("Asking for somebody else")}>
+            <h2 className="m-0 px-3 pt-5 pb-1.5 text-xs font-medium tracking-[0.06em] text-micro-foreground uppercase max-lg:px-0">
+              {t("Asking for somebody else")}
+            </h2>
+            {data.delegated.map((request) => (
+              <DelegatedRow key={request.id} request={request} agent={byId.get(request.agentId)} />
+            ))}
+          </section>
+        ) : null}
+
         {isPending ? (
           <p className="mt-8 text-sm text-muted-foreground lg:px-3">{t("Loading…")}</p>
-        ) : !data || data.items.length === 0 ? (
+        ) : !data || (data.items.length === 0 && !data.delegated?.length) ? (
           <EmptyPage
             dot="done"
             title={t("Nothing needs you")}

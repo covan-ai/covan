@@ -1,8 +1,12 @@
 /**
  * The addresses inbound mail arrives at, and what each one proves.
  *
- * Two kinds, both on `INBOUND_EMAIL_DOMAIN`:
+ * Three kinds, all on `INBOUND_EMAIL_DOMAIN`:
  *
+ *   a-<request><mac>@domain  the Reply-To on a request email (0147): a reply
+ *                            to it answers what an agent asked while nobody
+ *                            was watching. Made like the report's, below,
+ *                            with its own domain separation.
  *   r-<run><mac>@domain      the Reply-To on a routine's emailed report. The
  *                            run is the report's own `routine_runs.id`; the MAC
  *                            (`ROUTINE_SECRET_KEY`, domain-separated) is what
@@ -59,6 +63,35 @@ export async function runOfReply(secretKey: string, localPart: string): Promise<
   const h = m[1];
   const runId = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
   return timingSafeEqual(await replyMac(secretKey, runId), m[2]) ? runId : null;
+}
+
+async function approvalMac(secretKey: string, approvalId: string): Promise<string> {
+  return (
+    await hmacSha256Hex(secretKey, `covan/approval-reply/v1\n${approvalId.toLowerCase()}`)
+  ).slice(0, 16);
+}
+
+/**
+ * The local part of a request email's Reply-To (0147): `a-<request><mac>`,
+ * the report's shape with its own domain separation, so a report's address
+ * can never be turned into an answer and the other way round.
+ */
+export async function approvalLocalPart(secretKey: string, approvalId: string): Promise<string> {
+  const m = approvalId.match(UUID);
+  if (!m) throw new Error("a reply address needs the request's uuid");
+  return `a-${m.slice(1).join("").toLowerCase()}${await approvalMac(secretKey, approvalId)}`;
+}
+
+/** The request a reply address was made for, or null when it was not made here. */
+export async function approvalOfReply(
+  secretKey: string,
+  localPart: string,
+): Promise<string | null> {
+  const m = localPart.toLowerCase().match(/^a-([0-9a-f]{32})([0-9a-f]{16})$/);
+  if (!m || !secretKey) return null;
+  const h = m[1];
+  const id = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  return timingSafeEqual(await approvalMac(secretKey, id), m[2]) ? id : null;
 }
 
 /** A routine's own token: sixteen of a-z0-9, about 82 bits. */

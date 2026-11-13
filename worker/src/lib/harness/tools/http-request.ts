@@ -190,25 +190,16 @@ export const httpRequestTool: AgentTool = {
     /**
      * The three rules, as for a connected application (0140). A read (GET or
      * HEAD) never asks. A write asks, on anybody's connection, unless somebody
-     * said "don't ask again" for this agent in this service; on a schedule it
-     * happens only then. `allowed_methods` stays the ceiling: it is the most
-     * this connection may ever do, and nothing here widens it.
+     * said "don't ask again" for this agent in this service — on a schedule
+     * too, where the run parks on the question and its owner is asked (0143).
+     * `allowed_methods` stays the ceiling: it is the most this connection may
+     * ever do, and nothing here widens it.
      *
      * A yes covers that one request. There is no per-reply memory for HTTP: a
      * second write is a different body to a different path, and asking again
      * is the honest default.
      */
     if (writes && ctx.confirmed !== true && !(await mayChangeWithoutAsking(ctx, connection.id))) {
-      if (ctx.routineRunId || ctx.continuation) {
-        return {
-          kind: "error",
-          message:
-            `${method} on ${connection.label} changes something and nobody is watching ` +
-            "this run. Report that you could not do it. The routine's owner can let " +
-            `this agent change things in ${connection.label} without asking, on the ` +
-            "routine's page, or say so the next time it asks in a conversation.",
-        };
-      }
       return {
         kind: "needs_confirmation",
         summary: `${method} to ${connection.label}?`,

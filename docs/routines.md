@@ -296,14 +296,21 @@ What it changes for you:
 - **Write the instruction to be read cold.** The run has your instruction and
   the agent's documents, and none of the conversation the job came out of. Name
   the service and say what to report.
-- **Reads happen; a change needs the switch on.** The agent reads any
-  connected app it can reach without asking, as it would in a conversation.
-  A change in a connected app or HTTP service — a draft, a label, a record —
-  happens only when **What it may change without asking** on the routine's
-  page is on for that app. Anything else that would ask a person — a change
-  with the switch off, creating another routine — is recorded as wanted and
-  not done, and the delivered message says so at the bottom. A tick has
-  nobody to ask and nowhere to wait.
+- **Reads happen; a change asks, unless the switch is on.** The agent reads
+  any connected app it can reach without asking, as it would in a
+  conversation. A change in a connected app or HTTP service — a draft, a
+  label, a record — goes through without asking when **What it may change
+  without asking** on the routine's page is on for that app. Otherwise the
+  run asks, as a conversation would: it stops on the question, the routine's
+  owner is emailed at once (Settings › Preferences turns that off), and the
+  request waits a day in the Inbox, in the routine's own conversation and on
+  its own page. Where the deployment receives mail, replying "yes" or "no" to
+  the email answers it too (`docs/security.md` says what that rests on). The
+  owner answers, or any admin of the workspace; the next
+  tick of the cron carries on from where the run stopped and sends the report
+  with both halves in it. A no, or a day with no answer, sends the report
+  with a line saying what was not done. A run asks at most five times; a
+  test run never parks, and says what it stopped short of instead.
 - **It can search the web when the agent can.** A routine whose agent has web
   search switched on searches on a schedule too.
 - **One routine can hand work to another.** `run_routine` starts one of the
@@ -331,12 +338,16 @@ whatever is connected, because the browser is a tool it has.
 A page that only renders with JavaScript, a number on a site with no API, a
 dashboard behind a sign-in: these are what `browse` is for in a conversation,
 and a routine can use it too — **once its owner allows it**. The routine's page
-has a **Use a browser** card, off by default.
+has a **Use a browser** card with three settings, off by default.
 
-It is off by default because in a conversation every browser task is shown to
-you on a card before it starts, and a scheduled run has nobody to show one to.
-Turning the switch on is that approval, given once, for every run. Only the
-routine's owner can give it.
+In a conversation every browser task is shown to you on a card before it
+starts. **Ask every time** keeps that card on a schedule: the run stops before
+its first browser task, you are emailed the task, the logins it would use and
+what it may cost, and the run waits up to a day for your yes (or an admin's)
+before anything at the browser provider starts. **Allowed** is that approval
+given once, for every run, and no card is shown. Only the routine's owner can
+change the setting. For a routine that acts inside a signed-in account —
+closing a seat, changing a price — ask every time is the one to choose.
 
 A run's browser carries what yours does in a conversation: the sites you
 signed into in the browser panel, and any login you saved, by chat's rules.
@@ -399,7 +410,8 @@ What a woken turn may do is what a scheduled run may do. The browser runs
 without a card — the switch above is the approval — but carries no saved login
 on a wake-up, since no card showed one being typed. A connected app's change
 goes through on a standing permission, as on any run nobody is watching, and
-otherwise the reply says what it could not do.
+otherwise the turn parks on the question and its owner is asked, as a
+routine's run does.
 
 The same tool works in a conversation. There the browser runs in a woken turn
 only if a browser was approved in that conversation before, and a conversation

@@ -381,6 +381,13 @@ export type PendingConfirmation = {
   tool: string;
   summary: string;
   proposal: unknown;
+  /**
+   * Where it was asked (0143). A conversation's question is answered by the
+   * stream that runs the rest of the turn; one asked while nobody was
+   * watching is answered and carried on by the cron. Absent is a
+   * conversation's, which is what the stream's own `confirm` event is.
+   */
+  origin?: "chat" | "routine" | "wake";
 };
 
 /** Whether a value is something this card can open up rather than print. */
@@ -408,7 +415,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * and anything with real structure below that is better read as JSON than as a
  * list of lists.
  */
-function ProposalRows({ proposal, nested }: { proposal: unknown; nested?: boolean }): ReactNode {
+export function ProposalRows({
+  proposal,
+  nested,
+}: {
+  proposal: unknown;
+  nested?: boolean;
+}): ReactNode {
   if (!isPlainObject(proposal)) return null;
   const rows = Object.entries(proposal).filter(
     // `kind` and `operation` are what the worker keeps in here for itself:

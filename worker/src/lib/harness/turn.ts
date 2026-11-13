@@ -51,9 +51,22 @@ function groundingOfParked(raw: unknown): Retrieval["grounding"] | null {
  * the subject can edit is not an account.
  */
 
+/**
+ * Where a turn was parked from (0143). `chat` is a person's conversation,
+ * answered on its card by the request that then runs the rest; the other two
+ * have nobody watching, are answered anywhere, and the cron carries on.
+ */
+export type PauseOrigin = "chat" | "routine" | "wake";
+
+/** How long an unattended request waits for an answer. A conversation's waits an hour (0060). */
+export const UNATTENDED_TTL_MS = 24 * 60 * 60 * 1000;
+
 /** A paused turn, read back in the shape the resume needs it. */
 export type StoredPause = {
   id: string;
+  origin: PauseOrigin;
+  /** The routine run whose report waits on the answer, for an unattended one. */
+  routineRunId: string | null;
   sessionId: string;
   messageId: string | null;
   workspaceId: string;
@@ -166,6 +179,11 @@ export async function savePausedTurn(
     /** See `StoredPause.grounding`. Same rule as `usage`. */
     grounding?: Retrieval["grounding"] | null;
     sources?: RetrievedSource[] | null;
+    /** Absent is a conversation's, which is every caller before 0143. */
+    origin?: PauseOrigin;
+    routineRunId?: string | null;
+    /** Absent is the column's own hour; an unattended request passes its day. */
+    expiresAt?: Date;
   },
 ): Promise<string | null> {
   if (!input.paused.call) return null;
@@ -188,6 +206,9 @@ export async function savePausedTurn(
       grounding: input.grounding ?? null,
       // Null rather than `[]` for nothing cited, as `messages.sources` is.
       sources: input.sources && input.sources.length > 0 ? input.sources : null,
+      ...(input.origin && input.origin !== "chat" ? { origin: input.origin } : {}),
+      ...(input.routineRunId ? { routine_run_id: input.routineRunId } : {}),
+      ...(input.expiresAt ? { expires_at: input.expiresAt.toISOString() } : {}),
     })
     .select("id")
     .single();
@@ -219,33 +240,38 @@ export async function loadPausedTurn(
   if (new Date(String(data.expires_at)).getTime() < Date.now()) {
     return { error: "this confirmation has expired — ask again", status: 410 };
   }
+  return { pause: pauseFromRow(data) };
+}
+
+/** A `paused_turns` row, as the service role reads it, in the shape the resume needs. */
+export function pauseFromRow(data: Record<string, unknown>): StoredPause {
   return {
-    pause: {
-      id: String(data.id),
-      sessionId: String(data.session_id),
-      messageId: data.message_id ? String(data.message_id) : null,
-      workspaceId: String(data.workspace_id),
-      agentId: String(data.agent_id),
-      userId: String(data.user_id),
-      tool: String(data.tool),
-      toolCall: data.tool_call as ToolCall,
-      summary: String(data.summary ?? ""),
-      proposal: data.proposal,
-      messages: (data.messages ?? []) as CompletionMessage[],
-      steps: (data.steps ?? []) as AgentStep[],
-      model: data.model ? String(data.model) : null,
-      // A row parked by a build before 0065 has no column at all, and reads as
-      // "the row already holds it" — which is what it meant then. Normalised
-      // rather than cast: this is jsonb, so the shape is whatever was written,
-      // and `addUsage` is entitled to a real `passes` array.
-      usage: data.usage ? usageOfParked(data.usage) : null,
-      // A row parked before 0083 has neither column, and reads as null: the
-      // reply it resumes into says "nobody recorded one", which is the truth.
-      grounding: groundingOfParked(data.grounding),
-      sources: Array.isArray(data.sources) ? (data.sources as RetrievedSource[]) : null,
-      status: String(data.status),
-      expiresAt: String(data.expires_at),
-    },
+    id: String(data.id),
+    origin: data.origin === "routine" || data.origin === "wake" ? data.origin : "chat",
+    routineRunId: data.routine_run_id ? String(data.routine_run_id) : null,
+    sessionId: String(data.session_id),
+    messageId: data.message_id ? String(data.message_id) : null,
+    workspaceId: String(data.workspace_id),
+    agentId: String(data.agent_id),
+    userId: String(data.user_id),
+    tool: String(data.tool),
+    toolCall: data.tool_call as ToolCall,
+    summary: String(data.summary ?? ""),
+    proposal: data.proposal,
+    messages: (data.messages ?? []) as CompletionMessage[],
+    steps: (data.steps ?? []) as AgentStep[],
+    model: data.model ? String(data.model) : null,
+    // A row parked by a build before 0065 has no column at all, and reads as
+    // "the row already holds it" — which is what it meant then. Normalised
+    // rather than cast: this is jsonb, so the shape is whatever was written,
+    // and `addUsage` is entitled to a real `passes` array.
+    usage: data.usage ? usageOfParked(data.usage) : null,
+    // A row parked before 0083 has neither column, and reads as null: the
+    // reply it resumes into says "nobody recorded one", which is the truth.
+    grounding: groundingOfParked(data.grounding),
+    sources: Array.isArray(data.sources) ? (data.sources as RetrievedSource[]) : null,
+    status: String(data.status),
+    expiresAt: String(data.expires_at),
   };
 }
 
@@ -261,10 +287,16 @@ export async function resolvePausedTurn(
   service: SupabaseClient,
   id: string,
   status: "approved" | "declined" | "expired",
+  /** Who answered, on a conversation's card (0143). Absent for an expiry. */
+  answeredBy?: string,
 ): Promise<boolean> {
   const { data, error } = await service
     .from("paused_turns")
-    .update({ status, resolved_at: new Date().toISOString() })
+    .update({
+      status,
+      resolved_at: new Date().toISOString(),
+      ...(answeredBy ? { resolved_by: answeredBy, resolved_via: "chat" } : {}),
+    })
     .eq("id", id)
     .eq("status", "pending")
     .select("id");

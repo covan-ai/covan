@@ -496,15 +496,15 @@ describe("run_tool", () => {
     expect(out.kind).toBe("needs_confirmation");
   });
 
-  it("returns an error rather than a pause for a change when nobody is watching", async () => {
-    // A `needs_confirmation` in a scheduled run returns `paused` from
-    // `runAgentTurn` and abandons the rest of the run. An error lets the run
-    // finish and say what it could not do — and `agent-run.ts` only appends its
-    // own "stopped short of…" note on a pause, so the reason has to be in here.
+  it("asks for a change when nobody is watching, and runs nothing", async () => {
+    // The run parks on the question and its owner is asked (0143); before,
+    // this was an error and the report said what it could not do.
     const out = await runToolTool.run(CALL, ctxWith({ routineRunId: "run-1" }));
-    expect(out.kind).toBe("error");
-    expect(out.kind === "error" && out.message).toContain("nobody is watching");
-    expect(out.kind === "error" && out.message).toContain("changes something in Ana's Gmail");
+    expect(out.kind).toBe("needs_confirmation");
+    expect(out.kind === "needs_confirmation" && out.proposal).toMatchObject({
+      kind: "run_tool",
+      connection: { label: "Ana's Gmail" },
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -528,13 +528,12 @@ describe("run_tool", () => {
     expect(out).toMatchObject({ kind: "ok", approval: "grant" });
   });
 
-  it("errors instead of pausing in a woken turn (0142)", async () => {
+  it("asks in a woken turn (0142) as well, and runs nothing", async () => {
     const out = await runToolTool.run(
       CALL,
       ctxWith({ continuation: { id: "cont-1", browserApproved: true } }),
     );
-    expect(out.kind).toBe("error");
-    expect(out.kind === "error" && out.message).toContain("nobody is watching");
+    expect(out.kind).toBe("needs_confirmation");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -1196,9 +1195,9 @@ describe("how far one approval reaches", () => {
     expect(out).toMatchObject({ kind: "ok", approval: "person" });
   });
 
-  it("refuses an undescribed operation on a scheduled run rather than running it", async () => {
-    // Where nobody can answer the question, the refusal reaches the run
-    // report rather than becoming a call.
+  it("asks about an undescribed operation on a scheduled run rather than running it", async () => {
+    // A yes for another operation on the same connection covers nothing
+    // here, unattended or not: the run parks on this one (0143).
     const out = await runToolTool.run(
       { connectionId: "conn-cal", slug: "GOOGLECALENDAR_CLEAR_CALENDAR", arguments: {} },
       ctxWith({
@@ -1208,8 +1207,7 @@ describe("how far one approval reaches", () => {
       }),
     );
 
-    expect(out.kind).toBe("error");
-    expect(out.kind === "error" && out.message).toContain("nobody is watching");
+    expect(out.kind).toBe("needs_confirmation");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

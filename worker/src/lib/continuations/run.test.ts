@@ -200,7 +200,9 @@ describe("runContinuationTurn", () => {
     expect(ctx.routineRunId).toBeUndefined();
     expect(ctx.routineBrowser).toBeUndefined();
     expect(capabilities).toHaveBeenCalledWith(
-      expect.objectContaining({ surface: "schedule", browser: false, agentId: "agent-1" }),
+      // Offered even where no browser was approved before: its first task
+      // parks the turn on the card for the owner (0143).
+      expect.objectContaining({ surface: "schedule", browser: true, agentId: "agent-1" }),
     );
   });
 
@@ -362,19 +364,64 @@ describe("runContinuationTurn", () => {
     expect(nudge).not.toHaveBeenCalled();
   });
 
-  it("says what it stopped short of", async () => {
+  /**
+   * A woken turn that stops to ask parks for a day and asks its owner (0143):
+   * the email is their nudge, and the conversation's reply is what the
+   * question hangs off.
+   */
+  it("parks a question it stopped on, and asks the owner instead of nudging", async () => {
+    const call = { id: "call_1", name: "run_tool", arguments: "{}" };
     turn.mockImplementation(async () =>
       turnOf({
         text: "I found the video.",
+        paused: { reason: "confirmation", messages: [], call, summary: "Post to Slack" },
+      }),
+    );
+    const park = vi.fn(async (..._args: unknown[]) => ({
+      kind: "parked" as const,
+      id: "pause-1",
+      expiresAt: new Date(NOW.getTime() + 86_400_000),
+    }));
+    const db = seed();
+    const out = await runContinuationTurn(ENV, WAKE, {
+      db: db.db as unknown as SupabaseClient,
+      now: () => NOW,
+      turn: turn as unknown as typeof import("../harness/loop").runAgentTurn,
+      capabilities:
+        capabilities as unknown as typeof import("../harness/available").capabilitiesFor,
+      entitlements,
+      park: park as never,
+      mail: null,
+    });
+
+    expect(out).toEqual({ status: "done", text: "I found the video." });
+    const reply = db.tables.messages.at(-1)!;
+    expect(reply).toMatchObject({ content: "I found the video.", outcome: "paused" });
+    expect(park.mock.calls[0][3]).toMatchObject({
+      origin: "wake",
+      sessionId: "sess-1",
+      messageId: reply.id,
+      routineRunId: null,
+      paused: { call, summary: "Post to Slack" },
+    });
+    expect(nudge).not.toHaveBeenCalled();
+    expect(completeHeldRun).not.toHaveBeenCalled();
+  });
+
+  it("says what it stopped short of when the question could not be parked", async () => {
+    turn.mockImplementation(async () =>
+      turnOf({
+        text: "I found the video.",
+        // No call to carry on with: nothing to park.
         paused: { reason: "confirmation", messages: [], summary: "Post to Slack" },
       }),
     );
     const db = seed();
-    const out = await run(db);
-    expect(out.text).toMatch(/^I found the video\./);
-    expect(out.text).toContain('stopped short of "Post to Slack"');
-    expect(out.text).toContain("nobody was watching");
-    expect(db.tables.messages.at(-1)).toMatchObject({ outcome: "cut_short" });
+    await run(db);
+    const reply = db.tables.messages.at(-1)!;
+    expect(String(reply.content)).toMatch(/^I found the video\./);
+    expect(String(reply.content)).toContain('stopped short of "Post to Slack"');
+    expect(reply).toMatchObject({ outcome: "cut_short" });
   });
 
   it("writes something when the model said nothing", async () => {

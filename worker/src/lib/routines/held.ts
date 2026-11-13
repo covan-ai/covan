@@ -21,6 +21,7 @@ import {
 import { deliver, deliveryDepsFrom, type DeliveryContext } from "./delivery";
 import { deliverToOtherChannels } from "./other-channels";
 import { fileRoutineOutput, NOTE_NO_DOCUMENT_STORE, NOTE_VIEWER } from "./filing";
+import { openRunThread } from "./run-thread";
 import { EVENT_DELIVERED } from "./webhook";
 
 /**
@@ -47,8 +48,11 @@ import { EVENT_DELIVERED } from "./webhook";
  *    browser's answers in it, and was told its reply is the report.
  *
  * And a fourth thing holds it back: the run's chain (0142) — a wake-up not
- * yet run, or a step after a browser the cron has yet to claim — which
- * `chainPending` answers, and the sweep cuts.
+ * yet run, a step after a browser the cron has yet to claim, or a request
+ * waiting on a person (0143) — which `chainPending` answers. The sweep cuts
+ * the first two at `HELD_MAX_MS`; a run waiting on a person holds until its
+ * `held_until`, a little after the request's own day, so the request's expiry
+ * (`lib/approvals/dispatch.ts`) is what finishes it, with a note.
  *
  * So the finish begins with a claim: a conditional update of
  * `held_claimed_at`, and only the caller that gets the row back sends. It is
@@ -175,6 +179,8 @@ type HeldRun = {
 type HeldRoutine = {
   id: string;
   name: string;
+  visibility: string | null;
+  deliver_inbox: boolean | null;
   agent_id: string;
   user_id: string;
   workspace_id: string;
@@ -246,18 +252,24 @@ export async function completeHeldRun(
  * The runs that have waited longer than `HELD_MAX_MS`, sent with what they
  * have. One indexed read on every quiet tick, and nothing else unless there is
  * one — which is the cost the cron's other stages are held to.
+ *
+ * Not a run held past that on purpose (`held_until`, 0143): one waiting on a
+ * person is finished by its request's expiry, a day on, and sending it at two
+ * hours would answer for them.
  */
 export async function sweepHeldRuns(
   env: RoutineEnv,
   overrides: Partial<HeldDeps> = {},
 ): Promise<{ finished: number }> {
   const deps = resolve(env, overrides);
-  const cutoff = new Date(deps.now().getTime() - HELD_MAX_MS).toISOString();
+  const now = deps.now();
+  const cutoff = new Date(now.getTime() - HELD_MAX_MS).toISOString();
   const { data, error } = await deps.db
     .from("routine_runs")
     .select("id")
     .eq("status", "waiting")
     .lt("started_at", cutoff)
+    .or(`held_until.is.null,held_until.lt."${now.toISOString()}"`)
     .order("started_at", { ascending: true })
     .limit(SWEEP_BATCH);
   if (error) {
@@ -321,8 +333,8 @@ async function finishHeld(
   const { data: routineRow, error: routineError } = await deps.db
     .from("routines")
     .select(
-      "id, name, agent_id, user_id, workspace_id, instruction, delivery_channel_id, " +
-        "output_bundle_id, output_retention, ends_after_runs, runs_done, status",
+      "id, name, visibility, deliver_inbox, agent_id, user_id, workspace_id, instruction, " +
+        "delivery_channel_id, output_bundle_id, output_retention, ends_after_runs, runs_done, status",
     )
     .eq("id", run.routine_id)
     .maybeSingle();
@@ -392,6 +404,17 @@ async function finishHeld(
 
   const filing = sendError ? {} : await fileHeld(env, deps.db, routine, report, run.started_at);
 
+  // The run's thread in the Inbox, as the executor writes one for a run that
+  // delivered in its own tick (0123). A held report never wrote one, so a
+  // routine that used the browser delivered and left nothing in the Inbox.
+  const sessionId = await openRunThread(deps.db, routine, {
+    content: sendError ? `This run failed: ${sendError}` : report,
+    finishedAt,
+    model,
+    promptTokens: composed.usage?.promptTokens ?? null,
+    completionTokens: composed.usage?.completionTokens ?? null,
+  });
+
   const { error: runError } = await deps.db
     .from("routine_runs")
     .update({
@@ -404,6 +427,8 @@ async function finishHeld(
       ...(filing.documentId ? { document_id: filing.documentId } : {}),
       ...(filing.note ? { filing_note: filing.note } : {}),
       ...(deliveryNote ? { delivery_note: deliveryNote } : {}),
+      ...(sessionId ? { session_id: sessionId } : {}),
+      waiting_for: null,
     })
     .eq("id", run.id)
     .eq("status", "waiting");

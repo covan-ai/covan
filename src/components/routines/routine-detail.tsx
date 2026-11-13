@@ -124,7 +124,11 @@ function RunResult({ run }: { run: RoutineRun }) {
   }
   if (run.status === "waiting") {
     // Not delivered yet and not a failure: the report is written and held
-    // until the browser task it started answers (0100).
+    // until the browser task it started answers (0100), or until somebody
+    // answers what it asked (0143) — which the run's conversation shows.
+    if (run.waitingFor === "approval") {
+      return <StatusWord state="waiting">{t("Waiting for approval")}</StatusWord>;
+    }
     return <StatusWord state="waiting">{t("Waiting on the browser")}</StatusWord>;
   }
   if (run.status === "skipped") {

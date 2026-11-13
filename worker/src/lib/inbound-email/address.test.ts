@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_TOKEN,
+  approvalLocalPart,
+  approvalOfReply,
   addressName,
   addressOf,
   agentAddress,
@@ -44,6 +46,33 @@ describe("a report's reply address", () => {
     expect(await runOfReply("other".repeat(8), local)).toBeNull();
     expect(await runOfReply(KEY, "r-short")).toBeNull();
     expect(await runOfReply(KEY, "weekly-abcdefghijklmnop")).toBeNull();
+  });
+});
+
+describe("a request email's reply address (0147)", () => {
+  it("names its request and survives being lowercased", async () => {
+    const local = await approvalLocalPart(KEY, RUN);
+    expect(local).toMatch(/^a-[0-9a-f]{48}$/);
+    expect(local.length).toBeLessThanOrEqual(64);
+    expect(await approvalOfReply(KEY, local)).toBe(RUN);
+    expect(await approvalOfReply(KEY, local.toUpperCase().replace(/^A-/, "a-"))).toBe(RUN);
+  });
+
+  // A report's address must never answer a request, nor a request's start a
+  // routine: the MACs are separated by domain, not only by the prefix.
+  it("is not a report's address with its prefix changed, nor the other way round", async () => {
+    const report = await replyLocalPart(KEY, RUN);
+    expect(await approvalOfReply(KEY, `a-${report.slice(2)}`)).toBeNull();
+    const request = await approvalLocalPart(KEY, RUN);
+    expect(await runOfReply(KEY, `r-${request.slice(2)}`)).toBeNull();
+  });
+
+  it("is refused when the MAC or the key differs", async () => {
+    const local = await approvalLocalPart(KEY, RUN);
+    const flipped = local.slice(0, -1) + (local.endsWith("0") ? "1" : "0");
+    expect(await approvalOfReply(KEY, flipped)).toBeNull();
+    expect(await approvalOfReply("other".repeat(8), local)).toBeNull();
+    expect(await approvalOfReply(KEY, "a-short")).toBeNull();
   });
 });
 

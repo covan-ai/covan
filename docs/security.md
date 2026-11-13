@@ -157,9 +157,31 @@ migration 0140):
 The table is per agent and per connection, not per operation. A switch per
 operation across fifteen hundred applications was a model nobody could hold in
 their head, and it had no answer for the routine that needed it most — one
-running at three in the morning with nobody to ask. What keeps one switch
-narrow is the instruction it serves: a routine that drafts replies is told to
-draft and to change nothing else, and its report says what it did.
+running at three in the morning. What keeps one switch narrow is the
+instruction it serves: a routine that drafts replies is told to draft and to
+change nothing else, and its report says what it did.
+
+Without the switch, a run nobody is watching asks (0143): it parks on the
+question for a day and its owner is emailed. Who may answer is decided in
+Postgres, by `answer_approval`: the person the run acts as, or for a routine's
+request an admin of its workspace — never a plain member, a viewer, another
+workspace or an API key, and never somebody else's conversation. An admin sees
+the request's sentence and arguments, not the routine's conversation or the
+prompt. The answer is only written down; the cron acts on it once, and a resume
+that dies is reported as interrupted rather than run again, so the action
+happens at most once.
+
+The request email can also be answered by replying "yes" or "no" (0147),
+where the deployment receives mail. Its Reply-To names the request with a MAC
+of its own, domain-separated from a report's, so neither kind of address can
+be turned into the other. A reply counts only when the sender is the owner's
+own account address, their domain passed DMARC (not merely SPF or DKIM for
+some other domain — `passesAlignedAuthentication`), and the first line they
+wrote is one of a fixed list of words; no model reads it, and anything else
+gets the link back. **It is as strong as the owner's mailbox and no
+stronger**: a delegate, a taken-over mailbox or a rule that replies on its
+own can say yes. That is why each person can turn it off in Settings ›
+Preferences, and why the email says so.
 
 The connection itself is the first boundary. It does not exist until somebody
 searched for the app and either signed in at it or fetched a key for it, and it

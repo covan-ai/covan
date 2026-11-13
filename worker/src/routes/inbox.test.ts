@@ -67,6 +67,7 @@ describe("GET /inbox", () => {
           asked.push(args);
           return { data: [row(), row({ session_id: "s2" })], error: null };
         },
+        delegated_approvals: () => ({ data: [], error: null }),
         inbox_counts: () => ({
           data: [{ agent_id: AGENT, unread: 3, needs_you: 2, running: 1 }],
           error: null,
@@ -90,9 +91,112 @@ describe("GET /inbox", () => {
     expect(body.perAgentUnread).toEqual({ [AGENT]: 3 });
   });
 
+  // An admin's Inbox carries other people's routine requests they may answer
+  // (0146), on the first page of All and Needs you, and on nothing else.
+  it("lists the routine requests an admin may answer for somebody else", async () => {
+    const asked: string[] = [];
+    const { app } = appWith({
+      rpc: {
+        inbox_rows: () => ({ data: [], error: null }),
+        inbox_counts: () => ({ data: [], error: null }),
+        delegated_approvals: (args) => {
+          asked.push(String(args.p_workspace_id));
+          return {
+            data: [
+              {
+                id: "p-1",
+                agent_id: AGENT,
+                agent_name: "Box office agent",
+                owner_id: "owner-1",
+                owner_name: "Ada",
+                routine_id: "r-1",
+                routine_name: "Seat requests",
+                tool: "http_request",
+                summary: "POST to Box office?",
+                proposal: { method: "POST" },
+                created_at: "2026-11-13T03:00:00Z",
+                expires_at: "2026-11-14T03:00:00Z",
+              },
+            ],
+            error: null,
+          };
+        },
+      },
+    });
+
+    const body = (await (await app.request("/inbox?filter=needs_you")).json()) as {
+      delegated: unknown[];
+    };
+    expect(body.delegated).toEqual([
+      {
+        id: "p-1",
+        agentId: AGENT,
+        agentName: "Box office agent",
+        ownerName: "Ada",
+        routineName: "Seat requests",
+        tool: "http_request",
+        summary: "POST to Box office?",
+        proposal: { method: "POST" },
+        createdAt: Date.parse("2026-11-13T03:00:00Z"),
+        expiresAt: Date.parse("2026-11-14T03:00:00Z"),
+      },
+    ]);
+    expect(asked).toEqual([WORKSPACE]);
+
+    const running = (await (await app.request("/inbox?filter=running")).json()) as {
+      delegated: unknown[];
+    };
+    expect(running.delegated).toEqual([]);
+    expect(asked).toHaveLength(1);
+  });
+
   it("refuses a filter it does not know", async () => {
     const { app } = appWith({});
     expect((await app.request("/inbox?filter=everything")).status).toBe(400);
+  });
+
+  // A routine's request is answered from its row; a conversation's in its
+  // conversation (0143). The row says which.
+  it("says where each approval on the page was asked", async () => {
+    const seen: string[][] = [];
+    const { app } = appWith({
+      rpc: {
+        inbox_rows: () => ({
+          data: [
+            row({ needs_kind: "approval", needs_paused_turn_id: "p-routine" }),
+            row({ session_id: "s2", needs_kind: "approval", needs_paused_turn_id: "p-chat" }),
+            row({ session_id: "s3" }),
+          ],
+          error: null,
+        }),
+        inbox_counts: () => ({ data: [], error: null }),
+        delegated_approvals: () => ({ data: [], error: null }),
+      },
+      tables: {
+        paused_turns: {
+          select: (ctx) => {
+            seen.push(ctx.filters.flatMap((f) => (f.kind === "in" ? (f.value as string[]) : [])));
+            return {
+              data: [
+                { id: "p-routine", origin: "routine" },
+                { id: "p-chat", origin: "chat" },
+              ],
+              error: null,
+            };
+          },
+        },
+      },
+    });
+
+    const body = (await (await app.request("/inbox")).json()) as {
+      items: Array<{ needsYou: { origin?: string } | null }>;
+    };
+    expect(body.items.map((item) => item.needsYou?.origin ?? null)).toEqual([
+      "routine",
+      "chat",
+      null,
+    ]);
+    expect(seen).toEqual([["p-routine", "p-chat"]]);
   });
 });
 

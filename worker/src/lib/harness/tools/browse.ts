@@ -574,19 +574,15 @@ export const browseTool: AgentTool = {
      * nothing behind — a profile at the provider least of all.
      */
     /**
-     * A woken turn (0142) has nobody to show a card to. Where a browser was
-     * approved in this conversation before, that approval carries; where none
-     * ever was, this is an honest refusal rather than a card nobody answers.
+     * The card. A conversation shows it; so does a woken turn (0142) where no
+     * browser was approved in its conversation before, and a routine whose
+     * browser is set to ask every time (0145) — both park on it and ask the
+     * owner (0143), where they used to refuse. A routine set to `all`, and a
+     * woken turn whose conversation approved a browser before, need no card:
+     * that earlier yes is the approval.
      */
-    if (ctx.continuation && !ctx.continuation.browserApproved && !routine) {
-      return {
-        kind: "error",
-        message:
-          "nobody is watching this conversation and no browser was ever approved in it, so a " +
-          "browser cannot be opened now. Say so plainly and finish.",
-      };
-    }
-    if (ctx.confirmed !== true && !routine && !ctx.continuation?.browserApproved) {
+    const askFirst = !routine || routine.ask === true;
+    if (ctx.confirmed !== true && askFirst && !ctx.continuation?.browserApproved) {
       const cost = await creditNote(ctx);
       /**
        * Which sites this browser is signed into, on the card.

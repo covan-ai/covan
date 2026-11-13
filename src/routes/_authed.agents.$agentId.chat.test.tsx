@@ -3,6 +3,7 @@ import { render, screen, waitFor, act, fireEvent, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type React from "react";
+import { toast } from "sonner";
 import { ANSWER_EVENT, type AnswerAction } from "@/lib/answer-events";
 
 /**
@@ -101,6 +102,8 @@ const takeoverCurrent = vi.fn();
 const takeoverOpen = vi.fn();
 const tuneSession = vi.fn();
 const turnStatus = vi.fn();
+const pendingApproval = vi.fn();
+const answerApproval = vi.fn();
 const stopTurn = vi.fn();
 const documentJobs = vi.fn();
 const stopDocument = vi.fn();
@@ -130,10 +133,12 @@ vi.mock("@/lib/api-client", () => ({
       browserTasks,
       tune: tuneSession,
       turn: turnStatus,
+      pendingApproval,
       stopTurn,
       documentJobs,
     },
     documentJobs: { get: vi.fn(), stop: stopDocument, retry: vi.fn() },
+    approvals: { get: vi.fn(), answer: answerApproval },
     browser: { live: browserLive, takeOver: vi.fn(), handBack: vi.fn(), stop: vi.fn() },
     takeovers: { takeOver: vi.fn(), open: takeoverOpen, current: takeoverCurrent, close: vi.fn() },
     messages: {
@@ -356,6 +361,8 @@ beforeEach(() => {
   createMessage.mockResolvedValue(question);
   // No turn running on the server, and a stop that finds one and keeps nothing.
   turnStatus.mockResolvedValue({ turn: null });
+  // And no turn parked on a question.
+  pendingApproval.mockResolvedValue({ pending: null });
   stopTurn.mockResolvedValue({ stopped: true, message: null });
   // No browser beside the conversation, which is almost every conversation.
   browserTasks.mockResolvedValue({ tasks: [], session: null, events: [], delivered: false });
@@ -1615,6 +1622,97 @@ describe("a reply that stopped to ask", () => {
       expect(call?.[0]).toContain("/chat/confirm/paused-1");
       expect(JSON.parse(call?.[1]?.body ?? "{}")).toEqual({ approve: false });
     });
+  });
+
+  /**
+   * The card used to live only in the stream that asked, so a reload — or the
+   * reminder email's link — opened a conversation parked on a question with
+   * nothing on screen to answer it.
+   */
+  it("puts the card back when the conversation is opened again", async () => {
+    pendingApproval.mockResolvedValue({
+      pending: {
+        id: "paused-1",
+        tool: "schedule_job",
+        summary: "Create a routine on 0 17 * * 1?",
+        proposal: { kind: "schedule_job", name: "Monday orders", cron: "0 17 * * 1" },
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+    const fetchMock = vi.fn((url: string) => {
+      void url;
+      return Promise.resolve(
+        streamOf([
+          { type: "delta", text: " Created." },
+          { type: "done", message: answer },
+        ]),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderChat();
+
+    await screen.findByText("Create a routine on 0 17 * * 1?");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => {
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/chat/confirm/paused-1");
+    });
+  });
+
+  /**
+   * A routine's request in its own conversation (0143): the answer is
+   * written and the cron carries on, so nothing streams here.
+   */
+  it("answers a request nobody was watching without opening a stream", async () => {
+    pendingApproval.mockResolvedValue({
+      pending: {
+        id: "paused-9",
+        origin: "routine",
+        tool: "http_request",
+        summary: "POST to Box office?",
+        proposal: null,
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+    answerApproval.mockResolvedValue({ status: "approved" });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderChat();
+    await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(answerApproval).toHaveBeenCalledWith("paused-9", true));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    });
+    expect(toast.success).toHaveBeenCalledWith(
+      "Approved. The agent carries on within a few minutes.",
+    );
+  });
+
+  it("takes the card away when the question was answered somewhere else", async () => {
+    pendingApproval.mockResolvedValue({
+      pending: {
+        id: "paused-1",
+        tool: "schedule_job",
+        summary: "Create a routine on 0 17 * * 1?",
+        proposal: null,
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve({ ok: false, status: 409, body: null, json: () => null })),
+    );
+
+    await renderChat();
+    await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    });
+    expect(toast.message).toHaveBeenCalledWith("That request was already answered.");
   });
 
   it("takes the card away once it has been answered", async () => {

@@ -719,6 +719,79 @@ describe("GET /sessions/:id/browser-tasks", () => {
   });
 });
 
+describe("GET /sessions/:id/pending-approval", () => {
+  const ID = "4b1f7c0e-2d7a-4c55-9b7e-0d6a1f3e9c21";
+
+  function appAnswering(rows: unknown[], seen: QueryContext[] = []) {
+    return appWith({
+      tables: {
+        paused_turns: {
+          select: (ctx) => {
+            seen.push(ctx);
+            return { data: rows, error: null };
+          },
+        },
+      },
+    }).app;
+  }
+
+  it("reads the caller's own pending question back as the card the stream would have drawn", async () => {
+    const seen: QueryContext[] = [];
+    const app = appAnswering(
+      [
+        {
+          id: "pause-1",
+          tool: "run_tool",
+          summary: "Send the reply to ada@acme.test",
+          proposal: { to: "ada@acme.test" },
+          expires_at: "2026-11-13T10:00:00.000Z",
+        },
+      ],
+      seen,
+    );
+
+    const res = await app.request(`/sessions/${ID}/pending-approval`);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      pending: {
+        id: "pause-1",
+        // A row written before 0143 has no origin and is a conversation's.
+        origin: "chat",
+        tool: "run_tool",
+        summary: "Send the reply to ada@acme.test",
+        proposal: { to: "ada@acme.test" },
+        expiresAt: Date.parse("2026-11-13T10:00:00.000Z"),
+      },
+    });
+    const [query] = seen;
+    // Never the prompt: `messages` and `tool_call` are withheld by 0060's
+    // column grant, and asking for them would fail the whole read.
+    expect(query.columns).not.toMatch(/messages|tool_call|\*/);
+    expect(query.filters).toEqual(
+      expect.arrayContaining([
+        { column: "session_id", value: ID, kind: "eq" },
+        { column: "user_id", value: "user-1", kind: "eq" },
+        { column: "status", value: "pending", kind: "eq" },
+        expect.objectContaining({ column: "expires_at", kind: "gt" }),
+      ]),
+    );
+    expect(query.limit).toBe(1);
+  });
+
+  it("answers null when nothing is waiting", async () => {
+    const res = await appAnswering([]).request(`/sessions/${ID}/pending-approval`);
+    expect(await res.json()).toEqual({ pending: null });
+  });
+
+  it("asks nothing for an id that is not a conversation's", async () => {
+    const seen: QueryContext[] = [];
+    const res = await appAnswering([], seen).request("/sessions/not-an-id/pending-approval");
+    expect(res.status).toBe(404);
+    expect(seen).toEqual([]);
+  });
+});
+
 describe("POST /sessions/:id/browser-tasks/continue", () => {
   const ID = "4b1f7c0e-2d7a-4c55-9b7e-0d6a1f3e9c21";
 

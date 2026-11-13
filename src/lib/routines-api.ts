@@ -56,10 +56,11 @@ export type Routine = {
   /** How many it has delivered. */
   runsDone: number;
   /**
-   * Whether a scheduled run may use the browser: `off`, or `all`, carrying
+   * Whether a scheduled run may use the browser: `off`; `ask`, which shows the
+   * card a conversation would and waits for a yes (0145); or `all`, carrying
    * what the owner's browser does in a conversation.
    */
-  browserAccess: "off" | "all";
+  browserAccess: "off" | "ask" | "all";
   /** The conversation this routine's browser works beside, once a run opened one. */
   browserConversationId: string | null;
   status: "active" | "paused" | "completed";
@@ -131,6 +132,11 @@ export type RoutineRun = {
    * means the report is written and held until a browser task answers.
    */
   status: "ok" | "skipped" | "failed" | "waiting";
+  /**
+   * What a waiting run waits for: a browser task's answer, or somebody's yes
+   * to what it asked (0143). Absent from an older worker, which is the browser.
+   */
+  waitingFor?: "browser" | "approval" | null;
   itemsNew: number;
   /**
    * New entries this run saw and did not deliver, dropped by the per-run cap of
@@ -379,7 +385,7 @@ export type UpdateRoutineInput = Partial<{
    */
   outputBundleId: string | null;
   outputRetention: number;
-  browserAccess: "off" | "all";
+  browserAccess: "off" | "ask" | "all";
   deliverInbox: boolean;
   /** Null hands the choice back to the agent. */
   model: string | null;

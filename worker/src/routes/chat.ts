@@ -18,24 +18,14 @@ import {
 } from "../lib/models";
 import { KICKOFF_ASK, KICKOFF_MAX_TOKENS, onboardingKickoff } from "../lib/onboarding-kickoff";
 import { reportProviderFailure } from "../lib/provider-error";
-import { type CompletionMessage, type CompletionUsage, type ToolCall } from "../lib/completion";
-import {
-  answerUnanswered,
-  NOT_RUN_FOR_A_QUESTION,
-  oneCard,
-  parseArguments,
-  runToolCall,
-  runWithTimeout,
-  type AgentStep,
-  type PassUsage,
-} from "../lib/harness/loop";
+import { type CompletionMessage, type CompletionUsage } from "../lib/completion";
+import { type AgentStep, type PassUsage } from "../lib/harness/loop";
+import { answerPausedCall } from "../lib/harness/resume";
 import { apiKeyIdOf } from "../lib/api-key-rule";
 import { capabilitiesFor } from "../lib/harness/available";
 import { egressCountry } from "../lib/browser/egress";
 import { browserTaskNote } from "../lib/browser/task-note";
 import { documentJobNote } from "../lib/docs/note";
-import { toolByName } from "../lib/harness/registry";
-import { cap, MAX_TOOL_OUTPUT_CHARS, TOOL_TIMEOUT_MS } from "../lib/harness/budget";
 import { loadPausedTurn, resolvePausedTurn, savePausedTurn, writeSteps } from "../lib/harness/turn";
 import {
   addUsage,
@@ -86,7 +76,6 @@ import {
   turnSpend,
   creditHold,
 } from "./chat-turn";
-import type { RunApproval } from "../lib/harness/registry";
 import { stoppedByPerson, turnSignal, visitorTimezone } from "../lib/turns";
 
 const chat = new Hono<AppEnv>();
@@ -1252,49 +1241,7 @@ chat.post("/chat/stream", async (c) => {
   });
 });
 
-/**
- * What the model is told when a person says no.
- *
- * A refusal is a fact about the world, not an error, and the difference
- * matters to what happens next: told "error", a model retries: told "the
- * person declined", it acknowledges and moves on. It is written as the tool's
- * own result rather than as a new user turn because that is what it is — the
- * answer to the call the model made.
- */
-const DECLINED_RESULT =
-  "The person declined this. Do not try it again in this turn. Acknowledge it briefly and " +
-  "carry on with whatever else was asked.";
-
 const confirmSchema = z.object({ approve: z.boolean() });
-
-/** The calls after `id` in its batch: the last assistant turn that asked for any. */
-function laterInBatch(messages: CompletionMessage[], id: string): ToolCall[] {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role === "assistant" && message.toolCalls?.length) {
-      const at = message.toolCalls.findIndex((call) => call.id === id);
-      return at === -1 ? [] : message.toolCalls.slice(at + 1);
-    }
-  }
-  return [];
-}
-
-/** What `id` was answered, if anything. */
-function answerTo(messages: CompletionMessage[], id: string): string | null {
-  const found = messages.find((message) => message.role === "tool" && message.toolCallId === id);
-  return found?.role === "tool" ? found.content : null;
-}
-
-/** `messages` with the answer to `id` replaced, where it stands. */
-function answerInPlace(
-  messages: CompletionMessage[],
-  id: string,
-  content: string,
-): CompletionMessage[] {
-  return messages.map((message) =>
-    message.role === "tool" && message.toolCallId === id ? { ...message, content } : message,
-  );
-}
 
 // POST /chat/confirm/:id
 //
@@ -1316,6 +1263,12 @@ chat.post("/chat/confirm/:id", async (c) => {
   const loaded = await loadPausedTurn(service, c.req.param("id"));
   if ("error" in loaded) return c.json({ error: loaded.error }, loaded.status);
   const pause = loaded.pause;
+  // A request nobody was watching when it was made (0143) is answered on its
+  // own page, and the cron carries on with it — never a stream, which would
+  // be a second resume racing the first.
+  if (pause.origin !== "chat") {
+    return c.json({ error: "answer this on its request page", code: "unattended" }, 409);
+  }
   // The endpoint the first half ran on, if it was one (0135).
   const turnEnv = await withModelEndpoint(env, service, pause.workspaceId, pause.model);
 
@@ -1365,7 +1318,12 @@ chat.post("/chat/confirm/:id", async (c) => {
   // Claimed before anything runs, and the claim is what makes a double-click
   // safe: the second request finds nothing pending and is refused here rather
   // than sending the same email twice.
-  const claimed = await resolvePausedTurn(service, pause.id, approve ? "approved" : "declined");
+  const claimed = await resolvePausedTurn(
+    service,
+    pause.id,
+    approve ? "approved" : "declined",
+    c.get("user").id,
+  );
   if (!claimed) return c.json({ error: "this was already answered" }, 409);
 
   const signal = turnSignal(c);
@@ -1539,217 +1497,31 @@ chat.post("/chat/confirm/:id", async (c) => {
 
       try {
         await tracker.start();
-        const tool = approve ? toolByName(pause.toolCall.name) : null;
-        const started = Date.now();
-        const parsedArgs = parseArguments(pause.toolCall.arguments);
-        const result = await (async (): Promise<
-          | { kind: "ok"; content: string; approval?: RunApproval }
-          | { kind: "error"; message: string }
-        > => {
-          if (!approve) return { kind: "error", message: DECLINED_RESULT };
-          if (!tool) return { kind: "error", message: `no tool named ${pause.toolCall.name}` };
-          // Through the harness's own runner rather than called directly, which
-          // is what this path was doing. Every other tool call in the product
-          // is time-boxed; the one a person had just approved was not, so a
-          // connected app that hung held the stream open until the client gave
-          // up. `runWithTimeout` also delivers the ceiling as a signal, so the
-          // tool's own `fetch` is cancelled rather than left running with
-          // nobody to receive it — and it answers with an error rather than
-          // throwing, which is why the try that used to wrap this is gone.
-          const ran = await runWithTimeout(
-            tool,
-            parsedArgs.ok ? parsedArgs.args : {},
-            ctx,
-            TOOL_TIMEOUT_MS,
-            signal,
-          );
-          // A tool that asks again having been told yes is a tool that has not
-          // read `ctx.confirmed`, which is a bug in the tool rather than a
-          // second question for the person. Reported as an error so it is
-          // visible instead of parking the turn a second time.
-          if (ran.kind === "needs_confirmation") {
-            return { kind: "error", message: "this tool asked for confirmation twice" };
-          }
-          return ran;
-        })();
-
-        /**
-         * What the model is handed for the call it just approved.
-         *
-         * Capped, which this path did not do — `loop.ts` puts every other tool
-         * result through `MAX_TOOL_OUTPUT_CHARS` and this one went through
-         * whole. That was survivable while confirmation was rare; `run_tool`
-         * asks on every call, so the tool carrying most of today's traffic was
-         * the one tool with no output budget at all. An uncapped result is not
-         * paid for once either: it joins the transcript and is re-sent on every
-         * later pass of the turn, which at a hard ceiling of thirty-two is the
-         * expensive end of a square. (This said "sixteen" — a number that was
-         * reverted the day after it shipped and never ran. See `MAX_STEPS`.)
-         *
-         * One string for all three uses below — what the model reads, what the
-         * transcript keeps, and the length that is measured — because they were
-         * three expressions of the same thing and only two of them agreed.
-         */
-        const resolved =
-          result.kind === "ok"
-            ? cap(result.content, MAX_TOOL_OUTPUT_CHARS)
-            : `error: ${result.message}`;
-
-        // The pending step, resolved. Its index is kept so the numbering the
-        // person already saw does not move under them. Found by its status
-        // rather than taken as the last: the later calls of its batch are
-        // recorded after it, as refused (`NOT_RUN_FOR_A_QUESTION`).
-        const at = pause.steps.findLastIndex((step) => step.status === "pending");
-        const steps = pause.steps.map((step, i) =>
-          i === at
-            ? {
-                ...step,
-                status:
-                  result.kind === "ok"
-                    ? ("ok" as const)
-                    : approve
-                      ? ("failed" as const)
-                      : ("refused" as const),
-                resultExcerpt: resolved,
-                // The person's yes, which is what lets the rest of the turn
-                // treat this operation as approved (`approvedSlugsFrom`).
-                ...(result.kind === "ok" && result.approval ? { approval: result.approval } : {}),
-                // The pause wrote this row with no `result_chars`, because at
-                // that point nothing had been put in front of the model. Now
-                // something has. Leaving it null made every confirmed call
-                // invisible to the only measurement that can size the tool
-                // budget — and confirmed calls are most of them.
-                resultChars: resolved.length,
-                durationMs: Date.now() - started,
-              }
-            : step,
-        );
+        // The approved call, then the rest of its batch: `lib/harness/resume.ts`,
+        // which the cron's carrying-on shares (0143).
+        const answered = await answerPausedCall({
+          pause,
+          approve,
+          ctx,
+          signal,
+          send,
+          onSettled: (settled) => {
+            carried = settled;
+          },
+          loadTools: async () =>
+            (
+              await capabilitiesFor({
+                db,
+                env,
+                workspaceId: pause.workspaceId,
+                userId: pause.userId,
+                agentId: pause.agentId,
+                byApiKey: apiKeyIdOf(c) !== null,
+              })
+            ).tools,
+        });
+        const { steps, messages, tools, asked } = answered;
         carried = steps;
-        const settled = at === -1 ? steps[steps.length - 1] : steps[at];
-        send({
-          type: "step",
-          index: settled?.index ?? 0,
-          tool: pause.toolCall.name,
-          status: settled?.status ?? "ok",
-          label: pause.toolCall.name,
-        });
-
-        // `answerUnanswered` for a turn parked before the loop answered the
-        // rest of its batch itself; for one parked after, it adds nothing.
-        // The approved call's answer goes in front of its batch's later ones,
-        // where the model asked for it.
-        const later = laterInBatch(pause.messages, pause.toolCall.id);
-        const laterIds = new Set(later.map((call) => call.id));
-        const unanswered = answerUnanswered(pause.messages, pause.toolCall.id);
-        const first = unanswered.findIndex(
-          (message) => message.role === "tool" && laterIds.has(message.toolCallId),
-        );
-        const answer: CompletionMessage = {
-          role: "tool",
-          toolCallId: pause.toolCall.id,
-          content: resolved,
-        };
-        let messages: CompletionMessage[] =
-          first === -1
-            ? [...unanswered, answer]
-            : [...unanswered.slice(0, first), answer, ...unanswered.slice(first)];
-
-        const { tools } = await capabilitiesFor({
-          db,
-          env,
-          workspaceId: pause.workspaceId,
-          userId: pause.userId,
-          agentId: pause.agentId,
-          byApiKey: apiKeyIdOf(c) !== null,
-        });
-
-        /**
-         * The rest of the batch, run here rather than left to the model.
-         *
-         * The loop answered them "not run, call it again once that one is
-         * answered", and on 2026-10-11 21:32 the model was asked to look at
-         * three sites, had the first approved, and never called the other
-         * two: one browser ran and three were reported. So they run now, in
-         * order, each recorded over its own `refused` step so the numbering
-         * the person saw holds.
-         *
-         * Confirmed only when the person's card listed it
-         * (`AgentTool.approvedTogether`) and it reads the same; anything else
-         * runs unconfirmed and may ask for itself, which parks the turn again
-         * on it, with the calls after it still unanswered. A "no" declines the
-         * listed ones too, and leaves the rest as they were: a refused card
-         * must not set off what came after it.
-         */
-        const together = toolByName(pause.toolCall.name)?.approvedTogether;
-        const listed = together ? together.listed(pause.proposal) : [];
-        let asked: { call: ToolCall; summary: string; proposal: unknown } | null = null;
-        for (const [k, call] of later.entries()) {
-          // The loop records a batch's later calls right after the one that
-          // asked, in order. A pause that does not look like that (one parked
-          // before it did) is left to the model, as before.
-          const position = at === -1 ? -1 : at + 1 + k;
-          const step = steps[position];
-          if (
-            !step ||
-            step.tool !== call.name ||
-            step.status !== "refused" ||
-            answerTo(messages, call.id) !== NOT_RUN_FOR_A_QUESTION
-          ) {
-            continue;
-          }
-          const parsedCall = parseArguments(call.arguments);
-          const line =
-            together && call.name === pause.toolCall.name && parsedCall.ok
-              ? together.line(parsedCall.args)
-              : null;
-          const covered = line !== null && listed.includes(line);
-          if (!approve) {
-            if (!covered) continue;
-            const declined = `error: ${DECLINED_RESULT}`;
-            messages = answerInPlace(messages, call.id, declined);
-            steps[position] = { ...step, resultExcerpt: declined, resultChars: declined.length };
-            send({
-              type: "step",
-              index: step.index,
-              tool: call.name,
-              status: "refused",
-              label: call.name,
-            });
-            continue;
-          }
-          const run = await runToolCall(call, {
-            tools,
-            ctx: { ...ctx, confirmed: covered, confirmedAsListed: covered },
-            steps,
-            index: step.index,
-            pass: step.pass ?? 0,
-            toolTimeoutMs: TOOL_TIMEOUT_MS,
-            maxOutputChars: MAX_TOOL_OUTPUT_CHARS,
-            signal,
-            onEvent: (event) => {
-              if (event.type === "step") send(event);
-            },
-            record: (ran) => {
-              steps[position] = ran;
-            },
-          });
-          if (run.kind === "asks") {
-            // Unanswered, as the loop leaves a call that asks.
-            messages = messages.filter(
-              (message) => !(message.role === "tool" && message.toolCallId === call.id),
-            );
-            asked = {
-              call,
-              ...oneCard(
-                tools.find((tool) => tool.name === call.name),
-                { summary: run.summary, proposal: run.proposal },
-                later.slice(k + 1),
-              ),
-            };
-            break;
-          }
-          messages = answerInPlace(messages, call.id, run.message.content);
-        }
 
         if (asked) {
           // Parked again, before the model runs: the same stop the loop makes

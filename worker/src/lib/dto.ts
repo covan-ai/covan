@@ -1201,10 +1201,11 @@ export type RoutineDTO = {
   /** How many it has delivered. */
   runsDone: number;
   /**
-   * Whether a scheduled run may use the browser (0100, 0141): `off`, or `all`,
+   * Whether a scheduled run may use the browser (0100, 0141, 0145): `off`; `ask`,
+   * which shows the card a conversation would and waits for a yes; or `all`,
    * carrying what a conversation's browser would.
    */
-  browserAccess: "off" | "all";
+  browserAccess: "off" | "ask" | "all";
   /** The conversation this routine's browser reports into, once a run has opened one. */
   browserConversationId: string | null;
   status: "active" | "paused" | "completed";
@@ -1298,7 +1299,8 @@ export function mapRoutine(row: {
     endsAfterRuns: row.ends_after_runs ?? null,
     runsDone: row.runs_done ?? 0,
     // `off` for a row read before 0100, which is what every routine was.
-    browserAccess: row.browser_access === "all" ? "all" : "off",
+    browserAccess:
+      row.browser_access === "all" || row.browser_access === "ask" ? row.browser_access : "off",
     browserConversationId: row.browser_conversation_id ?? null,
     status:
       row.status === "paused" ? "paused" : row.status === "completed" ? "completed" : "active",
@@ -1323,6 +1325,8 @@ export type RoutineRunDTO = {
   id: string;
   /** `waiting`: the report is written and held for a browser task's answer (0100). */
   status: "ok" | "skipped" | "failed" | "waiting";
+  /** What a waiting run waits for: its browser, or a person's yes (0143). Null otherwise. */
+  waitingFor: "browser" | "approval" | null;
   itemsNew: number;
   /**
    * New entries this run saw and did not deliver, dropped by the per-run cap.
@@ -1405,6 +1409,7 @@ export function mapRoutineRun(row: {
   trigger_label?: string | null;
   session_id?: string | null;
   delivery_note?: string | null;
+  waiting_for?: string | null;
   started_at: string;
 }): RoutineRunDTO {
   return {
@@ -1413,6 +1418,9 @@ export function mapRoutineRun(row: {
       row.status === "ok" || row.status === "failed" || row.status === "waiting"
         ? row.status
         : "skipped",
+    // Null, which every waiting row was before 0143, is the browser.
+    waitingFor:
+      row.status === "waiting" ? (row.waiting_for === "approval" ? "approval" : "browser") : null,
     itemsNew: row.items_new ?? 0,
     itemsOverflow: row.items_overflow ?? 0,
     nothingRelevant: row.status === "skipped" && row.error === NOTHING_RELEVANT_REASON,

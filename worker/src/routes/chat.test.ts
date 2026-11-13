@@ -2453,6 +2453,20 @@ describe("POST /chat/confirm/:id", () => {
     expect((await confirm(app, true)).status).toBe(404);
   });
 
+  /**
+   * A routine's request is carried on by the cron once somebody answers it
+   * (0143). A stream here would be a second resume racing the first, so the
+   * card's endpoint refuses it before claiming anything.
+   */
+  it("refuses a request nobody was watching, which is answered on its own page", async () => {
+    parked = { ...PARKED, origin: "routine", routine_run_id: "run-1" };
+    const { app } = appWith({ question: "every monday" });
+    const res = await confirm(app, true);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "unattended" });
+    expect(completionCreate).not.toHaveBeenCalled();
+  });
+
   it("refuses somebody else's question, which the read policy deliberately shows them", async () => {
     parked = { ...PARKED, user_id: "someone-else" };
     const { app } = appWith({ question: "every monday" });

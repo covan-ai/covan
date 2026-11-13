@@ -3,15 +3,17 @@ import { Hono } from "hono";
 import type { AppEnv } from "../types";
 import { resetRateLimiters } from "../lib/ratelimit";
 import { resetMisses } from "../middleware/ratelimit";
-import { replyLocalPart } from "../lib/inbound-email/address";
+import { approvalLocalPart, replyLocalPart } from "../lib/inbound-email/address";
 import type { ReceivedEmail } from "../lib/inbound-email/resend";
 
 const receiveEvent = vi.fn();
 const receiveReply = vi.fn();
+const receiveApprovalReply = vi.fn();
 const fetchReceivedEmail = vi.fn();
 
 vi.mock("../lib/routines/events/receive", () => ({ receiveEvent }));
 vi.mock("../lib/routines/replies", () => ({ receiveReply }));
+vi.mock("../lib/approvals/reply", () => ({ receiveApprovalReply }));
 vi.mock("../lib/routines/poke-room", () => ({ startPokedRun: vi.fn() }));
 vi.mock("../lib/inbound-email/resend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/inbound-email/resend")>()),
@@ -85,6 +87,7 @@ async function post(
 beforeEach(() => {
   receiveEvent.mockReset().mockResolvedValue({ status: "accepted", eventId: "email:resend:e1" });
   receiveReply.mockReset().mockResolvedValue({ status: "accepted", routineId: "r1" });
+  receiveApprovalReply.mockReset().mockResolvedValue({ status: "approved" });
   fetchReceivedEmail.mockReset().mockResolvedValue(email());
   resetRateLimiters();
   resetMisses();
@@ -118,6 +121,36 @@ describe("POST /email/inbound", () => {
     expect(receiveReply.mock.calls[0][1]).toBe(RUN);
     expect(receiveReply.mock.calls[0][2]).toMatchObject({ id: "e1" });
     expect(receiveEvent).not.toHaveBeenCalled();
+  });
+
+  // 0147: a reply to a request email answers it, and nothing else does.
+  it("hands an answer to a request email to receiveApprovalReply, and starts no routine", async () => {
+    const local = await approvalLocalPart(ROUTINE_SECRET_KEY, RUN);
+    const body = envelope([`Covan <${local}@reply.example.com>`]);
+    const res = await post(body, await signed(body));
+    expect(await res.json()).toEqual({ ok: true, results: ["approved"] });
+    expect(receiveApprovalReply.mock.calls[0][1]).toBe(RUN);
+    expect(receiveApprovalReply.mock.calls[0][2]).toMatchObject({ id: "e1" });
+    expect(receiveReply).not.toHaveBeenCalled();
+    expect(receiveEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not take a report's address dressed as a request's", async () => {
+    const report = await replyLocalPart(ROUTINE_SECRET_KEY, RUN);
+    const body = envelope([`a-${report.slice(2)}@reply.example.com`]);
+    const res = await post(body, await signed(body));
+    expect(await res.json()).toEqual({ ok: true, results: ["unknown"] });
+    expect(receiveApprovalReply).not.toHaveBeenCalled();
+  });
+
+  it("leaves a routine whose own address starts with a- to that routine", async () => {
+    const body = envelope(["a-team-abcdefghijklmnop@reply.example.com"]);
+    await post(body, await signed(body));
+    expect(receiveApprovalReply).not.toHaveBeenCalled();
+    expect(receiveEvent.mock.calls[0][1]).toEqual({
+      provider: "email",
+      externalId: "abcdefghijklmnop",
+    });
   });
 
   it("hands mail to a routine's own address to receiveEvent, by its token", async () => {

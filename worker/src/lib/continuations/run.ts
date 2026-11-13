@@ -23,6 +23,8 @@ import {
 import { completeHeldRun } from "../routines/held";
 import { REPLY_IS_THE_REPORT } from "../routines/summarise";
 import { serviceClient } from "../supabase";
+import { parkAndAsk, stoppedShortNote } from "../approvals/park";
+import { mailerFrom, type Mailer } from "../reports/mailer";
 
 /**
  * The woken turn (0142): an agent turn in an existing conversation, run from
@@ -65,6 +67,9 @@ export const CARRY_ON = "The browser is done — carry on with the next step.";
 /** A row that says a turn ran and said nothing, rather than an empty message. */
 export const NOTHING_SAID = "(came back to this and had nothing to add)";
 
+/** The reply a woken turn that asked before saying anything hangs its question off. */
+export const STOPPED_TO_ASK = "(came back to this, and stopped to ask before going on)";
+
 const UNWATCHED =
   "You are carrying on something you put down earlier in this conversation. Nobody is " +
   "watching now: do what you can without asking, say plainly what you could not do, and if " +
@@ -90,6 +95,10 @@ export type RunDeps = {
   turn: typeof runAgentTurn;
   capabilities: typeof capabilitiesFor;
   entitlements: Entitlements;
+  /** Parks a question and asks its owner (0143). */
+  park: typeof parkAndAsk;
+  /** The deployment's mail, for that email; null sends none. */
+  mail: Mailer | null;
 };
 
 export type Woken = { status: "done" | "failed"; error?: string; text?: string };
@@ -101,6 +110,8 @@ function resolve(env: RoutineEnv, overrides: Partial<RunDeps>): RunDeps {
     turn: overrides.turn ?? runAgentTurn,
     capabilities: overrides.capabilities ?? capabilitiesFor,
     entitlements: overrides.entitlements ?? entitlementsFor(env),
+    park: overrides.park ?? parkAndAsk,
+    mail: overrides.mail === undefined ? mailerFrom(env) : overrides.mail,
   };
 }
 
@@ -126,7 +137,11 @@ type RoutineSide = {
   runId: string;
   /** The routine's browser switch (0141): on carries what a conversation's would. */
   browserOn: boolean;
+  /** On and set to ask every time (0145): the first task parks the run on its card. */
+  browserAsks: boolean;
   timezone: string | null;
+  /** For the request's email: which routine is asking. */
+  name: string | null;
 };
 
 const MAX_THEN_CHARS = 1000;
@@ -201,7 +216,9 @@ export async function runContinuationTurn(
 
     // 5. Whether a browser was ever approved in this conversation, by this person.
     const browserApproved = routine ? false : await browserApprovedIn(db, wake);
-    const browserOn = routine ? routine.browserOn : browserApproved;
+    // A conversation that never approved a browser is offered one too: the
+    // first task parks the turn on its card and asks the owner (0143).
+    const browserOn = routine ? routine.browserOn : true;
 
     // 6. The tools, as a scheduled run gets them.
     const toolEnv = env as ToolEnv;
@@ -267,7 +284,11 @@ export async function runContinuationTurn(
         ),
       );
     const routineBrowser: RoutineBrowser | undefined = routine?.browserOn
-      ? { conversation: async () => wake.sessionId, started: [] }
+      ? {
+          conversation: async () => wake.sessionId,
+          started: [],
+          ...(routine.browserAsks ? { ask: true } : {}),
+        }
       : undefined;
     const ctx: ToolContext = {
       db,
@@ -308,15 +329,12 @@ export async function runContinuationTurn(
       console.error("could not release a woken turn's credit hold", err);
     });
 
-    // 9. The reply, with what it stopped short of said out loud.
+    // 9. The reply. A turn that stopped to ask hangs its question off this
+    // reply below (0143); one that could not be parked says what it stopped
+    // short of, out loud.
     const said = turn.text.trim();
-    let content = said;
-    if (turn.paused?.reason === "confirmation") {
-      content =
-        `${content}\n\n---\n\n_This stopped short of "${turn.paused.summary ?? "an action"}" ` +
-        "because it needs somebody to approve it, and nobody was watching._";
-    }
-    content = content.trim() || NOTHING_SAID;
+    const asking = turn.paused?.reason === "confirmation" ? turn.paused : null;
+    let content = said || (asking ? STOPPED_TO_ASK : NOTHING_SAID);
     const usage = { ...turn.usage, passes: turn.passes };
 
     const { data: message, error: messageError } = await db
@@ -327,10 +345,12 @@ export async function runContinuationTurn(
         content,
         sender_id: null,
         model,
+        // Claimed parked and corrected below if the park does not land, the
+        // order the chat route uses: the park points at this row.
         outcome: replyOutcome({
           paused: turn.paused ?? null,
           finishReason: turn.finishReason,
-          parked: false,
+          parked: asking !== null,
           said: said.length > 0,
         }),
         ...usageColumns(usage),
@@ -358,6 +378,41 @@ export async function runContinuationTurn(
       } catch (err) {
         console.error("could not charge for a woken turn", wake.id, err);
       }
+    }
+
+    // 9b. The question, parked for a day and put to the owner (0143). The
+    // report of a routine's run waits on it (`chainPending`), and the email is
+    // the owner's nudge, so neither goes out here.
+    if (asking) {
+      const parked = await deps.park(env, db, deps.mail, {
+        origin: routine ? "routine" : "wake",
+        workspaceId: wake.workspaceId,
+        agentId: wake.agentId,
+        userId: wake.userId,
+        sessionId: wake.sessionId,
+        messageId,
+        routineRunId: routine?.runId ?? null,
+        model,
+        paused: asking,
+        steps: turn.steps,
+        now: deps.now(),
+        routineName: routine?.name ?? null,
+      });
+      if (parked.kind === "parked") return { status: "done", text: content };
+      content = `${said}${stoppedShortNote(asking.summary)}`.trim();
+      const { error } = await db
+        .from("messages")
+        .update({
+          content,
+          outcome: replyOutcome({
+            paused: asking,
+            finishReason: turn.finishReason,
+            parked: false,
+            said: said.length > 0,
+          }),
+        })
+        .eq("id", messageId);
+      if (error) console.error("could not say what a woken turn stopped short of", error.code);
     }
 
     // 10. A task this turn started without saying what comes next carries
@@ -409,7 +464,7 @@ async function routineSide(
 
   const { data: routine, error: routineError } = await db
     .from("routines")
-    .select("browser_access, timezone")
+    .select("name, browser_access, timezone")
     .eq("id", String(run.routine_id))
     .maybeSingle();
   if (routineError) {
@@ -417,8 +472,18 @@ async function routineSide(
   }
   if (!routine) return { kind: "error", message: "routine is gone" };
 
-  const browserOn = text(routine.browser_access) === "all";
-  return { kind: "ok", value: { runId, browserOn, timezone: text(routine.timezone) } };
+  const access = text(routine.browser_access);
+  const browserOn = access === "all" || access === "ask";
+  return {
+    kind: "ok",
+    value: {
+      runId,
+      browserOn,
+      browserAsks: access === "ask",
+      timezone: text(routine.timezone),
+      name: text(routine.name),
+    },
+  };
 }
 
 /** A browser task of this person's in this conversation: a card said yes here once. */

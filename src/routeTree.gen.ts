@@ -34,6 +34,7 @@ import { Route as AuthedThreadsRouteImport } from './routes/_authed.threads'
 import { Route as AuthedWelcomeRouteImport } from './routes/_authed.welcome'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as AuthedAgentsAgentIdRouteImport } from './routes/_authed.agents.$agentId'
+import { Route as AuthedApprovalsApprovalIdRouteImport } from './routes/_authed.approvals.$approvalId'
 import { Route as AuthedRoutinesIndexRouteImport } from './routes/_authed.routines.index'
 import { Route as AuthedRoutinesNewRouteImport } from './routes/_authed.routines.new'
 import { Route as AuthedRoutinesUseCasesRouteImport } from './routes/_authed.routines.use-cases'
@@ -187,6 +188,12 @@ const AuthedAgentsAgentIdRoute = AuthedAgentsAgentIdRouteImport.update({
   path: '/agents/$agentId',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedApprovalsApprovalIdRoute =
+  AuthedApprovalsApprovalIdRouteImport.update({
+    id: '/approvals/$approvalId',
+    path: '/approvals/$approvalId',
+    getParentRoute: () => AuthedRoute,
+  } as any)
 const AuthedRoutinesIndexRoute = AuthedRoutinesIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -365,6 +372,7 @@ export interface FileRoutesByFullPath {
   '/welcome': typeof AuthedWelcomeRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
+  '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/routines/new': typeof AuthedRoutinesNewRoute
   '/routines/use-cases': typeof AuthedRoutinesUseCasesRoute
   '/settings/account': typeof AuthedSettingsAccountRoute
@@ -416,6 +424,7 @@ export interface FileRoutesByTo {
   '/threads': typeof AuthedThreadsRoute
   '/welcome': typeof AuthedWelcomeRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/routines/new': typeof AuthedRoutinesNewRoute
   '/routines/use-cases': typeof AuthedRoutinesUseCasesRoute
   '/settings/account': typeof AuthedSettingsAccountRoute
@@ -472,6 +481,7 @@ export interface FileRoutesById {
   '/_authed/welcome': typeof AuthedWelcomeRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/_authed/agents/$agentId': typeof AuthedAgentsAgentIdRouteWithChildren
+  '/_authed/approvals/$approvalId': typeof AuthedApprovalsApprovalIdRoute
   '/_authed/routines/new': typeof AuthedRoutinesNewRoute
   '/_authed/routines/use-cases': typeof AuthedRoutinesUseCasesRoute
   '/_authed/settings/account': typeof AuthedSettingsAccountRoute
@@ -528,6 +538,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/auth/callback'
     | '/agents/$agentId'
+    | '/approvals/$approvalId'
     | '/routines/new'
     | '/routines/use-cases'
     | '/settings/account'
@@ -579,6 +590,7 @@ export interface FileRouteTypes {
     | '/threads'
     | '/welcome'
     | '/auth/callback'
+    | '/approvals/$approvalId'
     | '/routines/new'
     | '/routines/use-cases'
     | '/settings/account'
@@ -634,6 +646,7 @@ export interface FileRouteTypes {
     | '/_authed/welcome'
     | '/auth/callback'
     | '/_authed/agents/$agentId'
+    | '/_authed/approvals/$approvalId'
     | '/_authed/routines/new'
     | '/_authed/routines/use-cases'
     | '/_authed/settings/account'
@@ -856,6 +869,13 @@ declare module '@tanstack/react-router' {
       path: '/agents/$agentId'
       fullPath: '/agents/$agentId'
       preLoaderRoute: typeof AuthedAgentsAgentIdRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/approvals/$approvalId': {
+      id: '/_authed/approvals/$approvalId'
+      path: '/approvals/$approvalId'
+      fullPath: '/approvals/$approvalId'
+      preLoaderRoute: typeof AuthedApprovalsApprovalIdRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/routines/': {
@@ -1153,6 +1173,7 @@ interface AuthedRouteChildren {
   AuthedThreadsRoute: typeof AuthedThreadsRoute
   AuthedWelcomeRoute: typeof AuthedWelcomeRoute
   AuthedAgentsAgentIdRoute: typeof AuthedAgentsAgentIdRouteWithChildren
+  AuthedApprovalsApprovalIdRoute: typeof AuthedApprovalsApprovalIdRoute
   AuthedDocumentsDocumentIdPrintRoute: typeof AuthedDocumentsDocumentIdPrintRoute
 }
 
@@ -1168,6 +1189,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedThreadsRoute: AuthedThreadsRoute,
   AuthedWelcomeRoute: AuthedWelcomeRoute,
   AuthedAgentsAgentIdRoute: AuthedAgentsAgentIdRouteWithChildren,
+  AuthedApprovalsApprovalIdRoute: AuthedApprovalsApprovalIdRoute,
   AuthedDocumentsDocumentIdPrintRoute: AuthedDocumentsDocumentIdPrintRoute,
 }
 

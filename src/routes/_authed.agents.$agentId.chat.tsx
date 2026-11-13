@@ -714,9 +714,11 @@ function ChatTab() {
    * The thing the agent has stopped to ask about, if it has.
    *
    * Keyed by session, because somebody can switch conversations while a card
-   * is open and must not come back to another agent's question. The turn is
-   * parked server-side either way (`paused_turns`), so leaving the page loses
-   * the card and not the question.
+   * is open and must not come back to another agent's question. Set by the
+   * stream's `confirm` event while the reply is on screen, and read back from
+   * the parked row (`GET /sessions/:id/pending-approval`) when the
+   * conversation is opened — so a reload, a second tab or the reminder
+   * email's link finds the card that a turn is waiting on.
    */
   const [pendingConfirm, setPendingConfirm] = useState<
     (PendingConfirmation & { sessionId: string }) | null
@@ -982,6 +984,21 @@ function ChatTab() {
       // Nothing to pick up: the turn finished between asking whether it was
       // running and asking for it. Its row is in the transcript by now.
       if (opts.resume && res.status === 204) {
+        setThinking(false);
+        setReplyingIn(null);
+        invalidateMessages(sessionId);
+        return;
+      }
+
+      // The question was answered somewhere else — another tab, the email's
+      // link — or ran out of time, or is no longer there. Nothing will run, so
+      // the card goes and the transcript is read again for what did happen.
+      if (opts.confirm && [404, 409, 410].includes(res.status)) {
+        toast.message(
+          res.status === 410
+            ? t("That request expired. Ask the agent again.")
+            : t("That request was already answered."),
+        );
         setThinking(false);
         setReplyingIn(null);
         invalidateMessages(sessionId);
@@ -1662,8 +1679,40 @@ function ChatTab() {
 
   const answerConfirmation = async (approve: boolean) => {
     if (!active || busy || !pendingConfirm) return;
-    const { id } = pendingConfirm;
+    const { id, origin } = pendingConfirm;
+    if (origin && origin !== "chat") {
+      await answerUnattended(active.id, id, approve);
+      return;
+    }
     await streamReply(active.id, { confirm: { id, approve } });
+  };
+
+  /**
+   * A question asked while nobody was watching (0143): the answer is written
+   * here and the cron carries on with it on its next tick, so there is no
+   * stream to open — the card goes, and a line says what happens next.
+   */
+  const answerUnattended = async (sessionId: string, id: string, approve: boolean) => {
+    try {
+      await api.approvals.answer(id, approve);
+      toast.success(
+        approve
+          ? t("Approved. The agent carries on within a few minutes.")
+          : t("Declined. The agent won't do it."),
+      );
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : 0;
+      if (status === 410) toast.message(t("That request expired. Ask the agent again."));
+      else if (status === 404 || status === 409)
+        toast.message(t("That request was already answered."));
+      else {
+        toast.error(t("Couldn't answer that. Try again."));
+        return;
+      }
+    }
+    setPendingConfirm(null);
+    invalidateMessages(sessionId);
+    void queryClient.invalidateQueries({ queryKey: ["inbox"] });
   };
 
   /**
@@ -1820,6 +1869,35 @@ function ChatTab() {
   const [speakingId, setSpeakingId] = useState<string | null>(null);
 
   /**
+   * Put the card back for a turn that is parked on this person's answer.
+   *
+   * Only once nothing is running: a turn that is still being written has not
+   * asked anything yet, and a stream that is open will send its own
+   * `confirm`. A card already on screen for this conversation is left alone.
+   * A failure is "nothing waiting", which is how the screen behaved before
+   * the server could say.
+   */
+  const seedPendingApproval = useStableCallback((sessionId: string) => {
+    api.sessions
+      .pendingApproval(sessionId)
+      .then(({ pending }) => {
+        if (!pending || streamAbort.current || active?.id !== sessionId) return;
+        setPendingConfirm((current) =>
+          current?.sessionId === sessionId
+            ? current
+            : {
+                sessionId,
+                id: pending.id,
+                tool: pending.tool,
+                summary: pending.summary,
+                proposal: pending.proposal,
+                ...(pending.origin ? { origin: pending.origin } : {}),
+              },
+        );
+      })
+      .catch(() => {});
+  });
+  /**
    * Pick a turn back up when its conversation is opened again.
    *
    * The turn runs on the server now, so the person who asked, opened another
@@ -1837,6 +1915,7 @@ function ChatTab() {
       .then(({ turn, hosted }) => {
         if (!turn?.running) {
           setIdleTurn({ sessionId, hosted: hosted ?? false, checkedAt: Date.now() });
+          seedPendingApproval(sessionId);
           return;
         }
         if (!turn.mine || streamAbort.current) return;

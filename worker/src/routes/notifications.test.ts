@@ -38,7 +38,7 @@ function appWith(row: Record<string, unknown> | null) {
 }
 
 describe("notification preferences", () => {
-  it("answers the defaults when nothing was ever changed: away and failures on, summary off", async () => {
+  it("answers the defaults when nothing was ever changed: away, failures and requests on, summary off", async () => {
     const { app } = appWith(null);
     expect(await (await app.request("/notification-preferences")).json()).toEqual({
       routinePaused: true,
@@ -46,6 +46,8 @@ describe("notification preferences", () => {
       needsMeAway: true,
       routineFailed: true,
       weeklySummary: false,
+      approvalRequests: true,
+      approveByReply: true,
     });
   });
 

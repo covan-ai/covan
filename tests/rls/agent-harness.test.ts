@@ -181,6 +181,28 @@ describe("paused_turns", () => {
   });
 
   /**
+   * The read `GET /sessions/:id/pending-approval` makes to put the card back
+   * after a reload, column for column. Every one of them must be on 0060's
+   * grant: a single withheld column fails the whole select, and the card
+   * would quietly never come back.
+   */
+  it("hands the card back to the person it waits on, with nothing but the card", async () => {
+    const { data, error } = await owner.db
+      .from("paused_turns")
+      .select("id, tool, summary, proposal, expires_at")
+      .eq("session_id", seeded.sessionId)
+      .eq("user_id", owner.id)
+      .eq("status", "pending")
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false })
+      .limit(1);
+    expect(error).toBeNull();
+    expect(data).toEqual([
+      expect.objectContaining({ id: pausedId, tool: "schedule_job", summary: "Create a routine?" }),
+    ]);
+  });
+
+  /**
    * `messages` is the prompt the model is about to be shown. Selecting it is
    * not a leak of anything the reader could not already read — they can see
    * the transcript — but WRITING it would be, and PostgREST will not let a

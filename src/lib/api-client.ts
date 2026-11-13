@@ -174,6 +174,8 @@ export type WorkspaceSummary = { id: string; name: string; slug: string; role: s
 export type InboxNeedsYou = {
   kind: "approval" | "question" | "login" | "routine_failed";
   pausedTurnId?: string;
+  /** Where an approval was asked (0143); a routine's is answered from the row. */
+  origin?: "chat" | "routine" | "wake";
   summary: string;
   replies?: string[];
   since: number;
@@ -303,9 +305,28 @@ export type HomeOverview = {
 
 export type InboxPage = {
   items: InboxItem[];
+  /**
+   * Other people's routine requests the caller may answer as an admin
+   * (0146). Empty for everybody else, and absent from an older worker.
+   */
+  delegated?: DelegatedApproval[];
   counts: { unread: number; needsYou: number; running: number };
   perAgentUnread: Record<string, number>;
   hasMore: boolean;
+};
+
+/** A request of somebody else's routine, as an admin's Inbox lists it. */
+export type DelegatedApproval = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  ownerName: string | null;
+  routineName: string;
+  tool: string;
+  summary: string;
+  proposal: unknown;
+  createdAt: number;
+  expiresAt: number;
 };
 
 export type InboxCounts = {
@@ -1087,6 +1108,16 @@ export const api = {
     overview: (days = 7): Promise<HomeOverview> =>
       request("GET", days === 7 ? "/home/overview" : `/home/overview?days=${days}`),
   },
+  /**
+   * What an agent asked while nobody was watching (0143): read one, and
+   * answer it. Answering writes the answer; the cron carries on with it on
+   * its next tick, so the page says so rather than showing a result.
+   */
+  approvals: {
+    get: (id: string): Promise<{ approval: ApprovalRequest }> => request("GET", `/approvals/${id}`),
+    answer: (id: string, approve: boolean): Promise<{ status: "approved" | "declined" }> =>
+      request("POST", `/approvals/${id}/answer`, { approve }),
+  },
   inbox: {
     list: (
       opts: {
@@ -1190,12 +1221,29 @@ export const api = {
      * this ask is the one that delivered an answer.
      *
      * A table read rather than an SSE event, and that is the point: the
-     * approval card is driven only by a `confirm` event into in-memory state
-     * and does not survive a reload, while the browser panel has to. It is
-     * also the live endpoint — each call asks the provider how the run is
+     * browser panel has to survive a reload, as the approval card now does
+     * through `pendingApproval`. It is also the live endpoint — each call asks the provider how the run is
      * going — so the panel polls it every three seconds while something is
      * happening and not at all otherwise.
      */
+    /**
+     * The question a parked turn in this conversation is waiting on the
+     * caller to answer, or null: the approval card read back from the row,
+     * for a screen that was not open when the stream asked.
+     */
+    pendingApproval: (
+      id: string,
+    ): Promise<{
+      pending: {
+        id: string;
+        /** Absent from an older worker, which only parked conversations' questions. */
+        origin?: "chat" | "routine" | "wake";
+        tool: string;
+        summary: string;
+        proposal: unknown;
+        expiresAt: number;
+      } | null;
+    }> => request("GET", `/sessions/${id}/pending-approval`),
     browserTasks: (id: string): Promise<ConversationBrowser> =>
       request("GET", `/sessions/${id}/browser-tasks`),
     /**
@@ -2112,6 +2160,39 @@ export type NotificationPreferences = {
   routineFailed: boolean;
   /** The Monday-morning summary; off until somebody turns it on. */
   weeklySummary: boolean;
+  /**
+   * 0144: an agent asked for a go-ahead while nobody was watching, emailed the
+   * moment it asks. Absent from an older worker, which is on.
+   */
+  approvalRequests?: boolean;
+  /** 0147: a reply to that email answers it. Absent from an older worker, which is on. */
+  approveByReply?: boolean;
+};
+
+/** A request an agent made while nobody was watching (0143), as its page reads it. */
+export type ApprovalRequest = {
+  id: string;
+  origin: "chat" | "routine" | "wake";
+  tool: string;
+  summary: string;
+  proposal: unknown;
+  status: "pending" | "approved" | "declined" | "expired";
+  expiresAt: number;
+  createdAt: number;
+  resolvedAt: number | null;
+  resolvedVia: "chat" | "app" | "reply" | null;
+  /** When the cron carried on with the answer; null until it has. */
+  resumedAt: number | null;
+  /** Whether the turn runs as the caller. */
+  mine: boolean;
+  /** Whether the buttons would be accepted: pending, unexpired, and the caller's to answer. */
+  canAnswer: boolean;
+  /** The conversation it was asked in, for its owner only. */
+  sessionId: string | null;
+  agent: { id: string; name: string } | null;
+  routine: { id: string; name: string } | null;
+  owner: { id: string; name: string | null } | null;
+  resolvedBy: { id: string; name: string | null } | null;
 };
 
 /** One member as the Team table shows them (A3). */

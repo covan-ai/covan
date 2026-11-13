@@ -31,6 +31,7 @@ function store(seed: Partial<Record<string, Row[]>> = {}) {
     continuations: [],
     routine_runs: [],
     browser_tasks: [],
+    paused_turns: [],
     ...seed,
   });
 }
@@ -223,6 +224,26 @@ describe("chainPending", () => {
     expect(
       await chainPending(db({ browser_tasks: [{ ...task, delivered_at: null }] }), "run-1", NOW),
     ).toBe(false);
+  });
+
+  // A request waiting on a person (0143) holds the report as a wake-up does,
+  // and so does one answered that the cron has not settled yet.
+  it("is pending while one of the run's requests waits on a person", async () => {
+    const asking = { id: "p-1", routine_run_id: "run-1", status: "pending", resumed_at: null };
+    expect(await chainPending(db({ paused_turns: [asking] }), "run-1", NOW)).toBe(true);
+    for (const answered of ["approved", "declined"]) {
+      expect(
+        await chainPending(db({ paused_turns: [{ ...asking, status: answered }] }), "run-1", NOW),
+      ).toBe(true);
+    }
+    for (const settled of [
+      { ...asking, status: "approved", resumed_at: at(-1) },
+      { ...asking, status: "declined", resumed_at: at(-1) },
+      { ...asking, status: "expired", resumed_at: at(-1) },
+      { ...asking, routine_run_id: "run-2" },
+    ]) {
+      expect(await chainPending(db({ paused_turns: [settled] }), "run-1", NOW)).toBe(false);
+    }
   });
 
   it("agrees with the held window", () => {

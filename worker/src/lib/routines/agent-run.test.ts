@@ -58,6 +58,7 @@ beforeEach(() => {
     text: "Forty orders.",
     usage: { promptTokens: 100, completionTokens: 40, cachedTokens: 0 },
     steps: [],
+    passes: [],
     finishReason: "stop",
   });
 });
@@ -250,6 +251,7 @@ describe("runRoutineWithTools", () => {
       text: "I could not check two of the four attendees before the step limit.",
       usage: { promptTokens: 100, completionTokens: 40, cachedTokens: 0 },
       steps: [],
+      passes: [],
       finishReason: "stop",
       paused: { reason: "budget", messages: [] },
     });
@@ -274,6 +276,7 @@ describe("runRoutineWithTools", () => {
           durationMs: 5,
         },
       ],
+      passes: [],
       finishReason: "stop",
     });
     const out = await runRoutineWithTools(env, db)({ ...input, mayDecline: true }, env);
@@ -317,6 +320,7 @@ describe("runRoutineWithTools", () => {
       text: "Forty orders.",
       usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
       steps: [{ index: 0, tool: "send_email", request: {}, status: "pending", durationMs: 1 }],
+      passes: [],
       finishReason: "stop",
       paused: { reason: "confirmation", messages: [], call, summary: "Email the team?" },
     });
@@ -357,6 +361,7 @@ describe("runRoutineWithTools", () => {
         text: "Forty orders.",
         usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
         steps: [],
+        passes: [],
         finishReason: "stop",
         paused: { reason: "confirmation", messages: [], summary: "Email the team?" },
       });
@@ -369,6 +374,7 @@ describe("runRoutineWithTools", () => {
         text: "As far as I got.",
         usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
         steps: [],
+        passes: [],
         finishReason: "stop",
         paused: { reason: "budget", messages: [] },
       });
@@ -392,6 +398,7 @@ describe("runRoutineWithTools", () => {
         text: "",
         usage: { promptTokens: 1, completionTokens: 1, cachedTokens: 0 },
         steps: [],
+        passes: [],
         finishReason: "stop",
       });
       const out = await runRoutineWithTools(env, db)(input, env);
@@ -436,6 +443,7 @@ describe("a run allowed the browser", () => {
           text: "Draft.",
           usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 0 },
           steps: [],
+          passes: [],
           finishReason: "stop",
         };
       },
@@ -463,15 +471,17 @@ describe("a run allowed the browser", () => {
   it("tells the model that only a browse call opens a page", async () => {
     capabilitiesFor.mockResolvedValue({ tools: [BROWSE], manifest: "" });
     runAgentTurn.mockResolvedValue({
-      text: "Draft.",
+      text: "",
       usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 0 },
       steps: [],
+      passes: [],
       finishReason: "stop",
     });
 
     await runRoutineWithTools(env, db)({ ...input, browser }, env);
     await runRoutineWithTools(env, db)({ ...input, browser: { ...browser, ask: true } }, env);
 
+    // An empty reply is not reminded, so these are the two runs' only turns.
     const [all, ask] = runAgentTurn.mock.calls.map(
       (call) => call[0].request.messages[0].content as string,
     );
@@ -493,6 +503,7 @@ describe("a run allowed the browser", () => {
       text: "Draft.",
       usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 0 },
       steps: [],
+      passes: [],
       finishReason: "stop",
     });
 
@@ -503,5 +514,51 @@ describe("a run allowed the browser", () => {
     expect(browse?.description).toMatch(/written into this run's report/);
     expect(browse?.description).not.toMatch(/say that you have started it/);
     expect(tools.find((t) => t.name === "other")).toEqual({ name: "other" });
+  });
+
+  const said = (text: string, steps: unknown[] = []) => ({
+    text,
+    usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 0 },
+    steps,
+    passes: [],
+    finishReason: "stop",
+  });
+
+  // With all of the above in its prompt, gpt-4.1 on covan.app still called
+  // `browse` on one run in three: the others wrote "I am opening the page…",
+  // or "[browse tool output will be here]", and stopped.
+  it("reminds a run that called nothing, once, and reports what it says then", async () => {
+    capabilitiesFor.mockResolvedValue({ tools: [BROWSE], manifest: "" });
+    runAgentTurn
+      .mockResolvedValueOnce(said("I am opening the page."))
+      .mockImplementationOnce(async (opts: { ctx: { routineBrowser: { started: string[] } } }) => {
+        opts.ctx.routineBrowser.started.push("bt-1");
+        return said("The time is below.", [{ tool: "browse", status: "ok" }]);
+      });
+
+    const out = await runRoutineWithTools(env, db)({ ...input, browser }, env);
+
+    expect(runAgentTurn).toHaveBeenCalledTimes(2);
+    const again = runAgentTurn.mock.calls[1][0].request.messages as {
+      role: string;
+      content: string;
+    }[];
+    expect(again.at(-2)).toEqual({ role: "assistant", content: "I am opening the page." });
+    expect(again.at(-1)?.content).toMatch(/nothing was opened/);
+    expect(out?.text).toBe("The time is below.");
+    expect(out?.heldFor).toEqual(["bt-1"]);
+    expect(out?.tokens).toBe(30);
+  });
+
+  it("does not remind a run that used a tool, or one not allowed the browser", async () => {
+    capabilitiesFor.mockResolvedValue({ tools: [BROWSE], manifest: "" });
+    runAgentTurn.mockResolvedValue(said("Done.", [{ tool: "http_request", status: "ok" }]));
+    await runRoutineWithTools(env, db)({ ...input, browser }, env);
+    expect(runAgentTurn).toHaveBeenCalledTimes(1);
+
+    runAgentTurn.mockClear();
+    runAgentTurn.mockResolvedValue(said("Nothing to open."));
+    await runRoutineWithTools(env, db)(input, env);
+    expect(runAgentTurn).toHaveBeenCalledTimes(1);
   });
 });

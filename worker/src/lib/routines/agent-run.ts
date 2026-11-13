@@ -6,11 +6,11 @@ import { completionSpend, entitlementsFor, spends } from "../entitlements";
 import { resolveModel } from "../models";
 import { temperatureFor, reasoningEffortFor, maxTokensFor, whenAndWhere } from "../prompt";
 import { capabilitiesFor } from "../harness/available";
-import { runAgentTurn, type PassUsage } from "../harness/loop";
+import { runAgentTurn, type AgentTurnOptions, type PassUsage } from "../harness/loop";
 import { routineBudget } from "../harness/budget";
 import type { RoutineBrowser, ToolEnv } from "../harness/registry";
 import { DECISION_INSTRUCTION, readDecision, REPLY_IS_THE_REPORT } from "./summarise";
-import { replyOutcome, sumOverPasses } from "../harness/usage";
+import { addCounts, replyOutcome, sumOverPasses } from "../harness/usage";
 import type { AgentRunInput, AgentRunResult } from "./executor";
 
 /**
@@ -34,6 +34,17 @@ const ROUTINE_BROWSE_DESCRIPTION =
   "page's answer to it. When the task has to sign in to a site, put that site's host in " +
   "`site`. When the instruction wants something done with the answer once it arrives, put " +
   "that next step in `then`. Use http_request instead when the thing you want has an API.";
+
+/**
+ * What a run allowed the browser is told when it called no tool at all. A
+ * `user` turn, and it says who is speaking: the routine's owner did not write
+ * it, and a model that took it for theirs would answer them.
+ */
+const NOTHING_WAS_OPENED =
+  "Covan here, not the routine's owner: you called no tool, so nothing was opened and nothing " +
+  "will be added to your report. If the instruction needs anything from a web page, call the " +
+  "`browse` tool for it now. If it needs nothing from a web page, reply with your report " +
+  "again, unchanged.";
 
 /**
  * A scheduled run that can use the same tools a chat turn can.
@@ -195,7 +206,7 @@ export function runRoutineWithTools(
         ),
       );
 
-    const turn = await runAgentTurn({
+    const turnOptions: AgentTurnOptions = {
       env: runEnv,
       onPass: (usage) => passesSoFar.push(usage),
       ...(entitlements.hold
@@ -260,7 +271,36 @@ export function runRoutineWithTools(
         // should be allowed to remember of the last one — a product question,
         // not a missing read.
       },
-    });
+    };
+    let turn = await runAgentTurn(turnOptions);
+
+    // Once, and only for a run allowed the browser that touched no tool at
+    // all. Neither the prompt nor `browse`'s own description was enough:
+    // gpt-4.1 on covan.app, told both, still called it on one run in three and
+    // wrote "I am opening the page…" on the others. Told afterwards that
+    // nothing was opened, it called it — and with a task that needed no page,
+    // it said its answer again. The extra pass reads the cached prefix, and a
+    // run that does use a tool never pays it.
+    const calledNothing =
+      turn.steps.length === 0 && routineBrowser?.started.length === 0 && !turn.paused;
+    if (routineBrowser && calledNothing && turn.text.trim()) {
+      const again = await runAgentTurn({
+        ...turnOptions,
+        request: {
+          ...turnOptions.request,
+          messages: [
+            ...messages,
+            { role: "assistant", content: turn.text },
+            { role: "user", content: NOTHING_WAS_OPENED },
+          ],
+        },
+      });
+      turn = {
+        ...again,
+        usage: addCounts(turn.usage, again.usage),
+        passes: [...turn.passes, ...again.passes],
+      };
+    }
 
     // The executor records this run's charge as soon as it returns; until then
     // the hold lapses on its own if this is never reached.

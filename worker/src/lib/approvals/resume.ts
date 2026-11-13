@@ -236,7 +236,10 @@ export async function resumeApproved(
     ...(routineBrowser ? { routineBrowser } : {}),
     searchMemo: new Map<string, string>(),
     describeMemo: new Map<string, string>(),
-    offeredSlugs: new Set<string>(),
+    // What the half that asked had been offered by its own searches, as the
+    // conversation's resume carries it (`buildToolContext`'s `carriedSteps`):
+    // the set it ran with, rather than an empty one that forgets them.
+    offeredSlugs: new Set(pause.steps.flatMap((step) => step.offered ?? [])),
     offeredOperations: approvedOperation(pause.proposal),
   };
   const answered = await deps.answer({

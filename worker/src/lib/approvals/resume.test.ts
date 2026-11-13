@@ -43,6 +43,15 @@ const PAUSE: StoredPause = {
   steps: [
     {
       index: 0,
+      tool: "find_tool",
+      request: { query: "send an email" },
+      resultExcerpt: "GMAIL_SEND_EMAIL",
+      offered: ["GMAIL_SEND_EMAIL"],
+      status: "ok",
+      durationMs: 2,
+    },
+    {
+      index: 1,
       tool: "http_request",
       request: { method: "POST", path: "/seats/14/close" },
       resultExcerpt: "POST to Box office?",
@@ -130,7 +139,7 @@ function turnSaying(text: string, over: Partial<AgentTurn> = {}): AgentTurn {
 
 function answered(over: Partial<AnsweredCall> = {}): AnsweredCall {
   return {
-    steps: [{ ...PAUSE.steps[0], status: "ok", resultExcerpt: "closed" }],
+    steps: [PAUSE.steps[0], { ...PAUSE.steps[1], status: "ok", resultExcerpt: "closed" }],
     messages: [...PAUSE.messages, { role: "tool", toolCallId: "call_1", content: "closed" }],
     tools: [],
     asked: null,
@@ -187,6 +196,8 @@ describe("resumeApproved", () => {
     // The rest of the turn asks again for anything else.
     const ran = d.turn.mock.calls[0][0] as { ctx: Record<string, unknown> };
     expect(ran.ctx.confirmed).toBe(false);
+    // And keeps what the first half's own searches offered.
+    expect([...(ran.ctx.offeredSlugs as Set<string>)]).toEqual(["GMAIL_SEND_EMAIL"]);
 
     // One reply, two halves, what each spent added.
     const reply = db.tables.messages[0];

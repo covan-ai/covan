@@ -480,4 +480,28 @@ describe("a run allowed the browser", () => {
     expect(all).not.toMatch(/approve/);
     expect(ask).toMatch(/approve each browser task/);
   });
+
+  // The conversation's description promises an answer "as a new message" and
+  // says to "say that you have started it". A routine has no conversation, and
+  // with that description the model said it and called nothing.
+  it("describes browse as a run sees it, not as a conversation does", async () => {
+    capabilitiesFor.mockResolvedValue({
+      tools: [{ name: "browse", description: "conversation wording" }, { name: "other" }],
+      manifest: "",
+    });
+    runAgentTurn.mockResolvedValue({
+      text: "Draft.",
+      usage: { promptTokens: 10, completionTokens: 5, cachedTokens: 0 },
+      steps: [],
+      finishReason: "stop",
+    });
+
+    await runRoutineWithTools(env, db)({ ...input, browser }, env);
+
+    const tools = runAgentTurn.mock.calls[0][0].tools as { name: string; description?: string }[];
+    const browse = tools.find((t) => t.name === "browse");
+    expect(browse?.description).toMatch(/written into this run's report/);
+    expect(browse?.description).not.toMatch(/say that you have started it/);
+    expect(tools.find((t) => t.name === "other")).toEqual({ name: "other" });
+  });
 });

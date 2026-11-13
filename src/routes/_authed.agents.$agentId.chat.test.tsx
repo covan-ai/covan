@@ -1586,6 +1586,63 @@ describe("a reply that stopped to ask", () => {
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
   });
 
+  it("puts the question up when the connection breaks just as the turn stops to ask", async () => {
+    // 2026-11-13: the server parked the turn and the stream broke before its
+    // `confirm` event arrived. The screen said "Couldn't reach the assistant",
+    // the question stayed pending, and the only way on was asking again.
+    const broken = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `data: ${JSON.stringify({ type: "step", index: 0, tool: "run_tool", status: "running", label: "run" })}\n\n`,
+          ),
+        );
+        controller.error(new TypeError("network error"));
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({ ok: true, status: 200, body: broken, json: () => Promise.resolve(null) }),
+      ),
+    );
+    await renderChat();
+    await waitFor(() => expect(pendingApproval).toHaveBeenCalled());
+    // Parked by the time the screen asks, which is after the break.
+    pendingApproval.mockResolvedValue({
+      pending: {
+        id: "paused-1",
+        tool: "schedule_job",
+        summary: "Create a routine on 0 17 * * 1?",
+        proposal: null,
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "every monday{Enter}",
+    );
+
+    expect(await screen.findByText("Create a routine on 0 17 * * 1?")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't reach the assistant.")).not.toBeInTheDocument();
+  });
+
+  it("still says it could not reach the assistant when the request never got there", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+    );
+    await renderChat();
+
+    await userEvent.type(
+      screen.getByPlaceholderText(composerPlaceholder("GTM Agent")),
+      "every monday{Enter}",
+    );
+
+    expect(await screen.findByText("Couldn't reach the assistant.")).toBeInTheDocument();
+  });
+
   /**
    * Declining is not closing the card. It goes to the same endpoint with
    * `approve: false`, so the agent is told and finishes its turn — the

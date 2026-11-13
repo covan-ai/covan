@@ -947,6 +947,20 @@ function ChatTab() {
     const seenSteps = new Map<number, AgentStepView>();
     // Set when the body ended without `done` or `error`. Acted on in `finally`.
     let dropped = false;
+    // Set once the server has answered and the body is being read. From then
+    // on the request reached it and a turn is running there, so a connection
+    // that breaks is a drop to recover from, not an assistant out of reach.
+    let opened = false;
+    // What a drop does to this screen, wherever it is noticed.
+    const letGo = () => {
+      dropped = true;
+      setThinking(false);
+      setReplyingIn(null);
+      if (!opts.continuing) keepWords(sessionId, partial, [...seenSteps.values()]);
+      setContinuingId(null);
+      setStreamText("");
+      setThinkingText("");
+    };
 
     try {
       const token = await getAccessToken();
@@ -1039,6 +1053,7 @@ function ChatTab() {
         return;
       }
 
+      opened = true;
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -1308,18 +1323,20 @@ function ChatTab() {
         // that is usually only this connection going — the turn is still
         // being written, and `finally` picks it back up. Until it knows, the
         // words already here stay here, as a stopped reply's do.
-        dropped = true;
-        setThinking(false);
-        setReplyingIn(null);
-        if (!opts.continuing) keepWords(sessionId, partial, [...seenSteps.values()]);
-        setContinuingId(null);
-        setStreamText("");
-        setThinkingText("");
+        letGo();
       }
     } catch (err) {
       const isAbort = err instanceof DOMException && err.name === "AbortError";
       if (isAbort) {
         // Handled by `stop()`, which owns reconciling from the server.
+        return;
+      }
+      // The connection broke mid-reply rather than ending: the same drop as
+      // above, reached by a throw. This said "Couldn't reach the assistant"
+      // on 2026-11-13 while the server finished the turn and parked it on a
+      // question, whose card then never arrived (`recoverFromDrop` asks now).
+      if (opened) {
+        letGo();
         return;
       }
       setFailed({ sessionId, message: t("Couldn't reach the assistant.") });
@@ -1363,6 +1380,9 @@ function ChatTab() {
       void streamReply(sessionId, { resume: true });
       return;
     }
+    // The turn may have stopped to ask just as the connection went, and then
+    // the question is saved but its card never arrived.
+    seedPendingApproval(sessionId);
     invalidateMessages(sessionId);
     if (partialText.trim().length > 0) {
       toast.error(t("The connection dropped before the reply finished."));

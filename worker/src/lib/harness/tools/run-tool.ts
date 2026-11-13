@@ -126,6 +126,9 @@ const MAX_QUESTION_CHARS = 500;
 /** How many complaints one refusal carries. Enough to fix in one go, not a wall. */
 const MAX_COMPLAINTS = 6;
 
+/** How many of an argument's allowed values a refusal names; past this it names none. */
+const MAX_ALLOWED_VALUES = 12;
+
 /**
  * How many of an operation's argument names one refusal spells out.
  *
@@ -163,6 +166,17 @@ function matchesType(value: unknown, type: string): boolean {
       // schemas also describe fields with `anyOf` and no `type` at all.
       return true;
   }
+}
+
+/**
+ * The values an argument's schema lists, for a refusal to name. Without them
+ * "should be a string" leaves the model to guess which string, or to spend a
+ * search asking. Empty when the schema lists none, or too many to be worth it.
+ */
+function allowedValues(spec: Record<string, unknown>): string {
+  const values = Array.isArray(spec.enum) ? spec.enum : [];
+  if (values.length === 0 || values.length > MAX_ALLOWED_VALUES) return "";
+  return `: one of ${values.map((v) => JSON.stringify(v)).join(", ")}`;
 }
 
 /** What was sent, named the way an error message can use. */
@@ -246,7 +260,8 @@ function complaints(args: Record<string, unknown>, schema: Record<string, unknow
       if (!type) continue;
       if (!matchesType(value, type)) {
         out.push(
-          `\`${name}\` should be ${type === "array" ? "an array" : `a ${type}`}, not ${shapeOf(value)}`,
+          `\`${name}\` should be ${type === "array" ? "an array" : `a ${type}`}, not ${shapeOf(value)}` +
+            allowedValues(spec),
         );
         continue;
       }

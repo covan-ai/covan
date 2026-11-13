@@ -481,6 +481,26 @@ function remember(ctx: ToolContext, tool: ComposioTool): void {
 }
 
 /**
+ * The operation a recalled search offered first, described the way the search
+ * described it. What this turn already knows is used as it is; otherwise one
+ * lookup, charged as a search the way `detail`'s is. Null when it cannot be
+ * had, including on an account with nothing left to spend: the recall still
+ * answers, and its wording points at `detail`.
+ */
+async function describeRecalled(ctx: ToolContext, slug: string): Promise<ComposioTool | null> {
+  const known = ctx.offeredOperations?.get(slug);
+  if (known) return known;
+  if (await affordable(ctx)) return null;
+  const found = await getTool(ctx.env, slug, { signal: ctx.signal });
+  if (found.kind === "ok" || wasBilled(found.status)) {
+    await spend(ctx, [{ kind: "composio_search" }]);
+  }
+  if (found.kind === "error") return null;
+  remember(ctx, found.tool);
+  return found.tool;
+}
+
+/**
  * One candidate, in the two or three lines a model needs to choose it.
  *
  * `opts.parameters` prints every argument by name rather than the required
@@ -670,10 +690,17 @@ export const findToolTool: AgentTool = {
      * holds the whole rendered thing, and this holds slugs. There is no
      * rendered answer to hold — 45 of 61 stored `find_tool` excerpts are
      * truncated, so replaying one would show three candidates where five
-     * matched and the model would choose from three (covan#216). So this names
-     * the operations and points at the two places the rest of it already is:
-     * that earlier answer, still in the transcript this turn was built from,
-     * and `detail`, which is a different question and really asks it.
+     * matched and the model would choose from three (covan#216).
+     *
+     * NOR IS THAT ANSWER IN FRONT OF THE MODEL. This used to say the arguments
+     * were "in that earlier answer, further up this conversation", and they
+     * never were: an earlier turn reaches the model as its words alone
+     * (`selectHistory` in `lib/history.ts`), never its tool calls. With nothing
+     * to read, the model wrote `send_updates` as a boolean where the schema
+     * says string, in two separate turns on 2026-11-13; each time it was
+     * refused twice and then asked for detail. So the first operation is
+     * described here, as the search described it: one lookup, billed as a
+     * search, and far less than the pass it saves.
      *
      * Narrowed to what is still allowed. `offered` records what a search put in
      * front of the model — `priorSearches` keeps only the rows that can be shown
@@ -690,17 +717,25 @@ export const findToolTool: AgentTool = {
       (slug) => ctx.offeredSlugs?.has(slug) ?? true,
     );
     if (recalled.length > 0) {
+      const first = await describeRecalled(ctx, recalled[0]);
+      const named = first ? parameterNames(first) : [];
+      const hidden = first ? parameterCount(first) - named.length : 0;
+      const takes =
+        named.length > 0
+          ? `${recalled[0]} takes: ${named.join(", ")}` +
+            `${hidden > 0 ? `, … (+${hidden} more — ask for detail)` : ""}\n\n`
+          : "";
       return {
         kind: "ok",
         content:
           "You already ran this exact search earlier in this conversation, and it offered " +
           `these operations:\n${recalled.map((slug) => `  ${slug}`).join("\n")}\n\n` +
+          takes +
           "Those are the ones you may run. Call run_tool with one of them and that app's " +
-          "connection id from the list of connected services. What each one does — and the " +
-          "arguments of the first — are in that earlier answer, further up this " +
-          "conversation; if you need an argument's type or its allowed values, ask for " +
-          "detail on a slug by name. Repeating this search in these same words will keep " +
-          "giving you this.",
+          "connection id from the list of connected services. That earlier answer is not " +
+          "in front of you, so do not guess an argument: for any other operation's " +
+          "arguments, or an argument's allowed values, ask for detail on a slug by name. " +
+          "Repeating this search in these same words will keep giving you this.",
       };
     }
 

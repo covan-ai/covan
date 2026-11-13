@@ -744,6 +744,38 @@ describe("checking the arguments against the schema", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("names the values a refused argument allows, when the schema lists them", async () => {
+    // The other way round, as the catalogue's version now has it: a string
+    // with a fixed set of values. "Should be a string" alone left the model to
+    // guess which string, or spend a search asking.
+    const operations = schemas();
+    const tool = operations.get("GMAIL_SEND_EMAIL")!;
+    operations.set("GMAIL_SEND_EMAIL", {
+      ...tool,
+      inputSchema: {
+        ...CREATE_EVENT_SCHEMA,
+        properties: {
+          ...CREATE_EVENT_SCHEMA.properties,
+          send_updates: { type: "string", enum: ["all", "externalOnly", "none"] },
+        },
+      },
+    });
+
+    const out = await runToolTool.run(
+      {
+        connectionId: "conn-1",
+        slug: "GMAIL_SEND_EMAIL",
+        arguments: { start_datetime: "2026-09-28T22:00:00", send_updates: false },
+      },
+      ctxWith({ offeredOperations: operations }),
+    );
+
+    expect(out.kind === "error" && out.message).toContain(
+      '`send_updates` should be a string, not a boolean: one of "all", "externalOnly", "none"',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("refuses an array whose items are the wrong shape", async () => {
     // The one that cost five separate 400s. Composio wants plain email strings;
     // the published docs and the raw Google API both take objects with an

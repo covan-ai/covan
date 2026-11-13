@@ -977,6 +977,9 @@ describe("what a search reports having shown", () => {
     ctx.priorSearches = new Map([
       [searchMemoKey({ query: "send email" }) as string, ["GMAIL_SEND_EMAIL"]],
     ]);
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(SEND_WITH_PROPERTIES), { status: 200 }),
+    );
 
     const out = await findToolTool.run({ query: "send email" }, ctx);
 
@@ -1159,37 +1162,111 @@ describe("when a connected row counts as an answer", () => {
  * What crosses turns is `message_steps` — the slugs in `offered` (0066) and the
  * arguments in `request` — so a repeat can be recognised and answered from the
  * record. What does NOT cross is the rendered answer: 45 of 61 stored excerpts
- * are truncated, so there is nothing to replay. The recall therefore names the
- * operations and points at the two places the rest of it already is — the
- * earlier turn's own answer, still in the transcript, and `detail` for an
- * argument schema, which is a different question and really asks it.
+ * are truncated, so there is nothing to replay. Nor is it in the transcript:
+ * earlier turns reach the model as their words alone, without their tool
+ * calls. So the recall names the operations and describes the first one
+ * itself, which is one lookup rather than the whole search.
  */
 describe("a search an earlier turn already answered", () => {
   const priorSearch = (args: Parameters<typeof searchMemoKey>[0], slugs: string[]) =>
     new Map([[searchMemoKey(args) as string, slugs]]);
+  const described = (row: unknown) => new Response(JSON.stringify(row), { status: 200 });
+  /** Whether any request was a catalogue search, as opposed to describing one operation. */
+  const searched = () =>
+    fetchMock.mock.calls.some(([url]) => !/\/tools\/[A-Z_]+$/.test(new URL(String(url)).pathname));
+  // The recall now looks its first operation up; a test about something else
+  // gets an operation nobody can describe rather than an unstubbed fetch.
+  beforeEach(() => {
+    fetchMock.mockResolvedValue(new Response("{}", { status: 404 }));
+  });
 
-  it("names what that search offered, without asking the catalogue again", async () => {
+  it("names what that search offered, without searching the catalogue again", async () => {
     const ctx = ctxWith([GMAIL_CONNECTION], new Set(["GMAIL_SEND_EMAIL"]));
+    ctx.priorSearches = priorSearch({ query: "send email" }, ["GMAIL_SEND_EMAIL"]);
+    fetchMock.mockResolvedValue(described(SEND_WITH_PROPERTIES));
+
+    const out = await findToolTool.run({ query: "send email" }, ctx);
+
+    expect(searched()).toBe(false);
+    expect(out.kind === "ok" && out.content).toContain("GMAIL_SEND_EMAIL");
+    expect(out.kind === "ok" && out.content).toContain("earlier in this conversation");
+    // The way back to what the recall cannot carry.
+    expect(out.kind === "ok" && out.content).toContain("detail");
+    expect(out.kind === "ok" && out.content).toContain("run_tool");
+  });
+
+  it("gives the first operation's arguments, which the conversation no longer shows", async () => {
+    // Production, 2026-11-13: told the arguments were "in that earlier answer,
+    // further up this conversation", the model had nothing there to read, sent
+    // `send_updates` as a boolean where the schema says string, was refused
+    // twice and asked for detail. Two calls and a pass to learn one word.
+    const ctx = ctxWith([GMAIL_CONNECTION], new Set(["GMAIL_SEND_EMAIL"]), new Map());
+    ctx.priorSearches = priorSearch({ query: "send email" }, ["GMAIL_SEND_EMAIL"]);
+    fetchMock.mockResolvedValue(described(SEND_WITH_PROPERTIES));
+
+    const out = await findToolTool.run({ query: "send email" }, ctx);
+    const content = out.kind === "ok" ? out.content : "";
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(content).toContain("recipient_email: string (required)");
+    expect(content).toContain("cc: array");
+    expect(content).not.toContain("further up this conversation");
+    // Described now, so `run_tool` checks the arguments before anyone is asked.
+    expect(ctx.offeredOperations?.get("GMAIL_SEND_EMAIL")?.slug).toBe("GMAIL_SEND_EMAIL");
+  });
+
+  it("does not look up an operation this turn has already described", async () => {
+    const ctx = ctxWith(
+      [GMAIL_CONNECTION],
+      new Set(["GMAIL_SEND_EMAIL"]),
+      new Map([
+        [
+          "GMAIL_SEND_EMAIL",
+          {
+            slug: "GMAIL_SEND_EMAIL",
+            name: "Send email",
+            description: "",
+            toolkit: "gmail",
+            required: ["recipient_email"],
+            inputSchema: {
+              type: "object",
+              required: ["recipient_email"],
+              properties: { recipient_email: { type: "string" } },
+            },
+          } as unknown as import("../../composio/client").ComposioTool,
+        ],
+      ]),
+    );
     ctx.priorSearches = priorSearch({ query: "send email" }, ["GMAIL_SEND_EMAIL"]);
 
     const out = await findToolTool.run({ query: "send email" }, ctx);
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(out.kind === "ok" && out.content).toContain("GMAIL_SEND_EMAIL");
-    expect(out.kind === "ok" && out.content).toContain("earlier in this conversation");
-    // The two ways back to what the recall cannot carry.
-    expect(out.kind === "ok" && out.content).toContain("detail");
-    expect(out.kind === "ok" && out.content).toContain("run_tool");
+    expect(out.kind === "ok" && out.content).toContain("recipient_email: string (required)");
   });
 
-  it("spends nothing on a search it did not make", async () => {
+  it("still answers, pointing at detail, when the operation cannot be described", async () => {
+    const ctx = ctxWith([GMAIL_CONNECTION], new Set(["GMAIL_SEND_EMAIL"]));
+    ctx.priorSearches = priorSearch({ query: "send email" }, ["GMAIL_SEND_EMAIL"]);
+    fetchMock.mockResolvedValue(new Response("{}", { status: 500 }));
+
+    const out = await findToolTool.run({ query: "send email" }, ctx);
+
+    expect(out.kind).toBe("ok");
+    expect(out.kind === "ok" && out.content).toContain("GMAIL_SEND_EMAIL");
+    expect(out.kind === "ok" && out.content).toContain("ask for detail");
+  });
+
+  it("pays for describing one operation, not for a search", async () => {
     const ctx = ctxWith([], new Set(["GMAIL_SEND_EMAIL"]));
     ctx.priorSearches = priorSearch({ query: "send email" }, ["GMAIL_SEND_EMAIL"]);
+    fetchMock.mockResolvedValue(described(SEND_WITH_PROPERTIES));
     // Counted rather than asserted absent: `recordSpy` is module-level and
     // every search above this one in the file has already spent on it.
     const before = recordSpy.mock.calls.length;
     await findToolTool.run({ query: "send email" }, ctx);
-    expect(recordSpy.mock.calls.length).toBe(before);
+    expect(recordSpy.mock.calls.length).toBe(before + 1);
+    expect(searched()).toBe(false);
   });
 
   it("names only what that search offered, not everything the conversation was shown", async () => {
@@ -1279,17 +1356,18 @@ describe("a search an earlier turn already answered", () => {
     expect(second.kind === "ok" && second.content).toContain("Send an email");
   });
 
-  it("is the whole saving: a recalled search never reaches the catalogue", async () => {
+  it("is the whole saving: a recalled search is never searched again", async () => {
     // The first ask of the turn is the one that used to buy the search again.
     // There is no fresh render to prefer, because none was made — which is the
     // point, and the reason the recall has to be able to stand on its own.
     const ctx = ctxWith([GMAIL_CONNECTION], new Set(["GMAIL_SEND_EMAIL"]));
     ctx.searchMemo = new Map();
     ctx.priorSearches = priorSearch({ query: "send email" }, ["GMAIL_SEND_EMAIL"]);
+    fetchMock.mockResolvedValue(described(SEND_WITH_PROPERTIES));
 
     const out = await findToolTool.run({ query: "send email" }, ctx);
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(searched()).toBe(false);
     expect(out.kind === "ok" && out.content).toContain("earlier in this conversation");
     // And nothing was written to the per-turn memo, so the answer the model
     // gets to the same question twice does not change inside one turn.

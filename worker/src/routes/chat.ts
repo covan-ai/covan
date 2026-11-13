@@ -1362,6 +1362,8 @@ chat.post("/chat/confirm/:id", async (c) => {
     // thing that crosses the pause: `run_tool` writes the catalogue row into
     // the proposal and this is where it is read back.
     approvedProposal: pause.proposal,
+    // And what its searches offered, which the database does not hold yet.
+    carriedSteps: pause.steps,
     foundSources: resumedSources,
     knowledgeScope: knowledgeScopeFor(session),
     sessionShared: isShared(session),

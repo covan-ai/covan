@@ -3403,6 +3403,59 @@ describe("POST /chat/confirm/:id", () => {
     expect(handed?.offeredOperations?.size).toBe(0);
   });
 
+  /**
+   * What the half that asked was shown, which the database does not know yet.
+   *
+   * A reply's steps are written when it ends, so the offerings read on resume
+   * held every earlier turn and none of this one. The approved call skips the
+   * guard; the next call of the operation the same search found did not, and
+   * was refused as "not an operation find_tool returned" — seen deleting two
+   * calendar events in a conversation's second turn, where the first deletion
+   * ran and the second was turned away. A conversation's first turn hid it:
+   * there the read is empty and the guard stands down.
+   */
+  it("still allows what the first half's search offered", async () => {
+    parked = {
+      ...PARKED,
+      tool: "run_tool",
+      tool_call: { id: "call_1", name: "run_tool", arguments: "{}" },
+      proposal: { kind: "run_tool", slug: "CALENDAR_DELETE_EVENT" },
+      steps: [
+        {
+          index: 0,
+          tool: "find_tool",
+          request: { query: "delete event" },
+          resultExcerpt: "CALENDAR_DELETE_EVENT …",
+          status: "ok",
+          durationMs: 3,
+          offered: ["CALENDAR_DELETE_EVENT", "CALENDAR_LIST_CALENDARS"],
+        },
+        { ...PARKED.steps[0], index: 1, tool: "run_tool" },
+      ],
+    };
+    let handed: { offeredSlugs?: Set<string> } | undefined;
+    approvedTool = {
+      name: "run_tool",
+      description: "run_tool",
+      input: { type: "object", properties: {} },
+      destructive: true,
+      isConfigured: () => true,
+      run: async (_args: unknown, ctx: { offeredSlugs?: Set<string> }) => {
+        handed = ctx;
+        return { kind: "ok", content: "deleted" };
+      },
+    };
+    const { app } = appWith({ question: "delete both" });
+    answersWith(streamOf("Deleted."));
+
+    await (await confirm(app, true)).text();
+
+    expect([...(handed?.offeredSlugs ?? [])].sort()).toEqual([
+      "CALENDAR_DELETE_EVENT",
+      "CALENDAR_LIST_CALENDARS",
+    ]);
+  });
+
   it("says the resumed half was cut off, so it gets its Continue button too", async () => {
     // The same 4096-token cap applies to the second half of a reply, and
     // without this event it stops mid-thought with nothing saying so.

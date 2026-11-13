@@ -6,6 +6,7 @@ import { readCapped } from "../lib/routines/source";
 import { countMiss, hasSpentMisses, refuseSpent } from "../middleware/ratelimit";
 import {
   inboundDomain,
+  approvalOfReply,
   localPartsOn,
   runOfReply,
   tokenOfAgentLocalPart,
@@ -21,6 +22,7 @@ import {
 import { receiveEvent } from "../lib/routines/events/receive";
 import { receiveReply } from "../lib/routines/replies";
 import { startPokedRun } from "../lib/routines/poke-room";
+import { receiveApprovalReply } from "../lib/approvals/reply";
 
 /**
  * `POST /email/inbound` — Resend, telling us mail arrived on
@@ -30,6 +32,8 @@ import { startPokedRun } from "../lib/routines/poke-room";
  * webhook delivers every message on the domain here, and which routine it is
  * for is the address it was sent to (`lib/inbound-email/address.ts`):
  *
+ *   a-<request><mac>@…    an answer to a request email (`receiveApprovalReply`,
+ *                         0147), which has to pass DMARC as well
  *   r-<run><mac>@…        an answer to a routine's report (`receiveReply`)
  *   <name>-<token>@…      mail to a routine's own address (`receiveEvent`,
  *                         provider `email`)
@@ -144,6 +148,20 @@ emailInbound.post("/email/inbound", async (c) => {
     const verdict = await getRateLimiter(c.env, "expensive").check(`email-in:${local}`);
     if (!verdict.allowed) {
       results.push("rate_limited");
+      continue;
+    }
+
+    // An answer to a request email (0147): before the routine's own
+    // addresses, because a request's address must never start a routine.
+    if (local.startsWith("a-")) {
+      const approvalId = await approvalOfReply(c.env.ROUTINE_SECRET_KEY, local);
+      if (!approvalId) {
+        await countMiss(c);
+        results.push("unknown");
+        continue;
+      }
+      const outcome = await receiveApprovalReply(c.env, approvalId, email);
+      results.push(outcome.status);
       continue;
     }
 

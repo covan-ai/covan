@@ -131,6 +131,12 @@ export function approvalRequestEmail(args: {
   proposal: unknown;
   expiresAt: Date;
   url: string;
+  /**
+   * Where a reply goes when answering by reply is on (0147): an address that
+   * names this request. Absent where inbound mail is off, or the owner turned
+   * it off, and then the email says nothing about replying.
+   */
+  replyTo?: string;
 }) {
   const where = args.routineName
     ? `running your routine “${args.routineName}”`
@@ -140,10 +146,22 @@ export function approvalRequestEmail(args: {
   const details = proposalLines(args.proposal);
   const until = `${args.expiresAt.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   const wait = `Nothing happens until you answer. If nobody answers by ${until}, it is not done.`;
-  const footnote = `You get this because an agent of yours asked while nobody was watching. Turn it off in ${PREFERENCES}.`;
+  // Said where the person decides whether to reply: a reply is as strong as
+  // their mailbox, which anybody who can send as them also holds.
+  const byReply = args.replyTo
+    ? `You can also reply “yes” or “no” to this email. Anyone who can send mail as you can answer it that way; turn that off in ${PREFERENCES}.`
+    : null;
+  const footnote = [
+    byReply,
+    `You get this because an agent of yours asked while nobody was watching. Turn it off in ${PREFERENCES}.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return {
     to: args.email,
     subject: `${args.agentName} is waiting for your go-ahead in ${args.workspaceName}`,
+    ...(args.replyTo ? { replyTo: args.replyTo } : {}),
+    headers: { "Auto-Submitted": "auto-generated" },
     text: [
       what,
       "",
@@ -168,6 +186,43 @@ export function approvalRequestEmail(args: {
       action: { label: "Approve or decline", url: args.url },
       footnote,
     }),
+  };
+}
+
+/**
+ * A reply to a request email that did not answer it (0147), to the owner's own
+ * address and nobody else's: why, and the link that does.
+ */
+export function approvalReplyNotTakenEmail(args: {
+  email: string;
+  reason: "unclear" | "unverified" | "off" | "already" | "expired";
+  url: string;
+}) {
+  const why = {
+    unclear:
+      "We could not tell whether your reply meant yes or no. Reply with just “yes” or “no”, or use the link.",
+    unverified:
+      "Your reply could not be verified as coming from your address (its domain did not pass DMARC), so it was not taken as an answer.",
+    off: "Answering by reply is turned off for your account, so your reply was not taken as an answer.",
+    already: "This request was already answered, so your reply changed nothing.",
+    expired: "This request had already expired, so your reply changed nothing.",
+  }[args.reason];
+  const open =
+    args.reason === "already" || args.reason === "expired"
+      ? "See where it stands"
+      : "Approve or decline";
+  return {
+    to: args.email,
+    subject: "Your reply was not taken as an answer",
+    text: [why, "", `${open}: ${args.url}`].join("\n"),
+    html: emailShell({
+      preheader: why,
+      heading: "Your reply was not taken as an answer",
+      bodyHtml: paragraphs(escapeHtml(why)),
+      action: { label: open, url: args.url },
+      footnote: `Answering by reply can be turned off in ${PREFERENCES}.`,
+    }),
+    headers: { "Auto-Submitted": "auto-replied" },
   };
 }
 

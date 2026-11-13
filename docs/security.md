@@ -171,6 +171,18 @@ prompt. The answer is only written down; the cron acts on it once, and a resume
 that dies is reported as interrupted rather than run again, so the action
 happens at most once.
 
+The request email can also be answered by replying "yes" or "no" (0147),
+where the deployment receives mail. Its Reply-To names the request with a MAC
+of its own, domain-separated from a report's, so neither kind of address can
+be turned into the other. A reply counts only when the sender is the owner's
+own account address, their domain passed DMARC (not merely SPF or DKIM for
+some other domain — `passesAlignedAuthentication`), and the first line they
+wrote is one of a fixed list of words; no model reads it, and anything else
+gets the link back. **It is as strong as the owner's mailbox and no
+stronger**: a delegate, a taken-over mailbox or a rule that replies on its
+own can say yes. That is why each person can turn it off in Settings ›
+Preferences, and why the email says so.
+
 The connection itself is the first boundary. It does not exist until somebody
 searched for the app and either signed in at it or fetched a key for it, and it
 is personal to them unless they share it (0098).

@@ -51,6 +51,32 @@ describe("notifyApprovalRequest", () => {
     expect(db.tables.paused_turns[0].reminded_at).not.toBeNull();
   });
 
+  // 0147: where this deployment receives mail, a reply answers it — unless
+  // the owner turned that off — and the email says what that means.
+  it("lets a reply answer it where inbound mail is on, and says who else could", async () => {
+    const inbound = {
+      ...env,
+      INBOUND_EMAIL_DOMAIN: "reply.example.com",
+      RESEND_INBOUND_WEBHOOK_SECRET: "whsec_x",
+      ROUTINE_SECRET_KEY: "k".repeat(32),
+    } as unknown as RoutineEnv;
+    const { client } = world();
+    const mail = vi.fn(async (..._args: unknown[]) => {});
+    const uuid = { ...REQUEST, id: "3f2a91c0-8c01-4d4e-9a1b-0123456789ab" };
+    await notifyApprovalRequest(inbound, client, mail, uuid);
+    const [sent] = mail.mock.calls[0] as [{ replyTo?: string; text: string }];
+    expect(sent.replyTo).toMatch(/^a-[0-9a-f]{48}@reply\.example\.com$/);
+    expect(sent.text).toContain("reply “yes” or “no”");
+    expect(sent.text).toContain("Anyone who can send mail as you");
+
+    const off = world([{ user_id: "owner-1", approve_by_reply: false }]);
+    const quiet = vi.fn(async (..._args: unknown[]) => {});
+    await notifyApprovalRequest(inbound, off.client, quiet, uuid);
+    const [plain] = quiet.mock.calls[0] as [{ replyTo?: string; text: string }];
+    expect(plain.replyTo).toBeUndefined();
+    expect(plain.text).not.toContain("reply “yes”");
+  });
+
   it("sends nothing to somebody who turned it off", async () => {
     const { db, client } = world([{ user_id: "owner-1", approval_requests: false }]);
     const mail = vi.fn(async (..._args: unknown[]) => {});

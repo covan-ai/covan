@@ -119,6 +119,20 @@ describe("a request nobody was watching", () => {
     expect(screen.getByText("Approved, and the agent carried on.")).toBeInTheDocument();
   });
 
+  it("says when the answer came by replying to the email", async () => {
+    h.get.mockResolvedValue({
+      approval: {
+        ...REQUEST,
+        status: "declined",
+        canAnswer: false,
+        resolvedVia: "reply",
+        resolvedBy: { id: "owner-1", name: "Ada" },
+      },
+    });
+    await renderPage();
+    expect(await screen.findByText("Ada answered by replying to the email")).toBeInTheDocument();
+  });
+
   it("offers no buttons to somebody who may only read it", async () => {
     h.get.mockResolvedValue({
       approval: { ...REQUEST, mine: false, canAnswer: false, sessionId: null },

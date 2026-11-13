@@ -2165,6 +2165,8 @@ export type NotificationPreferences = {
    * moment it asks. Absent from an older worker, which is on.
    */
   approvalRequests?: boolean;
+  /** 0147: a reply to that email answers it. Absent from an older worker, which is on. */
+  approveByReply?: boolean;
 };
 
 /** A request an agent made while nobody was watching (0143), as its page reads it. */

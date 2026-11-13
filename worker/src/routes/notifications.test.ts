@@ -47,6 +47,7 @@ describe("notification preferences", () => {
       routineFailed: true,
       weeklySummary: false,
       approvalRequests: true,
+      approveByReply: true,
     });
   });
 

@@ -227,6 +227,10 @@ const SERVICE_CLIENT_ALLOWLIST = new Map([
     "the tick that acts on answered requests (0143): the cron has no caller, so it claims with claim_answered_approvals and expire_unattended_approvals, both service_role only, each handing a row out once. It writes nothing itself; what is done with each row is lib/approvals/resume.ts, under its own entry",
   ],
   [
+    "lib/approvals/reply.ts",
+    "a yes or a no by replying to the request email (0147): the inbound webhook has no caller, so the reply is matched to one request by its signed Reply-To, and before anything is answered the sender must be the request owner's own account address (auth.admin, the service role's alone), their domain must pass DMARC, and the first line must be an exact yes or no. The answer itself is answer_approval_as, a definer function granted to the service role only, which decides owner-or-admin in Postgres as the app's button does; this file reads the request's owner and their reply switch, and writes nothing else",
+  ],
+  [
     "lib/approvals/resume.ts",
     "carrying on after somebody answered a request nobody was watching (0143): the tick has no caller and no JWT, so it runs as lib/continuations/run.ts does — the owner as the caller, every id from the one paused_turns row the claim handed it, whose ids an authenticated turn wrote. Who may answer was decided in Postgres by answer_approval before the row was claimable; this asks again that the conversation is still the owner's and not deleted, the owner is still a member and may use the agent, the routine is still on and its run still waiting, and the workspace has credits, before any tool runs. It writes the rest of the one reply that asked, its steps, the run's draft and the spend on that workspace",
   ],

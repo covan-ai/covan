@@ -99,7 +99,7 @@ function Approval() {
               {request.resolvedBy &&
               (request.status === "approved" || request.status === "declined") ? (
                 <p className="m-0 text-meta text-muted-foreground">
-                  {answeredBy(request.resolvedBy.name, t)}
+                  {answeredBy(request.resolvedBy.name, t, request.resolvedVia)}
                 </p>
               ) : null}
               {late ? (
@@ -155,9 +155,12 @@ function heading(request: ApprovalRequest, t: T): string {
   return t("{{name}} is asking you", { name: agent });
 }
 
-function answeredBy(name: string | null, t: T): string {
+function answeredBy(name: string | null, t: T, via: ApprovalRequest["resolvedVia"]): string {
   const who = name ?? t("Somebody");
-  return t("{{name}} answered", { name: who });
+  // A reply is said, because it is only as strong as the mailbox (0147).
+  return via === "reply"
+    ? t("{{name}} answered by replying to the email", { name: who })
+    : t("{{name}} answered", { name: who });
 }
 
 function whereItStands(request: ApprovalRequest, t: T): string {

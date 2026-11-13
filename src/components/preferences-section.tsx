@@ -221,6 +221,7 @@ function NotificationToggles() {
 
   type Key =
     | "approvalRequests"
+    | "approveByReply"
     | "needsMeAway"
     | "routineFailed"
     | "weeklySummary"
@@ -248,6 +249,12 @@ function NotificationToggles() {
     {
       key: "approvalRequests",
       label: t("An agent asks for my go-ahead while nobody is watching"),
+      fallback: true,
+    },
+    // 0147: as strong as the mailbox it comes from, so it is a switch.
+    {
+      key: "approveByReply",
+      label: t("Let me answer those by replying yes or no to the email"),
       fallback: true,
     },
     {

@@ -304,7 +304,9 @@ What it changes for you:
   run asks, as a conversation would: it stops on the question, the routine's
   owner is emailed at once (Settings › Preferences turns that off), and the
   request waits a day in the Inbox, in the routine's own conversation and on
-  its own page. The owner answers, or any admin of the workspace; the next
+  its own page. Where the deployment receives mail, replying "yes" or "no" to
+  the email answers it too (`docs/security.md` says what that rests on). The
+  owner answers, or any admin of the workspace; the next
   tick of the cron carries on from where the run stopped and sends the report
   with both halves in it. A no, or a day with no answer, sends the report
   with a line saying what was not done. A run asks at most five times; a

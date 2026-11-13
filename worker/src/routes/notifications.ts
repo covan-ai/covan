@@ -18,10 +18,12 @@ const DEFAULTS = {
   weeklySummary: false,
   // 0144: what an agent asks while nobody is watching, the moment it asks.
   approvalRequests: true,
+  // 0147: a reply to that email answers it.
+  approveByReply: true,
 };
 
 const COLUMNS =
-  "routine_paused, quota_exhausted, needs_me_away, routine_failed, weekly_summary, approval_requests";
+  "routine_paused, quota_exhausted, needs_me_away, routine_failed, weekly_summary, approval_requests, approve_by_reply";
 
 function shape(row: Record<string, unknown>) {
   return {
@@ -31,6 +33,7 @@ function shape(row: Record<string, unknown>) {
     routineFailed: row.routine_failed as boolean,
     weeklySummary: row.weekly_summary as boolean,
     approvalRequests: row.approval_requests as boolean,
+    approveByReply: row.approve_by_reply as boolean,
   };
 }
 
@@ -42,6 +45,7 @@ const updateSchema = z
     routineFailed: z.boolean().optional(),
     weeklySummary: z.boolean().optional(),
     approvalRequests: z.boolean().optional(),
+    approveByReply: z.boolean().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: "at least one field is required",
@@ -91,6 +95,9 @@ notifications.patch("/notification-preferences", async (c) => {
   if (parsed.data.weeklySummary !== undefined) row.weekly_summary = parsed.data.weeklySummary;
   if (parsed.data.approvalRequests !== undefined) {
     row.approval_requests = parsed.data.approvalRequests;
+  }
+  if (parsed.data.approveByReply !== undefined) {
+    row.approve_by_reply = parsed.data.approveByReply;
   }
 
   const { data, error } = await db

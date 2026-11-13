@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoutineEnv } from "../../types";
 import { approvalRequestEmail } from "../emails/away";
+import { approvalLocalPart, inboundDomain } from "../inbound-email/address";
 import { appUrlFrom, type Mailer } from "../reports/mailer";
 
 /**
@@ -38,11 +39,19 @@ export async function notifyApprovalRequest(
   try {
     const { data: prefs } = await db
       .from("notification_preferences")
-      .select("approval_requests")
+      .select("approval_requests, approve_by_reply")
       .eq("user_id", request.userId)
       .maybeSingle();
     // No row is every switch at its default, and this one defaults on.
     if (prefs && prefs.approval_requests === false) return false;
+
+    // A reply answers it (0147), where this deployment receives mail and the
+    // owner has not turned that off.
+    const domain = inboundDomain(env);
+    const replyTo =
+      domain && env.ROUTINE_SECRET_KEY && prefs?.approve_by_reply !== false
+        ? `${await approvalLocalPart(env.ROUTINE_SECRET_KEY, request.id)}@${domain}`
+        : undefined;
 
     const [{ data: agent }, { data: workspace }, { data: found }] = await Promise.all([
       db.from("agents").select("name").eq("id", request.agentId).maybeSingle(),
@@ -62,6 +71,7 @@ export async function notifyApprovalRequest(
         proposal: request.proposal,
         expiresAt: request.expiresAt,
         url: `${appUrlFrom(env as { ALLOWED_ORIGIN?: string })}/approvals/${request.id}`,
+        ...(replyTo ? { replyTo } : {}),
       }),
     );
 

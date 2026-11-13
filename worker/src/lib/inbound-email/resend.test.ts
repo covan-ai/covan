@@ -4,6 +4,7 @@ import {
   isAutomatic,
   newTextOf,
   parseReceivedEmail,
+  passesAlignedAuthentication,
   passesAuthentication,
   verifyResendWebhook,
   type ReceivedEmail,
@@ -149,6 +150,31 @@ describe("passesAuthentication", () => {
       passesAuthentication(email({ authentication: { spf: "fail", dkim: "fail", dmarc: "gray" } })),
     ).toBe(false);
     expect(passesAuthentication(email({ authentication: null }))).toBe(false);
+  });
+
+  // The weakness the comment names: SPF passes for the envelope's domain,
+  // and a From domain with no DMARC policy has no verdict to fail.
+  it("lets an unaligned SPF pass through when the From's domain has no DMARC", () => {
+    expect(
+      passesAuthentication(email({ authentication: { spf: "pass", dkim: "fail", dmarc: "gray" } })),
+    ).toBe(true);
+  });
+});
+
+describe("passesAlignedAuthentication", () => {
+  it("wants DMARC itself to have passed, which ties the check to the From", () => {
+    expect(passesAlignedAuthentication(email())).toBe(email().authentication?.dmarc === "pass");
+    expect(
+      passesAlignedAuthentication(
+        email({ authentication: { spf: "pass", dkim: "pass", dmarc: "pass" } }),
+      ),
+    ).toBe(true);
+    expect(
+      passesAlignedAuthentication(
+        email({ authentication: { spf: "pass", dkim: "pass", dmarc: "gray" } }),
+      ),
+    ).toBe(false);
+    expect(passesAlignedAuthentication(email({ authentication: null }))).toBe(false);
   });
 });
 

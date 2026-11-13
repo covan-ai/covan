@@ -146,16 +146,35 @@ export async function fetchReceivedEmail(
 }
 
 /**
- * Whether the sender's domain vouched for this message. A From line is
- * whatever the sender typed; DKIM or SPF passing for it, and DMARC not
- * failing, is the receiving server saying the domain really sent it. A
- * message with no verdicts at all — Resend has none for older mail — is not
- * trusted, because "nobody checked" is not "it checked out".
+ * Whether the message was vouched for by somebody: DMARC passing, or failing
+ * to fail with DKIM or SPF passing. A message with no verdicts at all — Resend
+ * has none for older mail — is not trusted, because "nobody checked" is not
+ * "it checked out".
+ *
+ * **Weaker than it reads.** SPF and DKIM pass for the domains they check — the
+ * envelope sender, the signing domain — and neither has to be the From line's.
+ * Only DMARC ties them to the From, and a domain with no DMARC record gets no
+ * DMARC verdict to fail. So somebody with any domain of their own that passes
+ * SPF can put a stranger's address on the From of a message from a domain
+ * that publishes no DMARC policy, and this answers true. That is a cost worth
+ * bearing for starting a routine with a reply — the worst is a run the owner
+ * pays for — and not for saying yes to what an agent asked; that asks
+ * `passesAlignedAuthentication`.
  */
 export function passesAuthentication(email: ReceivedEmail): boolean {
   const a = email.authentication;
   if (!a || a.dmarc === "fail") return false;
   return a.dmarc === "pass" || a.dkim === "pass" || a.spf === "pass";
+}
+
+/**
+ * Whether the From line itself is vouched for: DMARC passed, which requires an
+ * SPF or DKIM pass aligned with the From's domain. What an answer to a request
+ * needs (0147); a domain that publishes no DMARC policy cannot answer one by
+ * mail, and its owner is sent the link instead.
+ */
+export function passesAlignedAuthentication(email: ReceivedEmail): boolean {
+  return email.authentication?.dmarc === "pass";
 }
 
 /**

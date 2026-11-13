@@ -58,6 +58,9 @@ export const emailInbound = new Hono<AppEnv>();
  */
 const MAX_BODY_BYTES = 64 * 1024;
 
+/** A request email's Reply-To: `a-`, the request's 32 hex and a 16-hex MAC. */
+const APPROVAL_REPLY = /^a-[0-9a-f]{48}$/i;
+
 /** A message to more of our addresses than this is not somebody writing to a routine. */
 const MAX_RECIPIENTS = 5;
 
@@ -152,8 +155,10 @@ emailInbound.post("/email/inbound", async (c) => {
     }
 
     // An answer to a request email (0147): before the routine's own
-    // addresses, because a request's address must never start a routine.
-    if (local.startsWith("a-")) {
+    // addresses, because a request's address must never start a routine. By
+    // its exact shape, not its prefix: a routine called "A-team" has an
+    // address of its own that starts `a-team-…`, and that is still its own.
+    if (APPROVAL_REPLY.test(local)) {
       const approvalId = await approvalOfReply(c.env.ROUTINE_SECRET_KEY, local);
       if (!approvalId) {
         await countMiss(c);

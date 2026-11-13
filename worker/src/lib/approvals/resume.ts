@@ -103,7 +103,13 @@ export type Unanswered = {
 };
 
 /** Why a request is settled with a note and no model call. */
-export type NoteReason = "declined" | "expired" | "interrupted" | { refused: string };
+export type NoteReason =
+  | "declined"
+  | "expired"
+  | "interrupted"
+  | { refused: string }
+  /** A later question that could not be asked: never approved, so never done. */
+  | { unasked: string };
 
 /** The line written under the reply, and into the report. */
 export function noteFor(reason: NoteReason, summary: string): string {
@@ -117,6 +123,9 @@ export function noteFor(reason: NoteReason, summary: string): string {
       `_${capital(what)} was approved, but carrying on was cut off. ` +
       "Check whether it happened before asking for it again._"
     );
+  }
+  if ("unasked" in reason) {
+    return `_${capital(what)} needs somebody's yes, and it could not be asked: ${reason.unasked}. It was not done._`;
   }
   return `_${capital(what)} was approved, but could not be carried on: ${reason.refused}. Nothing was done._`;
 }
@@ -281,7 +290,7 @@ export async function resumeApproved(
     return settleWithNote(
       env,
       { ...unanswered, summary: answered.asked.summary },
-      { refused: `it asked again and ${again.why}` },
+      { unasked: again.why },
       overrides,
     );
   }
@@ -350,7 +359,7 @@ export async function resumeApproved(
     parkedAgain = again.kind === "parked";
     if (!parkedAgain) {
       note = noteFor(
-        { refused: `it asked again and ${again.kind === "not_parked" ? again.why : ""}` },
+        { unasked: again.kind === "not_parked" ? again.why : "" },
         turn.paused.summary ?? "",
       );
     }
@@ -473,14 +482,20 @@ async function sendReport(
     .eq("id", runId)
     .maybeSingle();
   if (!runRow || runRow.status !== "waiting") return;
-  const report = joinHalves(typeof runRow.summary === "string" ? runRow.summary : "", addition);
+  const draft = joinHalves(typeof runRow.summary === "string" ? runRow.summary : "", addition);
+  // No longer waiting on a person, so the two-hour sweep is the backstop
+  // again for anything else it waits on.
   const { error } = await deps.db
     .from("routine_runs")
-    .update({ summary: report, waiting_for: null })
+    .update({ summary: draft, waiting_for: null, held_until: null })
     .eq("id", runId)
     .eq("status", "waiting");
   if (error) console.error("could not write a run's draft after its request", runId, error.code);
-  await deps.completeHeld(env, runId, { db: deps.db }, { report });
+  // Composed, not handed over as written: a browser task of the run may have
+  // answered while it waited on the person, and its answer belongs in the
+  // report. With nothing to add, the compose sends the draft as it is; with a
+  // task still out, this returns and that task's settle sends it.
+  await deps.completeHeld(env, runId, { db: deps.db });
 }
 
 async function runSide(

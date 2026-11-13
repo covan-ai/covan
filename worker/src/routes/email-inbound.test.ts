@@ -143,6 +143,16 @@ describe("POST /email/inbound", () => {
     expect(receiveApprovalReply).not.toHaveBeenCalled();
   });
 
+  it("leaves a routine whose own address starts with a- to that routine", async () => {
+    const body = envelope(["a-team-abcdefghijklmnop@reply.example.com"]);
+    await post(body, await signed(body));
+    expect(receiveApprovalReply).not.toHaveBeenCalled();
+    expect(receiveEvent.mock.calls[0][1]).toEqual({
+      provider: "email",
+      externalId: "abcdefghijklmnop",
+    });
+  });
+
   it("hands mail to a routine's own address to receiveEvent, by its token", async () => {
     const body = envelope(["weekly-abcdefghijklmnop@reply.example.com"]);
     await post(body, await signed(body));

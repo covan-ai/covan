@@ -198,9 +198,11 @@ describe("resumeApproved", () => {
       summary: "A mail asked to close seat 14.\n\nSeat 14 is closed.",
       waiting_for: null,
     });
-    expect(d.completeHeld).toHaveBeenCalledWith(env, "run-1", expect.anything(), {
-      report: "A mail asked to close seat 14.\n\nSeat 14 is closed.",
-    });
+    // Composed from the new draft rather than sent as written, so a browser
+    // answer that came in while the run waited on a person is not lost.
+    expect(d.completeHeld).toHaveBeenCalledWith(env, "run-1", expect.anything());
+    expect(d.completeHeld.mock.calls[0]).toHaveLength(3);
+    expect(db.tables.routine_runs[0].held_until).toBeNull();
     expect(d.entitlements.record).toHaveBeenCalledWith(
       "ws-1",
       expect.any(Array),
@@ -351,9 +353,14 @@ describe("settleWithNote", () => {
     const line = noteFor("expired", "POST to Box office?");
     expect(line).toMatch(/Nobody answered within 24 hours/);
     expect(db.tables.messages[0].content).toBe(`A mail asked to close seat 14.\n\n${line}`);
-    expect(d.completeHeld).toHaveBeenCalledWith(env, "run-1", expect.anything(), {
-      report: `A mail asked to close seat 14.\n\n${line}`,
-    });
+    expect(db.tables.routine_runs[0].summary).toBe(`A mail asked to close seat 14.\n\n${line}`);
+    expect(d.completeHeld).toHaveBeenCalledWith(env, "run-1", expect.anything());
+  });
+
+  it("does not call a later question approved when it could not be asked", () => {
+    const line = noteFor({ unasked: "it had already asked 5 times on this run" }, "Delete it?");
+    expect(line).toContain("could not be asked");
+    expect(line).not.toContain("approved");
   });
 
   it("says a cut-off resume may have happened, rather than running it again", () => {
